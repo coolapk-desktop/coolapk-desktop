@@ -50,7 +50,7 @@ impl Sessions {
             Policy::Follow => builder.redirect(reqwest::redirect::Policy::limited(10)),
             Policy::NoRedirect => builder.redirect(reqwest::redirect::Policy::none()),
             Policy::Download => builder
-                .user_agent("Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) +CoolMarket/16.2.0-2604201-universal")
+                .user_agent("Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) +CoolMarket/16.6.5-2610162-universal")
                 .redirect(reqwest::redirect::Policy::limited(10)),
             Policy::Updater => builder.user_agent("coolapk-desktop-updater")
                 .redirect(reqwest::redirect::Policy::custom(|attempt| {

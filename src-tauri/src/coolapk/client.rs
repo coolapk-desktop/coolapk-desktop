@@ -1,5 +1,5 @@
 use super::http_session::{session, Policy as SessionPolicy};
-use crate::coolapk::auth::CoolapkAuth;
+use crate::coolapk::auth::{APP_CODE, CoolapkAuth};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, LOCATION, USER_AGENT};
 use reqwest::{Client, Method};
@@ -1051,10 +1051,10 @@ fn build_api_clients(profile: &DeviceProfile) -> Result<(Client, Client), String
     headers.insert("X-App-Mode", HeaderValue::from_static("universal"));
     headers.insert("X-App-Channel", HeaderValue::from_static("coolapk"));
     headers.insert("X-App-Id", HeaderValue::from_static("com.coolapk.market"));
-    headers.insert("X-App-Version", HeaderValue::from_static("16.2.0"));
-    headers.insert("X-App-Code", HeaderValue::from_static("2604201"));
+    headers.insert("X-App-Version", HeaderValue::from_static("16.6.5"));
+    headers.insert("X-App-Code", HeaderValue::from(APP_CODE));
     headers.insert("X-Api-Version", HeaderValue::from_static("16"));
-    headers.insert("X-App-Supported", HeaderValue::from_static("2604201"));
+    headers.insert("X-App-Supported", HeaderValue::from(APP_CODE));
     headers.insert("X-Dark-Mode", HeaderValue::from_static("0"));
     let client = http_client_builder().default_headers(headers.clone()).build().map_err(|_| "创建酷安 HTTP 客户端失败".to_string())?;
     let redirect_client = http_client_builder().default_headers(headers).redirect(reqwest::redirect::Policy::none()).build().map_err(|_| "创建酷安重定向客户端失败".to_string())?;
@@ -1596,10 +1596,10 @@ impl CoolapkClient {
             .header("X-App-Mode", "universal")
             .header("X-App-Channel", "coolapk")
             .header("X-App-Id", "com.coolapk.market")
-            .header("X-App-Version", "16.2.0")
-            .header("X-App-Code", "2604201")
+            .header("X-App-Version", "16.6.5")
+            .header("X-App-Code", APP_CODE)
             .header("X-Api-Version", "16")
-            .header("X-App-Supported", "2604201")
+            .header("X-App-Supported", APP_CODE)
             .header("X-Dark-Mode", "0");
         self.apply_device_profile(request)
     }
@@ -7304,8 +7304,8 @@ impl CoolapkClient {
         // 覆盖默认 UA 和自定义 UA，避免从 #Build 或 Dalvik 片段重新识别机型。
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_str(&format!("CoolMarket/{}-{}-universal",
-            profile.app_version.as_deref().unwrap_or("16.2.0"),
-            profile.app_code.as_deref().unwrap_or("2604201"))).map_err(|_| "发布 UA 格式无效")?);
+            profile.app_version.as_deref().unwrap_or("16.6.5"),
+            profile.app_code.as_deref().unwrap_or("2610162"))).map_err(|_| "发布 UA 格式无效")?);
         Ok(request.headers(headers))
     }
 

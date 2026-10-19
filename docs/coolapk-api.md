@@ -43,14 +43,14 @@
 
 | 请求头 | 必要性 | 说明 |
 | - | - | - |
-| `User-Agent` | 推荐 | 需带 `+CoolMarket/<版本号>`，如 `Dalvik/2.1.0 (Linux; U; Android 16; ...) +CoolMarket/16.2.0-2604201-universal` |
+| `User-Agent` | 推荐 | 需带 `+CoolMarket/<版本号>`，如 `Dalvik/2.1.0 (Linux; U; Android 16; ...) +CoolMarket/16.6.5-2610162-universal` |
 | `X-App-Token` | **必要** | 动态生成的 v3 Token，见下节 |
 | `X-Requested-With` | **必要** | `XMLHttpRequest` 返回 JSON；`com.coolapk.market` 会返回 HTML |
 | `X-Sdk-Int` | 必要 | Android SDK 版本，如 `36` |
 | `X-Sdk-Locale` | 必要 | `zh-CN` |
 | `X-App-Id` | 必要 | `com.coolapk.market` |
-| `X-App-Version` | 必要 | `16.2.0` |
-| `X-App-Code` | 必要 | `2604201` |
+| `X-App-Version` | 必要 | `16.6.5` |
+| `X-App-Code` | 必要 | `2610162` |
 | `X-Api-Version` | 必要 | `16` |
 | `X-App-Device` | 非必要 | 设备码，本项目每次启动随机生成 |
 | `X-Dark-Mode` | 非必要 | `0` / `1` |

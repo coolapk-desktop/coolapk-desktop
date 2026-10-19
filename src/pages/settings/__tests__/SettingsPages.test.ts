@@ -331,12 +331,12 @@ describe('设置页面交互', () => {
     expect(wrapper.get('.preview-box').text()).toContain('; HyperOS_3.0; 3.0.310.0)');
     await wrapper.get('[aria-label="官方机型表"]').setValue('');
     expect((wrapper.get('[aria-label="官方机型表"]').element as HTMLSelectElement).value).toBe('');
-    const appCodeInput = inputs.find((i) => i.attributes('placeholder') === '2604201') || inputs[5];
+    const appCodeInput = inputs.find((i) => i.attributes('placeholder') === '2610162') || inputs[5];
     await appCodeInput.setValue('2600000');
     expect(wrapper.find('.version-warning').exists()).toBe(true);
     await wrapper.get('.reset-button').trigger('click');
     expect(settings.settings.deviceFingerprint.model).toBe('23113RKC6C');
-    expect(settings.settings.deviceFingerprint.appCode).toBe('2604201');
+    expect(settings.settings.deviceFingerprint.appCode).toBe('2610162');
     expect(settings.settings.deviceFingerprint.sdkInt).toBe('36');
     expect(settings.settings.deviceFingerprint.deviceId).toBe('saved-id');
     expect(settings.settings.deviceFingerprint.rom).toBe('');

@@ -4,7 +4,8 @@ use md5::{Digest, Md5};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const APP_ID: &str = "com.coolapk.market";
-const APP_CODE: u64 = 2_604_201;
+// 签名中的版本编码必须与请求头一致，否则服务端会返回“请求验证错误”。
+pub(crate) const APP_CODE: u64 = 2_610_162;
 const STD_BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const AUTH_BLOB_B64: &str = include_str!("auth_blob.b64");
@@ -132,8 +133,9 @@ mod tests {
     #[test]
     fn token_is_deterministic_for_a_synthetic_device_and_timestamp() {
         let auth = CoolapkAuth::new("synthetic-test-device");
-        let first = auth.generate_token_at(1_770_000_000).unwrap();
-        let second = auth.generate_token_at(1_770_000_000).unwrap();
+        // 此时间点为当前版本生成有效的 bcrypt 盐，固定输入用于验证签名可重复。
+        let first = auth.generate_token_at(1_770_000_001).unwrap();
+        let second = auth.generate_token_at(1_770_000_001).unwrap();
         assert_eq!(first, second);
         assert!(first.starts_with("v3"));
         assert!(first.len() > 70);

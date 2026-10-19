@@ -1,6 +1,17 @@
 use super::*;
 
 #[test]
+fn default_request_version_matches_token_signing_version() {
+    // 检查实际下载请求与 UA，避免升级请求头时遗漏签名版本。
+    let client = CoolapkClient::new();
+    let request = client.apply_download_headers(reqwest::Client::new().get("https://api.coolapk.com/v6/main/init")).unwrap().build().unwrap();
+    let code = APP_CODE.to_string();
+    assert_eq!(request.headers()["X-App-Code"], code.as_str());
+    assert_eq!(request.headers()["X-App-Supported"], code.as_str());
+    assert!(super::super::native_device::COMPATIBILITY_UA.contains(&format!("-{code}-")));
+}
+
+#[test]
 fn reply_detail_normalization_preserves_navigation_and_reply_context() {
     let raw = json!({ "data": {
         "id": 222, "fid": "333", "rid": "111", "rrid": "111",
@@ -193,7 +204,7 @@ fn test_publish_device_model_is_scoped_and_preserves_identity() {
     assert_eq!(hidden_fields[0], "publish-identity");
     assert!(hidden_fields[4..8].iter().all(String::is_empty));
     assert_eq!(visible_fields[6], "iPhone17,3");
-    assert_eq!(hidden.headers()[USER_AGENT], "CoolMarket/16.2.0-2604201-universal");
+    assert_eq!(hidden.headers()[USER_AGENT], "CoolMarket/16.6.5-2610162-universal");
     assert_eq!(hidden.headers().get_all(USER_AGENT).iter().count(), 1);
     assert_eq!(visible.headers()[USER_AGENT], "native-UA iPhone17,3");
     assert_eq!(hidden.body().unwrap().as_bytes(), visible.body().unwrap().as_bytes());
@@ -1206,7 +1217,7 @@ fn test_parse_reply_user_agent_keeps_real_device_metadata() {
 
 #[test]
 fn test_parse_reply_user_agent_android_rom_fallback_is_not_duplicated() {
-    let ua = "Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) (#Build; Redmi; 23113RKC6C; AQ3A.250226.002; 16) +CoolMarket/16.2.0-2604201-universal";
+    let ua = "Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) (#Build; Redmi; 23113RKC6C; AQ3A.250226.002; 16) +CoolMarket/16.6.5-2610162-universal";
     let (title, build, rom) = parse_reply_user_agent(ua);
     assert_eq!(title, "Redmi 23113RKC6C");
     assert_eq!(build, "AQ3A.250226.002");
@@ -1216,7 +1227,7 @@ fn test_parse_reply_user_agent_android_rom_fallback_is_not_duplicated() {
 #[test]
 fn test_user_agent_device_profile_headers_for_publish_request() {
     let client = CoolapkClient::new();
-    let ua = "Dalvik/2.1.0 (Linux; U; Android 16; 2210132C Build/BP2A.250605.031.A3) (#Build; Xiaomi; 2210132C; BP2A.250605.031.A3; HyperOS_3.0; 3.0.310.0) +CoolMarket/16.2.0-2604201-universal";
+    let ua = "Dalvik/2.1.0 (Linux; U; Android 16; 2210132C Build/BP2A.250605.031.A3) (#Build; Xiaomi; 2210132C; BP2A.250605.031.A3; HyperOS_3.0; 3.0.310.0) +CoolMarket/16.6.5-2610162-universal";
     client.update_device_profile(DeviceProfile {
         user_agent: Some(ua.into()), manufacturer: Some("Xiaomi".into()),
         brand: Some("Xiaomi".into()), model: Some("2210132C".into()),
@@ -1926,7 +1937,7 @@ fn test_device_profile_model_applies_without_custom_device_id() {
 #[test]
 fn test_native_device_profile_survives_settings_sync_and_custom_reset() {
     let mut client = CoolapkClient::new();
-    let native_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) (#Build; Apple; iPhone17,3; 22A3354; 18.0) +CoolMarket/16.2.0-2604201-universal";
+    let native_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) (#Build; Apple; iPhone17,3; 22A3354; 18.0) +CoolMarket/16.6.5-2610162-universal";
     client.native_device_profile = DeviceProfile {
         manufacturer: Some("Apple".into()), brand: Some("Apple".into()),
         model: Some("iPhone17,3".into()), build: Some("22A3354".into()),
