@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "coolapk_desktop"
-version = "1.36.2"
+version = "1.37.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
