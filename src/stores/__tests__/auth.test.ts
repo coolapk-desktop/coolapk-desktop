@@ -57,19 +57,49 @@ describe('auth store', () => {
     expect(store.accounts).toHaveLength(1);
   });
 
-  it('rejects a cookie with uid when server validation fails', async () => {
+  it('keeps a cookie when the server cannot confirm login', async () => {
     vi.spyOn(CoolapkTauriAPI, 'saveCookie').mockResolvedValue(undefined as any);
-    vi.spyOn(CoolapkTauriAPI, 'checkLoginStatus').mockRejectedValue(new Error('当前 Cookie 不包含有效会话'));
+    vi.spyOn(CoolapkTauriAPI, 'checkLoginStatus').mockRejectedValue(new Error('HTTP 403'));
     const clearCookie = vi.spyOn(CoolapkTauriAPI, 'clearCookie').mockResolvedValue(undefined as any);
     const saveAccount = vi.spyOn(CoolapkTauriAPI, 'saveAccount').mockResolvedValue(undefined as any);
 
     const store = useAuthStore();
-    await expect(store.loginWithCookie('uid=12345; username=test; token=only-token')).rejects.toThrow('有效会话');
+    await expect(store.loginWithCookie('uid=12345; username=test; token=only-token')).rejects.toThrow('接口未能确认登录状态');
 
     expect(store.isLoggedIn).toBe(false);
     expect(store.user).toBeNull();
-    expect(clearCookie).toHaveBeenCalledOnce();
+    expect(clearCookie).not.toHaveBeenCalled();
     expect(saveAccount).not.toHaveBeenCalled();
+  });
+
+  it('clears a cookie only when the API explicitly reports a logged-out uid', async () => {
+    vi.spyOn(CoolapkTauriAPI, 'saveCookie').mockResolvedValue(undefined as any);
+    vi.spyOn(CoolapkTauriAPI, 'checkLoginStatus').mockResolvedValue({
+      code: 200,
+      data: { uid: '10000' }
+    } as any);
+    const clearCookie = vi.spyOn(CoolapkTauriAPI, 'clearCookie').mockResolvedValue(undefined as any);
+
+    const store = useAuthStore();
+    await expect(store.loginWithCookie('SESSID=session; uid=12345')).rejects.toThrow('返回未登录状态');
+
+    expect(clearCookie).toHaveBeenCalledOnce();
+    expect(store.isLoggedIn).toBe(false);
+  });
+
+  it('keeps a cookie when the API response does not identify an account', async () => {
+    vi.spyOn(CoolapkTauriAPI, 'saveCookie').mockResolvedValue(undefined as any);
+    vi.spyOn(CoolapkTauriAPI, 'checkLoginStatus').mockResolvedValue({
+      code: 200,
+      data: {}
+    } as any);
+    const clearCookie = vi.spyOn(CoolapkTauriAPI, 'clearCookie').mockResolvedValue(undefined as any);
+
+    const store = useAuthStore();
+    await expect(store.loginWithCookie('SESSID=session; uid=12345')).rejects.toThrow('没有返回账号 UID');
+
+    expect(clearCookie).not.toHaveBeenCalled();
+    expect(store.isLoggedIn).toBe(false);
   });
 
   it('unwraps the native response and persists a validated cookie account', async () => {

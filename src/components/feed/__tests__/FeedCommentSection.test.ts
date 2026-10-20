@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getReplyDetail: vi.fn(),
   getSubReplies: vi.fn(),
   replyFeed: vi.fn(),
+  getDeviceInfo: vi.fn(),
   uploadImage: vi.fn(),
   logDiagnostic: vi.fn(),
   routerPush: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('../../../api/coolapk', () => ({
     getReplyDetail: mocks.getReplyDetail,
     getSubReplies: mocks.getSubReplies,
     replyFeed: mocks.replyFeed,
+    getDeviceInfo: mocks.getDeviceInfo,
     uploadImage: mocks.uploadImage,
   },
 }));
@@ -153,6 +155,7 @@ describe('评论完整信息展示', () => {
     mocks.getReplyDetail.mockResolvedValue({ data: {} });
     mocks.getSubReplies.mockResolvedValue({ code: 200, data: [] });
     mocks.replyFeed.mockResolvedValue({ code: 200, message: 'ok' });
+    mocks.getDeviceInfo.mockResolvedValue({ code: 200, data: { deviceId: '' } });
     mocks.uploadImage.mockResolvedValue({ code: 200, data: { url: 'https://image.coolapk.com/feed/test.jpg' } });
     setActivePinia(createPinia());
     shuzilmGuideState.visible = false;
@@ -760,6 +763,28 @@ describe('评论完整信息展示', () => {
     expect(mocks.replyFeed).not.toHaveBeenCalled();
     expect(shuzilmGuideState.visible).toBe(true);
     expect(shuzilmGuideState.reason).toBe('missing_id');
+  });
+
+  it('手动配置为空但当前账号已有生成设备 ID 时直接提交评论', async () => {
+    const authStore = useAuthStore();
+    authStore.user = { uid: 12345, username: '发布者' } as any;
+    authStore.isLoggedIn = true;
+
+    const settingsStore = useSettingsStore();
+    settingsStore.settings.deviceFingerprint.deviceId = '';
+    mocks.getDeviceInfo.mockResolvedValue({ code: 200, data: { deviceId: 'DU-MOCK-GENERATED-ACCOUNT-ID', deviceIdSource: 'generated_account' } });
+
+    const wrapper = mountSection();
+    const editor = wrapper.find('.comment-textarea');
+    editor.element.textContent = '使用账号已保存的设备 ID 评论';
+    await editor.trigger('input');
+    await wrapper.find('.stub-button').trigger('click');
+    await flushPromises();
+
+    expect(mocks.getDeviceInfo).toHaveBeenCalled();
+    expect(mocks.replyFeed).toHaveBeenCalledWith('feed-1', '使用账号已保存的设备 ID 评论', undefined, undefined);
+    expect(shuzilmGuideState.visible).toBe(false);
+    wrapper.unmount();
   });
   it('官方详情的表情面板放在编辑框内部，点击面板不会被外部点击处理关闭', async () => {
     const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: 12345, username: '发布者' } as any;

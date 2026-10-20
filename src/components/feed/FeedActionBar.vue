@@ -138,11 +138,9 @@ async function toggleLike() {
     isLiked.value = prevLiked;
     likeCount.value = prevCount;
     const msg = getErrorMessage(err, '点赞操作失败');
-    if (msg.includes('网络') || msg.includes('err_')) {
-      showToast('酷安服务端风控拦截（需官方手机环境），点赞失败', 'error');
-    } else {
-      showToast(msg, 'error');
-    }
+    // Preserve the API's error text. A network-related server message does not
+    // prove that the request requires an official phone environment.
+    showToast(msg, 'error');
   }
 }
 

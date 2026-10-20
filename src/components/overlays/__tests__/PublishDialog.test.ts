@@ -13,7 +13,7 @@ vi.mock('../../../stores/settings', () => ({ useSettingsStore: () => stores.sett
 vi.mock('../../../stores/auth', () => ({ useAuthStore: () => stores.auth }));
 vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: { getDeviceInfo: vi.fn(), createFeed: vi.fn(), getEditableFeed: vi.fn(), updateFeed: vi.fn(), uploadPublishVideo: vi.fn(), uploadImage: vi.fn() } }));
 vi.mock('../../../utils/publishDrafts', async (original) => ({ ...await original<any>(), listFullPublishDrafts: vi.fn(async () => []), saveFullPublishDraft: vi.fn(), deleteFullPublishDraft: vi.fn() }));
-vi.mock('../../../utils/shuzilmDeviceGuide', () => ({ shuzilmGuideState: { visible: false }, openShuzilmGuide: vi.fn(), isRiskControlError: () => false }));
+vi.mock('../../../utils/shuzilmDeviceGuide', () => ({ shuzilmGuideState: { visible: false }, openShuzilmGuide: vi.fn(), isRiskControlError: () => false, hasActiveShuzilmDeviceId: async () => false }));
 
 function mountDialog() {
   return mount(PublishDialog, { global: { stubs: {

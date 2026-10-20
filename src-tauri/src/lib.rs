@@ -214,6 +214,11 @@ struct ScreenRect {
 static WINDOW_STATE: Mutex<Option<WindowState>> = Mutex::new(None);
 // 最大化状态独立保存，WINDOW_STATE 始终保留可还原的普通窗口几何信息。
 static WINDOW_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+// 拖动窗口会连续触发 Moved/Resized；用修订号合并事件，在最后一次变化后再落盘。
+#[cfg(desktop)]
+static WINDOW_STATE_REVISION: AtomicU64 = AtomicU64::new(0);
+#[cfg(desktop)]
+static WINDOW_STATE_SAVE_SCHEDULED: AtomicBool = AtomicBool::new(false);
 static STARTUP_STATE_LOCK: Mutex<()> = Mutex::new(());
 static STARTUP_STATE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -325,7 +330,11 @@ fn persist_window_geometry(app: &tauri::AppHandle, state: WindowState) {
         "remember_window_state": REMEMBER_WINDOW_STATE.load(Ordering::SeqCst),
         "always_on_top": ALWAYS_ON_TOP.load(Ordering::SeqCst)
     });
-    let _ = update_startup_state_file(&path, fallback, |flags| write_saved_window_state(flags, state, WINDOW_MAXIMIZED.load(Ordering::SeqCst)));
+    if let Err(error) = update_startup_state_file(&path, fallback, |flags| {
+        write_saved_window_state(flags, state, WINDOW_MAXIMIZED.load(Ordering::SeqCst))
+    }) {
+        log::warn!("保存窗口状态失败：{error}");
+    }
 }
 
 // 最大化标记与普通窗口几何信息一起写入，保留同一文件里的其他启动设置。
@@ -448,6 +457,45 @@ pub(crate) fn persist_current_window_geometry(app: &tauri::AppHandle) {
     if let Some(state) = state {
         persist_window_geometry(app, state);
     }
+}
+
+#[cfg(desktop)]
+fn schedule_window_state_persistence(app: tauri::AppHandle) {
+    if !REMEMBER_WINDOW_STATE.load(Ordering::SeqCst) {
+        return;
+    }
+
+    WINDOW_STATE_REVISION.fetch_add(1, Ordering::SeqCst);
+    if WINDOW_STATE_SAVE_SCHEDULED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let revision = WINDOW_STATE_REVISION.load(Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            if WINDOW_STATE_REVISION.load(Ordering::SeqCst) != revision {
+                continue;
+            }
+
+            // 先解除排队标记，避免保存期间恰好到来的最后一次事件丢失。
+            WINDOW_STATE_SAVE_SCHEDULED.store(false, Ordering::SeqCst);
+            persist_current_window_geometry(&app);
+
+            if WINDOW_STATE_REVISION.load(Ordering::SeqCst) == revision {
+                return;
+            }
+            if WINDOW_STATE_SAVE_SCHEDULED
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1254,6 +1302,7 @@ pub fn run() {
                         prev.x = pos.x;
                         prev.y = pos.y;
                     }
+                    schedule_window_state_persistence(window.app_handle().clone());
                 }
                 WindowEvent::Resized(size) => {
                     if let Ok(mut guard) = WINDOW_STATE.lock() {
@@ -1266,6 +1315,7 @@ pub fn run() {
                         prev.w = size.width;
                         prev.h = size.height;
                     }
+                    schedule_window_state_persistence(window.app_handle().clone());
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     log::info!(

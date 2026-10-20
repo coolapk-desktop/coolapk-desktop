@@ -12,7 +12,12 @@ pub(crate) fn generation() -> u64 { GENERATION.load(Ordering::SeqCst) }
 
 pub(crate) fn configure(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     let configured = proxy_url().read().ok().and_then(|value| value.clone());
-    match configured { Some(url) => builder.proxy(reqwest::Proxy::all(url).expect("已校验的代理地址应保持有效")), None => builder }
+    match configured {
+        Some(url) => builder.proxy(reqwest::Proxy::all(url).expect("已校验的代理地址应保持有效")),
+        // “网络代理”设置为空就应当直连。reqwest 默认会读取 HTTP(S)_PROXY，
+        // 这会让从带代理环境变量的终端启动的应用悄悄连到本地代理端口。
+        None => builder.no_proxy(),
+    }
 }
 
 pub(crate) fn update(value: Option<&str>) -> Result<Option<String>, String> {

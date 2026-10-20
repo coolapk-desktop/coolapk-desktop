@@ -809,11 +809,13 @@ export class CoolapkTauriAPI {
   }
 
   static async likeFeed(feedId: string) {
-    return await invokeNative('like_feed', { feedId });
+    // A like is a write action. Retrying after an uncertain response can send
+    // the same mutation several times and will not resolve a server rejection.
+    return await invokeNative('like_feed', { feedId }, { retry: false });
   }
 
   static async unlikeFeed(feedId: string) {
-    return await invokeNative('unlike_feed', { feedId });
+    return await invokeNative('unlike_feed', { feedId }, { retry: false });
   }
 
   static async likeReply(replyId: string) {

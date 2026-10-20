@@ -2,7 +2,7 @@
 use super::client::DeviceProfile;
 
 pub const COMPATIBILITY_UA: &str = "Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) (#Build; Redmi; 23113RKC6C; AQ3A.250226.002; 16) +CoolMarket/16.2.0-2604201-universal";
-#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos", test))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 const APP_SUFFIX: &str = " +CoolMarket/16.2.0-2604201-universal";
 
 #[cfg(any(target_os = "android", test))]
@@ -33,7 +33,7 @@ fn android_profile(
     })
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos", test))]
+#[cfg(any(target_os = "ios", test))]
 fn apple_profile(platform: &str, model: &str, version: &str, build: &str) -> Option<DeviceProfile> {
     if model.is_empty() || version.is_empty() || build.is_empty() {
         return None;
@@ -100,7 +100,7 @@ pub fn detect() -> DeviceProfile {
     profile.unwrap_or_default()
 }
 
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(target_os = "ios")]
 fn sysctl_string(name: &std::ffi::CStr) -> Option<String> {
     use std::ffi::{c_char, c_int, c_void};
     unsafe extern "C" {
@@ -150,14 +150,10 @@ fn sysctl_string(name: &std::ffi::CStr) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 pub fn detect() -> DeviceProfile {
-    let profile = sysctl_string(c"hw.model")
-        .zip(sysctl_string(c"kern.osproductversion"))
-        .zip(sysctl_string(c"kern.osversion"))
-        .and_then(|((model, version), build)| apple_profile("macos", &model, &version, &build));
-    if profile.is_none() {
-        log::warn!("device.native_detection_failed platform=macos; using compatibility profile");
-    }
-    profile.unwrap_or_default()
+    // 桌面版请求的是酷安 Android API。将 Mac 主机标识放进 User-Agent 和
+    // X-App-Device 会形成服务端不支持的 Apple/Mac 客户端指纹；桌面端沿用
+    // Android 兼容模板，避免首页和登录检查被服务端拒绝。
+    DeviceProfile::default()
 }
 
 #[cfg(target_os = "ios")]
@@ -224,5 +220,13 @@ mod tests {
             assert!(profile.user_agent.unwrap().contains(system));
         }
         assert!(apple_profile("ios", "arm64", "18.0", "build").is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_uses_compatibility_profile_instead_of_host_identity() {
+        let profile = detect();
+        assert!(profile.model.is_none());
+        assert!(profile.user_agent.is_none());
     }
 }

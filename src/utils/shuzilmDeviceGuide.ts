@@ -1,4 +1,19 @@
 import { reactive } from 'vue';
+import { CoolapkTauriAPI } from '../api/coolapk';
+
+/**
+ * 是否存在当前请求实际使用的数盟设备 ID。
+ * 生成的账号级 ID 只保存在原生端，不会同步到前端设置里的手动 ID 字段，
+ * 因此提交前还要查询原生端当前生效的身份，避免把已配置账号误判为未配置。
+ */
+export async function hasActiveShuzilmDeviceId(): Promise<boolean> {
+  try {
+    const response = await CoolapkTauriAPI.getDeviceInfo();
+    return typeof response?.data?.deviceId === 'string' && response.data.deviceId.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
 
 export interface ShuzilmGuideOptions {
   reason?: 'missing_id' | 'risk_controlled' | 'manual';

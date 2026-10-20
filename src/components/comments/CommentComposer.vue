@@ -44,7 +44,7 @@ import AppIconButton from '../common/AppIconButton.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
-import { openShuzilmGuide, isRiskControlError } from '../../utils/shuzilmDeviceGuide';
+import { openShuzilmGuide, isRiskControlError, hasActiveShuzilmDeviceId } from '../../utils/shuzilmDeviceGuide';
 import { clearCommentDraft, loadCommentDraft, saveCommentDraft } from '../../utils/commentDrafts';
 
 const props = defineProps<{
@@ -130,7 +130,7 @@ async function handleSubmit() {
   };
 
   // 未设置设备 ID 时先完成设置，保存后继续评论。
-  if (!settingsStore.settings.deviceFingerprint.deviceId?.trim()) {
+  if (!settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
     openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedSubmit(); } });
     return;
   }

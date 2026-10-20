@@ -554,7 +554,7 @@ import { hasFeedMoreSuffix } from '../../utils/feedContent';
 import { logDiagnostic, summarizeDiagnosticError } from '../../utils/diagnosticLogger';
 import { reactiveUserProfileMap, getCachedUserProfileSync } from '../../utils/userProfilePreloader';
 import { verifyWithCaptcha, extractCaptchaParamsFromResponse } from '../../utils/neteaseCaptcha';
-import { openShuzilmGuide, isRiskControlError } from '../../utils/shuzilmDeviceGuide';
+import { openShuzilmGuide, isRiskControlError, hasActiveShuzilmDeviceId } from '../../utils/shuzilmDeviceGuide';
 import { hasActiveTextSelection } from '../../utils/selection';
 import {
   COMMENT_SORT_OPTIONS,
@@ -2003,7 +2003,7 @@ async function handleSend() {
   };
 
   // 未设置设备 ID 时先让用户在弹窗中粘贴官方日志，保存后继续评论。
-  if (!settingsStore.settings.deviceFingerprint.deviceId?.trim()) {
+  if (!settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
     openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedSubmit(); } });
     return;
   }

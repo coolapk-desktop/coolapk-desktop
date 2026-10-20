@@ -82,34 +82,36 @@ export const useAuthStore = defineStore('auth', () => {
     await CoolapkTauriAPI.saveCookie(trimmed);
 
     // 2. 发起 API 验证登录有效性并抓取个人资料
-    let profile: UserProfile;
-    try {
-      const res = await CoolapkTauriAPI.checkLoginStatus();
-      const data = res?.data || res || {};
-      // 解析 API 返回的用户属性
-      const uid = String(data.uid || data.id || '');
-      const username = data.username || data.displayUsername || data.user_name || '酷友';
-      
-      let userAvatar = data.userAvatar || data.avatar || data.user_avatar || '';
-      if (!userAvatar && uid) {
-        userAvatar = getAvatarUrlByUid(uid);
-      }
+    const res = await CoolapkTauriAPI.checkLoginStatus().catch((err: any) => {
+      const detail = err?.message || '未知接口错误';
+      // HTTP 403、超时和断连都不能证明 Cookie 无效；保留凭据便于重试。
+      throw new Error(`酷安接口未能确认登录状态（${detail}）。Cookie 已保留，请检查连接或稍后重试。`);
+    });
+    const data = res?.data || res || {};
+    // 解析 API 返回的用户属性
+    const uid = String(data.uid || data.id || '');
+    const username = data.username || data.displayUsername || data.user_name || '酷友';
 
-      const level = Number(data.level || data.userLevel || 0);
-      const bio = data.bio || data.sign || '';
-      const likenum = Number(data.be_like_num ?? data.feed_like_num ?? data.like_num ?? data.likenum ?? 0);
-      const fans = Number(data.fans ?? data.fansNum ?? data.fans_num ?? 0);
-      const follow = Number(data.follow ?? data.followNum ?? data.follow_num ?? 0);
-
-      if (!uid || uid === '0' || uid === '10000') {
-        throw new Error('无效的 Cookie 凭据，未能识别酷安 UID 账号身份');
-      }
-
-      profile = { uid, username, userAvatar, level, bio, likenum, fans, follow };
-    } catch (err: any) {
-      await CoolapkTauriAPI.clearCookie();
-      throw new Error(err?.message || '凭据无效或已过期，请登录酷安网页后复制包含 SESSID 的完整 Cookie');
+    let userAvatar = data.userAvatar || data.avatar || data.user_avatar || '';
+    if (!userAvatar && uid) {
+      userAvatar = getAvatarUrlByUid(uid);
     }
+
+    const level = Number(data.level || data.userLevel || 0);
+    const bio = data.bio || data.sign || '';
+    const likenum = Number(data.be_like_num ?? data.feed_like_num ?? data.like_num ?? data.likenum ?? 0);
+    const fans = Number(data.fans ?? data.fansNum ?? data.fans_num ?? 0);
+    const follow = Number(data.follow ?? data.followNum ?? data.follow_num ?? 0);
+
+    if (uid === '0' || uid === '10000') {
+      await CoolapkTauriAPI.clearCookie();
+      throw new Error('酷安接口返回未登录状态，Cookie 已清除；请重新登录并获取凭据');
+    }
+    if (!uid) {
+      throw new Error('酷安接口没有返回账号 UID，无法确认 Cookie 是否有效；Cookie 已保留');
+    }
+
+    const profile: UserProfile = { uid, username, userAvatar, level, bio, likenum, fans, follow };
 
     // 3. 校验成功，持久化并更新内存 Store
     // 安全说明：登录 Cookie 只写入 Rust 侧（accounts.json），

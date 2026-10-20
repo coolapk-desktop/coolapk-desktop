@@ -1720,7 +1720,7 @@ impl CoolapkClient {
             }
             Err(error) => {
                 self.restore_login_state(previous_cookie, &previous_uid)?;
-                Err(format!("切换账户失败，凭据无效或已过期: {error}"))
+                Err(format!("切换账户失败，酷安接口未能确认凭据: {error}"))
             }
         }
     }

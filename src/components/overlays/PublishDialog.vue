@@ -218,7 +218,7 @@ import { renderCoolapkRichText } from '../../utils/richText';
 import { extractFeedImageInputs, normalizeFeedImageItems } from '../../utils/livePhoto';
 import { listFullPublishDrafts, saveFullPublishDraft, deleteFullPublishDraft, restoreFullPublishDraft, type FullPublishDraft, type PublishDraftState } from '../../utils/publishDrafts';
 import { verifyWithCaptcha, extractCaptchaParamsFromResponse } from '../../utils/neteaseCaptcha';
-import { shuzilmGuideState, openShuzilmGuide, isRiskControlError } from '../../utils/shuzilmDeviceGuide';
+import { shuzilmGuideState, openShuzilmGuide, isRiskControlError, hasActiveShuzilmDeviceId } from '../../utils/shuzilmDeviceGuide';
 import PublishIcon from './PublishIcon.vue';
 import PublishOptionSheet from './PublishOptionSheet.vue';
 import '../../styles/publish.css';
@@ -1157,7 +1157,7 @@ async function handlePublish() {
   };
 
   // 未设置设备 ID 时先完成设备信息设置，保存后继续发布。
-  if (!isEditMode.value && !settingsStore.settings.deviceFingerprint.deviceId?.trim()) {
+  if (!isEditMode.value && !settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
     openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedPublish(); } });
     return;
   }
