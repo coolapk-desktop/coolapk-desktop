@@ -195,6 +195,8 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
 .app-main-content {
   flex: 1;
   min-width: 0;
+  /* clip 不会像 hidden 那样消除 flex 的内容最小高度，必须允许主区收缩到窗口内。 */
+  min-height: 0;
   overflow: hidden;
   position: relative;
   display: flex;

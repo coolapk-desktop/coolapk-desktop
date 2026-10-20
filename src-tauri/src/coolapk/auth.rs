@@ -38,6 +38,11 @@ impl CoolapkAuth {
     }
 
     pub fn get_app_token(&self) -> Result<String, String> {
+        self.get_app_token_with_app_code(APP_CODE)
+    }
+
+    /// 自定义请求版本与签名必须共用同一个编码，不能始终按内置版本签名。
+    pub fn get_app_token_with_app_code(&self, app_code: u64) -> Result<String, String> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("system clock error: {e}"))?
@@ -47,7 +52,7 @@ impl CoolapkAuth {
         // 最多向前探测 15 秒寻找下一组有效盐。
         let mut last_error = String::new();
         for offset in 0..=15 {
-            match self.generate_token_at(timestamp + offset) {
+            match self.generate_token_at(timestamp + offset, app_code) {
                 Ok(token) => return Ok(token),
                 Err(error) => last_error = error,
             }
@@ -56,8 +61,8 @@ impl CoolapkAuth {
         Err(format!("failed to generate Coolapk token: {last_error}"))
     }
 
-    fn generate_token_at(&self, timestamp: u64) -> Result<String, String> {
-        let index = (((timestamp + APP_CODE) % 100) * 4 + 0x80) as usize;
+    fn generate_token_at(&self, timestamp: u64, app_code: u64) -> Result<String, String> {
+        let index = (((timestamp + app_code) % 100) * 4 + 0x80) as usize;
         let chunk = self
             .auth_blob
             .get(index..index + 0x80)
@@ -73,7 +78,7 @@ impl CoolapkAuth {
             String::from_utf8_lossy(&segment),
             device_md5,
             timestamp,
-            APP_CODE
+            app_code
         );
 
         let password = md5_hex(BASE64.encode(plain.as_bytes()).as_bytes());
@@ -128,14 +133,29 @@ fn shift_last_base64_char(value: &str, shift: i32) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::CoolapkAuth;
+    use super::{APP_CODE, CoolapkAuth};
+    use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+
+    #[test]
+    fn signing_uses_the_selected_request_version() {
+        let auth = CoolapkAuth::new("synthetic-test-device");
+        // 摘要由独立 Python 实现计算，分别覆盖旧版自定义配置与当前默认版本。
+        for (code, timestamp, password) in [
+            (2_604_201, 1_770_000_000, "1ce908486cd6e2f4aedf30d09ab32e15"),
+            (2_610_162, 1_770_000_001, "b716df744e00ecaaddafcc28ac9c6089"),
+        ] {
+            let token = auth.generate_token_at(timestamp, code).unwrap();
+            let hash = String::from_utf8(STANDARD_NO_PAD.decode(token.strip_prefix("v3").unwrap()).unwrap()).unwrap();
+            assert!(bcrypt::verify(password, &hash).unwrap(), "版本编码 {code} 的签名摘要不一致");
+        }
+    }
 
     #[test]
     fn token_is_deterministic_for_a_synthetic_device_and_timestamp() {
         let auth = CoolapkAuth::new("synthetic-test-device");
         // 此时间点为当前版本生成有效的 bcrypt 盐，固定输入用于验证签名可重复。
-        let first = auth.generate_token_at(1_770_000_001).unwrap();
-        let second = auth.generate_token_at(1_770_000_001).unwrap();
+        let first = auth.generate_token_at(1_770_000_001, APP_CODE).unwrap();
+        let second = auth.generate_token_at(1_770_000_001, APP_CODE).unwrap();
         assert_eq!(first, second);
         assert!(first.starts_with("v3"));
         assert!(first.len() > 70);

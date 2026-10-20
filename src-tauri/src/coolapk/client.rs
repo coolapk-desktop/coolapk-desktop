@@ -1121,7 +1121,16 @@ impl CoolapkClient {
         self.auth
             .read()
             .map_err(|_| "failed to lock auth state".to_string())?
-            .get_app_token()
+            .get_app_token_with_app_code(self.request_app_code()?)
+    }
+
+    /// 开启自定义机型后，请求版本可能来自旧设置，签名必须使用实际发送的版本编码。
+    fn request_app_code(&self) -> Result<u64, String> {
+        let profile = self.effective_device_profile();
+        match profile.app_code.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => value.parse::<u32>().ok().filter(|value| *value > 0).map(u64::from).ok_or_else(|| "自定义酷安版本编码无效，请在设备信息中填写正整数".to_string()),
+            None => Ok(APP_CODE),
+        }
     }
 
     /// 同步设备码：已登录使用该账号绑定的固定设备码，
@@ -1381,9 +1390,10 @@ impl CoolapkClient {
         device_code: &str,
     ) -> Result<reqwest::RequestBuilder, String> {
         let profile = self.effective_device_profile();
-        let mut request = request;
+        // 自定义值必须替换已有请求头，不能与默认版本一起重复发送。
+        let mut headers = HeaderMap::new();
         if let Ok(header_value) = HeaderValue::from_str(device_code) {
-            request = request.header("X-App-Device", header_value);
+            headers.insert("X-App-Device", header_value);
         }
         for (header_name, value) in [
             ("X-Sdk-Int", profile.sdk_int.as_ref()),
@@ -1395,21 +1405,21 @@ impl CoolapkClient {
         ] {
             if let Some(value) = value.filter(|s| !s.trim().is_empty()) {
                 if let Ok(header_value) = HeaderValue::from_str(value) {
-                    request = request.header(header_name, header_value);
+                    headers.insert(header_name, header_value);
                 }
             }
         }
         if let Some(app_code) = profile.app_code.as_ref().filter(|s| !s.trim().is_empty()) {
             if let Ok(header_value) = HeaderValue::from_str(app_code) {
-                request = request.header("X-App-Supported", header_value);
+                headers.insert("X-App-Supported", header_value);
             }
         }
         if let Some(ua) = profile.user_agent.as_ref().filter(|s| !s.trim().is_empty()) {
             if let Ok(header_value) = HeaderValue::from_str(ua) {
-                request = request.header(USER_AGENT, header_value);
+                headers.insert(USER_AGENT, header_value);
             }
         }
-        Ok(request)
+        Ok(request.headers(headers))
     }
 
     fn effective_device_profile(&self) -> DeviceProfile {
@@ -2021,7 +2031,7 @@ impl CoolapkClient {
         // 公开内容只读回退使用本机持久化的游客设备码，不携带账号 Cookie。
         // 这样既能避开登录设备触发的 -415，也不会改变已绑定账号的写操作指纹。
         let public_device_code = device_code_with_profile(&self.guest_device_code(), &self.effective_device_profile());
-        let public_token = CoolapkAuth::new(public_device_code.clone()).get_app_token()?;
+        let public_token = CoolapkAuth::new(public_device_code.clone()).get_app_token_with_app_code(self.request_app_code()?)?;
         let device_header = HeaderValue::from_str(&public_device_code)
             .map_err(|_| "公开读取设备码格式无效".to_string())?;
         log::debug!("api.guest_request path={} cookie_attached=false", log_path);
@@ -7287,7 +7297,7 @@ impl CoolapkClient {
         let code = self.device_code.read().map_err(|_| "failed to read device code")?.clone();
         let code = if include_device_model { code } else { device_code_without_model(&code)? };
         // 发布时单独签名，不能改动共享登录指纹或影响并发请求。
-        let token = CoolapkAuth::new(code.clone()).get_app_token()?;
+        let token = CoolapkAuth::new(code.clone()).get_app_token_with_app_code(self.request_app_code()?)?;
         let request = self.apply_device_profile_with_code(
             self.api_client()?
                 .request(

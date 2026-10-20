@@ -12,6 +12,33 @@ fn default_request_version_matches_token_signing_version() {
 }
 
 #[test]
+fn custom_request_version_matches_signing_and_resets_with_profile() {
+    let client = CoolapkClient::new();
+    // 保留旧版自定义机型时也要按实际请求头签名，不能混入当前默认版本。
+    for code in ["2604201", "2610162"] {
+        client.update_device_profile(DeviceProfile { app_code: Some(code.into()), ..Default::default() });
+        let request = client.apply_download_headers(reqwest::Client::new().get("https://api.coolapk.com/v6/main/init")).unwrap().build().unwrap();
+        assert_eq!(request.headers()["X-App-Code"], code);
+        assert_eq!(request.headers()["X-App-Supported"], code);
+        assert_eq!(request.headers().get_all("X-App-Code").iter().count(), 1);
+        assert_eq!(request.headers().get_all("X-App-Supported").iter().count(), 1);
+        assert_eq!(client.request_app_code().unwrap().to_string(), code);
+        assert!(request.headers()["X-App-Token"].to_str().unwrap().starts_with("v3"));
+    }
+    client.update_device_profile(DeviceProfile::default());
+    assert_eq!(client.request_app_code().unwrap(), APP_CODE);
+}
+
+#[test]
+fn invalid_custom_request_version_is_rejected_before_signing() {
+    let client = CoolapkClient::new();
+    for code in ["0", "-1", "16.6.5", "not-a-version", "4294967296"] {
+        client.update_device_profile(DeviceProfile { app_code: Some(code.into()), ..Default::default() });
+        assert!(client.get_token().unwrap_err().contains("版本编码无效"));
+    }
+}
+
+#[test]
 fn reply_detail_normalization_preserves_navigation_and_reply_context() {
     let raw = json!({ "data": {
         "id": 222, "fid": "333", "rid": "111", "rrid": "111",
