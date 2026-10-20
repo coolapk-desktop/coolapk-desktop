@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { computed, defineComponent, inject, nextTick, onMounted, ref } from 'vue';
 import { desktopFeedCommentsOpenKey, openDesktopFeedCommentsKey } from '../../../utils/desktopFeedComments';
+import { routeNavigationIsHistory } from '../../../utils/routeScroll';
 
 const routeState = vi.hoisted(() => ({ controls: false, value: null as any, back: vi.fn(), replace: vi.fn(), history: { back: '/' as string | null } }));
 vi.mock('../../../composables/useDesktopWindow', () => ({ useDesktopWindow: () => ({ showWindowControls: computed(() => routeState.value.controls), usesMacOverlay: ref(false) }) }));
@@ -35,6 +36,28 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
+  it.each([['/', 'feed-scroll-container'], ['/digital', 'digital-content'], ['/discover', 'discover-scroll-container']])('%s 从详情返回时恢复离开前的导航高度，继续反向滚动仍能展开', async (path, listClass) => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
+    Object.assign(routeState.value, { path, fullPath: path });
+    const settings = useSettingsStore(); settings.settings.disableAutoMobileMode = false; settings.settings.autoHideMobileNavigation = true;
+    const wrapper = mount(AppShell, { slots: { default: `<div class="mobile-home-pager"><div class="${listClass}">阅读内容</div></div>` }, global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
+    try {
+      const list = wrapper.get(`.${listClass}`);
+      await list.trigger('wheel', { deltaY: 100 });
+      (list.element as HTMLElement).scrollTop = 100; await list.trigger('scroll');
+      expect(wrapper.classes()).toContain('reading-navigation-hidden');
+      Object.assign(routeState.value, { path: '/feed/42', fullPath: '/feed/42?scrollTo=comments' }); await nextTick();
+      expect(wrapper.classes()).not.toContain('reading-navigation-hidden');
+      routeNavigationIsHistory.value = true;
+      Object.assign(routeState.value, { path, fullPath: path }); await nextTick();
+      expect(wrapper.classes()).toContain('reading-navigation-hidden');
+      expect((list.element as HTMLElement).scrollTop).toBe(100);
+      await list.trigger('wheel', { deltaY: -20 });
+      (list.element as HTMLElement).scrollTop = 80; await list.trigger('scroll');
+      expect(wrapper.classes()).not.toContain('reading-navigation-hidden');
+    } finally { wrapper.unmount(); window.innerWidth = previousWidth; window.dispatchEvent(new Event('resize')); routeNavigationIsHistory.value = false; }
+  });
   it.each(['Android', 'iPhone'])('%s 话题栏目吸顶后合并玻璃，离开吸顶位置或页面后恢复', async (device) => {
     vi.stubGlobal('navigator', { userAgent: device, platform: device, maxTouchPoints: 5 });
     const previousWidth = window.innerWidth;
@@ -203,6 +226,7 @@ describe('AppShell', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   beforeEach(() => {
+    routeNavigationIsHistory.value = false;
     setActivePinia(createPinia());
     vi.clearAllMocks();
     Object.assign(routeState.value, { path: '/', fullPath: '/', controls: false });

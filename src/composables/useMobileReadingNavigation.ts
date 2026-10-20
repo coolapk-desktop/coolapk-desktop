@@ -17,6 +17,7 @@ export function useMobileReadingNavigation(enabled: Readonly<Ref<boolean>>, scro
     touch = null;
   }
   watch(enabled, reset, { flush: 'sync' });
+  function restoreHidden(value: boolean) { reset(); hidden.value = enabled.value && value; }
 
   function findScroller(target: EventTarget | null): HTMLElement | null {
     if (!enabled.value || !(target instanceof Element)) return null;
@@ -71,5 +72,5 @@ export function useMobileReadingNavigation(enabled: Readonly<Ref<boolean>>, scro
     if (direction > 0 && top > 64 && distance >= 48) hidden.value = true;
     if (direction < 0 && distance >= 12) hidden.value = false;
   }
-  return { hidden, reset, onWheel, onTouchStart, onTouchMove, onScroll };
+  return { hidden, reset, restoreHidden, onWheel, onTouchStart, onTouchMove, onScroll };
 }

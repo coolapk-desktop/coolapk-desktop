@@ -6,6 +6,7 @@
     <div
       v-for="(item, index) in processedImages"
       :key="item.key"
+      :style="gridCount === 1 && !isLongImage && imageRatios[item.key] ? { aspectRatio: String(imageRatios[item.key]) } : undefined"
       :class="[
         'grid-item',
         {
@@ -168,6 +169,7 @@ function openViewer(index: number) {
 }
 
 .count-1 .grid-item.has-natural-size:not(.is-long-image) {
+  /* 已测量的单图用宽高比保留空间，图片离屏释放后也不能让上方动态塌缩。 */
   min-height: 0;
   max-height: 520px;
 }

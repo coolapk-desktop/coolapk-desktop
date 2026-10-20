@@ -75,6 +75,7 @@ import { useAppStore } from '../../stores/app';
 import { useIosBackGesture } from '../../composables/useIosBackGesture';
 import { navigateBack } from '../../utils/navigation';
 import { mobileReadingNavigationKey, useMobileReadingNavigation } from '../../composables/useMobileReadingNavigation';
+import { routeNavigationIsHistory } from '../../utils/routeScroll';
 
 const route = useRoute();
 const router = useRouter();
@@ -121,6 +122,12 @@ const reading = useMobileReadingNavigation(computed(() => settingsStore.settings
   && !mobileNavigationOpen.value && !appStore.isSearchOpen && !appStore.isPublishOpen && !appStore.activeImageViewer),
   () => route.path === '/digital' ? '.digital-content, .digital-server-content' : route.path === '/discover' ? '.discover-scroll-container' : undefined);
 provide(mobileReadingNavigationKey, { hidden: reading.hidden, reset: reading.reset });
+// 返回列表要恢复离开时的导航高度，否则相同滚动值也会被重新展开的搜索栏遮挡。
+const readingStates = new Map<string, boolean>();
+let readingRoute = route.fullPath;
+watch(reading.hidden, hidden => {
+  if (route.fullPath === readingRoute && ['/', '/digital', '/discover'].includes(route.path)) readingStates.set(readingRoute, hidden);
+}, { flush: 'sync' });
 
 /** 话题栏目吸顶后由下方玻璃向上延伸，避免上下两次独立模糊在接缝处产生色差。 */
 function updateTopicGlass(scroller?: Element) {
@@ -150,11 +157,13 @@ function handleMobileNavigationKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closeMobileNavigation();
 }
 
-watch(() => route.fullPath, () => {
-  reading.reset();
+watch(() => route.fullPath, next => {
+  const restoreHidden = routeNavigationIsHistory.value && Boolean(readingStates.get(next));
+  readingRoute = next;
   topicGlassJoined.value = false;
   desktopCommentFeed.value = null;
   closeMobileNavigation();
+  reading.restoreHidden(restoreHidden);
   rootBack.reset();
 });
 
@@ -201,6 +210,8 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
 }
 
 .app-page-content { display: flex; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow: hidden; position: relative; }
+/* 裁切外框不参与程序滚动；正文各自的 overflow:auto 容器仍正常滚动。 */
+@supports (overflow: clip) { .app-main-content, .app-page-content { overflow: clip; } }
 
 .narrow-titlebar-back { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 36px; align-self: stretch; margin-left: 4px; padding: 0; border: 0; background: transparent; color: var(--text-primary); cursor: pointer; }
 .narrow-titlebar-back:hover { background: var(--surface-hover); }

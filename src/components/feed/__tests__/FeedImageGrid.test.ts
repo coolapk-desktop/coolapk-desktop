@@ -64,6 +64,20 @@ describe('FeedImageGrid 点击打开方式', () => {
     expect(restored.find('.grid-item').classes()).toContain('has-natural-size');
     restored.unmount();
   });
+  it.each([[1200, 800], [800, 1080]])('保留普通单图的布局比例，避免图片释放或子树重建后高度塌缩（%s×%s）', async (width, height) => {
+    const images = ['https://img.example/single.jpg'];
+    const first = mount(FeedImageGrid, { props: { images }, global: { stubs: { LivePhotoPreview: true } } });
+    first.findComponent({ name: 'LivePhotoPreview' }).vm.$emit('load', { target: { naturalWidth: width, naturalHeight: height } });
+    await flushPromises();
+    const ratios = first.emitted('update:imageRatios')?.[0]?.[0] as Record<string, number>;
+    expect((first.get('.grid-item').element as HTMLElement).style.aspectRatio).toBe(`${width / height} / 1`);
+    first.unmount();
+    const restored = mount(FeedImageGrid, { props: { images, imageRatios: ratios }, global: { stubs: { LivePhotoPreview: true } } });
+    // 图片尚未重新加载时，父卡片保存的尺寸就应当能撑住布局。
+    expect((restored.get('.grid-item').element as HTMLElement).style.aspectRatio).toBe(`${width / height} / 1`);
+    expect(restored.find('.is-long-image').exists()).toBe(false);
+    restored.unmount();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     setActivePinia(createPinia());
