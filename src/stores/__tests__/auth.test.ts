@@ -121,6 +121,23 @@ describe('auth store', () => {
     expect(saveAccount).toHaveBeenCalledWith('12345', 'test-user', 'avatar.png', 'SESSID=valid-session; uid=12345');
   });
 
+  it.each(['network', 'unknown', 'logged-out'])('新 Cookie 验证失败时清理旧账号界面，避免身份与底层不一致：%s', async (failure) => {
+    vi.spyOn(CoolapkTauriAPI, 'saveCookie').mockResolvedValue(undefined as any);
+    const check = vi.spyOn(CoolapkTauriAPI, 'checkLoginStatus');
+    if (failure === 'network') check.mockRejectedValue('HTTP 403');
+    else check.mockResolvedValue({ code: 200, data: failure === 'unknown' ? {} : { uid: '10000' } } as any);
+    const clearCookie = vi.spyOn(CoolapkTauriAPI, 'clearCookie').mockResolvedValue(undefined as any);
+    const store = useAuthStore();
+    store.user = { uid: 'old-account', username: '旧账号', userAvatar: '' };
+    store.isLoggedIn = true;
+    localStorage.setItem('coolapk_user', JSON.stringify(store.user));
+    await expect(store.loginWithCookie('uid=new-account; SESSID=synthetic-session')).rejects.toThrow(failure === 'network' ? 'HTTP 403' : failure === 'unknown' ? '没有返回账号 UID' : '返回未登录状态');
+    expect(store.isLoggedIn).toBe(false);
+    expect(store.user).toBeNull();
+    expect(localStorage.getItem('coolapk_user')).toBeNull();
+    expect(clearCookie).toHaveBeenCalledTimes(failure === 'logged-out' ? 1 : 0);
+  });
+
   it('clears a stale logged-in UI when status validation fails', async () => {
     vi.spyOn(CoolapkTauriAPI, 'checkLoginInfo').mockRejectedValue(new Error('invalid session'));
     vi.spyOn(CoolapkTauriAPI, 'checkLoginStatus').mockRejectedValue(new Error('invalid session'));

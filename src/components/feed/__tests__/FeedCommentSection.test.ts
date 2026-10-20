@@ -765,6 +765,26 @@ describe('评论完整信息展示', () => {
     expect(shuzilmGuideState.reason).toBe('missing_id');
   });
 
+  it('查询设备 ID 期间连续点击只允许发表一次评论', async () => {
+    const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: '12345', username: '发布者' } as any;
+    useSettingsStore().settings.deviceFingerprint.deviceId = '';
+    let resolveDevice!: (value: any) => void;
+    mocks.getDeviceInfo.mockReturnValue(new Promise(resolve => { resolveDevice = resolve; }));
+    const wrapper = mountSection();
+    try {
+      const editor = wrapper.get('.comment-textarea');
+      editor.element.textContent = '只发送一次';
+      await editor.trigger('input');
+      const button = wrapper.get('.stub-button');
+      await button.trigger('click');
+      await button.trigger('click');
+      expect(mocks.getDeviceInfo).toHaveBeenCalledTimes(1);
+      resolveDevice({ code: 200, data: { deviceId: 'DU-MOCK-GENERATED-ACCOUNT-ID' } });
+      await flushPromises();
+      expect(mocks.replyFeed).toHaveBeenCalledTimes(1);
+    } finally { resolveDevice({ data: {} }); await flushPromises(); wrapper.unmount(); }
+  });
+
   it('手动配置为空但当前账号已有生成设备 ID 时直接提交评论', async () => {
     const authStore = useAuthStore();
     authStore.user = { uid: 12345, username: '发布者' } as any;

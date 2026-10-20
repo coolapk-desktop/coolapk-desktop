@@ -99,9 +99,15 @@ async function handleSubmit() {
   }
 
   const proceedSubmit = async () => {
+    if (submitting.value) return;
     submitting.value = true;
     errorMsg.value = '';
     try {
+      // 设备查询也属于提交过程，必须先锁定按钮，避免等待期间重复发送。
+      if (!settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
+        openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedSubmit(); } });
+        return;
+      }
       await CoolapkTauriAPI.replyFeed(
         String(props.feedId),
         content.value.trim(),
@@ -129,11 +135,6 @@ async function handleSubmit() {
     }
   };
 
-  // 未设置设备 ID 时先完成设置，保存后继续评论。
-  if (!settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
-    openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedSubmit(); } });
-    return;
-  }
   await proceedSubmit();
 }
 </script>

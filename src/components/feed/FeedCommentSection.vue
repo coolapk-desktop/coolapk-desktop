@@ -1889,12 +1889,18 @@ async function handleSend() {
   }
 
   const proceedSubmit = async () => {
+    if (sending.value) return;
     sending.value = true;
     imageUploadTotal.value = images.value.filter(image => !image.url && image.file).length;
     uploadingImages.value = imageUploadTotal.value > 0;
     uploadedCount.value = 0;
 
     try {
+      // 在查询设备 ID 前占用提交状态，连续点击只允许进入一次发送流程。
+      if (!settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
+        openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedSubmit(); } });
+        return;
+      }
       let pic = '';
       if (images.value.length > 0) {
         const urls: string[] = [];
@@ -2002,11 +2008,6 @@ async function handleSend() {
   }
   };
 
-  // 未设置设备 ID 时先让用户在弹窗中粘贴官方日志，保存后继续评论。
-  if (!settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
-    openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedSubmit(); } });
-    return;
-  }
   await proceedSubmit();
 }
 </script>

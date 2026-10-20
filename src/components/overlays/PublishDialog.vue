@@ -981,12 +981,18 @@ async function handlePublish() {
   }
 
   const proceedPublish = async () => {
+    if (submitting.value) return;
     submitting.value = true;
     uploadingImages.value = uploadableImageCount.value > 0;
     imageUploadTotal.value = uploadableImageCount.value;
     uploadedCount.value = 0;
     errorMessage.value = '';
     try {
+      // 查询设备 ID 期间也保持发布按钮锁定，避免重复上传和发布。
+      if (!isEditMode.value && !settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
+        openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedPublish(); } });
+        return;
+      }
       let pic = '';
       let requestMessage = '';
       let articleCoverUrl = '';
@@ -1156,11 +1162,6 @@ async function handlePublish() {
     }
   };
 
-  // 未设置设备 ID 时先完成设备信息设置，保存后继续发布。
-  if (!isEditMode.value && !settingsStore.settings.deviceFingerprint.deviceId?.trim() && !(await hasActiveShuzilmDeviceId())) {
-    openShuzilmGuide({ reason: 'missing_id', onConfirmContinue: () => { void proceedPublish(); } });
-    return;
-  }
   await proceedPublish();
 }
 </script>

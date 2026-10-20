@@ -5,6 +5,7 @@ import { preparePublishVideo } from '../../../utils/publishVideo';
 import PublishDialog from '../PublishDialog.vue';
 import { CoolapkTauriAPI } from '../../../api/coolapk';
 import { listFullPublishDrafts, saveFullPublishDraft } from '../../../utils/publishDrafts';
+import { hasActiveShuzilmDeviceId } from '../../../utils/shuzilmDeviceGuide';
 
 vi.mock('../../../utils/publishVideo', () => ({ preparePublishVideo: vi.fn() }));
 const stores = vi.hoisted(() => ({ app: null as any, settings: null as any, auth: null as any }));
@@ -13,7 +14,7 @@ vi.mock('../../../stores/settings', () => ({ useSettingsStore: () => stores.sett
 vi.mock('../../../stores/auth', () => ({ useAuthStore: () => stores.auth }));
 vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: { getDeviceInfo: vi.fn(), createFeed: vi.fn(), getEditableFeed: vi.fn(), updateFeed: vi.fn(), uploadPublishVideo: vi.fn(), uploadImage: vi.fn() } }));
 vi.mock('../../../utils/publishDrafts', async (original) => ({ ...await original<any>(), listFullPublishDrafts: vi.fn(async () => []), saveFullPublishDraft: vi.fn(), deleteFullPublishDraft: vi.fn() }));
-vi.mock('../../../utils/shuzilmDeviceGuide', () => ({ shuzilmGuideState: { visible: false }, openShuzilmGuide: vi.fn(), isRiskControlError: () => false, hasActiveShuzilmDeviceId: async () => false }));
+vi.mock('../../../utils/shuzilmDeviceGuide', () => ({ shuzilmGuideState: { visible: false }, openShuzilmGuide: vi.fn(), isRiskControlError: () => false, hasActiveShuzilmDeviceId: vi.fn(async () => false) }));
 
 function mountDialog() {
   return mount(PublishDialog, { global: { stubs: {
@@ -32,6 +33,7 @@ function typeText(wrapper: ReturnType<typeof mountDialog>, text: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(hasActiveShuzilmDeviceId).mockResolvedValue(false);
   stores.app = reactive({ isPublishOpen: false, editFeedTarget: null, closePublish() { this.isPublishOpen = false; } });
   stores.settings = { settings: { publishDeviceSignature: false, deviceFingerprint: { deviceId: 'device' } } };
   stores.auth = reactive({ user: { uid: '123' } });
@@ -39,6 +41,29 @@ beforeEach(() => {
   vi.mocked(CoolapkTauriAPI.getDeviceInfo).mockResolvedValue({ code: 200, data: { defaultProfile: { includeDeviceModel: false } } });
 });
 describe('完整发帖流程', () => {
+  it('等待设备 ID 时连续点击只发布一次，失败后允许重试', async () => {
+    const wrapper = await openDialog();
+    stores.settings.settings.deviceFingerprint.deviceId = '';
+    let resolveDevice!: (value: boolean) => void;
+    vi.mocked(hasActiveShuzilmDeviceId).mockReturnValue(new Promise(resolve => { resolveDevice = resolve; }));
+    vi.mocked(CoolapkTauriAPI.createFeed).mockResolvedValue({ code: 400, message: '测试停止发送' });
+    try {
+      await typeText(wrapper, '仅发布一次');
+      const submit = wrapper.findAll('button').find(button => button.text() === '立即发布')!;
+      await submit.trigger('click');
+      await submit.trigger('click');
+      expect(hasActiveShuzilmDeviceId).toHaveBeenCalledTimes(1);
+      expect(CoolapkTauriAPI.createFeed).not.toHaveBeenCalled();
+      resolveDevice(true);
+      await flushPromises();
+      expect(CoolapkTauriAPI.createFeed).toHaveBeenCalledTimes(1);
+      vi.mocked(hasActiveShuzilmDeviceId).mockResolvedValue(true);
+      await submit.trigger('click');
+      await flushPromises();
+      expect(CoolapkTauriAPI.createFeed).toHaveBeenCalledTimes(2);
+    } finally { resolveDevice(false); await flushPromises(); wrapper.unmount(); }
+  });
+
   it('iOS WebView 无 randomUUID 时仍可挂载全局发帖组件', () => {
     vi.stubGlobal('crypto', { getRandomValues: (bytes: Uint8Array) => bytes.fill(0xaa) });
     try {
