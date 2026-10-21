@@ -12,12 +12,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
+import android.util.Log
 import android.provider.MediaStore
 import android.provider.Settings
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.view.View
 import android.view.WindowManager
+import android.view.ViewTreeObserver
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -32,56 +35,143 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import java.io.File
 import java.lang.ref.WeakReference
+import java.util.concurrent.Executors
 
 class MainActivity : TauriActivity() {
     @Volatile private var topSafeAreaPx = 0
     private var mainWebView: WeakReference<WebView>? = null
     private var activityResumed = false
     private var foregroundDrawRequest = 0L
+    private val foregroundDrawTasks = mutableListOf<Runnable>()
+    private var foregroundDrawListener: ViewTreeObserver.OnDrawListener? = null
+    private var foregroundDrawStarted = SystemClock.uptimeMillis()
+    private var foregroundDraws = 0
+    private var foregroundVisualCallbacks = 0
+    private var foregroundJsCallbacks = 0
+
+    companion object {
+        // 原生日志独立落盘，页面脚本失去响应时仍可从诊断导出获取；单线程保持事件顺序。
+        private val foregroundLogWriter = Executors.newSingleThreadExecutor { task -> Thread(task, "foreground-diagnostics").apply { isDaemon = true } }
+    }
+
+    private fun logForeground(event: String, detail: String = "") {
+        val webView = mainWebView?.get()
+        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.ROOT).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date())
+        val line = "[$timestamp][INFO][android.foreground] $event pid=${android.os.Process.myPid()} request=$foregroundDrawRequest elapsed_ms=${SystemClock.uptimeMillis() - foregroundDrawStarted} resumed=$activityResumed focus=${hasWindowFocus()} attached=${webView?.isAttachedToWindow} shown=${webView?.isShown} window_visibility=${webView?.windowVisibility} width=${webView?.width} height=${webView?.height} alpha=${webView?.alpha} hardware=${webView?.isHardwareAccelerated} layer_type=${webView?.layerType} $detail\n"
+        Log.i("CoolapkForeground", line.trim())
+        val directory = File(applicationInfo.dataDir, "logs")
+        foregroundLogWriter.execute {
+            try {
+                directory.mkdirs()
+                val file = File(directory, "coolapk-diagnostics-foreground.log")
+                // 仅保留当前文件及上一份，每份最多约 256 KiB，不记录页面内容或用户输入。
+                if (file.length() >= 256 * 1024) {
+                    val previous = File(directory, "coolapk-diagnostics-foreground.previous.log")
+                    if (previous.exists() && !previous.delete()) throw java.io.IOException("rotate delete failed")
+                    if (!file.renameTo(previous)) throw java.io.IOException("rotate rename failed")
+                }
+                file.appendText(line)
+            } catch (error: Exception) { Log.w("CoolapkForeground", "diagnostic_write_failed type=${error.javaClass.simpleName}") }
+        }
+    }
+
+    private fun cancelForegroundDraw(reason: String) {
+        val webView = mainWebView?.get()
+        if (foregroundDrawTasks.isNotEmpty()) logForeground("finished", "reason=$reason draws=$foregroundDraws visual_callbacks=$foregroundVisualCallbacks js_callbacks=$foregroundJsCallbacks")
+        foregroundDrawRequest++
+        foregroundDrawTasks.forEach { webView?.removeCallbacks(it) }
+        foregroundDrawTasks.clear()
+        foregroundDrawListener?.let { listener -> webView?.viewTreeObserver?.takeIf { it.isAlive }?.removeOnDrawListener(listener) }
+        foregroundDrawListener = null
+    }
 
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
         mainWebView = WeakReference(webView)
-        requestForegroundDraw()
+        logForeground("webview_created", "runtime=${runCatching { getRuntimeInfo("") }.getOrDefault("unavailable")}")
+        requestForegroundDraw("webview_created")
     }
 
     // 部分系统 WebView 从后台恢复后仍显示空白，直到触摸滚动才提交下一帧。
     // 等窗口可见且获得焦点后请求绘制，不重载页面或改变滚动、输入状态。
-    private fun requestForegroundDraw() {
-        if (!activityResumed || !hasWindowFocus()) return
+    private fun requestForegroundDraw(reason: String) {
+        if (!activityResumed) return
         val webView = mainWebView?.get() ?: return
-        val request = ++foregroundDrawRequest
-        fun canDraw() = request == foregroundDrawRequest && activityResumed &&
-            hasWindowFocus() && webView.isAttachedToWindow && webView.isShown
-        webView.post {
-            if (!canDraw()) return@post
-            webView.requestLayout()
-            webView.postInvalidateOnAnimation()
-            // DOM 与合成帧异步更新；内容准备好后再请求绘制，避免只刷新到旧的空白帧。
-            webView.postVisualStateCallback(request, object : WebView.VisualStateCallback() {
-                override fun onComplete(requestId: Long) {
-                    if (canDraw()) webView.postInvalidateOnAnimation()
+        cancelForegroundDraw("replaced")
+        val request = foregroundDrawRequest
+        foregroundDrawStarted = SystemClock.uptimeMillis()
+        foregroundDraws = 0
+        foregroundVisualCallbacks = 0
+        foregroundJsCallbacks = 0
+        fun isCurrent() = request == foregroundDrawRequest && activityResumed
+        fun canDraw() = isCurrent() && hasWindowFocus() && webView.isAttachedToWindow && webView.isShown && webView.windowVisibility == View.VISIBLE && webView.width > 0 && webView.height > 0
+        logForeground("requested", "reason=$reason")
+        // onDraw 只能证明原生绘制发生，不能把它或视觉状态回调当作画面已经显示的证据。
+        foregroundDrawListener = ViewTreeObserver.OnDrawListener {
+            if (isCurrent()) {
+                foregroundDraws++
+                if (foregroundDraws == 1) logForeground("view_tree_draw")
+            }
+        }.also { webView.viewTreeObserver.addOnDrawListener(it) }
+        // 最近任务切换动画可能晚于 onResume/焦点事件结束，有限补偿不可见时被跳过的绘制。
+        for (delay in longArrayOf(0, 120, 400, 1000)) {
+            val task = Runnable {
+                if (!isCurrent()) return@Runnable
+                if (!canDraw()) { logForeground("draw_skipped", "attempt_ms=$delay"); return@Runnable }
+                logForeground("draw_requested", "attempt_ms=$delay")
+                webView.requestLayout()
+                webView.postInvalidateOnAnimation()
+                webView.postVisualStateCallback(request, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        if (!isCurrent()) return
+                        foregroundVisualCallbacks++
+                        logForeground("visual_ready", "attempt_ms=$delay drawable=${canDraw()}")
+                        if (canDraw()) webView.postInvalidateOnAnimation()
+                    }
+                })
+                // 仅采集计数和状态：上一轮 rAF 标记可区分脚本响应与浏览器动画帧回调。
+                webView.evaluateJavascript("""(() => {
+                    const style = document.documentElement ? getComputedStyle(document.documentElement) : null;
+                    const result = { visibility: document.visibilityState, ready: document.readyState, elements: document.getElementsByTagName('*').length, raf: window.__coolapkForegroundFrame || 0, viewport: [innerWidth, innerHeight], root_display: style?.display, root_visibility: style?.visibility, root_opacity: style?.opacity };
+                    requestAnimationFrame(() => { window.__coolapkForegroundFrame = $request; });
+                    return JSON.stringify(result);
+                })()""".trimIndent()) { result ->
+                    if (isCurrent()) { foregroundJsCallbacks++; logForeground("js_state", "attempt_ms=$delay state=${result.take(512)}") }
                 }
-            })
+            }
+            foregroundDrawTasks.add(task)
+            webView.postDelayed(task, delay)
         }
+        val finish = Runnable { if (isCurrent()) cancelForegroundDraw("window_complete") }
+        foregroundDrawTasks.add(finish)
+        webView.postDelayed(finish, 1600)
     }
 
     override fun onResume() {
         super.onResume()
         activityResumed = true
-        requestForegroundDraw()
+        logForeground("resume")
+        requestForegroundDraw("resume")
     }
 
     override fun onPause() {
         activityResumed = false
-        foregroundDrawRequest++
+        logForeground("pause")
+        cancelForegroundDraw("pause")
         super.onPause()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) requestForegroundDraw()
-        else foregroundDrawRequest++
+        logForeground("focus_changed", "has_focus=$hasFocus")
+        if (hasFocus) requestForegroundDraw("focus")
+        else cancelForegroundDraw("focus_lost")
+    }
+
+    override fun onDestroy() {
+        cancelForegroundDraw("destroy")
+        logForeground("destroy")
+        super.onDestroy()
     }
 
     @Keep

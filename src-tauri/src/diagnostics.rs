@@ -13,6 +13,8 @@ const MAX_TAIL_BYTES: usize = 2_000_000;
 const SESSION_MARKER: &str = "coolapk-session.marker";
 const CRASH_FILE: &str = "coolapk-diagnostics-crash.log";
 const LOGIN_CHECKPOINT_FILE: &str = "coolapk-diagnostics-login.log";
+const FOREGROUND_FILE: &str = "coolapk-diagnostics-foreground.log";
+const FOREGROUND_PREVIOUS_FILE: &str = "coolapk-diagnostics-foreground.previous.log";
 static REPORT_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
 static LOGIN_STAGE: AtomicU8 = AtomicU8::new(0);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
@@ -236,10 +238,10 @@ fn list_log_paths(dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn select_report_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
-    let is_report = |path: &PathBuf| matches!(path.file_name().and_then(|name| name.to_str()), Some(CRASH_FILE | LOGIN_CHECKPOINT_FILE));
+    let is_report = |path: &PathBuf| matches!(path.file_name().and_then(|name| name.to_str()), Some(CRASH_FILE | LOGIN_CHECKPOINT_FILE | FOREGROUND_FILE | FOREGROUND_PREVIOUS_FILE));
     let mut selected: Vec<_> = paths.iter().rev().filter(|path| !is_report(path)).take(MAX_FILES).collect();
     selected.reverse();
-    // 崩溃报告和最后检查点即使比轮转日志更旧，也必须包含在导出中。
+    // 原生恢复日志不依赖页面脚本；与崩溃报告、检查点一样，不能被普通日志轮转挤出导出。
     selected.extend(paths.iter().filter(|path| is_report(path)));
     selected
 }
@@ -292,7 +294,7 @@ pub fn clear_diagnostic_logs(app: tauri::AppHandle) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_session_marker, is_diagnostic_file, select_report_paths, write_report, CRASH_FILE, LOGIN_CHECKPOINT_FILE};
+    use super::{create_session_marker, is_diagnostic_file, select_report_paths, write_report, CRASH_FILE, LOGIN_CHECKPOINT_FILE, FOREGROUND_FILE, FOREGROUND_PREVIOUS_FILE};
     use std::path::Path;
 
     #[test]
@@ -311,6 +313,18 @@ mod tests {
         assert_eq!(selected.len(), 7);
         assert!(selected.iter().any(|path| path.file_name().unwrap() == CRASH_FILE));
         assert!(selected.iter().any(|path| path.file_name().unwrap() == LOGIN_CHECKPOINT_FILE));
+        assert!(!selected.iter().any(|path| path.file_name().unwrap() == "coolapk-diagnostics.log.0"));
+    }
+
+    #[test]
+    fn export_keeps_native_foreground_logs_even_after_log_rotation() {
+        // 黑屏恢复后再导出时，保留新旧原生记录，避免被后续大量接口日志挤掉。
+        let mut paths = vec![FOREGROUND_PREVIOUS_FILE.into(), FOREGROUND_FILE.into()];
+        paths.extend((0..8).map(|index| format!("coolapk-diagnostics.log.{index}").into()));
+        let selected = select_report_paths(&paths);
+        assert_eq!(selected.len(), 7);
+        assert!(selected.iter().any(|path| path.file_name().unwrap() == FOREGROUND_FILE));
+        assert!(selected.iter().any(|path| path.file_name().unwrap() == FOREGROUND_PREVIOUS_FILE));
         assert!(!selected.iter().any(|path| path.file_name().unwrap() == "coolapk-diagnostics.log.0"));
     }
 
