@@ -343,11 +343,11 @@ import { getMessageUnreadCount, getSelfMessageUnreadCount } from '../../utils/me
 import { getNotificationActor } from '../../utils/notificationItem';
 import {
   addSeenNotificationCount,
-  clearSeenNotificationState,
   hasSeenNotificationItems,
   markNotificationItemsSeen,
   takeSeenNotificationCount,
 } from '../../utils/notificationSeen';
+import { markNotificationRead } from '../../utils/notificationRead';
 import { getNotificationExternalUrl, getNotificationFeedId, resolveNotificationTargetRoute } from '../../utils/notificationNavigation';
 import { syncWindowsNotificationIcons } from '../../utils/taskbarNotificationDot';
 import { openFeedDetail } from '../../utils/feedNavigation';
@@ -799,12 +799,7 @@ function openNotificationCenter() {
 }
 
 async function openNotificationPreview(preview: NotificationPreview) {
-  const viewed = notificationStore.markViewed(preview.category);
-  if (viewed && preview.category === 'like' && authStore.user?.uid) {
-    addSeenNotificationCount(authStore.user.uid, preview.category, 1);
-    markNotificationItemsSeen(authStore.user.uid, preview.category, [preview.item], 1);
-  }
-  void clearFeedNotifications();
+  markNotificationRead(preview.item, preview.category, authStore.user?.uid, true);
   notificationPreviews.value = notificationPreviews.value.filter((item) => item.key !== preview.key);
   isNotificationPopoverVisible.value = false;
   const externalUrl = getNotificationExternalUrl(preview.item);
@@ -826,23 +821,6 @@ async function openNotificationPreview(preview: NotificationPreview) {
     return;
   }
   void router.push({ path: '/notifications', query: { tab: preview.apiType } });
-}
-
-async function clearFeedNotifications(): Promise<void> {
-  notificationStore.beginNotificationClear();
-  try {
-    // v18 服务端对 type=feed 会返回 200 但不改变 badge；官方 APK 的通知中心使用 type=all。
-    // 只有在当前已知没有私信时才调用 all，保留桌面端铃铛与私信入口的分离语义。
-    const clearType = notificationStore.messageCount > 0 ? 'feed' : 'all';
-    await CoolapkTauriAPI.clearNotificationCount(clearType);
-    notificationStore.markNotificationsCleared();
-    if (authStore.user?.uid) clearSeenNotificationState(authStore.user.uid, 'like');
-    notificationPreviews.value = [];
-    notificationPreviewLoadedAt = 0;
-  } catch (error) {
-    // 保留本地即时反馈；下次轮询仍会以服务端状态为准。
-    console.warn('清除服务端通知未读数失败:', error);
-  }
 }
 
 function getNotificationPollIntervalMs(): number {

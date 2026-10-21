@@ -9,6 +9,13 @@ function okResponse(data: unknown) {
 }
 
 describe('CoolapkTauriAPI 内容新页接口封装', () => {
+  it('通知点击上报与全部已读使用独立命令', async () => {
+    await CoolapkTauriAPI.reportNotificationClick('123');
+    expect(invoke).toHaveBeenLastCalledWith('report_notification_click', { taskId: '123' });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await CoolapkTauriAPI.clearNotificationCount('all');
+    expect(invoke).toHaveBeenLastCalledWith('clear_notification_count', { notificationType: 'all' });
+  });
   beforeEach(() => {
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockResolvedValue(okResponse([]));

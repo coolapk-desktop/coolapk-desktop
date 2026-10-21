@@ -3,6 +3,18 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../notifications';
 
 describe('通知状态', () => {
+  it('官方全部已读包含私信，清除后新通知仍正常计入', () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { badge: 5, commentme: 2, feedlike: 1, message: 2 } });
+    store.markNotificationsCleared(true);
+    expect(store.unreadCount).toBe(0);
+    expect(store.messageCount).toBe(0);
+    expect(Object.values(store.categoryCounts).every(count => count === 0)).toBe(true);
+    store.applyServerResponse({ data: { badge: 2, commentme: 1, message: 1 } });
+    expect(store.unreadCount).toBe(2);
+    expect(store.categoryCounts.comment).toBe(1);
+    expect(store.messageCount).toBe(1);
+  });
   beforeEach(() => {
     setActivePinia(createPinia());
   });

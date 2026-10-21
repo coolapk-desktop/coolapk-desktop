@@ -215,19 +215,19 @@ export const useNotificationStore = defineStore('notifications', () => {
     notificationStateVersion.value += 1;
   }
 
-  /** 服务端确认清除站内通知后丢弃旧的本地抵消，避免吞掉下一条新通知。 */
-  function markNotificationsCleared(): void {
+  /** 服务端确认清除后重建基线；官方全部已读包含私信，其余调用默认保留私信。 */
+  function markNotificationsCleared(includeMessages = false): void {
     notificationStateVersion.value += 1;
-    const remainingMessageCount = categoryCounts.message;
+    const remainingMessageCount = includeMessages ? 0 : categoryCounts.message;
     for (const category of CATEGORY_NAMES) {
-      if (category === 'message') continue;
+      if (category === 'message' && !includeMessages) continue;
       categoryCounts[category] = 0;
       serverCategoryCounts[category] = 0;
       locallyViewed[category] = 0;
     }
     locallyViewedWithoutCategory.value = 0;
     unreadCount.value = remainingMessageCount;
-    // feed 清除后，当前已知的服务端基线只剩私信，后续新通知从 0 正常计入。
+    // 按本次清除范围建立服务端基线，后续新通知从新基线正常计入。
     serverTotal.value = remainingMessageCount;
   }
 

@@ -1449,6 +1449,7 @@ pub fn run() {
             coolapk::commands::add_emoji_picture,
             coolapk::commands::edit_emoji_pictures,
             clear_notification_count,
+            coolapk::commands::report_notification_click,
             get_notifications,
             list_messages,
             get_recent_chat_users,

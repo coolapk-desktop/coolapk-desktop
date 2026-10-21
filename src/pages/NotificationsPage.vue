@@ -5,7 +5,7 @@
         <h2 class="page-title">通知中心</h2>
         <div class="notification-actions">
           <button type="button" class="header-action-btn" :disabled="loading" @click="refreshNotifications"><i class="fas fa-sync-alt"></i> 刷新</button>
-          <button type="button" class="header-action-btn" :disabled="!notificationStore.categoryCounts[getCurrentCategory()]" @click="markCurrentTabViewed"><i class="fas fa-check-double"></i> 当前分类已读</button>
+          <button type="button" class="header-action-btn" :disabled="clearingNotifications || !notificationStore.unreadCount" @click="markAllViewed"><i class="fas fa-check-double"></i> 全部已读</button>
         </div>
       </div>
       
@@ -110,12 +110,15 @@ import {
   getNotificationCategoryCountsFromItems,
   type NotificationCategory,
 } from '../utils/notificationCount';
-import { addSeenNotificationCount, clearSeenNotificationState, markNotificationItemsSeen } from '../utils/notificationSeen';
+import { addSeenNotificationCount, clearSeenNotificationState, markNotificationItemsSeen, countSeenNotificationItems } from '../utils/notificationSeen';
 import { getNotificationActor } from '../utils/notificationItem';
 import { renderCoolapkRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
 import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
+import { markNotificationRead } from '../utils/notificationRead';
+import { requestConfirmation } from '../utils/confirm';
+import { showToast } from '../utils/toast';
 import AppButton from '../components/common/AppButton.vue';
 import AppAvatar from '../components/common/AppAvatar.vue';
 import LoadingState from '../components/common/LoadingState.vue';
@@ -138,6 +141,8 @@ const tabs: Array<{ label: string; value: string; countKey: NotificationCategory
 
 const currentTab = ref('list');
 const loading = ref(false);
+const clearingNotifications = ref(false);
+let notificationRequestId = 0;
 const items = ref<any[]>([]);
 const page = ref(1);
 const hasMore = ref(true);
@@ -147,7 +152,6 @@ const pageContainerRef = ref<HTMLElement | null>(null);
 // 切换 Tab
 async function switchTab(tabValue: string) {
   if (currentTab.value === tabValue && items.value.length > 0) {
-    markCurrentTabViewed();
     return;
   }
   currentTab.value = tabValue;
@@ -181,7 +185,9 @@ function loadMoreWhenNearBottom(container = pageContainerRef.value) {
 
 // 获取数据
 async function fetchNotifications(): Promise<boolean> {
-  if (loading.value) return false;
+  const requestId = ++notificationRequestId;
+  const requestedTab = currentTab.value;
+  const requestedPage = page.value;
   if (!authStore.isLoggedIn) {
     items.value = [];
     page.value = 1;
@@ -193,7 +199,9 @@ async function fetchNotifications(): Promise<boolean> {
   notificationError.value = '';
   let fetchSucceeded = false;
   try {
-    const res = await CoolapkTauriAPI.getNotifications(currentTab.value, page.value);
+    const res = await CoolapkTauriAPI.getNotifications(requestedTab, requestedPage);
+    // 分类切换后丢弃旧请求，避免旧分类响应标记新分类已读。
+    if (requestId !== notificationRequestId) return false;
     if (!authStore.isLoggedIn) {
       items.value = [];
       page.value = 1;
@@ -217,24 +225,24 @@ async function fetchNotifications(): Promise<boolean> {
         } else {
           items.value = [...items.value, ...data];
         }
-
-        // 官方通知页打开首屏后只确认当前分类，不能把其他分类一起清掉。
-        if (page.value === 1) markCurrentTabViewed();
       }
+      // 官方仅在点赞、关注首屏成功后清除该分类，普通通知保留逐条未读。
+      if (page.value === 1 && ['like', 'follow'].includes(getCurrentCategory())) markCurrentTabViewed();
       fetchSucceeded = true;
     } else {
       hasMore.value = false;
       fetchSucceeded = true;
     }
   } catch (err) {
+    if (requestId !== notificationRequestId) return false;
     console.warn('Notifications fetch warning', err);
     notificationError.value = err instanceof Error ? err.message : String(err);
     // 请求失败时禁止 finally 里的自动 loadMore，否则会在无登录/网络错误时无限重试。
     hasMore.value = false;
     if (page.value > 1) page.value -= 1;
   } finally {
-    loading.value = false;
-    if (fetchSucceeded) {
+    if (requestId === notificationRequestId) loading.value = false;
+    if (fetchSucceeded && requestId === notificationRequestId) {
       // “@ 提及”等分类可能只有一两条，首屏没有滚动条时不会触发 scroll。
       // DOM 更新后检查一次并继续加载，直到内容足以滚动或接口明确到底。
       await nextTick();
@@ -321,6 +329,7 @@ function getOriginalFeedSummary(item: any): string {
 function openOriginalFeed(item: any) {
   const id = getOriginalFeedId(item);
   if (!id) return;
+  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
   openFeedDetail(router, id, item);
 }
 
@@ -400,6 +409,7 @@ function getNotificationKey(item: any): string {
 }
 
 function getNotificationUnreadCount(item: any): number {
+  if (authStore.user?.uid && countSeenNotificationItems(authStore.user.uid, getCurrentCategory(), [item]) > 0) return 0;
   const count = Number(item?.unread_count ?? item?.unreadCount);
   if (Number.isFinite(count) && count > 0) return Math.floor(count);
   return Number(item?.isnew ?? item?.isNew ?? 0) > 0 ? 1 : 0;
@@ -416,18 +426,9 @@ function isNotificationUnread(item: any): boolean {
 
 function markCurrentTabViewed(): number {
   const category = getCurrentCategory();
-  let viewedCount = notificationStore.markCategoryViewed(category);
-  // 点赞分类的服务端字段会先于总 badge 清零。此时用户已经进入点赞页且列表有内容，
-  // 仍要把这条总未读明确归属为已读并持久化，不能因为分类数恰好变成 0 而漏记。
-  if (
-    viewedCount === 0
-    && category === 'like'
-    && items.value.length > 0
-    && notificationStore.notificationCount > 0
-    && notificationStore.markViewed(category)
-  ) {
-    viewedCount = 1;
-  }
+  const viewedCount = notificationStore.markCategoryViewed(category);
+  // 分类计数为零时不从总数猜测扣减，避免吞掉其他尚未查看的通知。
+  for (const item of items.value) item.isnew = item.isNew = item.unread_count = item.unreadCount = 0;
   if (viewedCount > 0 && category === 'like' && authStore.user?.uid) {
     addSeenNotificationCount(authStore.user.uid, category, viewedCount);
     markNotificationItemsSeen(authStore.user.uid, category, items.value, viewedCount);
@@ -435,19 +436,28 @@ function markCurrentTabViewed(): number {
   return viewedCount;
 }
 
-async function clearFeedNotifications(): Promise<void> {
-  notificationStore.beginNotificationClear();
+/** 全部已读与官方一致包含私信，必须由用户确认后才发送请求。 */
+async function markAllViewed(): Promise<void> {
+  if (clearingNotifications.value || !authStore.isLoggedIn) return;
+  const accountUid = authStore.user?.uid;
+  clearingNotifications.value = true;
   try {
-    // v18 服务端对 type=feed 会返回 200 但不改变 badge；官方 APK 的通知中心使用 type=all。
-    // 有私信未读时不调用 all，避免进入通知中心误清私信。
-    const clearType = notificationStore.messageCount > 0 ? 'feed' : 'all';
-    await CoolapkTauriAPI.clearNotificationCount(clearType);
-    notificationStore.markNotificationsCleared();
-    if (authStore.user?.uid) clearSeenNotificationState(authStore.user.uid, 'like');
+    if (!await requestConfirmation({ title: '设为全部已读', message: '将点赞、关注、私信、回复、@、系统消息、活动消息的未读通知设为已读，该操作不可恢复，确定要操作吗？' })) return;
+    if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
+    notificationStore.beginNotificationClear();
+    await CoolapkTauriAPI.clearNotificationCount('all');
+    if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
+    // 清除前发出的列表响应不能再把旧未读标记写回页面。
+    notificationRequestId += 1;
+    loading.value = false;
+    notificationStore.markNotificationsCleared(true);
+    for (const item of items.value) item.isnew = item.isNew = item.unread_count = item.unreadCount = 0;
+    if (authStore.user?.uid) {
+      for (const category of tabs) clearSeenNotificationState(authStore.user.uid, category.countKey);
+    }
   } catch (error) {
-    // 通知列表已经正常展示，本地状态保持即时反馈，下一次轮询继续校正。
-    console.warn('清除服务端通知未读数失败:', error);
-  }
+    showToast(`设置全部已读失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+  } finally { clearingNotifications.value = false; }
 }
 
 function renderSafeHtml(text: string): string {
@@ -456,6 +466,7 @@ function renderSafeHtml(text: string): string {
 
 // 通知内链接点击：动态链接携带通知上下文进入完整动态页，其余走统一处理。
 async function handleNotifyClick(e: Event, item: any) {
+  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
   const anchor = (e.target as HTMLElement).closest('a');
   const href = anchor?.getAttribute('href') || '';
   // 正文链接始终由应用处理，危险协议不得继续触发浏览器默认导航。
@@ -507,9 +518,7 @@ onActivated(() => {
     notificationError.value = '';
     return;
   }
-  void refreshNotifications().then((loaded) => {
-    if (loaded) void clearFeedNotifications();
-  });
+  void refreshNotifications();
 });
 
 onDeactivated(() => {
@@ -527,14 +536,14 @@ watch(
 watch(
   () => authStore.isLoggedIn,
   (isLoggedIn) => {
+    notificationRequestId += 1;
+    loading.value = false;
     page.value = 1;
     items.value = [];
     notificationError.value = '';
     hasMore.value = isLoggedIn;
     if (isLoggedIn) {
-      void refreshNotifications().then((loaded) => {
-        if (loaded) void clearFeedNotifications();
-      });
+      void refreshNotifications();
     }
   }
 );

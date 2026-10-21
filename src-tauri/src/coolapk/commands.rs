@@ -1478,6 +1478,11 @@ pub async fn clear_notification_count(
 }
 
 #[tauri::command]
+pub async fn report_notification_click(state: State<'_, AppState>, task_id: String) -> Result<Value, String> {
+    state.client.report_notification_click(&task_id).await
+}
+
+#[tauri::command]
 pub async fn get_notifications(
     state: State<'_, AppState>,
     notification_type: String,

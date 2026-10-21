@@ -6239,6 +6239,11 @@ impl CoolapkClient {
         )
     }
 
+    /// 与 APK NotificationReportUtils 一致，只上报携带任务标识的通知点击。
+    pub async fn report_notification_click(&self, task_id: &str) -> Result<Value, String> {
+        wrap_api_data(self.api_post("/v6/notificationV18/reportPushTaskClick", &[], &[("task_id", task_id.to_string()), ("source", "2".to_string())]).await?)
+    }
+
     pub async fn get_notifications(
         &self,
         notification_type: &str,
