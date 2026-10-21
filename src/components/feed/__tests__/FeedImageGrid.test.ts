@@ -38,6 +38,32 @@ function mountGrid() {
 }
 
 describe('FeedImageGrid 点击打开方式', () => {
+  it('桌面多图响应排列开关，单图和评论保留原布局', async () => {
+    const settings = useSettingsStore();
+    const wrapper = mountGrid();
+    try {
+      expect(wrapper.classes()).not.toContain('adaptive-images');
+      settings.settings.adaptiveFeedImages = true;
+      await flushPromises();
+      expect(wrapper.classes()).toContain('adaptive-images');
+      await wrapper.setProps({ variant: 'comment' });
+      expect(wrapper.classes()).not.toContain('adaptive-images');
+      await wrapper.setProps({ variant: 'feed', images: ['https://img.example/1.jpg'] });
+      expect(wrapper.classes()).not.toContain('adaptive-images');
+      await wrapper.setProps({ images: ['https://img.example/1.jpg', 'https://img.example/2.jpg'] });
+      settings.settings.adaptiveFeedImages = false;
+      await flushPromises();
+      expect(wrapper.classes()).not.toContain('adaptive-images');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('移动设备开启自适应排列仍保留原宫格', () => {
+    stubIOSDevice();
+    useSettingsStore().settings.adaptiveFeedImages = true;
+    const wrapper = mountGrid();
+    try { expect(wrapper.classes()).not.toContain('adaptive-images'); }
+    finally { wrapper.unmount(); }
+  });
   it('无图模式下详情配图可进入大图查看器，列表继续隐藏配图', async () => {
     const settings = useSettingsStore();
     settings.settings.noImageMode = settings.settings.showImagesInDetail = true;

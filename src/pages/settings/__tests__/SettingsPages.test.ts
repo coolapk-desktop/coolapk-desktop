@@ -191,6 +191,9 @@ describe('设置页面交互', () => {
     await wrapper.get('.text-input').setValue('广告');
     await wrapper.get('.keyword-input-row button').trigger('click');
     expect(settings.settings.collapseLines).toBe(18);
+    const adaptiveImagesRow = wrapper.findAll('.setting-row').find(row => row.text().includes('图片自适应排列'))!;
+    await adaptiveImagesRow.get('.switch-input').setValue(true);
+    expect(settings.settings.adaptiveFeedImages).toBe(true);
     const backgroundRow = wrapper.findAll('.setting-row').find(row => row.text().includes('显示动态背景图'))!;
     await backgroundRow.get('.switch-input').setValue(false);
     expect(settings.settings.showFeedBackground).toBe(false);

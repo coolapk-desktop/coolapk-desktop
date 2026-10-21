@@ -23,6 +23,13 @@
       <h4 class="group-title">动态展示</h4>
       <div class="setting-row">
         <div class="row-info">
+          <span class="row-label">图片自适应排列</span>
+          <span class="row-sub">桌面端按帖子可用宽度排列多图，能放下时显示在同一行，空间不足时自动换行</span>
+        </div>
+        <AppSwitch v-model="settingsStore.settings.adaptiveFeedImages" />
+      </div>
+      <div class="setting-row">
+        <div class="row-info">
           <span class="row-label">无图模式</span>
           <span class="row-sub">开启后不显示图片、视频及图片占位图，适合专注阅读文字</span>
         </div>

@@ -20,6 +20,12 @@ const fileStoreState = vi.hoisted(() => {
 vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: fileStoreState.load } }));
 
 describe('settings store', () => {
+  it('图片自适应排列默认关闭，保留保存的布尔值并忽略无效配置', () => {
+    expect(normalizeSettings({}).adaptiveFeedImages).toBe(false);
+    expect(normalizeSettings({ adaptiveFeedImages: true }).adaptiveFeedImages).toBe(true);
+    expect(normalizeSettings({ adaptiveFeedImages: false }).adaptiveFeedImages).toBe(false);
+    expect(normalizeSettings({ adaptiveFeedImages: 'true' }).adaptiveFeedImages).toBe(false);
+  });
   it('液态玻璃总开关默认关闭，保留已保存的选择', () => {
     expect(normalizeSettings({}).headerGlass).toBe(false);
     expect(normalizeSettings({ headerGlass: true }).headerGlass).toBe(true);

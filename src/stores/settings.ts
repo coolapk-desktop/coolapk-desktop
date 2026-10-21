@@ -142,6 +142,7 @@ const defaultSettings: AppSettings = {
   autoLoadOriginalImage: true,
   noImageMode: false,
   showImagesInDetail: false,
+  adaptiveFeedImages: false,
   showDeviceInfo: true,
   showFeedBackground: true,
   showHomeMonthlyRank: true,
@@ -316,6 +317,7 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.autoLoadOriginalImage = readBoolean(source.autoLoadOriginalImage, result.autoLoadOriginalImage);
   result.noImageMode = readBoolean(source.noImageMode, result.noImageMode);
   result.showImagesInDetail = readBoolean(source.showImagesInDetail, result.showImagesInDetail);
+  result.adaptiveFeedImages = readBoolean(source.adaptiveFeedImages, result.adaptiveFeedImages);
   result.showDeviceInfo = readBoolean(source.showDeviceInfo, result.showDeviceInfo);
   result.showFeedBackground = readBoolean(source.showFeedBackground, result.showFeedBackground);
   result.showHomeMonthlyRank = readBoolean(source.showHomeMonthlyRank, result.showHomeMonthlyRank);

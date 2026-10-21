@@ -157,6 +157,8 @@ export interface AppSettings {
   noImageMode: boolean;
   /** 无图模式下仅在动态详情中显示图片。 */
   showImagesInDetail: boolean;
+  /** 桌面端多图按可用宽度排列，空间不足时自动换行。 */
+  adaptiveFeedImages: boolean;
   showDeviceInfo: boolean;
   /** 是否显示动态顶部的作者背景与装饰图，不影响正文配图。 */
   showFeedBackground: boolean;

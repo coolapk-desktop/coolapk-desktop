@@ -1,7 +1,7 @@
 <template>
   <div
     v-if="!noImageMode && processedImages && processedImages.length > 0"
-    :class="['feed-image-grid', `count-${gridCount}`, `variant-${variant}`]"
+    :class="['feed-image-grid', `count-${gridCount}`, `variant-${variant}`, { 'adaptive-images': adaptiveImages }]"
   >
     <div
       v-for="(item, index) in processedImages"
@@ -42,6 +42,7 @@ import { computed, inject, ref } from 'vue';
 import { useAppStore } from '../../stores/app';
 import { useSettingsStore } from '../../stores/settings';
 import { useNoImageMode, detailImageScopeKey } from '../../composables/useNoImageMode';
+import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
 import LivePhotoPreview from './LivePhotoPreview.vue';
 import { getStaticAnimatedImageUrl, isAnimatedImageUrl, isPortraitLongImage } from '../../utils/image';
 import { CoolapkTauriAPI } from '../../api/coolapk';
@@ -66,6 +67,9 @@ const contentType = computed<LivePhotoContextType>(() => props.contentType || 'f
 
 const appStore = useAppStore();
 const settingsStore = useSettingsStore();
+const mobileLayout = useMobileLayout();
+// 仅扩展桌面正文多图，保留移动端、单图与评论的原有布局。
+const adaptiveImages = computed(() => settingsStore.settings.adaptiveFeedImages && !mobileLayout.value && variant.value === 'feed' && processedImages.value.length > 1);
 const noImageMode = useNoImageMode();
 const detailImageScope = inject(detailImageScopeKey, ref(false));
 const LONG_IMAGE_RATIO = 1.8;
@@ -229,6 +233,12 @@ function openViewer(index: number) {
 .count-4 {
   grid-template-columns: repeat(2, 1fr);
   max-width: 380px;
+}
+
+/* 以接近原三列缩略图的尺寸填满可用空间，不受窗口宽度或三列上限限制。 */
+.feed-image-grid.adaptive-images {
+  max-width: none;
+  grid-template-columns: repeat(auto-fill, min(100%, 160px));
 }
 
 .grid-item {
