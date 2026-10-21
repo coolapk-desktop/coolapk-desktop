@@ -6,9 +6,10 @@
     <div class="toolbar">
       <AppButton variant="secondary" size="sm" :loading="loading" @click="loadLogs">刷新</AppButton>
       <AppButton variant="secondary" size="sm" :disabled="!snapshot.content" @click="copyLogs">复制日志</AppButton>
-      <AppButton variant="secondary" size="sm" :disabled="!snapshot.content" @click="exportLogs">导出日志</AppButton>
+      <AppButton variant="secondary" size="sm" :disabled="!snapshot.content" @click="exportLogs">导出完整日志</AppButton>
       <AppButton variant="danger" size="sm" :disabled="snapshot.files.length === 0" @click="clearLogs">清空日志</AppButton>
     </div>
+    <p v-if="isAndroid" class="description">排查切后台返回黑屏时，请使用“导出完整日志”获取合并后的日志。Android 原生前台恢复日志单独保存，仅分享 coolapk-diagnostics.log 不包含这些记录。</p>
     <label class="verbose-toggle"><input v-model="verbose" type="checkbox" @change="changeVerbose" /> 本次运行记录详细调试信息</label>
 
     <div class="filters">
@@ -63,6 +64,7 @@ const reportUrl = ref(props.reportUrl);
 const readingReport = ref(false);
 const reportError = ref('');
 const report = ref<DiagnosticReport | null>(null);
+const isAndroid = /android/i.test(navigator.userAgent);
 
 async function readReport(loader: () => Promise<DiagnosticReport>) {
   if (readingReport.value) return;
@@ -131,12 +133,18 @@ const visibleLines = computed(() => {
   }).slice(-1000);
 });
 
+async function refreshSnapshot(): Promise<string> {
+  const latest = await invoke<DiagnosticSnapshot>('get_diagnostic_logs');
+  snapshot.value = latest;
+  return latest.content;
+}
+
 async function loadLogs() {
   if (loading.value) return;
   loading.value = true;
   error.value = '';
   try {
-    snapshot.value = await invoke<DiagnosticSnapshot>('get_diagnostic_logs');
+    await refreshSnapshot();
   } catch (cause) {
     error.value = `读取日志失败：${String(cause)}`;
   } finally {
@@ -162,7 +170,9 @@ async function copyText(text: string) {
 
 async function copyLogs() {
   try {
-    await copyText(snapshot.value.content);
+    const content = await refreshSnapshot();
+    if (!content) { showToast('暂无日志可复制'); return; }
+    await copyText(content);
     showToast('日志已复制');
   } catch (cause) {
     showToast(`复制日志失败：${String(cause)}`, 'error');
@@ -170,9 +180,9 @@ async function copyLogs() {
 }
 
 async function exportLogs() {
-  const content = snapshot.value.content;
-  if (!content) return;
   try {
+    const content = await refreshSnapshot();
+    if (!content) { showToast('暂无日志可导出'); return; }
     if (/android/i.test(navigator.userAgent)) {
       const path = await CoolapkTauriAPI.exportJsonFile('coolapk-diagnostics.txt', content);
       showToast(`日志已保存：${path}`, 'success', 5000);
