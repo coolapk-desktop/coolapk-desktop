@@ -117,6 +117,20 @@ describe('评论完整信息展示', () => {
     wrapper.unmount();
   });
 
+  it('目标评论读取失败时显示后端字符串原因，重试成功后恢复定位', async () => {
+    mocks.getReplyDetail.mockRejectedValue('评论详情加载失败：请求验证错误');
+    const wrapper = mountSection({}, { feedId: '333', targetReplyId: '222' });
+    try {
+      await flushPromises();
+      expect(wrapper.get('[role="status"]').text()).toContain('评论详情加载失败：请求验证错误');
+      mocks.getReplyDetail.mockResolvedValue({ data: { id: '222', feedId: '333', message: '通知目标回复' } });
+      await wrapper.get('[role="status"] button').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('[role="status"]').exists()).toBe(false);
+      expect(wrapper.get('.notification-comment-target').text()).toContain('通知目标回复');
+    } finally { wrapper.unmount(); }
+  });
+
   it('切换目标后忽略上一条评论的迟到响应', async () => {
     let finish!: (value: unknown) => void;
     mocks.getReplyDetail.mockImplementation((id: string) => id === '222'

@@ -1828,7 +1828,8 @@ async function loadTargetReply() {
     authorOnly.value = false;
     targetComments.value = parent ? [parent, reply] : [reply];
   } catch (error) {
-    if (request === targetRequest) targetReplyError.value = error instanceof Error ? error.message : '目标评论加载失败';
+    // Tauri 的后端错误可能直接以字符串返回，保留具体原因供用户判断和重试。
+    if (request === targetRequest) targetReplyError.value = error instanceof Error ? error.message : typeof error === 'string' && error.trim() ? error : '目标评论加载失败';
   }
 }
 

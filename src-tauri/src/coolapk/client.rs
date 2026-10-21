@@ -4576,17 +4576,34 @@ impl CoolapkClient {
     /// 获取单条评论的完整元数据。
     /// 评论列表接口会省略设备型号等字段，详情接口用于后台补齐，不影响列表首屏显示。
     pub async fn get_reply_detail(&self, reply_id: &str) -> Result<Value, String> {
-        let raw = self
-            .public_api_get_from(
-                "https://api.coolapk.com",
-                "/v6/feed/replyDetail",
-                &[("id", reply_id.to_string())],
-            )
-            .await?;
-        Self::normalize_reply_detail(&raw)
+        let query = [("id", reply_id.to_string())];
+        // 通知定位优先沿用当前登录态，避免独立游客设备验证失败时无法读取评论。
+        let primary_error = match self.api_get("/v6/feed/replyDetail", &query).await {
+            Ok(value) if matches!(application_failure(&value), Some((403, "captcha"))) => return Err(value.to_string()),
+            Ok(value) => match Self::normalize_reply_detail(&value) {
+                Ok(detail) => return Ok(detail),
+                Err(error) => error,
+            },
+            Err(error) => error,
+        };
+        // 登录请求不可用时尝试游客读取，保留各入口的错误以便诊断。
+        let mut public_errors = Vec::new();
+        for api_origin in ["https://api.coolapk.com", "https://api2.coolapk.com"] {
+            match self.public_api_get_from(api_origin, "/v6/feed/replyDetail", &query).await {
+                Ok(value) if matches!(application_failure(&value), Some((403, "captcha"))) => return Err(value.to_string()),
+                Ok(value) => match Self::normalize_reply_detail(&value) {
+                    Ok(detail) => return Ok(detail),
+                    Err(error) => public_errors.push(format!("{api_origin}: {error}")),
+                },
+                Err(error) => public_errors.push(format!("{api_origin}: {error}")),
+            }
+        }
+        Err(format!("评论详情加载失败：{primary_error}；游客接口：{}", public_errors.join("；")))
     }
 
     fn normalize_reply_detail(raw: &Value) -> Result<Value, String> {
+        // 先解析服务端错误，不能将验证失败等响应误报为评论数据为空。
+        let raw = wrap_api_data(raw.clone())?;
         let obj = raw
             .get("data")
             .and_then(Value::as_object)

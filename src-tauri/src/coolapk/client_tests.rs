@@ -64,6 +64,27 @@ fn reply_detail_normalization_rejects_missing_reply_data() {
 }
 
 #[test]
+fn reply_detail_normalization_preserves_server_errors() {
+    // 服务端使用 HTTP 200 返回验证失败或删除提示时，也必须显示原始原因。
+    for raw in [
+        json!({ "status": -3, "message": "请求验证错误", "data": null }),
+        json!({ "code": 404, "message": "这条评论已被删除", "data": null }),
+        json!({ "error": "评论暂时不可见", "data": null }),
+    ] {
+        let expected = raw.get("message").or_else(|| raw.get("error")).unwrap().as_str().unwrap();
+        assert_eq!(CoolapkClient::normalize_reply_detail(&raw).unwrap_err(), expected);
+    }
+}
+
+#[test]
+fn reply_detail_normalization_preserves_captcha_response() {
+    // 验证码响应必须保留结构化信息，供现有验证流程识别。
+    let raw = json!({ "code": 403, "message": "请完成验证", "messageStatus": "err_request_captcha_v2", "data": null });
+    let error = CoolapkClient::normalize_reply_detail(&raw).unwrap_err();
+    assert_eq!(serde_json::from_str::<Value>(&error).unwrap(), raw);
+}
+
+#[test]
 fn generated_duid_is_guest_default_and_account_explicit_only() {
     let client = CoolapkClient::new();
     client.update_device_profile(DeviceProfile { device_id: Some("DUmanual123456".into()), ..Default::default() });
