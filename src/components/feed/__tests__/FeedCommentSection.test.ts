@@ -401,15 +401,15 @@ describe('评论完整信息展示', () => {
       username: '一级评论',
       message: '一级评论内容',
       replyRows: [
-        { id: 'embedded-1', username: '内嵌回复1', message: '内嵌内容1' },
-        { id: 'embedded-2', username: '内嵌回复2', message: '内嵌内容2' },
+        firstPage[0],
+        secondPage[1],
       ],
       replyRowsCount: 2,
       replyRowsMore: 1,
-      replynum: 25,
+      replynum: 23,
     });
 
-    expect(wrapper.text()).toContain('展开剩下的 23 条回复');
+    expect(wrapper.text()).toContain('查看更多回复(23)');
     expect(wrapper.findAll('.sub-reply-row')).toHaveLength(2);
 
     await wrapper.get('.sub-more-btn').trigger('click');
@@ -422,7 +422,7 @@ describe('评论完整信息展示', () => {
       1,
       { lastItem: '' },
     );
-    expect(wrapper.findAll('.sub-reply-row')).toHaveLength(22);
+    expect(wrapper.findAll('.sub-reply-row')).toHaveLength(20);
     expect(wrapper.text()).toContain('加载更多楼中楼');
 
     const loadMoreButton = wrapper
@@ -439,7 +439,7 @@ describe('评论完整信息展示', () => {
       2,
       { lastItem: 'remote-20' },
     );
-    expect(wrapper.findAll('.sub-reply-row')).toHaveLength(25);
+    expect(wrapper.findAll('.sub-reply-row')).toHaveLength(23);
     expect(wrapper.text()).not.toContain('加载更多楼中楼');
     expect(wrapper.text()).toContain('远程内容23');
   });
@@ -457,12 +457,60 @@ describe('评论完整信息展示', () => {
       expect(order()).toEqual(['酷友3', '酷友1']);
       await wrapper.get('.sub-more-btn').trigger('click');
       await flushPromises();
-      expect(order()).toEqual(['酷友2', '酷友1', '酷友3']);
+      expect(order()).toEqual(['酷友2', '酷友1']);
       const more = wrapper.findAll('.sub-more-btn').find(button => button.text().includes('加载更多楼中楼'));
       await more!.trigger('click');
       await flushPromises();
       expect(mocks.getSubReplies).toHaveBeenLastCalledWith('feed-1', 'floor-order', 2, { lastItem: '1' });
       expect(order()).toEqual(['酷友2', '酷友1', '酷友3', '酷友4']);
+      await wrapper.get('.sub-collapse-btn').trigger('click');
+      expect(order()).toEqual(['酷友3', '酷友1']);
+      await wrapper.get('.sub-more-btn').trigger('click');
+      expect(order()).toEqual(['酷友2', '酷友1', '酷友3', '酷友4']);
+      expect(mocks.getSubReplies).toHaveBeenCalledTimes(2);
+    } finally { wrapper.unmount(); }
+  });
+
+  it.each([false, true])('officialDetail=%s 时第一页不能混入预览的末尾回复，收起恢复原预览', async officialDetail => {
+    const replies = Array.from({ length: 31 }, (_, index) => ({
+      id: String(612924526 + index), username: `回复${index + 1}`, message: `内容${index + 1}`,
+    }));
+    const preview = replies.slice(-5);
+    mocks.getSubReplies
+      .mockResolvedValueOnce({ data: replies.slice(0, 20) })
+      .mockResolvedValueOnce({ data: replies.slice(20) });
+    const wrapper = mountSection({ id: '612924460', replyRows: preview, replynum: 31, replyRowsMore: 1 }, { officialDetail });
+    const order = () => wrapper.findAll('.sub-reply-row').map(row => row.attributes('data-context-comment-id'));
+    try {
+      expect(order()).toEqual(preview.map(row => row.id));
+      await wrapper.get('.sub-more-btn').trigger('click');
+      await flushPromises();
+      expect(order()).toEqual(replies.slice(0, 20).map(row => row.id));
+      await wrapper.get('.sub-collapse-btn').trigger('click');
+      expect(order()).toEqual(preview.map(row => row.id));
+      expect(wrapper.text()).toContain('查看更多回复(31)');
+      await wrapper.get('.sub-more-btn').trigger('click');
+      expect(mocks.getSubReplies).toHaveBeenCalledTimes(1);
+      await wrapper.findAll('.sub-more-btn').find(button => button.text().includes('加载更多'))!.trigger('click');
+      await flushPromises();
+      expect(order()).toEqual(replies.map(row => row.id));
+      await wrapper.get('.sub-collapse-btn').trigger('click');
+      expect(order()).toEqual(preview.map(row => row.id));
+    } finally { wrapper.unmount(); }
+  });
+
+  it('完整分页与预览重合时仍能继续获取未加载的后续回复', async () => {
+    const replies = [1, 2, 3].map(id => ({ id: String(id), username: `回复${id}`, message: `内容${id}` }));
+    mocks.getSubReplies.mockResolvedValueOnce({ data: replies.slice(0, 2) }).mockResolvedValueOnce({ data: replies.slice(2) });
+    const wrapper = mountSection({ replyRows: replies.slice(0, 2), replynum: 3, replyRowsMore: 1 });
+    try {
+      await wrapper.get('.sub-more-btn').trigger('click');
+      await flushPromises();
+      const more = wrapper.findAll('.sub-more-btn').find(button => button.text().includes('加载更多'));
+      expect(more).toBeDefined();
+      await more!.trigger('click');
+      await flushPromises();
+      expect(wrapper.findAll('.sub-reply-row')).toHaveLength(3);
     } finally { wrapper.unmount(); }
   });
 
@@ -522,8 +570,11 @@ describe('评论完整信息展示', () => {
     await wrapper.get('.sub-more-btn').trigger('click');
     await flushPromises();
 
-    expect(mocks.getSubReplies).toHaveBeenCalledTimes(1);
-    expect(wrapper.findAll('.sub-reply-row')).toHaveLength(2);
+    const more = wrapper.findAll('.sub-more-btn').find(button => button.text().includes('加载更多'));
+    await more!.trigger('click');
+    await flushPromises();
+    expect(mocks.getSubReplies).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAll('.sub-reply-row')).toHaveLength(1);
     expect(wrapper.text()).not.toContain('加载更多楼中楼');
     expect(wrapper.text()).not.toContain('加载楼中楼...');
   });

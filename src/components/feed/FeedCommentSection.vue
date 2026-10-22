@@ -453,18 +453,18 @@
             </button>
 
             <!-- 楼中楼按 APK 的 replyList 分页；展开时只请求当前楼层，不预取所有楼层。 -->
-            <div v-else-if="hasSubReplyMore(c) || expandedFloorIds.has(String(c.id))" class="sub-more-btn-wrap">
+            <div v-else-if="canExpandSubReplies(c) || expandedFloorIds.has(String(c.id))" class="sub-more-btn-wrap">
               <button
                 v-if="!expandedFloorIds.has(String(c.id))"
                 type="button"
                 class="sub-more-btn"
                 @click.stop="toggleExpandSub(c)"
               >
-                <template v-if="getRemainingSubCount(c) > 0">
-                  展开剩下的 {{ getRemainingSubCount(c) }} 条回复
+                <template v-if="getSubReplyTotal(c) !== null">
+                  查看更多回复({{ getSubReplyTotal(c) }})
                 </template>
                 <template v-else>
-                  展开更多回复
+                  查看更多回复
                 </template>
                 <i class="fa-solid fa-chevron-down icon-arrow"></i>
               </button>
@@ -1174,14 +1174,18 @@ function hasExplicitSubReplyMore(floor: any): boolean {
 }
 
 function mergeSubReplyRows(embedded: any[], fetched: any[]): any[] {
-  // APK 的会话列表沿用 replyList 顺序。完整分页优先，尚未取到的预览仅补在末尾。
+  // 尚未加载完整会话时合并本地新增回复；完整分页不经过此预览合并。
   return mergeReplies(fetched, embedded).map(mergeReplyDetail);
 }
 
 function getSubReplyRows(floor: any): any[] {
   const floorId = subReplyFloorId(floor);
   const state = floorId ? subReplyStates.value[floorId] : undefined;
-  return mergeSubReplyRows(getEmbeddedSubReplies(floor), state?.items || []);
+  // 完整会话只显示已返回的分页，不能把预览中的末尾回复提前接在第一页后面。
+  const rows = state?.loaded
+    ? state.items.map(mergeReplyDetail)
+    : mergeSubReplyRows(getEmbeddedSubReplies(floor), state?.items || []);
+  return authorOnly.value && !props.preserveApiOrder ? collectAuthorReplies(rows) : rows;
 }
 
 function ensureSubReplyState(floor: any): SubReplyState | null {
@@ -1227,10 +1231,8 @@ function hasSubReplyMore(floor: any): boolean {
   return hasExplicitSubReplyMore(floor) || (state ? state.hasMore : false);
 }
 
-function getRemainingSubCount(floor: any): number {
-  const total = getSubReplyTotal(floor);
-  if (total === null) return 0;
-  return Math.max(0, total - getSubReplyRows(floor).length);
+function canExpandSubReplies(floor: any): boolean {
+  return hasSubReplyMore(floor) || getSubReplyRows(floor).length > getEmbeddedSubReplies(floor).length;
 }
 
 function getVisibleSubReplies(floor: any): any[] {
@@ -1293,12 +1295,11 @@ async function loadSubReplies(floor: any, reset: boolean) {
     });
     if (String(props.feedId || '').trim() !== requestedFeedId) return;
     const pageRows = Array.isArray(response?.data) ? response.data : [];
-    const previousRows = mergeSubReplyRows(getEmbeddedSubReplies(floor), state.items);
+    const previousRows = reset ? [] : state.items;
     const fetchedRows = reset ? pageRows : mergeReplies(state.items, pageRows);
-    const loadedRows = mergeSubReplyRows(getEmbeddedSubReplies(floor), fetchedRows);
     const total = getSubReplyTotal(floor);
     const cursor = getReplyPageCursor(pageRows);
-    const hasMore = hasMoreReplyPages(pageRows, previousRows, loadedRows, total);
+    const hasMore = hasMoreReplyPages(pageRows, previousRows, fetchedRows, total);
 
     updateSubReplyState(floorId, {
       items: fetchedRows,
@@ -1700,7 +1701,7 @@ function collectAuthorReplies(items: any[]): any[] {
 function filterAuthorOnlyComments(comments: any[]): any[] {
   const result: any[] = [];
   comments.forEach((floor) => {
-    const authorReplies = collectAuthorReplies(Array.isArray(floor.replyRows) ? floor.replyRows : []);
+    const authorReplies = collectAuthorReplies(getSubReplyRows(floor));
     if (isAuthor(floor)) {
       result.push({ ...floor, replyRows: authorReplies, replyRowsCount: authorReplies.length });
     } else if (authorReplies.length > 0) {
@@ -1735,10 +1736,10 @@ const nestedComments = computed(() => {
     const enrichedItem = mergeReplyDetail(rawItem);
     const item = {
       ...enrichedItem,
-      replyRows: Array.isArray(enrichedItem.replyRows)
-        ? enrichedItem.replyRows.map(mergeReplyDetail)
-        : Array.isArray(enrichedItem.rlist)
-          ? enrichedItem.rlist.map(mergeReplyDetail)
+      replyRows: Array.isArray(rawItem.replyRows)
+        ? rawItem.replyRows.map(mergeReplyDetail)
+        : Array.isArray(rawItem.rlist)
+          ? rawItem.rlist.map(mergeReplyDetail)
           : [],
     };
 
@@ -1774,15 +1775,7 @@ const nestedComments = computed(() => {
     }
   });
 
-  // 楼中楼接口返回的数据保存在组件本地，不能直接改写只读 props；
-  // 在树构建阶段合并，保证楼主筛选、详情补齐和渲染都能看到已加载的子回复。
-  topList.forEach((floor) => {
-    const floorId = subReplyFloorId(floor);
-    const state = floorId ? subReplyStates.value[floorId] : undefined;
-    if (state?.items.length) {
-      floor.replyRows = mergeSubReplyRows(floor.replyRows, state.items);
-    }
-  });
+  // 保留原预览；完整分页由 getSubReplyRows 读取，避免展开污染收起后的显示。
 
   return topList;
 });
