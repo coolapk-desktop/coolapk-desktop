@@ -10,6 +10,7 @@
       'reading-navigation-hidden': reading.hidden.value,
       'has-topic-navigation': route.path.startsWith('/topic/'),
       'has-home-navigation': route.path === '/',
+      'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
     }"
     @scroll.capture="handleShellScroll"
@@ -249,6 +250,8 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   /* 网格折叠同时释放高度，不能只把导航移出屏幕而留下占位。 */
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar { display: grid; grid-template-rows: 1fr; flex: 0 0 auto; transition: grid-template-rows 200ms ease, padding-top 200ms ease; }
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar-content { display: block; min-height: 0; overflow: hidden; }
+  /* 数码、发现收起搜索栏后仍保留状态栏安全区，底色与下方栏目栏一致，收起动画中也不露出外壳底色。 */
+  .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar { background: var(--surface); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden .mobile-reading-topbar { grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
   .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { transition: transform 200ms ease, opacity 200ms ease; }
