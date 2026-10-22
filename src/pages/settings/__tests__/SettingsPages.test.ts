@@ -24,7 +24,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
-vi.mock('../../../utils/resourceCache', () => ({
+vi.mock('../../../utils/resourceCache', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../utils/resourceCache')>(),
   clearResourceCache: vi.fn().mockResolvedValue(undefined),
   clearResourceMemoryCache: vi.fn(),
 }));

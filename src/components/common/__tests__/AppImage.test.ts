@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
+import { mockObjectUrls } from '../../../test-utils/objectUrls';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, KeepAlive, ref, nextTick } from 'vue';
 import { clearResourceMemoryCache } from '../../../utils/resourceCache';
@@ -19,6 +20,7 @@ import AppAvatar from '../AppAvatar.vue';
 import { detailImageScopeKey } from '../../../composables/useNoImageMode';
 
 describe('AppImage', () => {
+  let blobs: Map<string, Blob>;
   it('无图模式只放行详情图片，后台列表仍不加载，关闭详情选项后立即隐藏', async () => {
     const settings = useSettingsStore();
     settings.settings.noImageMode = settings.settings.showImagesInDetail = true;
@@ -37,10 +39,11 @@ describe('AppImage', () => {
   });
   beforeEach(() => {
     clearResourceMemoryCache();
+    blobs = mockObjectUrls();
     mocks.getImageDataUrl.mockReset();
     mocks.getImageDataUrl.mockResolvedValue('data:image/jpeg;base64,YWJj');
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it('保留原始图片地址供右键菜单保存', async () => {
     const sourceUrl = 'http://image.coolapk.com/feed/test.jpg';
@@ -49,7 +52,7 @@ describe('AppImage', () => {
     await flushPromises();
 
     const image = wrapper.get('img');
-    expect(image.attributes('src')).toBe('data:image/jpeg;base64,YWJj');
+    expect(await blobs.get(image.attributes('src')!)!.text()).toBe('abc');
     expect(image.attributes('data-original-url')).toBe('https://image.coolapk.com/feed/test.jpg');
     expect(mocks.getImageDataUrl).toHaveBeenCalledWith('https://image.coolapk.com/feed/test.jpg', expect.any(Object));
     wrapper.unmount();
@@ -75,13 +78,14 @@ describe('AppImage', () => {
     const wrapper = mount(host);
     await flushPromises();
     const image = wrapper.getComponent(AppImage);
+    const cachedSrc = wrapper.get('img').attributes('src');
     expect(image.find('img').exists()).toBe(true);
     visible.value = false;
     await nextTick();
     expect(image.find('img').exists()).toBe(false);
     visible.value = true;
     await flushPromises();
-    expect(wrapper.get('img').attributes('src')).toBe('data:image/jpeg;base64,YWJj');
+    expect(wrapper.get('img').attributes('src')).toBe(cachedSrc);
     expect(mocks.getImageDataUrl).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
@@ -113,7 +117,7 @@ describe('AppImage', () => {
     await flushPromises();
     expect(wrapper.find('img').exists()).toBe(false);
     await setVisible(true);
-    expect(wrapper.get('img').attributes('src')).toBe('data:image/png;base64,bmVhcmJ5');
+    expect(await blobs.get(wrapper.get('img').attributes('src')!)!.text()).toBe('nearby');
     await setVisible(false);
     expect(wrapper.find('img').exists()).toBe(false);
     wrapper.unmount();

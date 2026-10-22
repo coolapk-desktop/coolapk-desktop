@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { CoolapkTauriAPI } from '../coolapk';
 import { clearFeedFullTextCache, getFeedFullTextRequestStats, loadFeedFullText } from '../../utils/feedFullTextCache';
 import { clearResourceMemoryCache, loadImageResource } from '../../utils/resourceCache';
+import { mockObjectUrls } from '../../test-utils/objectUrls';
 
 function okResponse(data: unknown) {
   return { code: 200, data };
@@ -41,6 +42,8 @@ describe('CoolapkTauriAPI 内容新页接口封装', () => {
   });
 
   it('已加载的原图直接保存缓存数据，静态动图封面不冒充原文件', async () => {
+    const blobs = mockObjectUrls();
+    const fetchBlob = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => ({ blob: async () => blobs.get(String(input))! }) as Response);
     const original = 'https://image.coolapk.com/feed/demo.gif';
     const cover = `${original}.m.jpg`;
     await loadImageResource(cover, async () => 'data:image/jpeg;base64,Y292ZXI=');
@@ -50,8 +53,14 @@ describe('CoolapkTauriAPI 内容新页接口封装', () => {
     await loadImageResource(original, async () => dataUrl);
     await CoolapkTauriAPI.saveImage(original);
     expect(invoke).toHaveBeenLastCalledWith('save_file', expect.objectContaining({ url: original, cachedDataUrl: dataUrl }));
+    expect(fetchBlob).toHaveBeenCalledTimes(1);
     await CoolapkTauriAPI.saveImage('https://example.com/large.gif', '', dataUrl);
     expect(invoke).toHaveBeenLastCalledWith('save_file', expect.objectContaining({ url: 'https://example.com/large.gif', cachedDataUrl: dataUrl }));
+    // 超过缓存上限的图片由显示组件传入 Blob，也应保存当前原始字节。
+    const uncached = URL.createObjectURL(new Blob(['GIF89a'], { type: 'image/gif' }));
+    await CoolapkTauriAPI.saveImage('https://example.com/uncached.gif', '', uncached);
+    expect(invoke).toHaveBeenLastCalledWith('save_file', expect.objectContaining({ url: 'https://example.com/uncached.gif', cachedDataUrl: dataUrl }));
+    expect(fetchBlob).toHaveBeenCalledTimes(2);
   });
 
   it('验证码脚本连续加载失败时仍取得网页全文并释放并发槽', async () => {

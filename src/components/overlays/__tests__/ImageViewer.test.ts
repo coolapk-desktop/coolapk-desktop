@@ -14,7 +14,8 @@ vi.mock('@tauri-apps/api/app', () => ({
   onBackButtonPress: vi.fn().mockResolvedValue(vi.fn()),
 }));
 
-vi.mock('../../../utils/resourceCache', () => ({
+vi.mock('../../../utils/resourceCache', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../utils/resourceCache')>(),
   loadImageResource: vi.fn(),
   normalizeResourceUrl: (url: string) => url,
   getMemoryCachedResourceSync: vi.fn(() => null),

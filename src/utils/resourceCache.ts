@@ -1,12 +1,14 @@
 const MEMORY_CACHE_LIMIT = 300;
-// Data URL 字符串按 UTF-16 保守估算；条数限制无法约束几百张大图的占用。
+// 延续原 Data URL 的 UTF-16 预算，转换为 Blob 后保持相同淘汰范围，避免扩大缓存。
 const MEMORY_CACHE_BYTE_LIMIT = 24 * 1024 * 1024;
 const MEMORY_CACHE_ENTRY_BYTE_LIMIT = 4 * 1024 * 1024;
 
 type ResourceFetcher = (url: string) => Promise<string>;
+type ResourceEntry = { src: string; bytes: number; binaryBytes: number; cached: boolean; readers: number; timer?: ReturnType<typeof setTimeout> };
 
-const memoryCache = new Map<string, string>();
+const memoryCache = new Map<string, ResourceEntry>();
 const pendingRequests = new Map<string, Promise<string>>();
+const objectUrls = new Map<string, ResourceEntry>();
 let memoryCacheBytes = 0;
 let cacheGeneration = 0;
 
@@ -37,23 +39,64 @@ export function canPersistResource(url: string): boolean {
   }
 }
 
-function remember(url: string, value: string) {
+/** 缓存淘汰与显示结束分别释放所有权；下一任务再撤销地址，等待 Vue 完成 DOM 更新。 */
+function disposeUnused(entry: ResourceEntry) {
+  if (entry.cached || entry.readers || !objectUrls.has(entry.src) || entry.timer !== undefined) return;
+  entry.timer = setTimeout(() => {
+    entry.timer = undefined;
+    if (entry.cached || entry.readers) return;
+    URL.revokeObjectURL(entry.src);
+    objectUrls.delete(entry.src);
+  }, 0);
+}
+
+/** 仅解码 Base64 封装，不重编码图片，保留 GIF、透明度和原图字节。 */
+function createEntry(url: string, value: string): ResourceEntry {
+  const entry: ResourceEntry = { src: value, bytes: (url.length + value.length) * 2, binaryBytes: 0, cached: false, readers: 0 };
+  const header = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(value);
+  if (!header || typeof URL.createObjectURL !== 'function') return entry;
+  try {
+    const decoded = atob(value.slice(header[0].length));
+    const bytes = new Uint8Array(decoded.length);
+    for (let index = 0; index < decoded.length; index++) bytes[index] = decoded.charCodeAt(index);
+    entry.src = URL.createObjectURL(new Blob([bytes], { type: header[1] }));
+    entry.binaryBytes = bytes.byteLength;
+    objectUrls.set(entry.src, entry);
+  } catch { /* 异常数据或不支持 Blob 的环境保留原地址，沿用图片加载错误处理。 */ }
+  return entry;
+}
+
+/** 显示组件和切图旧图层分别持有引用，清缓存不能撤销仍在使用的图片地址。 */
+export function retainResourceUrl(src: string | undefined): () => void {
+  const entry = src ? objectUrls.get(src) : undefined;
+  if (!entry) return () => {};
+  entry.readers += 1;
+  let released = false;
+  return () => { if (!released) { released = true; entry.readers -= 1; disposeUnused(entry); } };
+}
+
+function remember(url: string, entry: ResourceEntry) {
   const existing = memoryCache.get(url);
   if (existing !== undefined) {
-    memoryCacheBytes -= (url.length + existing.length) * 2;
+    memoryCacheBytes -= existing.bytes;
     memoryCache.delete(url);
+    if (existing !== entry) { existing.cached = false; disposeUnused(existing); }
   }
-  const bytes = (url.length + value.length) * 2;
   // 大图由当前显示组件持有即可，避免在全局缓存中额外延长其生命周期。
-  if (bytes > MEMORY_CACHE_ENTRY_BYTE_LIMIT) return;
-  memoryCache.set(url, value);
-  memoryCacheBytes += bytes;
+  if (entry.bytes > MEMORY_CACHE_ENTRY_BYTE_LIMIT) { disposeUnused(entry); return; }
+  entry.cached = true;
+  memoryCache.set(url, entry);
+  // 继续按原 Base64 的保守预算计费，避免转换后反而多缓存几倍图片。
+  memoryCacheBytes += entry.bytes;
 
   while (memoryCache.size > MEMORY_CACHE_LIMIT || memoryCacheBytes > MEMORY_CACHE_BYTE_LIMIT) {
     const oldestKey = memoryCache.keys().next().value as string | undefined;
     if (!oldestKey) break;
-    memoryCacheBytes -= (oldestKey.length + memoryCache.get(oldestKey)!.length) * 2;
+    const oldest = memoryCache.get(oldestKey)!;
+    memoryCacheBytes -= oldest.bytes;
     memoryCache.delete(oldestKey);
+    oldest.cached = false;
+    disposeUnused(oldest);
   }
 }
 
@@ -69,13 +112,16 @@ export function getMemoryCachedResourceSync(url: string | undefined): string | n
   }
   const cached = memoryCache.get(normalizedUrl);
   if (cached) remember(normalizedUrl, cached);
-  return cached || null;
+  return cached?.src || null;
 }
 
 /** 仅返回缓存规模，供诊断使用，不暴露图片或账号信息。 */
 export function getResourceMemoryCacheStats() {
+  const resources = [...objectUrls.values()];
   return { entries: memoryCache.size, estimatedBytes: memoryCacheBytes,
-    byteLimit: MEMORY_CACHE_BYTE_LIMIT, entryByteLimit: MEMORY_CACHE_ENTRY_BYTE_LIMIT };
+    byteLimit: MEMORY_CACHE_BYTE_LIMIT, entryByteLimit: MEMORY_CACHE_ENTRY_BYTE_LIMIT,
+    objectUrls: objectUrls.size, retainedBinaryBytes: resources.reduce((sum, entry) => sum + entry.binaryBytes, 0),
+    activeReaders: resources.reduce((sum, entry) => sum + entry.readers, 0) };
 }
 
 /**
@@ -93,7 +139,7 @@ export async function loadImageResource(url: string, fetcher: ResourceFetcher): 
   const memoryValue = memoryCache.get(normalizedUrl);
   if (memoryValue) {
     remember(normalizedUrl, memoryValue);
-    return memoryValue;
+    return memoryValue.src;
   }
 
   const pending = pendingRequests.get(normalizedUrl);
@@ -101,10 +147,11 @@ export async function loadImageResource(url: string, fetcher: ResourceFetcher): 
 
   const request = (async () => {
     const fetchedValue = await fetcher(normalizedUrl);
+    const entry = createEntry(normalizedUrl, fetchedValue);
     if (generation === cacheGeneration) {
-      remember(normalizedUrl, fetchedValue);
-    }
-    return fetchedValue;
+      remember(normalizedUrl, entry);
+    } else disposeUnused(entry);
+    return entry.src;
   })();
 
   pendingRequests.set(normalizedUrl, request);
@@ -122,6 +169,7 @@ export async function loadImageResource(url: string, fetcher: ResourceFetcher): 
  */
 export function clearResourceMemoryCache(): void {
   cacheGeneration += 1;
+  for (const entry of memoryCache.values()) { entry.cached = false; disposeUnused(entry); }
   memoryCache.clear();
   memoryCacheBytes = 0;
   pendingRequests.clear();

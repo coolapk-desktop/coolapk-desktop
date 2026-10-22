@@ -21,6 +21,7 @@ import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useNoImageMode } from '../../composables/useNoImageMode';
 import { loadImageResource, normalizeResourceUrl, getMemoryCachedResourceSync } from '../../utils/resourceCache';
 import { observeResourceVisibility } from '../../utils/resourceVisibility';
+import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 
 const props = withDefaults(
   defineProps<{
@@ -39,6 +40,7 @@ const defaultAvatar = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/200
 
 const initialTargetUrl = typeof IntersectionObserver === 'undefined' && !noImageMode.value && props.pluginUrl ? normalizeResourceUrl(props.pluginUrl) : '';
 const pluginDataUrl = ref<string>(initialTargetUrl ? (getMemoryCachedResourceSync(initialTargetUrl) || '') : '');
+useResourceUrlLifetime(pluginDataUrl);
 let pluginLoadSequence = 0;
 let active = true;
 let nearViewport = typeof IntersectionObserver === 'undefined';

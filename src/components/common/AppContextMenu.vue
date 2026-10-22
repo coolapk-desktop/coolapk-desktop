@@ -464,7 +464,7 @@ function getLoadedOriginalImage(element: HTMLElement, url: string): string | und
   const image = element.closest('img') as HTMLImageElement | null;
   const resourceUrl = image?.dataset.resourceUrl || image?.dataset.originalUrl;
   const dataUrl = image?.currentSrc || image?.src || '';
-  return resourceUrl === getOriginalImageUrl(url) && dataUrl.startsWith('data:image/') ? dataUrl : undefined;
+  return resourceUrl === getOriginalImageUrl(url) && /^(?:data:image\/|blob:)/.test(dataUrl) ? dataUrl : undefined;
 }
 
 async function saveImage(url: string, loadedDataUrl?: string) {

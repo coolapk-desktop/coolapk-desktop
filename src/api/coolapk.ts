@@ -10,7 +10,7 @@ import { extractCaptchaParamsFromError, verifyWithCaptcha } from '../utils/netea
 import type { UpdatePackageType } from '../utils/updateChecker';
 import { showToast } from '../utils/toast';
 import { getOriginalImageUrl } from '../utils/image';
-import { getMemoryCachedResourceSync } from '../utils/resourceCache';
+import { getMemoryCachedResourceSync, retainResourceUrl } from '../utils/resourceCache';
 import { useSettingsStore } from '../stores/settings';
 
 async function safeFetchOnce(pythonEndpoint: string, tauriCmd: string, tauriArgs: any = {}) {
@@ -1438,15 +1438,19 @@ export class CoolapkTauriAPI {
 
   static async saveFile(url: string, dir?: string, loadedDataUrl?: string) {
     let cachedDataUrl = loadedDataUrl || getMemoryCachedResourceSync(url) || undefined;
-    if (url.startsWith('blob:')) {
-      // Blob 是本地完整资源，读取现有字节不会重新请求远端服务器。
-      const blob = await (await fetch(url)).blob();
-      cachedDataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(blob);
-      });
+    const cachedBlobUrl = url.startsWith('blob:') ? url : cachedDataUrl?.startsWith('blob:') ? cachedDataUrl : undefined;
+    if (cachedBlobUrl) {
+      // 保存时才将缓存 Blob 转回 IPC 所需数据，继续复用已显示的原图而不重新下载。
+      const release = retainResourceUrl(cachedBlobUrl);
+      try {
+        const blob = await (await fetch(cachedBlobUrl)).blob();
+        cachedDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+      } finally { release(); }
     }
     const args: Record<string, unknown> = { url, dir: dir || '' };
     if (cachedDataUrl?.startsWith('data:')) args.cachedDataUrl = cachedDataUrl;

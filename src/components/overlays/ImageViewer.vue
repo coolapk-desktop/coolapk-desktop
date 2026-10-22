@@ -170,6 +170,7 @@ import { useNoImageMode, provideDetailImageScope } from '../../composables/useNo
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { getHdImageUrl, getOriginalImageUrl } from '../../utils/image';
 import { getMemoryCachedResourceSync, loadImageResource, normalizeResourceUrl } from '../../utils/resourceCache';
+import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 import { getErrorMessage } from '../../utils/errors';
 import { showToast } from '../../utils/toast';
 import { showLivePhotoCodecPrompt } from '../../utils/livePhotoCodecPrompt';
@@ -226,6 +227,8 @@ const SLIDE_DURATION_MS = 280;
 let transitionTimer: ReturnType<typeof setTimeout> | null = null;
 
 const displaySrc = ref<string>('');
+useResourceUrlLifetime(displaySrc);
+useResourceUrlLifetime(computed(() => slideGhost.value?.src));
 let resolveSequence = 0;
 
 const liveVideoRef = ref<HTMLVideoElement | null>(null);
@@ -1148,7 +1151,7 @@ async function saveOriginal() {
     const path = await CoolapkTauriAPI.saveImage(
       originalUrl.value,
       settingsStore.settings.downloadPath,
-      currentUrl.value === originalUrl.value && displaySrc.value.startsWith('data:') ? displaySrc.value : undefined
+      currentUrl.value === originalUrl.value && /^(?:data:|blob:)/.test(displaySrc.value) ? displaySrc.value : undefined
     );
     showToast(`原图已保存：${path}`, 'success', 3000);
   } catch (error) {

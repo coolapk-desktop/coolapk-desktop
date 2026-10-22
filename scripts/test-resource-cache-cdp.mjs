@@ -90,13 +90,15 @@ try {
 
       const originalHash = location.hash || '#/';
       const originalTimeOrigin = performance.timeOrigin;
-      location.hash = '#/messages';
+      const router = document.querySelector('#app').__vue_app__.config.globalProperties.$router;
+      await router.push('/messages');
       await waitFor(() => document.querySelector('.messages-sidebar'));
       const sidebar = document.querySelector('.messages-sidebar');
       const sessions = await waitFor(() => {
         const items = [...document.querySelectorAll('.session-item')];
         if (items.length) return items;
-        if (document.querySelector('.error-state')) return [];
+        // 未登录或没有会话时也是加载完成，不能一直等待不存在的会话项。
+        if (document.querySelector('.messages-sidebar .error-state, .messages-sidebar .empty-state, .not-login-main-card')) return [];
         return null;
       });
 
@@ -117,11 +119,12 @@ try {
           .find(item => item.querySelector('.last-message')?.textContent?.includes('[图片]'));
         if (imageSession) {
           imageSession.click();
-          const image = await waitFor(() => (
-            document.querySelector('.msg-pic-only-card img, .msg-pic-container img')
-            || (document.querySelector('.image-error') ? false : null)
-          ));
-          privateImageRendered = Boolean(image && image.getAttribute('src')?.startsWith('data:image/'));
+          const image = await waitFor(() => {
+            const candidate = document.querySelector('.msg-pic-only-card img, .msg-pic-container img');
+            return candidate?.complete && candidate.naturalWidth > 0 ? candidate : null;
+          });
+          const imageSource = image?.getAttribute('src') || '';
+          privateImageRendered = imageSource.startsWith('data:image/') || imageSource.startsWith('blob:');
         }
 
         const partnerLink = document.querySelector('.clickable-header');
@@ -134,7 +137,7 @@ try {
         }
       }
 
-      location.hash = '#/settings/downloads';
+      await router.push('/settings/downloads');
       const cacheLabel = await waitFor(() => [...document.querySelectorAll('.row-label')]
         .find(node => node.textContent?.trim() === '图片缓存目录'));
       const cacheRow = cacheLabel.closest('.setting-row');
@@ -146,7 +149,7 @@ try {
       const settings = settingsModule.useSettingsStore();
       const cacheInfo = await apiModule.CoolapkTauriAPI.getCacheInfo(settings.settings.cachePath);
 
-      location.hash = originalHash;
+      await router.push(originalHash.slice(1));
       return {
         noDocumentReload: performance.timeOrigin === originalTimeOrigin,
         sessionCount: sessions.length,

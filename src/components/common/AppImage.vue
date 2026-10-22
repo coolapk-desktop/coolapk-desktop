@@ -33,6 +33,7 @@ import { useNoImageMode } from '../../composables/useNoImageMode';
 import { sanitizeImageUrl } from '../../utils/image';
 import { loadImageResource, normalizeResourceUrl, getMemoryCachedResourceSync } from '../../utils/resourceCache';
 import { observeResourceVisibility } from '../../utils/resourceVisibility';
+import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 
 const props = withDefaults(defineProps<{
   src?: string;
@@ -57,6 +58,7 @@ const contextImageUrl = computed(() => props.src ? normalizeResourceUrl(props.sr
 // 同步尝试命中内存缓存
 const initialCached = typeof IntersectionObserver === 'undefined' ? getMemoryCachedResourceSync(props.src) : null;
 const renderedSrc = ref<string | undefined>(initialCached || undefined);
+useResourceUrlLifetime(renderedSrc);
 const loading = ref(!initialCached && !!props.src);
 const error = ref(false);
 const isFallback = ref(false);

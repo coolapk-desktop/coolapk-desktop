@@ -7,7 +7,8 @@ import ImageViewer from '../ImageViewer.vue';
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => false, invoke: vi.fn().mockResolvedValue(null) }));
 vi.mock('@tauri-apps/api/app', () => ({ onBackButtonPress: vi.fn().mockResolvedValue(vi.fn()) }));
-vi.mock('../../../utils/resourceCache', () => ({
+vi.mock('../../../utils/resourceCache', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../utils/resourceCache')>(),
   loadImageResource: vi.fn(async () => 'data:image/png;base64,AA=='),
   normalizeResourceUrl: (url: string) => url,
   getMemoryCachedResourceSync: vi.fn(() => null),

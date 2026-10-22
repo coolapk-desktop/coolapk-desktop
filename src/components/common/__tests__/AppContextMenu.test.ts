@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   writeText: vi.fn().mockResolvedValue(undefined),
   openUrl: vi.fn().mockResolvedValue(undefined),
   saveFile: vi.fn().mockResolvedValue('/downloads/file.custom'),
+  saveImage: vi.fn().mockResolvedValue('/downloads/image.png'),
 }));
 
 vi.mock('vue-router', () => ({
@@ -20,7 +21,7 @@ vi.mock('vue-router', () => ({
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
     openUrl: mocks.openUrl,
-    saveImage: vi.fn(),
+    saveImage: mocks.saveImage,
     saveFile: mocks.saveFile,
   },
 }));
@@ -50,6 +51,23 @@ function appendChatMessage(text: string, id: string): HTMLElement {
 }
 
 describe('AppContextMenu', () => {
+  it('右键已显示的 Blob 原图直接传给保存入口，保留远端原图地址', async () => {
+    const wrapper = mount(AppContextMenu, { attachTo: document.body });
+    const image = document.createElement('img');
+    const url = 'https://image.coolapk.com/feed/original.png';
+    image.src = 'blob:displayed-original';
+    image.dataset.originalUrl = image.dataset.resourceUrl = url;
+    document.body.appendChild(image);
+    try {
+      image.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 100 }));
+      await wrapper.vm.$nextTick();
+      const action = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(item => item.textContent?.trim() === '保存图片');
+      expect(action).toBeDefined();
+      action!.click();
+      await flushPromises();
+      expect(mocks.saveImage).toHaveBeenCalledWith(url, expect.any(String), 'blob:displayed-original');
+    } finally { image.remove(); wrapper.unmount(); }
+  });
   it('复制图片失败不退回复制链接，复制图片地址仍单独写入文本', async () => {
     vi.stubGlobal('ClipboardItem', undefined);
     const wrapper = mount(AppContextMenu, { attachTo: document.body });
