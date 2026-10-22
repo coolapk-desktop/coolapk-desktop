@@ -28,6 +28,7 @@
       :feed-uid="authorUid"
       :feed-username="feed.username || feed.userInfo?.username"
       :comments="comments"
+      :pinned-comments="feed.topReplyRows || []"
       :total-comment-count="feed.replynum"
       :loading="commentsLoading"
       :error="commentsError"

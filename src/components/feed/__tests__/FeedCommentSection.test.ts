@@ -41,6 +41,47 @@ vi.mock('../../../api/coolapk', () => ({
 import FeedCommentSection from '../FeedCommentSection.vue';
 
 describe('评论完整信息展示', () => {
+  it.each([false, true])('officialDetail=%s 时置顶评论显示标记，切换排序仍在前面且不重复', async officialDetail => {
+    const pinned = { id: 'pinned', username: '置顶作者', message: '置顶内容', likenum: 1, dateline: 1 };
+    const wrapper = mountSection({}, {
+      officialDetail,
+      pinnedComments: [pinned],
+      comments: [{ id: 'normal', username: '普通作者', message: '普通内容', likenum: 99, dateline: 99 }, pinned],
+    });
+    try {
+      const order = () => wrapper.findAll('.comment-row').map(row => row.attributes('data-context-comment-id'));
+      expect(order()).toEqual(['pinned', 'normal']);
+      expect(wrapper.findAll('.badge-pinned')).toHaveLength(1);
+      expect(wrapper.get('.badge-pinned').text()).toBe('置顶');
+      await wrapper.findAll('.comment-sort-button')[1].trigger('click');
+      expect(order()).toEqual(['pinned', 'normal']);
+      await wrapper.findAll('.comment-sort-button')[2].trigger('click');
+      expect(order()).toEqual(['pinned', 'normal']);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('桌面分栏保留普通接口顺序，并补上分页中缺失的置顶评论', () => {
+    const wrapper = mountSection({}, {
+      preserveApiOrder: true,
+      pinnedComments: [{ id: 'pin', username: '置顶作者', message: '置顶' }],
+      comments: [{ id: 'a', message: '第一条', likenum: 1 }, { id: 'b', message: '第二条', likenum: 99 }],
+      defaultSortMode: 'likes',
+    });
+    try {
+      expect(wrapper.findAll('.comment-row').map(row => row.attributes('data-context-comment-id'))).toEqual(['pin', 'a', 'b']);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('楼主筛选不补入其他用户的置顶评论', () => {
+    const wrapper = mountSection({}, {
+      feedUid: 'owner', defaultAuthorOnly: true, comments: [],
+      pinnedComments: [{ id: 'other-pin', uid: 'other', message: '其他置顶' }, { id: 'owner-pin', uid: 'owner', message: '楼主置顶' }],
+    });
+    try {
+      expect(wrapper.findAll('.comment-row').map(row => row.attributes('data-context-comment-id'))).toEqual(['owner-pin']);
+    } finally { wrapper.unmount(); }
+  });
+
   it.each(['.comment-avatar', '.comment-username', '.sub-reply-avatar', '.sub-user'])('点击 %s 进入用户主页，不打开回复输入框', async selector => {
     const wrapper = mountSection({ uid: '123', replyRows: [{ id: 'sub-1', fromUid: '456', fromUserName: '楼中楼用户', message: '楼中楼正文' }] });
     try {

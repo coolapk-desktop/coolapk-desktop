@@ -234,6 +234,7 @@
         :default-sort-mode="commentsSortMode"
         :total-comment-count="feed.replynum"
         :comments="comments"
+        :pinned-comments="feed.topReplyRows || []"
         :loading="commentsLoading"
         :error="commentsError"
         :has-more-comments="hasMoreComments"

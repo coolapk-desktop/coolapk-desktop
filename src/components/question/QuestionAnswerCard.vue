@@ -150,6 +150,7 @@
         :total-comment-count="replyCount"
         :default-sort-mode="commentsSortMode"
         :comments="comments"
+        :pinned-comments="answer.topReplyRows || []"
         :loading="commentsLoading"
         :error="commentsError"
         :has-more-comments="hasMoreComments"

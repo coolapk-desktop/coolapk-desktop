@@ -249,6 +249,7 @@
             </span>
             <span v-else-if="authorOnly && c.authorOnlyContext" class="author-filter-context-label">上下文</span>
             <span v-if="!isAuthor(c) && isOwn(c)" class="badge-identity">我</span>
+            <span v-if="isPinnedComment(c)" class="badge-pinned">置顶</span>
 
             <span v-if="getCommentUserLevel(c)" class="level-tag">LV{{ getCommentUserLevel(c) }}</span>
             <span v-if="getCommentVerifyTitle(c)" class="verify-tag" :title="getCommentVerifyTitle(c)">
@@ -592,6 +593,7 @@ const props = withDefaults(
     feedUid?: string | number;
     feedUsername?: string;
     comments: any[];
+    pinnedComments?: any[];
     totalCommentCount?: number | string | null;
     loading?: boolean;
     error?: string;
@@ -611,6 +613,7 @@ const props = withDefaults(
     hideCollapseButton: false,
     feedUid: '',
     feedUsername: '',
+    pinnedComments: () => [],
     totalCommentCount: undefined,
     loading: false,
     error: '',
@@ -944,6 +947,7 @@ async function handleDeleteComment(comment: any) {
     const res = await CoolapkTauriAPI.deleteReply(String(comment.id));
     if (res && res.code === 200) {
       showToast('评论已删除');
+      deletedCommentIds.value = new Set([...deletedCommentIds.value, String(comment.id)]);
       emit('delete-comment', comment.id);
     } else {
       showToast(res?.message || '删除评论失败', 'error');
@@ -1057,8 +1061,8 @@ function scheduleReplyDetails(ids: string[]) {
 }
 
 watch(
-  () => collectReplyIds(props.comments).join(','),
-  () => scheduleReplyDetails(collectReplyIds(props.comments)),
+  () => collectReplyIds([...props.pinnedComments, ...props.comments]).join(','),
+  () => scheduleReplyDetails(collectReplyIds([...props.pinnedComments, ...props.comments])),
   { immediate: true },
 );
 
@@ -1336,6 +1340,7 @@ watch(
   () => {
     expandedFloorIds.value = new Set();
     subReplyStates.value = {};
+    deletedCommentIds.value = new Set();
   },
 );
 
@@ -1714,6 +1719,11 @@ function filterAuthorOnlyComments(comments: any[]): any[] {
 const sectionRef = ref<HTMLElement | null>(null);
 const targetComments = ref<any[]>([]);
 const targetReplyError = ref('');
+const deletedCommentIds = ref<Set<string>>(new Set());
+const pinnedCommentIds = computed(() => new Set(props.pinnedComments.map(item => String(item.id))));
+function isPinnedComment(comment: any): boolean {
+  return pinnedCommentIds.value.has(String(comment.id));
+}
 let targetRequest = 0;
 let scrolledTarget = '';
 
@@ -1722,7 +1732,10 @@ let scrolledTarget = '';
  * 将平铺的回复数组聚合成真实的【一级楼层 -> 二级楼中楼 (replyRows)】嵌套树！
  */
 const nestedComments = computed(() => {
-  const comments = mergeReplies(props.comments || [], targetComments.value);
+  // 官方 topReplyRows 独立于普通分页；置顶优先、按 ID 去重。
+  const pinned = props.pinnedComments.filter(item => !authorOnly.value || isAuthor(item));
+  const comments = mergeReplies(pinned, mergeReplies(props.comments || [], targetComments.value))
+    .filter(item => !deletedCommentIds.value.has(String(item.id)));
   if (!comments.length) return [];
 
   const topMap = new Map<string, any>();
@@ -1782,10 +1795,15 @@ const nestedComments = computed(() => {
 
 const sortedComments = computed(() => {
   // 应用页通过官方 listType 请求排序，不能再按全局评论设置重排。
-  if (props.preserveApiOrder) return nestedComments.value;
   const visibleComments = authorOnly.value ? filterAuthorOnlyComments(nestedComments.value) : nestedComments.value;
   // APK 的楼主筛选由 fromFeedAuthor=1 决定顺序，不叠加当前排序按钮的本地排序。
-  return authorOnly.value ? visibleComments : sortComments(visibleComments, commentSortMode.value);
+  const rows = props.preserveApiOrder ? nestedComments.value
+    : authorOnly.value ? visibleComments : sortComments(visibleComments, commentSortMode.value);
+  // 切换最新/热门时，仍保留官方置顶区，普通楼层保持各自排序。
+  const pinned = nestedComments.value.filter(item => isPinnedComment(item));
+  const visibleById = new Map(rows.map(item => [String(item.id), item]));
+  return [...pinned.filter(item => visibleById.has(String(item.id))).map(item => visibleById.get(String(item.id))),
+    ...rows.filter(item => !isPinnedComment(item))];
 });
 
 // 同一回复可能同时出现在楼中楼预览和完整楼层中，只突出更紧凑的楼中楼目标。
@@ -2566,6 +2584,18 @@ async function handleSend() {
 .badge-identity.sub-badge {
   padding: 0 4px;
   font-size: 0.65rem;
+}
+
+.badge-pinned {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--brand-primary);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+  font-size: 0.68rem;
+  line-height: 1.3;
 }
 
 .level-tag {
