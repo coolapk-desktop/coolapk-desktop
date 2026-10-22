@@ -20,6 +20,18 @@ static LOGIN_STAGE: AtomicU8 = AtomicU8::new(0);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 static PANIC_HOOK: Once = Once::new();
 
+/// Android 生命周期直接写入常规日志，不经过 WebView/页面脚本。
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_coolapk_desktop_MainActivity_logForegroundNative(
+    mut env: jni::JNIEnv<'_>,
+    _activity: jni::objects::JObject<'_>,
+    detail: jni::objects::JString<'_>,
+) {
+    let Ok(message) = env.get_string(&detail) else { return; };
+    log::info!(target: "android.foreground", "{}", message.to_string_lossy());
+}
+
 /// 仅记录固定步骤名，禁止把 Cookie、授权码或完整 URL 写入崩溃检查点。
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -248,6 +260,7 @@ fn select_report_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
 
 #[tauri::command]
 pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, String> {
+    log::logger().flush();
     let dir = log_dir(&app)?;
     let paths = list_log_paths(&dir)?;
     let mut files = Vec::new();

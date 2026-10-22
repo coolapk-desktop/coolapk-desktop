@@ -4,10 +4,10 @@
     <p class="description">日志保存在本机，仅在你主动复制、导出或手动附加到 GitHub Issue 时离开应用。每个文件最多 2 MB，最多保留 4 个旧文件。</p>
 
     <div class="toolbar">
-      <AppButton variant="secondary" size="sm" :loading="loading" @click="loadLogs">刷新</AppButton>
-      <AppButton variant="secondary" size="sm" :disabled="!snapshot.content" @click="copyLogs">复制日志</AppButton>
-      <AppButton variant="secondary" size="sm" :disabled="!snapshot.content" @click="exportLogs">导出日志</AppButton>
-      <AppButton variant="danger" size="sm" :disabled="snapshot.files.length === 0" @click="clearLogs">清空日志</AppButton>
+      <AppButton variant="secondary" size="sm" :loading="loading" :disabled="savingLogs" @click="loadLogs">刷新</AppButton>
+      <AppButton variant="secondary" size="sm" :disabled="loading || savingLogs" @click="copyLogs">复制日志</AppButton>
+      <AppButton variant="secondary" size="sm" :disabled="loading || savingLogs" @click="exportLogs">导出日志</AppButton>
+      <AppButton variant="danger" size="sm" :disabled="loading || savingLogs || snapshot.files.length === 0" @click="clearLogs">清空日志</AppButton>
     </div>
     <label class="verbose-toggle"><input v-model="verbose" type="checkbox" @change="changeVerbose" /> 本次运行记录详细调试信息</label>
 
@@ -118,6 +118,7 @@ interface DiagnosticSnapshot {
 
 const snapshot = ref<DiagnosticSnapshot>({ files: [], content: '', directory: '' });
 const loading = ref(false);
+const savingLogs = ref(false);
 const error = ref('');
 const level = ref('all');
 const keyword = ref('');
@@ -131,12 +132,18 @@ const visibleLines = computed(() => {
   }).slice(-1000);
 });
 
+async function readLatestLogs(): Promise<string> {
+  const latest = await invoke<DiagnosticSnapshot>('get_diagnostic_logs');
+  snapshot.value = latest;
+  return latest.content;
+}
+
 async function loadLogs() {
   if (loading.value) return;
   loading.value = true;
   error.value = '';
   try {
-    snapshot.value = await invoke<DiagnosticSnapshot>('get_diagnostic_logs');
+    await readLatestLogs();
   } catch (cause) {
     error.value = `读取日志失败：${String(cause)}`;
   } finally {
@@ -161,18 +168,24 @@ async function copyText(text: string) {
 }
 
 async function copyLogs() {
+  if (loading.value || savingLogs.value) return;
+  savingLogs.value = true;
   try {
-    await copyText(snapshot.value.content);
+    await copyText(await readLatestLogs());
     showToast('日志已复制');
   } catch (cause) {
     showToast(`复制日志失败：${String(cause)}`, 'error');
+  } finally {
+    savingLogs.value = false;
   }
 }
 
 async function exportLogs() {
-  const content = snapshot.value.content;
-  if (!content) return;
+  if (loading.value || savingLogs.value) return;
+  savingLogs.value = true;
   try {
+    const content = await readLatestLogs();
+    if (!content) { showToast('暂无日志'); return; }
     if (/android/i.test(navigator.userAgent)) {
       const path = await CoolapkTauriAPI.exportJsonFile('coolapk-diagnostics.txt', content);
       showToast(`日志已保存：${path}`, 'success', 5000);
@@ -188,6 +201,8 @@ async function exportLogs() {
     showToast(`日志已保存：${path}`, 'success', 5000);
   } catch (cause) {
     showToast(`导出日志失败：${String(cause)}`, 'error');
+  } finally {
+    savingLogs.value = false;
   }
 }
 

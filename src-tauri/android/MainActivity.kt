@@ -54,11 +54,20 @@ class MainActivity : TauriActivity() {
         private val foregroundLogWriter = Executors.newSingleThreadExecutor { task -> Thread(task, "foreground-diagnostics").apply { isDaemon = true } }
     }
 
+    @Keep
+    private external fun logForegroundNative(detail: String)
+
     private fun logForeground(event: String, detail: String = "") {
         val webView = mainWebView?.get()
         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.ROOT).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date())
-        val line = "[$timestamp][INFO][android.foreground] $event pid=${android.os.Process.myPid()} request=$foregroundDrawRequest elapsed_ms=${SystemClock.uptimeMillis() - foregroundDrawStarted} resumed=$activityResumed focus=${hasWindowFocus()} attached=${webView?.isAttachedToWindow} shown=${webView?.isShown} window_visibility=${webView?.windowVisibility} width=${webView?.width} height=${webView?.height} alpha=${webView?.alpha} hardware=${webView?.isHardwareAccelerated} layer_type=${webView?.layerType} $detail\n"
+        val message = "$event pid=${android.os.Process.myPid()} request=$foregroundDrawRequest elapsed_ms=${SystemClock.uptimeMillis() - foregroundDrawStarted} resumed=$activityResumed focus=${hasWindowFocus()} attached=${webView?.isAttachedToWindow} shown=${webView?.isShown} window_visibility=${webView?.windowVisibility} width=${webView?.width} height=${webView?.height} alpha=${webView?.alpha} hardware=${webView?.isHardwareAccelerated} layer_type=${webView?.layerType} $detail"
+        val line = "[$timestamp][INFO][android.foreground] $message\n"
         Log.i("CoolapkForeground", line.trim())
+        // 直接进入 Rust 日志通道，不依赖页面 JS；单独附加常规 .log 也包含恢复事件。
+        // 启动早期桥接不可用时仍继续写独立文件。
+        runCatching { logForegroundNative(message) }.onFailure { error ->
+            Log.w("CoolapkForeground", "diagnostic_mirror_failed type=${error.javaClass.simpleName}")
+        }
         val directory = File(applicationInfo.dataDir, "logs")
         foregroundLogWriter.execute {
             try {

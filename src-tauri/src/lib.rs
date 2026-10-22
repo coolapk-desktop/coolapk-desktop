@@ -984,7 +984,7 @@ pub fn run() {
             .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout))
             .level(log::LevelFilter::Debug)
             .filter(|metadata| {
-                (metadata.target().starts_with("coolapk_desktop_lib") || metadata.target().starts_with("webview"))
+                (metadata.target().starts_with("coolapk_desktop_lib") || metadata.target().starts_with("webview") || metadata.target() == "android.foreground")
                     && (metadata.level() <= log::Level::Info || diagnostics::verbose_enabled())
             })
             .max_file_size(2_000_000)
