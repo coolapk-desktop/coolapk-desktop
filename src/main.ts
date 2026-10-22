@@ -5,7 +5,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import '@fortawesome/fontawesome-free/css/all.min.css';
 import './styles/index.css';
-import 'virtual:android-icons.css';
 import App from './App.vue';
 import { initializeAndroidSafeArea } from './utils/androidSafeArea';
 import { router } from './router';
@@ -18,6 +17,8 @@ import { isResizeObserverWarning } from './utils/windowError';
 
 // 启动全局原生 alert 代理拦截，统一呈现顶部高质感 Toast
 // 手机上的图标不依赖系统字体；桌面继续沿用现有字体图标。
+// 仅 Android 加载 SVG 规则，并在挂载前等待样式就绪，避免首屏图标闪烁。
+const androidIconStylesReady = /android/i.test(navigator.userAgent) ? import('virtual:android-icons.css') : Promise.resolve();
 if (/android/i.test(navigator.userAgent)) document.documentElement.dataset.iconRenderer = 'svg';
 setupGlobalAlertProxy();
 installDiagnosticLogging();
@@ -142,6 +143,7 @@ async function setupDeepLinkHandling() {
 }
 
 async function bootstrap() {
+  await androidIconStylesReady;
   await initializeAndroidSafeArea();
   await settingsStore.initializeSettings();
   // 原生层已恢复登录 Cookie：游客生成并缓存 DUID，已登录时不会自动获取或启用。

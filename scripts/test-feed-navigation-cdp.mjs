@@ -97,8 +97,11 @@ try {
       const originalHash = location.hash || '#/';
       const originalTimeOrigin = performance.timeOrigin;
 
-      location.hash = '#/history';
-      const sourcePage = await waitFor(() => document.querySelector('.page-container'));
+      // 等待路由和本地模块就绪，并排除转场中的旧页面，避免把下载页误记为历史页。
+      const router = document.querySelector('#app').__vue_app__.config.globalProperties.$router;
+      await router.push('/history');
+      await new Promise(requestAnimationFrame);
+      const sourcePage = await waitFor(() => document.querySelector('.route-transition-stage > .page-container:not([class*="-leave-active"])'));
       const preserveToken = 'cdp-' + Date.now();
       sourcePage.dataset.cdpPreserve = preserveToken;
 
@@ -132,7 +135,7 @@ try {
       const backButton = document.querySelector('[aria-label="后退"]');
       backButton?.click();
       await waitFor(() => location.hash === '#/history');
-      const restoredPage = document.querySelector('.page-container');
+      const restoredPage = await waitFor(() => document.querySelector('.route-transition-stage > .page-container:not([class*="-leave-active"])'));
       const sourcePagePreserved = restoredPage === sourcePage
         && restoredPage?.dataset.cdpPreserve === preserveToken;
 
