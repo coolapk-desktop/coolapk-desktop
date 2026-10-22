@@ -76,4 +76,35 @@ describe('route scroll restoration', () => {
     expect(page.scrollTop).toBe(240);
     expect(getComputedStyleSpy).not.toHaveBeenCalled();
   });
+
+  it('按节点身份恢复，已销毁页面的位置不会写入同路由的新实例', async () => {
+    document.body.innerHTML = '<main class="app-main-content"><section data-route-scroll></section></main>';
+    const oldPage = document.querySelector<HTMLElement>('section')!;
+    oldPage.scrollTop = 240;
+    saveRouteScrollPosition('/recreated-page');
+    const newPage = document.createElement('section');
+    newPage.setAttribute('data-route-scroll', '');
+    oldPage.replaceWith(newPage);
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    await restoreRouteScrollPosition('/recreated-page');
+    expect(newPage.scrollTop).toBe(0);
+  });
+
+  it('缓存列表暂时没有溢出时仍恢复位置，共用外框按路由分别记录', async () => {
+    document.body.innerHTML = '<main class="app-main-content"><section data-route-scroll></section></main>';
+    const root = document.querySelector<HTMLElement>('main')!;
+    const page = document.querySelector<HTMLElement>('section')!;
+    root.scrollTop = 10; page.scrollTop = 300;
+    saveRouteScrollPosition('/cached-a');
+    root.scrollTop = 20; page.scrollTop = 400;
+    saveRouteScrollPosition('/cached-b');
+    root.scrollTop = page.scrollTop = 0;
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    await restoreRouteScrollPosition('/cached-a');
+    expect([root.scrollTop, page.scrollTop]).toEqual([10, 300]);
+    await restoreRouteScrollPosition('/cached-b');
+    expect([root.scrollTop, page.scrollTop]).toEqual([20, 400]);
+  });
 });
