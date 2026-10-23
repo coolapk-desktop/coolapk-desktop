@@ -457,12 +457,7 @@ async function playLiveVideo(forceUnsupportedNotice = false): Promise<boolean> {
   liveVideoPlaying.value = false;
   const codecCheck = await checkLiveVideoCodec(liveVideoUrl.value);
   if (playbackSequence !== livePlaybackSequence || video !== liveVideoRef.value) return false;
-  if (codecCheck.unsupported && codecCheck.codec) {
-    liveVideoUnsupported.value = codecCheck.codec;
-    video.pause();
-    showUnsupportedLiveVideoToast(codecCheck.codec, forceUnsupportedNotice);
-    return false;
-  }
+  // 能力查询可能与实际解码结果不一致，不能据此阻止播放器尝试播放。
   liveVideoUnsupported.value = null;
   video.loop = true;
   video.muted = !liveSoundEnabled.value;
@@ -477,6 +472,11 @@ async function playLiveVideo(forceUnsupportedNotice = false): Promise<boolean> {
     if (playbackSequence !== livePlaybackSequence || video !== liveVideoRef.value) return false;
     logLiveVideoState('viewer_play_failed', video, error);
     liveVideoPlaying.value = false;
+    // 仅在实际格式或解码失败后提示；网络错误和自动播放限制不属于缺少解码器。
+    if (codecCheck.codec && (((error instanceof Error || error instanceof DOMException) && error.name === 'NotSupportedError') || video.error?.code === 3 || video.error?.code === 4)) {
+      liveVideoUnsupported.value = codecCheck.codec;
+      showUnsupportedLiveVideoToast(codecCheck.codec, forceUnsupportedNotice);
+    }
     // 自动播放策略拒绝时保留静态封面，用户点击播放按钮仍可重试。
     return false;
   }
@@ -549,9 +549,12 @@ async function handleLiveVideoError(event: Event) {
   const video = liveVideoRef.value;
   if (!video || event.target !== video) return;
   logLiveVideoState('viewer_media_failed', video);
+  const videoUrl = liveVideoUrl.value;
+  const mediaErrorCode = video.error?.code;
   const codecCheck = await checkLiveVideoCodec(liveVideoUrl.value);
-  if (event.target !== liveVideoRef.value) return;
-  if (codecCheck.unsupported && codecCheck.codec) {
+  if (event.target !== liveVideoRef.value || videoUrl !== liveVideoUrl.value) return;
+  // 能力查询仅作为诊断线索，提示以播放器真实的格式或解码错误为准。
+  if ((mediaErrorCode === 3 || mediaErrorCode === 4) && codecCheck.codec) {
     liveVideoUnsupported.value = codecCheck.codec;
     liveVideoPlaying.value = false;
     showUnsupportedLiveVideoToast(codecCheck.codec);

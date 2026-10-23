@@ -99,7 +99,34 @@ describe('WebView2 视频编码能力判断', () => {
     error.name = 'NotSupportedError';
     logLiveVideoState('viewer_play_failed', video, error);
     expect(logDiagnostic).toHaveBeenCalledWith('warn', 'live-photo', 'viewer_play_failed',
-      'media_error=4 ready_state=0 network_state=3 width=0 height=0 paused=true reason=NotSupportedError');
+      expect.stringContaining('reason=NotSupportedError media_reason=source_not_supported pipeline=not_exposed hresult=not_exposed license_check=unknown'));
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).not.toContain('secret');
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).not.toContain('private');
+  });
+
+  it('仅从播放器实际错误提取许可错误码及管线状态，不保存原始消息', () => {
+    const video = { error: { code: 3, message: 'PIPELINE_ERROR_DECODE decoder failed 0xc00db3b3 https://private.example/video?token=secret' },
+      readyState: 0, networkState: 3, videoWidth: 0, videoHeight: 0, paused: true } as unknown as HTMLVideoElement;
+    logLiveVideoState('viewer_media_failed', video);
+    const detail = String(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]);
+    expect(detail).toContain('media_reason=decode pipeline=PIPELINE_ERROR_DECODE hresult=0xC00DB3B3 license_check=failed');
+    expect(detail).not.toContain('private');
+    expect(detail).not.toContain('secret');
+    expect(detail).not.toContain('decoder failed');
+  });
+
+  it('DOMException 的格式错误不推断为许可失败', () => {
+    const video = { error: null, readyState: 0, networkState: 0, videoWidth: 0, videoHeight: 0, paused: true } as unknown as HTMLVideoElement;
+    logLiveVideoState('viewer_play_failed', video, new DOMException('private message', 'NotSupportedError'));
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).toContain('reason=NotSupportedError');
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).toContain('hresult=not_exposed license_check=unknown');
+  });
+
+  it('能力查询异常时记录安全的错误线索并保留实际播放机会', async () => {
+    vi.stubGlobal('navigator', { mediaCapabilities: { decodingInfo: vi.fn().mockRejectedValue(new DOMException('private message', 'SecurityError')) } });
+    await expect(getLiveVideoCodecSupport(hevc)).resolves.toBe('unknown');
+    expect(logDiagnostic).toHaveBeenCalledWith('warn', 'live-photo', 'codec_check_failed', expect.stringContaining('reason=SecurityError'));
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).not.toContain('private');
   });
 
   it('只有尺寸和已解码帧都有效时才确认播放', () => {

@@ -186,9 +186,15 @@ export function detectLiveVideoCodec(header: Uint8Array): LiveVideoCodec | null 
 }
 
 export async function getLiveVideoCodecSupport(codec: LiveVideoCodec): Promise<LiveVideoCodecSupport> {
-  if (!codec.mimeCodec) return 'unknown';
+  if (!codec.mimeCodec) {
+    logDiagnostic('info', 'live-photo', 'codec_check_skipped', `codec=${codec.id} reason=missing_codec_configuration`);
+    return 'unknown';
+  }
   const contentType = `${codec.container === 'webm' ? 'video/webm' : 'video/mp4'}; codecs="${codec.mimeCodec}"`;
-  if (!navigator.mediaCapabilities?.decodingInfo) return 'unknown';
+  if (!navigator.mediaCapabilities?.decodingInfo) {
+    logDiagnostic('info', 'live-photo', 'codec_check_skipped', `codec=${codec.id} reason=api_unavailable`);
+    return 'unknown';
+  }
   try {
     const mediaCapabilities = await navigator.mediaCapabilities.decodingInfo({
       type: 'file',
@@ -198,21 +204,35 @@ export async function getLiveVideoCodecSupport(codec: LiveVideoCodec): Promise<L
     // 官方 Android 使用原生播放器实际准备媒体；WebView 的能力查询只能作为线索。
     const android = /android/i.test(navigator.userAgent || '');
     logDiagnostic('info', 'live-photo', 'codec_check',
-      `codec=${codec.id} mime_codec=${codec.mimeCodec} supported=${mediaCapabilities.supported} can_play=${canPlay || 'empty'} android=${android} probe_width=1920 probe_height=1080 probe_fps=30`);
+      `codec=${codec.id} mime_codec=${codec.mimeCodec} supported=${mediaCapabilities.supported} smooth=${mediaCapabilities.smooth ?? 'unknown'} power_efficient=${mediaCapabilities.powerEfficient ?? 'unknown'} can_play=${canPlay || 'empty'} android=${android} probe_width=1920 probe_height=1080 probe_fps=30`);
     if (mediaCapabilities.supported) return 'supported';
     if (android) return 'unknown';
     return canPlay ? 'unknown' : 'unsupported';
-  } catch {
+  } catch (error) {
+    logDiagnostic('warn', 'live-photo', 'codec_check_failed', `codec=${codec.id} ${liveVideoFailureDetail(undefined, error)}`);
     return 'unknown';
   }
 }
 
-/** 仅记录播放器状态，不记录地址、照片、动态 ID 或原始异常文本。 */
+/** 只提取错误类型、固定管线状态和十六进制错误码，不持久化可能含媒体地址的异常正文。 */
+function liveVideoFailureDetail(mediaError?: MediaError | null, error?: unknown): string {
+  const exception = error instanceof Error || error instanceof DOMException ? error : null;
+  const reason = exception && ['NotAllowedError', 'NotSupportedError', 'AbortError', 'TypeError', 'SecurityError'].includes(exception.name)
+    ? exception.name : error ? 'other' : 'none';
+  const messages = [mediaError?.message || '', exception?.message || ''];
+  // Web API 不保证透出 Media Foundation 的 HRESULT；未提供时明确标记，不能推断为许可错误。
+  const hresults = [...new Set(messages.flatMap(message => message.match(/\b0x[0-9a-f]{8}\b/gi) || []).map(code => `0x${code.slice(2).toUpperCase()}`))].slice(0, 4);
+  const pipeline = messages.flatMap(message => message.match(/\b(?:PIPELINE_ERROR_DECODE|PIPELINE_ERROR_NETWORK|DECODER_ERROR_NOT_SUPPORTED|DEMUXER_ERROR_COULD_NOT_OPEN|DEMUXER_ERROR_NO_SUPPORTED_STREAMS)\b/g) || [])[0] || 'not_exposed';
+  const mediaReason = ['none', 'aborted', 'network', 'decode', 'source_not_supported'][mediaError?.code || 0] || 'unknown';
+  return `reason=${reason} media_reason=${mediaReason} pipeline=${pipeline} hresult=${hresults.join(',') || 'not_exposed'} license_check=${hresults.includes('0xC00DB3B3') ? 'failed' : 'unknown'}`;
+}
+
+/** 仅记录播放器状态和经过筛选的错误线索，不记录地址、照片、动态 ID 或原始异常文本。 */
 export function logLiveVideoState(event: string, video: HTMLVideoElement, error?: unknown): void {
-  const reason = error instanceof Error && ['NotAllowedError', 'NotSupportedError', 'AbortError'].includes(error.name)
-    ? error.name : error ? 'other' : 'none';
+  // UA 中的 Chrome 版本用于定位内核差异，不将其当成已读取的 WebView2 Runtime 版本。
+  const chromiumVersion = navigator.userAgent?.match(/Chrome\/([\d.]+)/)?.[1] || 'unknown';
   logDiagnostic(event.includes('failed') ? 'warn' : 'info', 'live-photo', event,
-    `media_error=${video.error?.code || 0} ready_state=${video.readyState} network_state=${video.networkState} width=${video.videoWidth} height=${video.videoHeight} paused=${video.paused} reason=${reason}`);
+    `media_error=${video.error?.code || 0} ready_state=${video.readyState} network_state=${video.networkState} width=${video.videoWidth} height=${video.videoHeight} paused=${video.paused} chromium_version=${chromiumVersion} ${liveVideoFailureDetail(video.error, error)}`);
 }
 
 export function hasDecodedVideoFrame(video: HTMLVideoElement): boolean {
