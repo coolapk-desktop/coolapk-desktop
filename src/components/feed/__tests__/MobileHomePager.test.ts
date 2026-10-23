@@ -1,5 +1,5 @@
 import { mount, flushPromises } from '@vue/test-utils';
-import { defineComponent, ref } from 'vue';
+import { defineComponent, onUpdated, ref } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({ config: vi.fn() }));
@@ -9,7 +9,10 @@ import HomePage from '../../../pages/HomePage.vue';
 import { useSettingsStore } from '../../../stores/settings';
 import { desktopFeedCommentsOpenKey } from '../../../utils/desktopFeedComments';
 import { mobileReadingNavigationKey } from '../../../composables/useMobileReadingNavigation';
-const Panel = defineComponent({ name: 'HomeTabPanel', props: ['tabKey', 'selected'], template: '<div class="panel-stub"><div class="nested" style="overflow-x:auto">内容</div></div>' });
+const progress = vi.fn();
+const Tabs = defineComponent({ name: 'FeedTabs', props: ['activeKey', 'tabs', 'swipeProgress'], setup(_, { expose }) { expose({ setSwipeProgress: progress }); }, template: '<nav />' });
+const panelUpdated = vi.fn();
+const Panel = defineComponent({ name: 'HomeTabPanel', props: ['tabKey', 'selected', 'preview'], setup() { onUpdated(panelUpdated); }, template: '<div class="panel-stub"><div class="nested" style="overflow-x:auto">内容</div></div>' });
 let now = 0, sequence = 0;
 let notifyResize: () => void;
 const frames = new Map<number, FrameRequestCallback>();
@@ -18,9 +21,10 @@ function pointer(target: Element | Window, type: string, x: number, y = 120) {
   Object.defineProperties(event, { pointerId: { value: 1 }, isPrimary: { value: true }, pointerType: { value: 'touch' } });
   target.dispatchEvent(event);
 }
-function finish() { now += 300; const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(now)); }
+function tick() { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(now)); }
+function finish() { now += 300; tick(); }
 async function render() {
-  const wrapper = mount(MobileHomePager, { global: { stubs: { HomeTabPanel: Panel, FeedTabs: true } } });
+  const wrapper = mount(MobileHomePager, { global: { stubs: { HomeTabPanel: Panel, FeedTabs: Tabs } } });
   await flushPromises(); return wrapper;
 }
 describe('移动首页一体滑动', () => {
@@ -32,7 +36,7 @@ describe('移动首页一体滑动', () => {
       { title: '头条', page_name: 'digest', url: '/main/headline' },
       { title: '热榜', page_name: 'hot', url: '/hot' },
     ] }] });
-    now = 0; frames.clear(); sequence = 0;
+    now = 0; frames.clear(); sequence = 0; progress.mockClear();
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { frames.set(++sequence, cb); return sequence; });
     vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
@@ -48,7 +52,7 @@ describe('移动首页一体滑动', () => {
     const reset = vi.fn(() => { hidden.value = false; });
     const w = mount(MobileHomePager, { global: {
       provide: { [mobileReadingNavigationKey as symbol]: { hidden, reset } },
-      stubs: { HomeTabPanel: Panel, FeedTabs: true },
+      stubs: { HomeTabPanel: Panel, FeedTabs: Tabs },
     } });
     try {
       await flushPromises(); reset.mockClear(); hidden.value = true;
@@ -69,7 +73,7 @@ describe('移动首页一体滑动', () => {
     const Sidebar = defineComponent({ setup() { sidebarMounted(); }, template: '<aside class="recommendations-stub" />' });
     const w = mount(MobileHomePager, { props: { mobile: false }, global: {
       provide: { [desktopFeedCommentsOpenKey as symbol]: commentsOpen },
-      stubs: { HomeTabPanel: Panel, FeedTabs: true, FeedLayoutToggle: true, RightSidebar: Sidebar },
+      stubs: { HomeTabPanel: Panel, FeedTabs: Tabs, FeedLayoutToggle: true, RightSidebar: Sidebar },
     } });
     await flushPromises();
     const tabs = w.findComponent({ name: 'FeedTabs' });
@@ -116,7 +120,7 @@ describe('移动首页一体滑动', () => {
       media: query, addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
       removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
     } as unknown as MediaQueryList));
-    const w = mount(HomePage, { global: { stubs: { HomeTabPanel: Panel, FeedTabs: true, RightSidebar: true, FeedLayoutToggle: true } } });
+    const w = mount(HomePage, { global: { stubs: { HomeTabPanel: Panel, FeedTabs: Tabs, RightSidebar: true, FeedLayoutToggle: true } } });
     await flushPromises();
     const tabs = w.findComponent({ name: 'FeedTabs' });
     tabs.vm.$emit('update:activeKey', 'hot'); await flushPromises();
@@ -141,9 +145,9 @@ describe('移动首页一体滑动', () => {
   });
   it('拖动中同时移动页面与指示条，松手完成相邻切页', async () => {
     const w = await render(), viewport = w.find('.pager-viewport').element;
-    pointer(viewport, 'pointerdown', 300); now = 100; pointer(window, 'pointermove', 156); await flushPromises();
+    pointer(viewport, 'pointerdown', 300); now = 100; pointer(window, 'pointermove', 156); tick(); await flushPromises();
     expect(Number.parseFloat(w.find('.pager-track').attributes('style')!.split('translate3d(')[1]!)).toBeCloseTo(-504);
-    expect(w.findComponent({ name: 'FeedTabs' }).props('swipeProgress')).toBeCloseTo(1.4);
+    expect(progress).toHaveBeenLastCalledWith(1.4);
     pointer(window, 'pointerup', 156); finish(); await flushPromises();
     expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('hot'); w.unmount();
   });
@@ -155,6 +159,48 @@ describe('移动首页一体滑动', () => {
     pointer(viewport, 'pointerdown', 300); now += 100; pointer(window, 'pointermove', 100);
     pointer(window, 'pointercancel', 100); finish(); await flushPromises();
     expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('digest'); w.unmount();
+  });
+  it('连续触摸每帧只更新轨道和指示条，不重新渲染内容页', async () => {
+    const w = await render(), viewport = w.get('.pager-viewport').element;
+    try {
+      pointer(viewport, 'pointerdown', 300);
+      pointer(window, 'pointermove', 280); tick(); await flushPromises();
+      panelUpdated.mockClear(); progress.mockClear();
+      for (const x of [270, 260, 250]) pointer(window, 'pointermove', x);
+      expect(frames.size).toBe(1);
+      tick(); await flushPromises();
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(panelUpdated).not.toHaveBeenCalled();
+      pointer(window, 'pointercancel', 250); finish(); await flushPromises();
+    } finally { w.unmount(); }
+  });
+  it('拖动不唤醒已访问的远处栏目', async () => {
+    api.config.mockResolvedValueOnce({ data: [{ entityId: '6390', entities: Array.from({ length: 6 }, (_, i) => ({ title: `栏目${i}`, page_name: `tab${i}`, url: `/tab${i}` })) }] });
+    const w = await render();
+    try {
+      const tabs = w.findComponent({ name: 'FeedTabs' });
+      tabs.vm.$emit('update:activeKey', 'tab5'); finish(); await flushPromises();
+      tabs.vm.$emit('update:activeKey', 'tab0'); finish(); await flushPromises();
+      pointer(w.get('.pager-viewport').element, 'pointerdown', 300);
+      pointer(window, 'pointermove', 270); tick(); await flushPromises();
+      const far = w.findAllComponents(Panel).find(panel => panel.props('tabKey') === 'tab5')!;
+      expect(far.props('preview')).toBe(false);
+      expect(far.props('selected')).toBe(false);
+    } finally { w.unmount(); }
+  });
+  it('相邻栏目在手指按下前已准备内容，普通链接也允许横滑且不会误打开', async () => {
+    const w = await render();
+    try {
+      const panels = w.findAllComponents(Panel);
+      expect(panels.every(panel => panel.props('preview'))).toBe(true);
+      const link = document.createElement('a'); link.href = '/feed/123';
+      w.get('.pager-page[data-tab-key="digest"] .panel-stub').element.appendChild(link);
+      pointer(link, 'pointerdown', 300); now += 100; pointer(window, 'pointermove', 100);
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+      link.dispatchEvent(click); expect(click.defaultPrevented).toBe(true);
+      pointer(window, 'pointerup', 100); finish(); await flushPromises();
+      expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('hot');
+    } finally { w.unmount(); }
   });
   it('竖向浏览和卡片内部横向滚动不触发整页切换', async () => {
     const w = await render(), viewport = w.find('.pager-viewport').element;
@@ -168,16 +214,16 @@ describe('移动首页一体滑动', () => {
     const w = await render(), original = w.find('.pager-page[data-tab-key="digest"] .panel-stub').element;
     const tabs = w.findComponent({ name: 'FeedTabs' }); tabs.vm.$emit('update:activeKey', 'hot');
     now += 100; const pending = [...frames.values()]; frames.clear(); pending.forEach(cb => cb(now)); await flushPromises();
-    expect(tabs.props('swipeProgress')).toBeGreaterThan(1); expect(tabs.props('swipeProgress')).toBeLessThan(2);
+    expect(progress.mock.lastCall![0]).toBeGreaterThan(1); expect(progress.mock.lastCall![0]).toBeLessThan(2);
     finish(); await flushPromises(); tabs.vm.$emit('update:activeKey', 'digest'); finish(); await flushPromises();
     expect(w.find('.pager-page[data-tab-key="digest"] .panel-stub').element).toBe(original); w.unmount();
   });
-  it('首尾越界拖动有阻尼并回弹，滑动后阻止点击内容', async () => {
+  it('首尾与数码栏目一样限制越界，滑动后阻止点击内容', async () => {
     const w = await render(), tabs = w.findComponent({ name: 'FeedTabs' });
     tabs.vm.$emit('update:activeKey', 'follow'); finish(); await flushPromises();
     const viewport = w.find('.pager-viewport').element;
-    pointer(viewport, 'pointerdown', 100); now += 100; pointer(window, 'pointermove', 200); await flushPromises();
-    expect(tabs.props('swipeProgress')).toBeCloseTo(-100 / 360 * .2);
+    pointer(viewport, 'pointerdown', 100); now += 100; pointer(window, 'pointermove', 200); tick(); await flushPromises();
+    expect(progress).toHaveBeenLastCalledWith(0);
     const click = new MouseEvent('click', { bubbles: true, cancelable: true }); viewport.dispatchEvent(click); expect(click.defaultPrevented).toBe(true);
     pointer(window, 'pointerup', 200); finish(); await flushPromises(); expect(tabs.props('activeKey')).toBe('follow'); w.unmount();
   });

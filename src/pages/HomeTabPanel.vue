@@ -18,6 +18,7 @@
         <div
           ref="followSubChannelsContainer"
           class="follow-subchannel-list custom-scrollbar"
+          data-discovery-horizontal-scroll
           aria-label="关注筛选"
           @wheel.passive="handleFollowSubChannelsWheel"
         >
@@ -37,6 +38,7 @@
 
       <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || loadingMore || isPrefetching || !props.selected }"
         ref="feedScrollContainer"
+        data-resource-scroll-root
         class="feed-scroll-container custom-scrollbar"
         @scroll="handleScroll"
         @load.capture="scheduleFeedEndCheck"
@@ -52,6 +54,7 @@
             v-if="headlineSubChannels.length"
             ref="subChannelsContainer"
             class="quick-icons-grid custom-scrollbar"
+            data-discovery-horizontal-scroll
             @wheel.passive="handleSubChannelsWheel"
           >
             <button
@@ -75,7 +78,7 @@
               <span class="channel-title">{{ channel.title }}</span>
             </button>
           </div>
-          <div v-if="headlineNestedSubChannels.length" class="headline-nested-tabs" role="tablist" aria-label="头条子栏目">
+          <div v-if="headlineNestedSubChannels.length" data-discovery-horizontal-scroll class="headline-nested-tabs" role="tablist" aria-label="头条子栏目">
             <button
               v-for="channel in headlineNestedSubChannels"
               :key="channel.key"
@@ -114,7 +117,7 @@
               </button>
             </div>
           </section>
-          <div v-if="hotSearches.length" class="hot-search-chips custom-scrollbar">
+          <div v-if="hotSearches.length" data-discovery-horizontal-scroll class="hot-search-chips custom-scrollbar">
             <button
               v-for="(keyword, idx) in hotSearches"
               :key="idx"
@@ -377,12 +380,12 @@ import { desktopFeedCommentsOpenKey } from '../utils/desktopFeedComments';
 import { isAnswerSearchEntity } from '../utils/searchEntities';
 import { isQuestionFeedEntity, isQuestionHomeTab } from '../utils/question';
 import { isRatingFeedEntity } from '../utils/rating';
-const props = withDefaults(defineProps<{ embedded?: boolean; tabKey?: string; tabs?: ConfigPageTab[]; selected?: boolean }>(), { embedded: false, selected: true });
+const props = withDefaults(defineProps<{ embedded?: boolean; tabKey?: string; tabs?: ConfigPageTab[]; selected?: boolean; preview?: boolean }>(), { embedded: false, selected: true, preview: false });
 import { feedPageVisibleKey, feedPageRenderKey, homePagerMovingKey } from '../utils/feedPageVisibility';
 const pagerMoving = inject(homePagerMovingKey, ref(false));
 const desktopCommentsOpen = inject(desktopFeedCommentsOpenKey, ref(false));
 provide(feedPageVisibleKey, computed(() => props.selected && !pagerMoving.value));
-provide(feedPageRenderKey, computed(() => props.selected || pagerMoving.value));
+provide(feedPageRenderKey, computed(() => props.selected || props.preview));
 
 const settingsStore = useSettingsStore();
 

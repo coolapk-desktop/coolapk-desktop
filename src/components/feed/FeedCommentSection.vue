@@ -43,7 +43,7 @@
     <Teleport to="body" :disabled="!floatingComposer">
     <div v-if="!floatingComposer || composerOpen" :class="floatingComposer ? ['official-composer-layer', { 'desktop-reply-composer': !officialDetail }] : 'inline-composer-layer'">
     <div v-if="floatingComposer" class="official-composer-backdrop" @click="closeComposer"></div>
-    <div class="comment-composer-box">
+    <div class="comment-composer-box" :data-resource-scroll-root="floatingComposer || undefined">
       <button v-if="floatingComposer" type="button" class="official-composer-close" aria-label="关闭评论输入" @click="closeComposer"><i class="fas fa-xmark"></i></button>
       <!-- 针对楼层的回复目标提示栏 -->
       <div v-if="replyTargetUser" class="comment-reply-target-bar">
@@ -76,7 +76,7 @@
       ></div>
 
       <!-- 已选图片预览列表 -->
-      <div v-if="images.length > 0" class="comment-media-preview">
+      <div v-if="images.length > 0" class="comment-media-preview" :data-resource-scroll-root="floatingComposer || undefined">
         <div v-for="(img, i) in images" :key="i" class="comment-media-thumb">
           <AppImage v-if="img.url" :src="img.preview" alt="评论配图" fit="cover" />
           <img v-else :src="img.preview" alt="评论配图" />

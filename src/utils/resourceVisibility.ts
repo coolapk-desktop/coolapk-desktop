@@ -3,6 +3,9 @@ const callbacks = new Map<Element, (visible: boolean) => void>();
 const observers = new Map<Element | null, { observer: IntersectionObserver; count: number }>();
 
 export function getResourceScrollRoot(element: Element): Element | null {
+  // 动态流/详情明确声明滚动边界，批量恢复图片和卡片时无需逐级读取计算样式。
+  const boundary = element.parentElement?.closest('[data-resource-scroll-root], .custom-scrollbar, [data-route-scroll]');
+  if (boundary?.hasAttribute('data-resource-scroll-root')) return boundary;
   let root: Element | null = element.parentElement;
   while (root && root !== document.body && !/(auto|scroll)/.test(getComputedStyle(root).overflowY)) root = root.parentElement;
   return root === document.body ? null : root;

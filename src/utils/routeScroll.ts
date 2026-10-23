@@ -32,7 +32,7 @@ function cancelPendingRestore() {
  * 不能遍历全部后代节点再读取 getComputedStyle：动态流页面常有数千节点，
  * 高速切路由时这会迫使渲染线程反复进行整页样式计算。
  */
-function getScrollContainers(onlyScrollable = true): HTMLElement[] {
+function getScrollContainers(): HTMLElement[] {
   if (typeof document === 'undefined') return [];
   const root = document.querySelector<HTMLElement>('.app-main-content');
   if (!root) return [];
@@ -50,12 +50,9 @@ function getScrollContainers(onlyScrollable = true): HTMLElement[] {
     ...Array.from(root.querySelectorAll<HTMLElement>(SCROLL_FRAME_SELECTOR)),
   ]);
 
-  return [...new Set([...candidates, ...frames])].filter((element) => (
-    !onlyScrollable || frames.has(element) || element.scrollHeight > element.clientHeight
-    || element.scrollWidth > element.clientWidth
-    || element.scrollTop !== 0
-    || element.scrollLeft !== 0
-  ));
+  // 记录声明的容器（含零位置）即可；保存位置时查询 scrollHeight/clientHeight
+  // 会在 popstate 的同步导航处理中强制完成整页布局。
+  return [...new Set([...candidates, ...frames])];
 }
 
 /** 在路由离开前保存页面内各滚动容器的位置。 */
@@ -81,7 +78,7 @@ export async function restoreRouteScrollPosition(routeKey: string): Promise<void
   if (generation !== restoreGeneration) return;
 
   // 缓存页面接回后按原节点身份查找，不把旧实例的位置套到新创建的同路由页面。
-  const positions = getScrollContainers(false).flatMap(element => {
+  const positions = getScrollContainers().flatMap(element => {
     const position = elementScrollPositions.get(element)?.get(routeKey);
     return position ? [{ element, ...position }] : [];
   });

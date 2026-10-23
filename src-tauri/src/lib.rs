@@ -821,6 +821,7 @@ fn register_windows_notification_identity(app: &tauri::AppHandle) -> Result<(), 
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 pub(crate) fn escape_notification_xml(value: &str) -> String {
     value
         .replace('&', "&amp;")

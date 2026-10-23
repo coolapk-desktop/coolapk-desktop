@@ -14,7 +14,14 @@ const androidActivityDir = join(androidDir, 'app', 'src', 'main', 'java', 'com',
 const keystoreProperties = join(androidDir, 'keystore.properties');
 const tauriCli = join(root, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
 const initOnly = process.argv.includes('--init-only');
-const forwardedArgs = process.argv.slice(2).filter((arg) => arg !== '--init-only');
+const fastRelease = process.argv.includes('--fast-release');
+const forwardedArgs = process.argv.slice(2).filter((arg) => !['--init-only', '--fast-release'].includes(arg));
+if (fastRelease && forwardedArgs.includes('--debug')) throw new Error('--fast-release 不能与 --debug 同时使用');
+if (fastRelease) {
+  // 仅用于本地优化构建；正式发布仍使用 Cargo.toml 的完整 LTO 配置。
+  process.env.CARGO_PROFILE_RELEASE_LTO = 'thin';
+  process.env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = '16';
+}
 
 function latestDirectory(directory) {
   if (!existsSync(directory)) return '';
@@ -103,9 +110,39 @@ function ensureAndroidProject() {
   if (!contents.includes(pathCheckSetting)) {
     appendFileSync(gradleProperties, `\n${pathCheckSetting}\n`, 'utf8');
   }
+  // 中文仓库路径需要此兼容开关；仅排除它和提示配置本身的实验选项提示。
+  const knownOption = 'android.suppressUnsupportedOptionWarnings=android.overridePathCheck,android.suppressUnsupportedOptionWarnings';
+  const currentProperties = readFileSync(gradleProperties, 'utf8');
+  writeFileSync(gradleProperties, /^android\.suppressUnsupportedOptionWarnings=.*$/m.test(currentProperties)
+    ? currentProperties.replace(/^android\.suppressUnsupportedOptionWarnings=.*$/m, knownOption)
+    : `${currentProperties}\n${knownOption}\n`, 'utf8');
+
+  const projectBuildPath = join(androidDir, 'build.gradle.kts');
+  let projectBuild = readFileSync(projectBuildPath, 'utf8')
+    .replace(/org\.jetbrains\.kotlin:kotlin-gradle-plugin:[\d.]+/g, 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21');
+  if (!projectBuild.includes('// coolapk-jvm-target')) {
+    projectBuild += `\n// coolapk-jvm-target\nallprojects {\n    afterEvaluate {\n        extensions.findByType<com.android.build.gradle.BaseExtension>()?.compileOptions?.apply {\n            sourceCompatibility = JavaVersion.VERSION_11\n            targetCompatibility = JavaVersion.VERSION_11\n        }\n        tasks.withType<JavaCompile>().configureEach {\n            sourceCompatibility = "11"\n            targetCompatibility = "11"\n        }\n        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {\n            compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)\n            // Windows 跨盘依赖无法生成相对路径的增量缓存；Gradle 仍会复用未变化任务。\n            if (project.projectDir.toPath().root != rootProject.projectDir.toPath().root) incremental = false\n        }\n    }\n}\n`;
+  }
+  writeFileSync(projectBuildPath, projectBuild, 'utf8');
+
+  const buildTaskPath = join(androidDir, 'buildSrc', 'src', 'main', 'java', 'com', 'coolapk', 'desktop', 'kotlin', 'BuildTask.kt');
+  let buildTask = readFileSync(buildTaskPath, 'utf8');
+  if (buildTask.includes('project.exec {')) {
+    buildTask = `import javax.inject.Inject\nimport org.gradle.process.ExecOperations\n${buildTask}`
+      .replace('open class BuildTask : DefaultTask()', 'open class BuildTask @Inject constructor(private val execOperations: ExecOperations) : DefaultTask()')
+      .replace('project.exec {', 'execOperations.exec {');
+  }
+  // TaskAction 执行阶段不再访问 Project；路径在配置阶段保存，日志使用任务自身的 logger。
+  if (!buildTask.includes('val cliProjectDir: File')) {
+    buildTask = buildTask.replace('    @Input', '    @get:org.gradle.api.tasks.Internal\n    val cliProjectDir: File = project.projectDir\n\n    @Input');
+  }
+  buildTask = buildTask.replaceAll('File(project.projectDir, rootDirRel)', 'File(cliProjectDir, rootDirRel)')
+    .replaceAll('project.logger.', 'logger.');
+  writeFileSync(buildTaskPath, buildTask, 'utf8');
 
   const signingMarker = '// coolapk-android-release-signing';
   let buildGradle = readFileSync(appBuildGradle, 'utf8');
+  buildGradle = buildGradle.replace(/    kotlinOptions\s*\{\s*jvmTarget = "1\.8"\s*\}/, '');
   if (!buildGradle.includes(signingMarker)) {
     buildGradle = buildGradle.replace(
       '\nandroid {',
@@ -242,7 +279,7 @@ const signingConfigured = configureSigning();
 if (!initOnly) {
   const buildArgs = forwardedArgs.length
     ? forwardedArgs
-    : ['--debug', '--target', 'aarch64', '--apk'];
+    : [...(fastRelease ? [] : ['--debug']), '--target', 'aarch64', '--apk'];
   if (!buildArgs.includes('--debug') && !signingConfigured) {
     throw new Error('Release APK/AAB 必须签名，请先配置 Android 签名环境变量。');
   }

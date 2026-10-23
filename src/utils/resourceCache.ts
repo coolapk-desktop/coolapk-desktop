@@ -56,9 +56,17 @@ function createEntry(url: string, value: string): ResourceEntry {
   const header = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(value);
   if (!header || typeof URL.createObjectURL !== 'function') return entry;
   try {
-    const decoded = atob(value.slice(header[0].length));
-    const bytes = new Uint8Array(decoded.length);
-    for (let index = 0; index < decoded.length; index++) bytes[index] = decoded.charCodeAt(index);
+    const payload = value.slice(header[0].length);
+    const decoder = Uint8Array as typeof Uint8Array & { fromBase64?: (value: string) => Uint8Array<ArrayBuffer> };
+    let bytes: Uint8Array<ArrayBuffer>;
+    if (decoder.fromBase64) {
+      // 新版 WebView 直接解码为字节，避免在 JS 主线程生成中间字符串并逐字节复制。
+      bytes = decoder.fromBase64(payload);
+    } else {
+      const decoded = atob(payload);
+      bytes = new Uint8Array(decoded.length);
+      for (let index = 0; index < decoded.length; index++) bytes[index] = decoded.charCodeAt(index);
+    }
     entry.src = URL.createObjectURL(new Blob([bytes], { type: header[1] }));
     entry.binaryBytes = bytes.byteLength;
     objectUrls.set(entry.src, entry);

@@ -747,18 +747,15 @@ pub fn has_package_identity() -> bool {
     status == ERROR_INSUFFICIENT_BUFFER
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn has_package_identity() -> bool {
-    false
-}
-
 /// Windows 11 的内部版本起点。低于它即为 Windows 10。
+#[cfg(any(windows, test))]
 const WINDOWS_11_FIRST_BUILD: u32 = 22000;
 
 /// 内部版本号是否属于 Windows 10。
 ///
 /// 单列成函数是为了让边界可以被单元测试钉住 —— 直接查系统的那一层无法在
 /// CI 上断言，因为 Windows runner 的版本会随镜像变化。
+#[cfg(any(windows, test))]
 fn is_windows_10_build(build: u32) -> bool {
     build < WINDOWS_11_FIRST_BUILD
 }
@@ -878,9 +875,11 @@ pub fn supports_live_tile() -> bool {
 /// **必须与 `msix/AppxManifest.xml` 的 `Application/@Id` 逐字一致** ——
 /// AUMID 的组成是 `<PackageFamilyName>!<ApplicationId>`，写错就落到一个
 /// 清单里不存在的身份上。
+#[cfg(any(windows, test))]
 const PACKAGE_APPLICATION_ID: &str = "CoolapkDesktop";
 
 /// 组装打包形态的 AUMID。
+#[cfg(any(windows, test))]
 fn packaged_aumid(package_family_name: &str) -> String {
     format!("{package_family_name}!{PACKAGE_APPLICATION_ID}")
 }
@@ -920,6 +919,7 @@ fn current_package_family_name() -> Option<String> {
 /// 有包标识时传未打包的 BareId，通知**仍会投递**（已实测确认），但系统会把它
 /// 解析成 `<PackageFamilyName>!<BareId>` —— 一个**清单里并不存在的 Application Id**。
 /// 结果是通知的归属身份不对：它挂在那个幻影身份下，而不是本应用声明的应用上。
+#[cfg(any(windows, test))]
 pub fn notification_aumid(bare_id: &str) -> String {
     #[cfg(target_os = "windows")]
     if let Some(package_family_name) = current_package_family_name() {
@@ -932,12 +932,16 @@ pub fn notification_aumid(bare_id: &str) -> String {
 pub const MAX_TILE_ITEMS: usize = 5;
 
 /// 正文截断上限，按 Unicode 字符计（非字节）。
+#[cfg(any(windows, test))]
 pub const MAX_MESSAGE_CHARS: usize = 160;
 
 /// 供磁贴渲染的一条内容。
 pub struct TileItem {
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
     pub user_name: String,
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
     pub message: String,
+    #[cfg_attr(not(any(windows, test)), allow(dead_code))]
     pub avatar_url: Option<String>,
 }
 
@@ -948,6 +952,7 @@ pub struct TileItem {
 /// - 按字节截会切出半个中文字符（中文每字 3 字节）
 /// - 按 `char`（Unicode 标量值）截会把 ZWJ 组合 emoji 从中间切开 ——
 ///   👨‍👩‍👧‍👦 是 7 个标量值但只是 **1 个**字形簇，数成 7 个就会在边界处切碎
+#[cfg(any(windows, test))]
 pub fn truncate_message(input: &str) -> String {
     use unicode_segmentation::UnicodeSegmentation;
 
@@ -965,6 +970,7 @@ pub fn truncate_message(input: &str) -> String {
 ///
 /// 形状约束（同机实测得来，见模块文档注释）：**不使用 `<adaptive>` 包裹层**，
 /// 自适应子元素直接位于 `<binding>` 之下；`<visual>` 不带 `version` 属性。
+#[cfg(any(windows, test))]
 pub fn build_tile_xml(item: &TileItem) -> String {
     let user = crate::escape_notification_xml(&item.user_name);
     let message = crate::escape_notification_xml(&truncate_message(&item.message));

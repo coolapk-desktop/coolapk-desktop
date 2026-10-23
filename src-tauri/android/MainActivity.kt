@@ -184,7 +184,7 @@ class MainActivity : TauriActivity() {
     }
 
     @Keep
-    fun getSafeAreaTop(unused: String): String = topSafeAreaPx.toString()
+    fun getSafeAreaTop(@Suppress("UNUSED_PARAMETER") unused: String): String = topSafeAreaPx.toString()
 
     private fun syncWebSafeArea(top: Int) {
         topSafeAreaPx = top
@@ -193,7 +193,7 @@ class MainActivity : TauriActivity() {
     }
 
     @Keep
-    fun getRuntimeInfo(unused: String): String {
+    fun getRuntimeInfo(@Suppress("UNUSED_PARAMETER") unused: String): String {
         val webview = androidx.webkit.WebViewCompat.getCurrentWebViewPackage(this)
         fun safe(value: String?): String = (value ?: "unavailable").replace(Regex("[^A-Za-z0-9._ -]"), "_").take(96)
         return org.json.JSONObject().apply {
@@ -254,7 +254,7 @@ class MainActivity : TauriActivity() {
     } catch (error: Exception) { "error:${error.message ?: error.javaClass.simpleName}" }
 
     @Keep
-    fun backgroundNotificationState(unused: String): String = when {
+    fun backgroundNotificationState(@Suppress("UNUSED_PARAMETER") unused: String): String = when {
         BackgroundNotificationService.failure != null -> "error:${BackgroundNotificationService.failure}"
         !BackgroundNotificationService.active -> "stopped"
         BackgroundNotificationService.mainVisible -> "foreground"
@@ -299,7 +299,7 @@ class MainActivity : TauriActivity() {
             contentResolver.openOutputStream(uri)?.use { output -> file.inputStream().use { it.copyTo(output) } }
                 ?: throw IllegalStateException("无法写入所选文件")
             if (file.extension.lowercase() in listOf("apk", "xapk", "apks")) {
-                val flags = (data?.flags ?: 0) and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                 contentResolver.takePersistableUriPermission(uri, flags)
                 rememberPublishedApk(file, uri)
             }
@@ -311,7 +311,7 @@ class MainActivity : TauriActivity() {
     }
 
     @Keep
-    fun takeSavedFileResult(unused: String): String = saveResult
+    fun takeSavedFileResult(@Suppress("UNUSED_PARAMETER") unused: String): String = saveResult
 
     @Keep
     fun publishSavedFile(path: String): String = try {
@@ -413,6 +413,8 @@ class MainActivity : TauriActivity() {
         super.onCreate(savedInstanceState)
         applySystemBarTheme(resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES)
         // 保证旧版 Android 也派发键盘遮挡区域，由原生容器统一避让。
+        // 旧版 Android 仍依赖此模式派发 IME 区域，保留兼容行为。
+        @Suppress("DEPRECATION")
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         // 顶部由网页安全区避让，让内容可以绘制在透明状态栏后；左右、底部和键盘仍由原生处理。
         val content = findViewById<View>(android.R.id.content)

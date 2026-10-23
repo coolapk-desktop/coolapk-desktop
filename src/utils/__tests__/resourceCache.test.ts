@@ -128,6 +128,25 @@ describe('资源缓存', () => {
     }
   });
 
+  it.each([true, false])('原生 Base64 解码可用=%s 时保持原始字节并兼容旧内核', async native => {
+    const descriptor = Object.getOwnPropertyDescriptor(Uint8Array, 'fromBase64');
+    const expected = new Uint8Array([0, 255, 128, 71, 73, 70]);
+    const decode = vi.fn(() => expected);
+    Object.defineProperty(Uint8Array, 'fromBase64', { configurable: true, value: native ? decode : undefined });
+    const atobSpy = vi.spyOn(globalThis, 'atob');
+    try {
+      const src = await loadImageResource('https://img.example/native-base64', async () => 'data:image/gif;base64,AP+AR0lG');
+      expect(new Uint8Array(await blobs.get(src)!.arrayBuffer())).toEqual(expected);
+      if (native) {
+        expect(decode).toHaveBeenCalledWith('AP+AR0lG');
+        expect(atobSpy).not.toHaveBeenCalled();
+      } else expect(atobSpy).toHaveBeenCalledWith('AP+AR0lG');
+    } finally {
+      if (descriptor) Object.defineProperty(Uint8Array, 'fromBase64', descriptor);
+      else Reflect.deleteProperty(Uint8Array, 'fromBase64');
+    }
+  });
+
   it('不支持 Object URL 时仍使用原数据地址', async () => {
     vi.spyOn(URL, 'createObjectURL').mockImplementation(() => { throw new Error('unavailable'); });
     const value = 'data:image/png;base64,YQ==';

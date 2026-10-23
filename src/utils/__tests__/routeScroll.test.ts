@@ -8,6 +8,21 @@ describe('route scroll restoration', () => {
     vi.restoreAllMocks();
   });
 
+  it('saves declared containers without measuring overflow during navigation', async () => {
+    document.body.innerHTML = '<main class="app-main-content"><section data-route-scroll></section></main>';
+    const page = document.querySelector<HTMLElement>('section')!;
+    for (const key of ['scrollHeight', 'clientHeight', 'scrollWidth', 'clientWidth']) {
+      Object.defineProperty(page, key, { get() { throw new Error(`unexpected layout read: ${key}`); } });
+    }
+    page.scrollTop = 280;
+    saveRouteScrollPosition('/no-layout-read');
+    page.scrollTop = 0;
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    await restoreRouteScrollPosition('/no-layout-read');
+    expect(page.scrollTop).toBe(280);
+  });
+
   it('从评论返回时恢复正文位置，并将原本未滚动的裁切外框归零', async () => {
     document.body.innerHTML = '<main class="app-main-content"><div class="app-page-content"><div class="route-transition-stage"><div class="feed-scroll-container custom-scrollbar"></div></div></div></main>';
     const root = document.querySelector<HTMLElement>('main')!;

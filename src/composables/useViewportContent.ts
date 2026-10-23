@@ -1,7 +1,7 @@
 import { computed, nextTick, onActivated, onDeactivated, onUnmounted, ref, watch, type Ref } from 'vue';
 import { getResourceScrollRoot } from '../utils/resourceVisibility';
 
-type CardObserver = { visibility: (visible: boolean) => void; resize: () => void };
+type CardObserver = { visibility: (visible: boolean, height: number) => void; resize: () => void };
 const cards = new Map<Element, CardObserver & { reobserve: () => void }>();
 const observers = new Map<Element | null, { observer: IntersectionObserver; count: number }>();
 let resizeFrame = 0;
@@ -21,7 +21,7 @@ function observeCard(element: Element, callback: CardObserver) {
   let group = observers.get(root);
   if (!group) {
     const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) cards.get(entry.target)?.visibility(entry.isIntersecting);
+      for (const entry of entries) cards.get(entry.target)?.visibility(entry.isIntersecting, entry.boundingClientRect.height);
     }, { root, rootMargin: '2000px 0px' });
     group = { observer, count: 0 };
     observers.set(root, group);
@@ -57,6 +57,7 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
   const retained = ref(false);
   const height = ref(0);
   const active = ref(true);
+  let viewportWidth = window.innerWidth;
   let stop = () => {};
   const renderViewportContent = computed(() => retained.value || protectedContent.value
     || (active.value && pageVisible.value && (nearViewport.value || !height.value)));
@@ -68,8 +69,14 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
     stop();
     stop = () => {};
     if (!active.value || !pageVisible.value || !element.value || retained.value || protectedContent.value || typeof IntersectionObserver === 'undefined') return;
+    // 隐藏期间旋转手机/调整桌面窗口后，旧占位高度需要重新测量。
+    if (viewportWidth !== window.innerWidth) {
+      viewportWidth = window.innerWidth;
+      height.value = 0;
+      nearViewport.value = true;
+    }
     stop = observeCard(element.value, {
-      visibility(visible) {
+      visibility(visible, measured) {
         if (visible) nearViewport.value = true;
         else {
           const selection = window.getSelection();
@@ -77,7 +84,6 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
             retainViewportContent();
             return;
           }
-          const measured = element.value?.getBoundingClientRect().height || 0;
           if (measured > 0) {
             height.value = measured;
             nearViewport.value = false;
@@ -87,12 +93,13 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
       resize() { height.value = 0; nearViewport.value = true; },
     });
   }
-  watch([element, retained, protectedContent, pageVisible], (_, previous) => {
-    if (retained.value || protectedContent.value || (pageVisible.value && previous && !previous[3])) nearViewport.value = true;
+  watch([element, retained, protectedContent, pageVisible], () => {
+    if (retained.value || protectedContent.value) nearViewport.value = true;
     observe();
   }, { flush: 'post' });
   onDeactivated(() => { active.value = false; stop(); });
-  onActivated(() => { if (!active.value) { active.value = true; nearViewport.value = true; observe(); } });
+  // 返回缓存页面时沿用离屏占位；不能先重建整页卡片，再等观察器将它们卸载。
+  onActivated(() => { if (!active.value) { active.value = true; observe(); } });
   onUnmounted(() => { active.value = false; stop(); });
   return { renderViewportContent, viewportPlaceholderStyle, retainViewportContent };
 }

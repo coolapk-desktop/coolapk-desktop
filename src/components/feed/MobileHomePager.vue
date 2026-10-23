@@ -2,15 +2,15 @@
   <div class="mobile-home-pager" :class="{ 'desktop-home-pager': !mobile, 'is-pager-moving': moving }">
     <div class="home-main-column">
     <div class="home-toolbar">
-    <FeedTabs :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="position" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
+    <FeedTabs ref="tabBar" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="activeIndex" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
     <FeedLayoutToggle v-if="!mobile" v-model="settings.settings.feedLayout" />
     </div>
     <div v-if="error" class="pager-warning" role="status"><span>{{ error }}</span><button type="button" @click="loadTabs">重试</button></div>
     <div v-if="!tabs.length" class="pager-state">正在加载栏目…</div>
-    <div v-else ref="viewport" class="pager-viewport" @pointerdown="startDrag" @click.capture="blockSwipeClick" @wheel="wheel">
-      <div class="pager-track" :style="{ transform: `translate3d(${-position * width}px,0,0)` }">
+    <div v-else ref="viewport" class="pager-viewport" @pointerdown="startDrag" @touchmove="preventSwipeScroll" @click.capture="blockSwipeClick" @wheel="wheel">
+      <div ref="track" class="pager-track">
         <section v-for="(tab, index) in tabs" :key="getHomeTabKey(tab)" class="pager-page" :style="{ left: `${index * 100}%` }" :inert="index !== activeIndex || undefined" :aria-hidden="index !== activeIndex" :data-tab-key="getHomeTabKey(tab)">
-          <HomeTabPanel v-if="visited.has(getHomeTabKey(tab)) || index === activeIndex || (mobile && Math.abs(index - activeIndex) <= 1)" :ref="el => setPanel(getHomeTabKey(tab), el)" embedded :tab-key="getHomeTabKey(tab)" :tabs="serverTabs" :selected="index === activeIndex" />
+          <HomeTabPanel v-if="visited.has(getHomeTabKey(tab)) || index === activeIndex || (mobile && Math.abs(index - activeIndex) <= 1)" :ref="el => setPanel(getHomeTabKey(tab), el)" embedded :tab-key="getHomeTabKey(tab)" :tabs="serverTabs" :selected="index === activeIndex" :preview="mobile && (Math.abs(index - activeIndex) <= 1 || (moving && index >= previewRange[0] && index <= previewRange[1]))" />
         </section>
       </div>
     </div>
@@ -40,7 +40,21 @@ const readingNavigation = inject(mobileReadingNavigationKey, undefined);
 const sidebarMounted = ref(!props.mobile);
 const settings = useSettingsStore();
 const serverTabs = ref<ConfigPageTab[]>([]), activeKey = ref(''), error = ref('');
-const position = ref(0), width = ref(1), viewport = ref<HTMLElement | null>(null);
+const viewport = ref<HTMLElement | null>(null), track = ref<HTMLElement | null>(null);
+const tabBar = ref<{ setSwipeProgress?: (position: number) => void } | null>(null);
+const previewRange = ref<[number, number]>([0, 0]);
+let position = 0, width = 1, moveFrame = 0, pendingPosition = 0;
+function setPosition(value: number) {
+  position = value;
+  if (track.value) track.value.style.transform = `translate3d(${-value * width}px,0,0)`;
+  tabBar.value?.setSwipeProgress?.(value);
+}
+function flushMove() {
+  if (moveFrame) { cancelAnimationFrame(moveFrame); moveFrame = 0; setPosition(pendingPosition); }
+}
+function preparePreview(target: number) {
+  previewRange.value = [Math.min(activeIndex.value, target) - 1, Math.max(activeIndex.value, target) + 1];
+}
 const moving = ref(false);
 watch(activeKey, () => readingNavigation?.reset());
 provide(homePagerMovingKey, moving);
@@ -90,25 +104,27 @@ async function loadTabs() {
     logDiagnostic('warn', 'home', 'tab_config_fallback', summarizeDiagnosticError(err));
   }
   activeKey.value = resolvePreferredHomeTab(tabs.value, settings.settings.defaultHomeTab);
-  position.value = activeIndex.value;
+  setPosition(activeIndex.value);
   visited.add(activeKey.value);
   await nextTick(); measure();
 }
 let frame = 0, clickUntil = 0;
 let stopObservingResize: (() => void) | undefined;
-type Drag = { id: number; x: number; y: number; origin: number; lastX: number; lastTime: number; velocity: number; axis: 'pending' | 'horizontal' };
+type Drag = { target: EventTarget | null; id: number; x: number; y: number; origin: number; time: number; axis: 'pending' | 'horizontal' };
 let drag: Drag | null = null;
 function stopAnimation() { cancelAnimationFrame(frame); frame = 0; }
 function settle(target: number) {
+  flushMove();
   stopAnimation();
   target = Math.max(0, Math.min(tabs.value.length - 1, target));
-  const from = position.value, start = performance.now();
-  const finish = () => { position.value = target; activeKey.value = getHomeTabKey(tabs.value[target]!); visited.add(activeKey.value); frame = 0; moving.value = false; };
+  const from = position, start = performance.now();
+  const finish = () => { setPosition(target); activeKey.value = getHomeTabKey(tabs.value[target]!); visited.add(activeKey.value); frame = 0; moving.value = false; };
   if (!props.mobile || window.matchMedia('(prefers-reduced-motion: reduce)').matches || Math.abs(target - from) < .001) { finish(); return; }
   moving.value = true;
+  preparePreview(target);
   const animate = (now: number) => {
-    const progress = Math.min(1, (now - start) / 260);
-    position.value = from + (target - from) * (1 - Math.pow(1 - progress, 3));
+    const progress = Math.min(1, (now - start) / 280);
+    setPosition(from + (target - from) * (1 - Math.pow(1 - progress, 3)));
     if (progress < 1) frame = requestAnimationFrame(animate); else finish();
   };
   frame = requestAnimationFrame(animate);
@@ -118,7 +134,7 @@ function select(key: string) {
   if (index < 0) return;
   drag = null;
   if (props.mobile) {
-    for (let i = Math.min(Math.floor(position.value), index); i <= Math.max(Math.ceil(position.value), index); i++) {
+    for (let i = Math.min(Math.floor(position), index); i <= Math.max(Math.ceil(position), index); i++) {
       const tab = tabs.value[i]; if (tab) visited.add(getHomeTabKey(tab));
     }
   } else {
@@ -141,27 +157,27 @@ function nestedScroller(target: EventTarget | null) {
   return false;
 }
 function startDrag(event: PointerEvent) {
-  if (!event.isPrimary || event.pointerType === 'mouse' || nestedScroller(event.target)) return;
-  if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+  if (!props.mobile || event.isPrimary === false || event.pointerType !== 'touch') return;
+  if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"],[data-discovery-horizontal-scroll]')) return;
+  flushMove();
   stopAnimation();
-  drag = { id: event.pointerId, x: event.clientX, y: event.clientY, origin: position.value, lastX: event.clientX, lastTime: performance.now(), velocity: 0, axis: 'pending' };
+  drag = { target: event.target, id: event.pointerId, x: event.clientX, y: event.clientY, origin: position, time: performance.now(), axis: 'pending' };
 }
 function moveDrag(event: PointerEvent) {
   if (!drag || drag.id !== event.pointerId) return;
   const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
   if (drag.axis === 'pending') {
-    if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
-    if (Math.abs(dx) <= Math.abs(dy) * 1.25) { drag = null; settle(activeIndex.value); return; }
+    if (Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx)) { drag = null; settle(activeIndex.value); return; }
+    if (Math.abs(dx) <= 8) return;
+    if (nestedScroller(drag.target)) { drag = null; return; }
     drag.axis = 'horizontal'; viewport.value?.setPointerCapture(event.pointerId);
+    preparePreview(activeIndex.value);
     moving.value = true;
   }
-  const now = performance.now(), elapsed = now - drag.lastTime;
-  if (elapsed > 0) drag.velocity = (event.clientX - drag.lastX) / elapsed;
-  drag.lastX = event.clientX; drag.lastTime = now;
-  const desired = drag.origin - dx / width.value, last = tabs.value.length - 1;
-  // 首尾保留阻尼，松手回到边界。
-  position.value = desired < 0 ? desired * .2 : desired > last ? last + (desired - last) * .2 : desired;
-  clickUntil = now + 500;
+  pendingPosition = Math.max(0, Math.min(tabs.value.length - 1, drag.origin - dx / width));
+  // 与数码栏目一样，每帧只更新轨道和指示条，不让整棵首页随触摸事件重新渲染。
+  if (!moveFrame) moveFrame = requestAnimationFrame(() => { moveFrame = 0; setPosition(pendingPosition); });
+  clickUntil = performance.now() + 350;
   event.preventDefault();
 }
 function endDrag(event: PointerEvent, cancelled = false) {
@@ -170,11 +186,12 @@ function endDrag(event: PointerEvent, cancelled = false) {
   if (gesture.axis !== 'horizontal') { settle(activeIndex.value); return; }
   if (viewport.value?.hasPointerCapture(event.pointerId)) viewport.value.releasePointerCapture(event.pointerId);
   const dx = event.clientX - gesture.x;
-  const velocity = performance.now() - gesture.lastTime > 100 ? 0 : gesture.velocity;
-  const change = !cancelled && (Math.abs(dx) > width.value * .22 || (Math.abs(dx) > 12 && Math.abs(velocity) > .45));
+  const fast = Math.abs(dx) > 24 && Math.abs(dx) / Math.max(1, performance.now() - gesture.time) > .35;
+  const change = !cancelled && (Math.abs(dx) > width * .2 || fast);
   settle(change ? activeIndex.value + (dx < 0 ? 1 : -1) : activeIndex.value);
-  clickUntil = performance.now() + 400;
+  clickUntil = performance.now() + 350;
 }
+function preventSwipeScroll(event: TouchEvent) { if (drag?.axis === 'horizontal' && event.cancelable) event.preventDefault(); }
 function cancelDrag(event: PointerEvent) { endDrag(event, true); }
 function pointerUp(event: PointerEvent) { endDrag(event); }
 function blockSwipeClick(event: MouseEvent) {
@@ -189,7 +206,11 @@ function wheel(event: WheelEvent) {
   if (Math.abs(wheelDelta) >= 56) { settle(activeIndex.value + (wheelDelta > 0 ? 1 : -1)); wheelDelta = 0; }
   clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { wheelDelta = 0; }, 260);
 }
-function measure() { width.value = Math.max(1, viewport.value?.clientWidth || 1); }
+function measure() {
+  const nextWidth = Math.max(1, viewport.value?.clientWidth || 1);
+  if (nextWidth !== width) { width = nextWidth; resetGesture(); }
+  else setPosition(position);
+}
 watch(() => props.mobile, () => {
   // 改变布局时结束未完成的手势，保留已选栏目及其页面实例。
   resetGesture();
@@ -206,9 +227,9 @@ function unbind() {
   resetGesture();
 }
 function resetGesture() {
-  drag = null; stopAnimation(); position.value = activeIndex.value; moving.value = false; clearTimeout(wheelTimer); wheelDelta = 0;
+  drag = null; stopAnimation(); cancelAnimationFrame(moveFrame); moveFrame = 0; setPosition(activeIndex.value); moving.value = false; clearTimeout(wheelTimer); wheelDelta = 0;
 }
-watch(tabs, () => { if (tabs.value.length && !tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = getHomeTabKey(tabs.value[0]!); if (!drag && !frame) position.value = activeIndex.value; });
+watch(tabs, () => { if (tabs.value.length && !tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = getHomeTabKey(tabs.value[0]!); if (!drag && !frame) setPosition(activeIndex.value); });
 function observeViewport() {
   stopObservingResize?.();
   stopObservingResize = viewport.value ? observeResizeOnFrame(viewport.value, measure) : undefined;
