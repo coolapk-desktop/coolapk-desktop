@@ -324,6 +324,7 @@ import { renderCoolapkRichText } from '../utils/richText';
 import { coolapkHtmlToPlainText } from '../utils/sanitizeHtml';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { clearMessageDraft, loadMessageDraft, saveMessageDraft } from '../utils/messageDrafts';
+import { isTouchMobilePlatform } from '../utils/platform';
 import { requestConfirmation } from '../utils/confirm';
 import { showToast } from '../utils/toast';
 import {
@@ -817,10 +818,11 @@ async function restoreDraft(session: any) {
   draftSaved.value = Boolean(inputText.value.trim());
   syncTextToEditor(inputText.value);
 
-  if (inputText.value) {
+  // 手机恢复草稿或分享链接时不抢焦点，避免 WebView 为显示光标上移整个页面并挤掉顶部安全区。
+  if (inputText.value && !isTouchMobilePlatform()) {
     void nextTick(() => {
       if (editorRef.value) {
-        editorRef.value.focus();
+        editorRef.value.focus({ preventScroll: true });
         const sel = window.getSelection();
         if (sel) {
           const range = document.createRange();

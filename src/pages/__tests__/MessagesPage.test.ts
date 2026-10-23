@@ -61,7 +61,7 @@ window.URL.revokeObjectURL = mocks.revokeObjectURL;
 import MessagesPage from '../MessagesPage.vue';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
-import { clearMessageDraft } from '../../utils/messageDrafts';
+import { clearMessageDraft, saveMessageDraft } from '../../utils/messageDrafts';
 
 describe('MessagesPage 粘贴图片发送功能', () => {
   let wrapper: any;
@@ -130,6 +130,8 @@ describe('MessagesPage 粘贴图片发送功能', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    delete mocks.route.query.initialText;
     if (wrapper) {
       wrapper.unmount();
       wrapper = null;
@@ -168,6 +170,29 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     }
     return wrapper;
   }
+
+  it.each(['share', 'draft'])('手机进入会话恢复 %s 时保留内容且不聚焦输入框', async (source) => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 16)');
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const text = 'https://www.coolapk.com/feed/123';
+    if (source === 'share') mocks.route.query.initialText = text;
+    else await saveMessageDraft('10001', '10001_20002', text);
+    const w = await mountMessagesPage();
+    expect(w.get('.message-rich-editor').text()).toBe(text);
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(w.get('.message-rich-editor').element);
+    expect(mocks.sendPrivateMessage).not.toHaveBeenCalled();
+  });
+
+  it('桌面恢复草稿时聚焦输入框且禁止浏览器滚动外层页面', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    await saveMessageDraft('10001', '10001_20002', '桌面草稿');
+    const w = await mountMessagesPage();
+    expect(w.get('.message-rich-editor').text()).toBe('桌面草稿');
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.activeElement).toBe(w.get('.message-rich-editor').element);
+  });
 
   it.each([true, false])('切换页面后恢复聊天位置，离开时位于底部=%s', async (atBottom) => {
     const visible = ref(true);
