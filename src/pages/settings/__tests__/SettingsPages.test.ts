@@ -82,6 +82,17 @@ function mountPage(component: Parameters<typeof mount>[0]) {
 }
 
 describe('设置页面交互', () => {
+  it('首页右栏热门资讯可从外观设置独立关闭', async () => {
+    const { wrapper, settings } = mountPage(AppearanceSettingsPage);
+    try {
+      const row = wrapper.findAll('.setting-row').find(item => item.find('.row-label').text() === '热门资讯');
+      expect(row).toBeDefined();
+      expect(settings.settings.showHomeHotNews).toBe(true);
+      await row!.get('.switch-input').setValue(false);
+      expect(settings.settings.showHomeHotNews).toBe(false);
+      expect(settings.settings.showHomeMonthlyRank).toBe(true);
+    } finally { wrapper.unmount(); }
+  });
   it('外观页只提供一个默认关闭的液态玻璃总开关', async () => {
     const { wrapper, settings } = mountPage(AppearanceSettingsPage);
     try {

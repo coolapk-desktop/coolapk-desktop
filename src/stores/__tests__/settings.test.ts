@@ -20,6 +20,22 @@ const fileStoreState = vi.hoisted(() => {
 vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: fileStoreState.load } }));
 
 describe('settings store', () => {
+  it('右栏资讯默认开启、热榜默认今日，并校验保存的范围', () => {
+    expect(normalizeSettings({})).toMatchObject({ showHomeHotNews: true, homeSidebarRankPeriod: 'day' });
+    expect(normalizeSettings({ showHomeHotNews: false, homeSidebarRankPeriod: 'week' })).toMatchObject({ showHomeHotNews: false, homeSidebarRankPeriod: 'week' });
+    expect(normalizeSettings({ homeSidebarRankPeriod: 'month' }).homeSidebarRankPeriod).toBe('month');
+    expect(normalizeSettings({ homeSidebarRankPeriod: 'invalid', showHomeHotNews: 'false' })).toMatchObject({ showHomeHotNews: true, homeSidebarRankPeriod: 'day' });
+  });
+
+  it('右栏资讯开关和热榜范围写入 settings.json 并可恢复', async () => {
+    (window as any).__TAURI_INTERNALS__ = {};
+    const store = useSettingsStore();
+    await store.initializeSettings();
+    store.settings.showHomeHotNews = false;
+    store.settings.homeSidebarRankPeriod = 'week';
+    await nextTick(); await store.flushSettings();
+    expect(normalizeSettings(Object.fromEntries(fileStoreState.values))).toMatchObject({ showHomeHotNews: false, homeSidebarRankPeriod: 'week' });
+  });
   it('图片自适应排列默认关闭，保留保存的布尔值并忽略无效配置', () => {
     expect(normalizeSettings({}).adaptiveFeedImages).toBe(false);
     expect(normalizeSettings({ adaptiveFeedImages: true }).adaptiveFeedImages).toBe(true);

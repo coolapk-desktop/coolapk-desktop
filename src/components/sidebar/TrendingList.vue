@@ -1,16 +1,21 @@
 <template>
   <div class="sidebar-card">
     <div class="card-header">
-      <h3 class="card-title">本月热榜</h3>
-      <button class="refresh-btn" title="刷新本月热榜" @click="fetchHot">
+      <h3 class="card-title">{{ currentPeriod.title }}</h3>
+      <div class="rank-controls">
+      <button class="refresh-btn period-prev" title="上一个热榜" aria-label="上一个热榜" @click="switchPeriod(-1)"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+      <button class="refresh-btn period-next" title="下一个热榜" aria-label="下一个热榜" @click="switchPeriod(1)"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+      <button class="refresh-btn" :title="`刷新${currentPeriod.title}`" @click="fetchHot">
         <i class="fas fa-sync-alt"></i>
       </button>
+      </div>
     </div>
 
     <div class="card-body custom-scrollbar">
       <div v-if="loading" class="loading-wrapper">
         <LoadingState text="正在获取热榜" />
       </div>
+      <div v-else-if="error" class="empty-wrapper"><ErrorState title="热榜加载失败" :message="error" @retry="fetchHot" /></div>
       <div v-else-if="items.length === 0" class="empty-wrapper">
         <EmptyState title="暂无热榜" />
       </div>
@@ -33,28 +38,50 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, ref, watch, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import LoadingState from '../common/LoadingState.vue';
 import EmptyState from '../common/EmptyState.vue';
+import ErrorState from '../common/ErrorState.vue';
+import { useSettingsStore } from '../../stores/settings';
+import { hasFeedRenderableContent } from '../../utils/feedFilter';
 import { openFeedDetail } from '../../utils/feedNavigation';
 
 const router = useRouter();
 const loading = ref(false);
 const items = ref<any[]>([]);
+const error = ref('');
+const settings = useSettingsStore();
+const periods = [{ key: 'day', title: '今日热榜' }, { key: 'week', title: '本周热榜' }, { key: 'month', title: '本月热榜' }] as const;
+const currentPeriod = computed(() => periods.find(period => period.key === settings.settings.homeSidebarRankPeriod) || periods[0]);
+let sequence = 0;
+
+/** 保存到统一设置，重建右栏或重启应用后仍恢复用户选中的时间范围。 */
+function switchPeriod(direction: number) {
+  const index = periods.findIndex(period => period.key === currentPeriod.value.key);
+  settings.settings.homeSidebarRankPeriod = periods[(index + direction + periods.length) % periods.length].key;
+}
 
 async function fetchHot() {
+  const request = ++sequence;
+  const period = currentPeriod.value.key;
   loading.value = true;
+  error.value = '';
+  items.value = [];
   try {
-    const res = await CoolapkTauriAPI.getRankFeeds('month', 1);
+    // 今日沿用官方今日热门参数；周榜、月榜复用现有统计接口。
+    const res = period === 'day'
+      ? await CoolapkTauriAPI.getDiscoveryPageData({ url: '#/feed/statList?cacheExpires=300&statType=day&sortField=rank_score&filterRepeatQuestionAnswer=true&replyRowsLimit=1', title: '今日热榜', page: 1 })
+      : await CoolapkTauriAPI.getRankFeeds(period, 1);
+    if (request !== sequence) return;
     if (res && res.data) {
-      items.value = res.data.filter((i: any) => i.title || i.message);
+      items.value = res.data.filter(hasFeedRenderableContent);
     }
   } catch (err) {
-    console.error('Failed to fetch hot feeds', err);
+    if (request === sequence) error.value = err instanceof Error ? err.message : '请稍后重试';
   } finally {
-    loading.value = false;
+    if (request === sequence) loading.value = false;
   }
 }
 
@@ -64,9 +91,8 @@ function openFeed(item: any) {
   }
 }
 
-onMounted(() => {
-  fetchHot();
-});
+watch(() => settings.settings.homeSidebarRankPeriod, fetchHot, { immediate: true });
+onUnmounted(() => { sequence += 1; });
 </script>
 
 <style scoped>
@@ -99,12 +125,18 @@ onMounted(() => {
 }
 
 .refresh-btn {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
   color: var(--text-tertiary);
   font-size: 12px;
   padding: 4px;
   border-radius: var(--radius-xs);
   transition: color var(--duration-fast) var(--ease-default);
 }
+
+.rank-controls { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.rank-controls button:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 
 .refresh-btn:hover {
   color: var(--brand-primary);

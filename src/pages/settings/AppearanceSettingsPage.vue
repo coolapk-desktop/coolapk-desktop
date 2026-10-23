@@ -204,12 +204,17 @@
 
     <div v-if="!isAndroidTauri" class="setting-group">
       <h4 class="group-title">首页右侧栏</h4>
-      <p class="group-sub">分别控制首页右侧的热榜和热门话题卡片，关闭后不再请求对应数据</p>
+      <p class="group-sub">分别控制首页右侧的热门资讯、热榜和热门话题卡片，关闭后不再请求对应数据</p>
+
+      <div class="setting-row">
+        <div class="row-info"><span class="row-label">热门资讯</span><span class="row-sub">在首页右侧栏第一块显示热门资讯</span></div>
+        <AppSwitch v-model="settingsStore.settings.showHomeHotNews" />
+      </div>
 
       <div class="setting-row">
         <div class="row-info">
-          <span class="row-label">本月热榜</span>
-          <span class="row-sub">显示首页右侧的本月动态热榜</span>
+          <span class="row-label">动态热榜</span>
+          <span class="row-sub">支持今日、本周、本月切换，并记住上次选择</span>
         </div>
         <AppSwitch v-model="settingsStore.settings.showHomeMonthlyRank" />
       </div>

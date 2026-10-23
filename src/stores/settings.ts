@@ -146,6 +146,8 @@ const defaultSettings: AppSettings = {
   showDeviceInfo: true,
   showFeedBackground: true,
   showHomeMonthlyRank: true,
+  showHomeHotNews: true,
+  homeSidebarRankPeriod: 'day',
   showHomeHotTopics: true,
   autoHideMobileNavigation: true,
   headerGlass: false,
@@ -321,6 +323,8 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.showDeviceInfo = readBoolean(source.showDeviceInfo, result.showDeviceInfo);
   result.showFeedBackground = readBoolean(source.showFeedBackground, result.showFeedBackground);
   result.showHomeMonthlyRank = readBoolean(source.showHomeMonthlyRank, result.showHomeMonthlyRank);
+  result.showHomeHotNews = readBoolean(source.showHomeHotNews, result.showHomeHotNews);
+  result.homeSidebarRankPeriod = ['day', 'week', 'month'].includes(String(source.homeSidebarRankPeriod)) ? source.homeSidebarRankPeriod as AppSettings['homeSidebarRankPeriod'] : result.homeSidebarRankPeriod;
   result.showHomeHotTopics = readBoolean(source.showHomeHotTopics, result.showHomeHotTopics);
   result.autoHideMobileNavigation = readBoolean(source.autoHideMobileNavigation, result.autoHideMobileNavigation);
   result.headerGlass = readBoolean(source.headerGlass, result.headerGlass);

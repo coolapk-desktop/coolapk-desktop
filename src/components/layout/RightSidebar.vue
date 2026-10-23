@@ -1,5 +1,6 @@
 <template>
   <aside class="right-sidebar custom-scrollbar">
+    <HotNewsList v-if="props.showHotNews" />
     <TrendingList v-if="props.showMonthlyRank" />
     <HotTopicList v-if="props.showHotTopics" />
   </aside>
@@ -8,12 +9,15 @@
 <script setup lang="ts">
 import TrendingList from '../sidebar/TrendingList.vue';
 import HotTopicList from '../sidebar/HotTopicList.vue';
+import HotNewsList from '../sidebar/HotNewsList.vue';
 
 const props = withDefaults(defineProps<{
   showMonthlyRank?: boolean;
+  showHotNews?: boolean;
   showHotTopics?: boolean;
 }>(), {
   showMonthlyRank: true,
+  showHotNews: true,
   showHotTopics: true,
 });
 </script>

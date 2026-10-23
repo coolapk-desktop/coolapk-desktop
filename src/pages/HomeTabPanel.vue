@@ -88,33 +88,47 @@
           </div>
         </div>
 
-        <!-- 2. 热榜 Tab 专属：周榜/月榜 + 热门搜索词 + 排序名次 -->
+        <!-- APK 热榜首页：榜单入口、热点话题与热搜均使用服务端实体。 -->
         <div v-if="isHotTab" class="hot-header-section">
           <!-- 5 大榜单金刚组 -->
           <div class="hot-ranks-row">
             <button
-              v-for="rank in hotRanks"
-              :key="rank.key"
+              v-for="(rank, index) in hotRanks"
+              :key="getEntityKey(rank, index)"
               type="button"
-              :class="['rank-action-item', { active: activeHotRank === rank.key }]"
-              @click="selectHotRank(rank.key)"
+              class="rank-action-item"
+              @click="openPageEntity(rank)"
             >
-              <span :class="['rank-icon-bg', rank.color]"><i :class="rank.icon"></i></span>
-              <span>{{ rank.label }}</span>
+              <AppImage v-if="rank.pic" :src="rank.pic" class="rank-official-icon" fit="contain" />
+              <span v-else class="rank-icon-bg bg-orange"><i class="fas fa-chart-line"></i></span>
+              <span>{{ rank.title }}</span>
             </button>
           </div>
 
-          <!-- 热门搜索词 Chips 胶囊标签 -->
-          <div v-if="hotKeywords.length" class="hot-search-chips custom-scrollbar">
+          <section v-for="(card, index) in hotTopicCards" :key="getEntityKey(card, index)" class="hot-topics">
+            <header v-if="card.title" class="hot-topics-header"><span>{{ card.title }}</span><button v-if="card.url" type="button" aria-label="更多热点资讯" @click="openHotHeaderEntity(card)">更多 <i class="fas fa-chevron-right" aria-hidden="true"></i></button></header>
+            <div class="hot-topics-grid">
+              <button v-for="(topic, topicIndex) in card.entities" :key="getEntityKey(topic, topicIndex)" type="button" class="hot-topic" :title="topic.title" @click="openHotHeaderEntity(topic)">
+                <AppImage v-if="getEntityImage(topic)" :src="getEntityImage(topic)" class="hot-topic-icon" fit="cover" />
+                <span class="hot-topic-title">{{ topic.title }}</span>
+              </button>
+            </div>
+          </section>
+          <div v-if="hotSearches.length" class="hot-search-chips custom-scrollbar">
             <button
-              v-for="(kw, idx) in hotKeywords"
+              v-for="(keyword, idx) in hotSearches"
               :key="idx"
               class="chip-btn"
-              @click="quickSearch(kw)"
+              @click="openHotHeaderEntity(keyword)"
             >
-              {{ kw }}
+              {{ keyword.title }}
             </button>
           </div>
+        </div>
+
+        <!-- SelectorLinkViewHolder：默认 selectedTab，点击替换当前列表，分类栏按 cardFixedToTop 吸顶。 -->
+        <div v-if="isHotTab && hotChannels.length" class="hot-channel-tabs custom-scrollbar" role="tablist" aria-label="热榜分类" :class="{ 'is-fixed': hotChannelsFixed }">
+          <button v-for="channel in hotChannels" :key="channel.url" type="button" role="tab" :aria-selected="selectedHotChannelUrl === channel.url" :class="['hot-channel-tab', { active: selectedHotChannelUrl === channel.url }]" @click="selectHotChannel(channel)">{{ channel.title }}</button>
         </div>
 
         <!-- 3. 快讯 Tab 专属：酷安快讯 Banner -->
@@ -261,7 +275,6 @@
                 v-else-if="isQuestionTab && isQuestionHomeItem(entry.item)"
                 :question="entry.item"
                 :style="{ order: entry.index }"
-                :rank-index="isHotTab ? entry.index + 1 : undefined"
                 :class="{ 'feed-card-focused': entry.index === navIndex }"
                 :ref="(el) => setCardRef(el, entry.index)"
               />
@@ -276,7 +289,6 @@
                 v-else
                 :feed="entry.item"
                 :style="{ order: entry.index }"
-                :rank-index="isHotTab ? entry.index + 1 : undefined"
                 :class="{ 'feed-card-focused': entry.index === navIndex }"
                 :ref="(el) => setCardRef(el, entry.index)"
                 @deleted="handleFeedDeleted"
@@ -294,7 +306,6 @@
             <QuestionFeedCard
               v-else-if="isQuestionTab && isQuestionHomeItem(item)"
               :question="item"
-              :rank-index="isHotTab ? idx + 1 : undefined"
               :class="{ 'feed-card-focused': idx === navIndex }"
               :ref="(el) => setCardRef(el, idx)"
             />
@@ -307,7 +318,6 @@
             <FeedCard
               v-else
               :feed="item"
-              :rank-index="isHotTab ? idx + 1 : undefined"
               :class="{ 'feed-card-focused': idx === navIndex }"
               :ref="(el) => setCardRef(el, idx)"
               @deleted="handleFeedDeleted"
@@ -323,9 +333,10 @@
     </div>
 
     <RightSidebar
-      v-if="!props.embedded && (settingsStore.settings.showHomeMonthlyRank || settingsStore.settings.showHomeHotTopics)"
+      v-if="!props.embedded && (settingsStore.settings.showHomeHotNews || settingsStore.settings.showHomeMonthlyRank || settingsStore.settings.showHomeHotTopics)"
       v-show="!desktopCommentsOpen"
       :show-monthly-rank="settingsStore.settings.showHomeMonthlyRank"
+      :show-hot-news="settingsStore.settings.showHomeHotNews"
       :show-hot-topics="settingsStore.settings.showHomeHotTopics"
     />
   </div>
@@ -356,14 +367,14 @@ import ProductSelectorPage from './ProductSelectorPage.vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useSettingsStore } from '../stores/settings';
 import { hasFeedRenderableContent, shouldHideFeed } from '../utils/feedFilter';
-import { decodeDiscoveryRouteSegment, getEntityKey, parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
+import { decodeDiscoveryRouteSegment, getEntityImage, getEntityKey, parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
 import { normalizeCoolapkRoute } from '../utils/coolapkRoute';
 import type { FeedLayout, ConfigPageTab } from '../types/settings';
 import type { DiscoveryEntity } from '../types/discovery';
 import { getHomeSubChannels, isFollowingHomeTab, resolvePreferredHomeTab, type HomeSubChannel, type HomeSubChannelSelection } from '../utils/homeTabs';
 import { HOME_TAB_REFRESH_EVENT, HOME_TAB_SCROLL_TOP_EVENT } from '../utils/homeTab';
 import { desktopFeedCommentsOpenKey } from '../utils/desktopFeedComments';
-import { extractHotSearchKeywords, isAnswerSearchEntity } from '../utils/searchEntities';
+import { isAnswerSearchEntity } from '../utils/searchEntities';
 import { isQuestionFeedEntity, isQuestionHomeTab } from '../utils/question';
 import { isRatingFeedEntity } from '../utils/rating';
 const props = withDefaults(defineProps<{ embedded?: boolean; tabKey?: string; tabs?: ConfigPageTab[]; selected?: boolean }>(), { embedded: false, selected: true });
@@ -399,6 +410,7 @@ const feedScrollContainer = ref<HTMLElement | null>(null);
 const subChannelsContainer = ref<HTMLElement | null>(null);
 const followSubChannelsContainer = ref<HTMLElement | null>(null);
 const loading = ref(false);
+let feedRequestSequence = 0;
 const homeTabSwipeThreshold = 56;
 let feedPointerStart: { pointerId: number; x: number; y: number } | null = null;
 let wheelGestureDelta = 0;
@@ -614,7 +626,8 @@ const activeFollowSubChannelKey = computed(() => selectedFollowSubChannel.value?
 // 视频栏目就是这类页面，但它仍然渲染成动态流，不能复用普通 getBoardFeeds 的页码分页。
 const isCursorFeedTab = computed(() => {
   const tab = currentActiveTabObj.value;
-  if (isHeadlineTab.value || isHotTab.value || isPageEntityTab.value || isFollowingTab.value) return false;
+  if (isHotTab.value) return true;
+  if (isHeadlineTab.value || isPageEntityTab.value || isFollowingTab.value) return false;
   const pageName = String(tab?.page_name || activeTab.value).trim();
   const url = String(tab?.url || (tab ? '' : activeTab.value)).trim();
   return /^\/page\?url=/i.test(url) || /^V\d+_/i.test(pageName);
@@ -735,27 +748,42 @@ function updateHeadlineNestedSubChannels(items: any[]) {
   }
 }
 
-// 热门搜索关键词 Chips
-const hotKeywords = ref<string[]>([]);
+const hotRanks = ref<DiscoveryEntity[]>([]);
+const hotTopicCards = ref<DiscoveryEntity[]>([]);
+const hotSearches = ref<DiscoveryEntity[]>([]);
+const hotChannels = ref<DiscoveryEntity[]>([]);
+const hotChannelsFixed = ref(false);
+const selectedHotChannelUrl = ref('');
 
-async function loadHotSearchKeywords() {
-  try {
-    const response = await CoolapkTauriAPI.getHotSearches(false);
-    hotKeywords.value = extractHotSearchKeywords(response).slice(0, 12);
-  } catch (error) {
-    console.warn('加载首页热门搜索失败', error);
+/** APK selectorLinkCard 的标题、顺序和请求地址由服务端决定，不拼接分类参数或持久化选择。 */
+function updateHotNavigation(items: DiscoveryEntity[]) {
+  const ranks = items.find(item => item.entityTemplate === 'iconLinkGridCard');
+  if (ranks?.entities) hotRanks.value = ranks.entities;
+  const topics = items.filter(item => item.entityTemplate === 'iconMiniGridCard');
+  if (topics.length) hotTopicCards.value = topics;
+  const searches = items.find(item => item.entityTemplate === 'capsuleListCard');
+  if (searches?.entities) hotSearches.value = searches.entities;
+  const selector = items.find(item => item.entityTemplate === 'selectorLinkCard');
+  if (!selector?.entities?.length) return;
+  hotChannels.value = selector.entities.filter(item => item.url && item.title);
+  let extra: Record<string, unknown> = {};
+  try { extra = selector.extraDataArr as Record<string, unknown> || (typeof selector.extraData === 'string' ? JSON.parse(selector.extraData) : selector.extraData) || {}; } catch { /* 缺失样式参数时仍显示服务端分类。 */ }
+  hotChannelsFixed.value = String(extra.cardFixedToTop) === '1';
+  if (!hotChannels.value.some(item => item.url === selectedHotChannelUrl.value)) {
+    const selected = hotChannels.value.find(item => item.title === extra.selectedTab) || hotChannels.value[0];
+    selectedHotChannelUrl.value = String(selected?.url || '');
   }
 }
 
-type HotRankType = 'week' | 'month' | 'favorite' | 'index' | 'picture';
-const activeHotRank = ref<HotRankType>('week');
-const hotRanks: { key: HotRankType; label: string; icon: string; color: string }[] = [
-  { key: 'week', label: '周榜', icon: 'fas fa-thumbs-up', color: 'bg-orange' },
-  { key: 'month', label: '月榜', icon: 'fas fa-calendar-alt', color: 'bg-cyan' },
-  { key: 'favorite', label: '收藏榜', icon: 'fas fa-star', color: 'bg-yellow' },
-  { key: 'index', label: '酷安指数', icon: 'fas fa-chart-line', color: 'bg-purple' },
-  { key: 'picture', label: '酷图榜', icon: 'fas fa-chart-bar', color: 'bg-red' },
-];
+function openHotHeaderEntity(entity: DiscoveryEntity) {
+  const url = String(entity.url || '');
+  if (url.startsWith('searchTab://')) {
+    const keyword = new URL(url).searchParams.get('keyword') || String(entity.title || '');
+    quickSearch(keyword);
+  } else if (/^#?\/topic\/tagList(?:\?|$)/.test(url)) {
+    void router.push({ path: '/page', query: { url, title: String(entity.title || '热点话题'), renderer: 'discovery' } });
+  } else openPageEntity(entity);
+}
 
 function getTabKey(tab: ConfigPageTab): string {
   return tab.page_name || tab.url || String(tab.id || tab.title);
@@ -1053,7 +1081,8 @@ async function fetchTabApi(tabKey: string, p: number, background = false) {
   }
 
   if (matchedTab ? isHotConfigTab(matchedTab) : isHotTab.value) {
-    return await CoolapkTauriAPI.getRankFeeds(activeHotRank.value, p, background);
+    // 首次读取官方热榜首页及默认今日热门，后续沿用选中实体的完整 URL 与分页游标。
+    return await CoolapkTauriAPI.getDiscoveryPageData({ url: selectedHotChannelUrl.value || matchedTab?.page_name || matchedTab?.url || 'V9_HOME_TAB_RANKING', title: hotChannels.value.find(item => item.url === selectedHotChannelUrl.value)?.title || matchedTab?.title || '热榜', page: p, firstItem: '', lastItem: p > 1 ? feedCursor.lastItem : '', pageContext: p > 1 ? feedCursor.pageContext : '' });
   }
 
   const targetUrl = matchedTab ? (matchedTab.url || matchedTab.page_name || '') : tabKey;
@@ -1109,9 +1138,11 @@ async function fetchTabApi(tabKey: string, p: number, background = false) {
 async function prefetchNextPage() {
   if (isHeadlineTab.value || isPageEntityTab.value || isCursorFeedTab.value || isPrefetching.value || noMore.value) return;
   isPrefetching.value = true;
+  const sequence = feedRequestSequence;
   try {
     const nextP = page.value;
     const res: any = await fetchTabApi(activeTab.value, nextP, true);
+    if (sequence !== feedRequestSequence) return;
     if (res && res.data && Array.isArray(res.data)) {
       const validItems = res.data.filter((item: any) => !isFollowUpdateCard(item) && hasFeedRenderableContent(item) && !shouldHideFeed(item, settingsStore.settings));
       if (validItems.length > 0) {
@@ -1128,6 +1159,8 @@ async function prefetchNextPage() {
 
 async function loadFeeds(isRefresh: boolean = false) {
   if (loading.value || (loadingMore.value && !isRefresh)) return;
+  if (!isRefresh && noMore.value) return;
+  const sequence = ++feedRequestSequence;
 
   if (isRefresh) {
     // 清空列表前保留默认头条的刷新锚点，子栏目继续使用各自的重置逻辑。
@@ -1161,6 +1194,7 @@ async function loadFeeds(isRefresh: boolean = false) {
 
     if (isPageEntityTab.value) {
       const res: any = await fetchTabApi(activeTab.value, page.value);
+      if (sequence !== feedRequestSequence) return;
       const parsed = parseDiscoveryPage(res, page.value);
       const incoming = parsed.items;
       if (isRefresh) {
@@ -1183,6 +1217,7 @@ async function loadFeeds(isRefresh: boolean = false) {
       page.value = prefetchPage.value;
     } else {
       const res: any = await fetchTabApi(activeTab.value, page.value);
+      if (sequence !== feedRequestSequence) return;
       if (isCursorFeedTab.value) {
         const parsed = parseDiscoveryPage(res, page.value);
         feedCursor.firstItem = parsed.firstItem;
@@ -1191,6 +1226,7 @@ async function loadFeeds(isRefresh: boolean = false) {
       }
       if (res && res.data && Array.isArray(res.data)) {
         rawItems = res.data;
+        if (isHotTab.value) updateHotNavigation(rawItems);
         if (isFollowingTab.value && rawItems.some(isFollowUpdateCard)) followingUpdateFeeds.value = rawItems.filter(isFollowUpdateCard);
         if (isHeadlineTab.value) updateHeadlineQuickLinks(rawItems);
         validItems = rawItems.filter((item: any) => !isFollowUpdateCard(item) && hasFeedRenderableContent(item) && !shouldHideFeed(item, settingsStore.settings));
@@ -1235,16 +1271,10 @@ async function loadFeeds(isRefresh: boolean = false) {
     if (isHeadlineTab.value) {
       if (rawItems.length === 0) noMore.value = true;
       else updateHeadlineCursor(validItems, page.value === 2);
+    } else if (isHotTab.value) {
+      noMore.value = !rawItems.some(hasFeedRenderableContent);
     } else if (validItems.length < 3) {
       noMore.value = true;
-    }
-
-    const extractedKw = validItems
-      .map((item: any) => item.deviceTitle || item.targetType)
-      .filter(Boolean);
-    if (extractedKw.length > 0) {
-      const uniqueKw = Array.from(new Set([...hotKeywords.value, ...extractedKw]));
-      hotKeywords.value = uniqueKw.slice(0, 12);
     }
 
     if (isRefresh) {
@@ -1262,13 +1292,12 @@ async function loadFeeds(isRefresh: boolean = false) {
     }
 
   } catch (err: any) {
-    error.value = err?.message || '加载失败，请检查网络';
+    if (sequence === feedRequestSequence) error.value = err?.message || '加载失败，请检查网络';
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (sequence === feedRequestSequence) { loading.value = false; loadingMore.value = false; }
   }
   // 追加数据后重新检查短列，首屏不足或两列高度差较大时不必再滚动一次。
-  if (!error.value) scheduleFeedEndCheck();
+  if (sequence === feedRequestSequence && !error.value) scheduleFeedEndCheck();
 }
 
 function loadNearFeedEnd(el: HTMLElement) {
@@ -1306,12 +1335,14 @@ function quickSearch(kw: string) {
   router.push({ path: '/search', query: { q: kw } });
 }
 
-function selectHotRank(rankType: HotRankType) {
-  if (activeHotRank.value === rankType) {
-    void loadFeeds(true);
-    return;
-  }
-  activeHotRank.value = rankType;
+function selectHotChannel(channel: DiscoveryEntity) {
+  if (!channel.url || selectedHotChannelUrl.value === channel.url) return;
+  selectedHotChannelUrl.value = channel.url;
+  // 连续切换时允许立即发起新分类，迟到的旧结果不能覆盖当前选择。
+  feedRequestSequence += 1;
+  loading.value = loadingMore.value = false;
+  resetFeedScroll();
+  void loadFeeds(true);
 }
 
 function handleTabOrderUpdated() {
@@ -1437,6 +1468,8 @@ function openHeadlineUser(item: any) {
 
 watch(activeTab, (nextTab, previousTab) => {
   if (nextTab !== previousTab) {
+    // 首次初始化已在请求列表；只有真正离开一个栏目时才取消旧请求。
+    if (previousTab) { feedRequestSequence += 1; loading.value = loadingMore.value = false; }
     // 切换主栏目后重新初始化，避免携带上一栏目留下的头条刷新锚点。
     resetHeadlineCursor();
     selectedHeadlineSubChannelUrl.value = '';
@@ -1451,10 +1484,6 @@ watch(activeTab, (nextTab, previousTab) => {
   if (isInitializingHome) return;
   resetFeedScroll();
   loadFeeds(true);
-});
-
-watch(activeHotRank, () => {
-  if (isHotTab.value) loadFeeds(true);
 });
 
 const navIndex = ref(-1);
@@ -1631,14 +1660,13 @@ function unbindGlobalListeners() {
 onMounted(() => {
   bindGlobalListeners();
   void initializeHome();
-  void loadHotSearchKeywords();
 });
 
 onActivated(bindGlobalListeners);
 watch(() => props.selected, (selected) => { unbindGlobalListeners(); if (selected) bindGlobalListeners(); });
 watch(() => props.tabs, (tabs) => { if (props.embedded && tabs) serverTabs.value = tabs; });
 onDeactivated(unbindGlobalListeners);
-onUnmounted(unbindGlobalListeners);
+onUnmounted(() => { feedRequestSequence += 1; unbindGlobalListeners(); });
 defineExpose({ handleHomeSubChannelSelected, activeFollowSubChannelKey });
 
 // 下拉仅刷新当前栏目，不切换筛选、路由或页面实例。
@@ -2066,26 +2094,50 @@ async function refreshMobilePage() { await loadFeeds(true); }
 
 /* 2. 热榜 Tab 头部样式 */
 .hot-header-section {
-  padding: 14px 16px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  background: var(--surface-hover, rgba(0,0,0,0.01));
-  border-bottom: 1px solid var(--border);
+  gap: 6px;
+  background: var(--background-secondary);
 }
 
 .hot-ranks-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  padding: 4px 12px;
+  background: var(--surface);
 }
+
+.rank-official-icon { width: 36px; height: 36px; }
+
+/* APK IconMiniGridCard：每行两条，20dp 图标、8dp 间距、单行标题，不额外生成标题栏。 */
+.hot-topics { min-width: 0; background: var(--surface); }
+.hot-topics-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px 0; color: var(--text-secondary); font-size: 14px; }
+.hot-topics-header button { display: inline-flex; align-items: center; gap: 4px; padding: 2px 0 2px 8px; border: 0; background: transparent; color: var(--brand-primary); font: inherit; cursor: pointer; }
+.hot-topics-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; padding: 6px 16px; }
+.hot-topic { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 8px 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.hot-topic:hover { background: var(--brand-soft); }
+.hot-topic:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: -2px; }
+.hot-topic-icon { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 4px; }
+.hot-topic-title { min-width: 0; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 官方 transButton 单选栏：小屏横向滚动，吸顶时仍使用主题底色。 */
+.hot-channel-tabs { display: flex; flex-shrink: 0; align-items: center; gap: 8px; padding: 8px 16px; overflow-x: auto; background: var(--surface); border-bottom: 1px solid var(--border); }
+.hot-channel-tabs.is-fixed { position: sticky; top: 0; z-index: 5; }
+.hot-channel-tabs, .hot-search-chips { scrollbar-width: none; }
+.hot-channel-tabs::-webkit-scrollbar, .hot-search-chips::-webkit-scrollbar { display: none; }
+.hot-channel-tab { flex-shrink: 0; border: 1px solid transparent; border-radius: 8px; padding: 5px 10px; font-size: 12px; line-height: 20px; color: var(--text-primary); background: transparent; white-space: nowrap; cursor: pointer; }
+.hot-channel-tab:hover { color: var(--brand-primary); background: var(--brand-soft); }
+.hot-channel-tab.active { color: var(--brand-primary); border-color: var(--brand-primary); background: var(--brand-soft); font-weight: 600; }
+.hot-channel-tab:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: -2px; }
 
 .rank-action-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 4px;
+  gap: 3px;
+  padding: 9px 4px 8px;
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -2106,8 +2158,8 @@ async function refreshMobilePage() { await loadFeeds(true); }
 }
 
 .rank-icon-bg {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -2129,9 +2181,10 @@ async function refreshMobilePage() { await loadFeeds(true); }
 
 .hot-search-chips {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 6px 12px;
+  background: var(--surface);
 }
 
 .chip-btn {
@@ -2277,8 +2330,7 @@ async function refreshMobilePage() { await loadFeeds(true); }
     border-radius: 0;
   }
 
-  .headline-header-section,
-  .hot-header-section {
+  .headline-header-section {
     padding-right: var(--mobile-page-padding);
     padding-left: var(--mobile-page-padding);
   }

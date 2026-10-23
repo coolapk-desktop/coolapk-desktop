@@ -163,6 +163,9 @@ export interface AppSettings {
   /** 是否显示动态顶部的作者背景与装饰图，不影响正文配图。 */
   showFeedBackground: boolean;
   showHomeMonthlyRank: boolean;
+  /** 首页右栏热门资讯开关，以及热榜上次选择的时间范围。 */
+  showHomeHotNews: boolean;
+  homeSidebarRankPeriod: 'day' | 'week' | 'month';
   showHomeHotTopics: boolean;
   /** 移动阅读时自动收起首页搜索栏、Dock 或详情底栏，保留栏目导航。 */
   autoHideMobileNavigation: boolean;
