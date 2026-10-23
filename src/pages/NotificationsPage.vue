@@ -8,6 +8,7 @@
           <button type="button" class="header-action-btn" :disabled="clearingNotifications || !notificationStore.unreadCount" @click="markAllViewed"><i class="fas fa-check-double"></i> 全部已读</button>
         </div>
       </div>
+      <button v-if="subNoteType" type="button" class="header-action-btn" @click="closeNotificationGroup">返回通知列表</button>
       
       <div class="tabs">
         <button 
@@ -106,11 +107,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { useNotificationStore } from '../stores/notifications';
-import {
-  getNotificationCategoryCountsFromItems,
-  type NotificationCategory,
-} from '../utils/notificationCount';
-import { addSeenNotificationCount, clearSeenNotificationState, markNotificationItemsSeen, countSeenNotificationItems } from '../utils/notificationSeen';
+import type { NotificationCategory } from '../utils/notificationCount';
 import { getNotificationActor } from '../utils/notificationItem';
 import { renderCoolapkRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
@@ -132,14 +129,13 @@ const notificationStore = useNotificationStore();
 
 // 分类 Tabs（接口路径与官方 UWP 客户端一致）
 const tabs: Array<{ label: string; value: string; countKey: NotificationCategory }> = [
-  { label: '评论回复', value: 'list', countKey: 'comment' },
-  { label: '@ 提及', value: 'atMeList', countKey: 'atMe' },
-  { label: '评论 @', value: 'atCommentMeList', countKey: 'atComment' },
+  { label: '通知', value: 'list', countKey: 'notification' },
   { label: '收到的赞', value: 'feedLikeList', countKey: 'like' },
   { label: '新关注', value: 'contactsFollowList', countKey: 'follow' }
 ];
 
 const currentTab = ref('list');
+const subNoteType = ref('');
 const loading = ref(false);
 const clearingNotifications = ref(false);
 let notificationRequestId = 0;
@@ -149,12 +145,27 @@ const hasMore = ref(true);
 const notificationError = ref('');
 const pageContainerRef = ref<HTMLElement | null>(null);
 
+/** 兼容旧入口，回复和两种 @ 均归入官方统一通知列表。 */
+function normalizeNotificationTab(value: unknown): string {
+  const tab = String(value || 'list');
+  return ['feedLikeList', 'contactsFollowList'].includes(tab) ? tab : 'list';
+}
+
+async function closeNotificationGroup() {
+  subNoteType.value = '';
+  page.value = 1;
+  items.value = [];
+  hasMore.value = true;
+  await fetchNotifications();
+}
+
 // 切换 Tab
 async function switchTab(tabValue: string) {
   if (currentTab.value === tabValue && items.value.length > 0) {
     return;
   }
   currentTab.value = tabValue;
+  subNoteType.value = '';
   page.value = 1;
   items.value = [];
   hasMore.value = true;
@@ -188,6 +199,7 @@ async function fetchNotifications(): Promise<boolean> {
   const requestId = ++notificationRequestId;
   const requestedTab = currentTab.value;
   const requestedPage = page.value;
+  const requestedUid = authStore.user?.uid;
   if (!authStore.isLoggedIn) {
     items.value = [];
     page.value = 1;
@@ -199,9 +211,11 @@ async function fetchNotifications(): Promise<boolean> {
   notificationError.value = '';
   let fetchSucceeded = false;
   try {
-    const res = await CoolapkTauriAPI.getNotifications(requestedTab, requestedPage);
+    const firstItem = requestedPage > 1 ? String(items.value[0]?.id || '') : '';
+    const lastItem = requestedPage > 1 ? String(items.value.at(-1)?.id || '') : '';
+    const res = await CoolapkTauriAPI.getNotifications(subNoteType.value ? 'subList' : requestedTab, requestedPage, firstItem, lastItem, subNoteType.value);
     // 分类切换后丢弃旧请求，避免旧分类响应标记新分类已读。
-    if (requestId !== notificationRequestId) return false;
+    if (requestId !== notificationRequestId || requestedUid !== authStore.user?.uid) return false;
     if (!authStore.isLoggedIn) {
       items.value = [];
       page.value = 1;
@@ -211,11 +225,8 @@ async function fetchNotifications(): Promise<boolean> {
     const data = res?.data || [];
     
     if (Array.isArray(data)) {
-      // 通知列表项通常携带 notifyCount；它比只看 checkCount 更能覆盖 v18 分类字段。
-      const recoveredCounts = getNotificationCategoryCountsFromItems(data);
-      for (const [category, count] of Object.entries(recoveredCounts) as Array<[NotificationCategory, number]>) {
-        notificationStore.applyCategoryCount(category, count);
-      }
+      // 与官方一致，采用第一份完整 NotifyCount，不能把多个响应的字段取最大值再拼接。
+      notificationStore.applyNotifyCount(res);
 
       if (data.length === 0) {
         hasMore.value = false;
@@ -393,7 +404,7 @@ function formatTime(dateline: any): string {
 }
 
 function getCurrentCategory(): NotificationCategory {
-  return tabs.find((tab) => tab.value === currentTab.value)?.countKey || 'comment';
+  return tabs.find((tab) => tab.value === currentTab.value)?.countKey || 'notification';
 }
 
 function getNotificationKey(item: any): string {
@@ -409,7 +420,6 @@ function getNotificationKey(item: any): string {
 }
 
 function getNotificationUnreadCount(item: any): number {
-  if (authStore.user?.uid && countSeenNotificationItems(authStore.user.uid, getCurrentCategory(), [item]) > 0) return 0;
   const count = Number(item?.unread_count ?? item?.unreadCount);
   if (Number.isFinite(count) && count > 0) return Math.floor(count);
   return Number(item?.isnew ?? item?.isNew ?? 0) > 0 ? 1 : 0;
@@ -429,10 +439,6 @@ function markCurrentTabViewed(): number {
   const viewedCount = notificationStore.markCategoryViewed(category);
   // 分类计数为零时不从总数猜测扣减，避免吞掉其他尚未查看的通知。
   for (const item of items.value) item.isnew = item.isNew = item.unread_count = item.unreadCount = 0;
-  if (viewedCount > 0 && category === 'like' && authStore.user?.uid) {
-    addSeenNotificationCount(authStore.user.uid, category, viewedCount);
-    markNotificationItemsSeen(authStore.user.uid, category, items.value, viewedCount);
-  }
   return viewedCount;
 }
 
@@ -452,9 +458,6 @@ async function markAllViewed(): Promise<void> {
     loading.value = false;
     notificationStore.markNotificationsCleared(true);
     for (const item of items.value) item.isnew = item.isNew = item.unread_count = item.unreadCount = 0;
-    if (authStore.user?.uid) {
-      for (const category of tabs) clearSeenNotificationState(authStore.user.uid, category.countKey);
-    }
   } catch (error) {
     showToast(`设置全部已读失败：${error instanceof Error ? error.message : String(error)}`, 'error');
   } finally { clearingNotifications.value = false; }
@@ -471,6 +474,16 @@ async function handleNotifyClick(e: Event, item: any) {
   const href = anchor?.getAttribute('href') || '';
   // 正文链接始终由应用处理，危险协议不得继续触发浏览器默认导航。
   if (anchor) e.preventDefault();
+  // 官方系统账号的聚合卡片打开 noteType 分组，而不是把聚合 ID 当动态或评论 ID。
+  const fromUid = String(item.fromuid ?? item.from_uid ?? '');
+  if (!anchor && !subNoteType.value && /^\d+$/.test(fromUid) && Number(fromUid) < 9999 && item.note_type) {
+    subNoteType.value = String(item.note_type);
+    page.value = 1;
+    items.value = [];
+    hasMore.value = true;
+    await fetchNotifications();
+    return;
+  }
   // 用户和其他正文链接保持独立；评论正文中的动态/评论链接携带定位信息。
   if (href && /(?:\/feed\/\d+|\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
     e.preventDefault();
@@ -509,7 +522,8 @@ async function handleNotifyClick(e: Event, item: any) {
 
 onActivated(() => {
   window.addEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
-  const requestedTab = String(route.query.tab || '');
+  const requestedTab = normalizeNotificationTab(route.query.tab);
+  subNoteType.value = typeof route.query.noteType === 'string' ? route.query.noteType : '';
   if (tabs.some((tab) => tab.value === requestedTab)) currentTab.value = requestedTab;
   if (!authStore.isLoggedIn) {
     items.value = [];
@@ -528,14 +542,22 @@ onDeactivated(() => {
 watch(
   () => route.query.tab,
   (tab) => {
-    const requestedTab = String(tab || '');
+    const requestedTab = normalizeNotificationTab(tab);
     if (tabs.some((item) => item.value === requestedTab)) void switchTab(requestedTab);
   }
 );
 
+watch(() => route.query.noteType, async noteType => {
+  subNoteType.value = typeof noteType === 'string' ? noteType : '';
+  page.value = 1;
+  items.value = [];
+  hasMore.value = true;
+  await fetchNotifications();
+});
+
 watch(
-  () => authStore.isLoggedIn,
-  (isLoggedIn) => {
+  () => [authStore.isLoggedIn, authStore.user?.uid] as const,
+  ([isLoggedIn]) => {
     notificationRequestId += 1;
     loading.value = false;
     page.value = 1;

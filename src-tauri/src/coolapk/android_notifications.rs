@@ -24,13 +24,21 @@ fn counts(response: &Value) -> [u64; 7] {
         &["contacts_follow", "contactsFollow", "follow"], &["message", "messageCount"],
         &["badge_v18", "badge", "count", "total", "unreadCount"],
     ];
-    keys.map(|aliases| aliases.iter().find_map(|key| data.get(key).and_then(|value|
-        value.as_u64().or_else(|| value.as_str()?.parse().ok()))).unwrap_or(0))
+    let mut result = keys.map(|aliases| aliases.iter().find_map(|key| data.get(key).and_then(|value|
+        value.as_u64().or_else(|| value.as_str()?.parse().ok()))).unwrap_or(0));
+    // v18 普通通知包含回复和 @，总数按 APK 规则排除关注，不能重复累加旧分类。
+    if let Some(notification) = data.get("notification_v18").and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok())) {
+        result[0] = notification;
+        result[1] = 0;
+        result[2] = 0;
+        result[6] = notification + result[3] + result[5];
+    } else { result[6] = result[6].max(result[..6].iter().sum()); }
+    result
 }
 
 #[cfg(any(target_os = "android", test))]
 fn increased(previous: [u64; 7], current: [u64; 7], config: &BackgroundConfig) -> bool {
-    let enabled = [config.notify_replies, config.notify_at, config.notify_at, true, true, config.notify_pm];
+    let enabled = [config.notify_replies || config.notify_at, config.notify_at, config.notify_at, true, true, config.notify_pm];
     (0..6).any(|index| enabled[index] && current[index] > previous[index])
         || (current[..6].iter().all(|count| *count == 0) && current[6] > previous[6]
             && (config.notify_replies || config.notify_at || config.notify_pm))
@@ -96,9 +104,9 @@ pub async fn configure_android_background_notifications(app: tauri::AppHandle, c
                     if GENERATION.load(Ordering::SeqCst) != generation { break; }
                     if matches!(state.as_deref(), Ok("background")) {
                         if let Some(last) = previous.filter(|last| increased(*last, current, &config)) {
-                            let total = current[6].max(current[..6].iter().sum());
-                            let enabled = [config.notify_replies, config.notify_at, config.notify_at, true, true, config.notify_pm];
-                            let categories = ["comment", "atMe", "atComment", "like", "follow", "message"];
+                            let total = current[6];
+                            let enabled = [config.notify_replies || config.notify_at, config.notify_at, config.notify_at, true, true, config.notify_pm];
+                            let categories = ["notification", "atMe", "atComment", "like", "follow", "message"];
                             let increased_category = (0..6).find(|index| enabled[*index] && current[*index] > last[*index]);
                             let index = increased_category.unwrap_or(0);
                             let mut payload = serde_json::json!({ "title": "酷安新通知",
@@ -109,7 +117,7 @@ pub async fn configure_android_background_notifications(app: tauri::AppHandle, c
                             let client = &app_state.client;
                             let details = if increased_category.is_none() { Err("仅总数增加，保留汇总通知".to_string()) }
                                 else if index == 5 { client.list_messages(1, "", "").await }
-                                else { client.get_notifications(["list", "atMeList", "atCommentMeList", "feedLikeList", "contactsFollowList"][index], 1).await };
+                                else { client.get_notifications(["list", "atMeList", "atCommentMeList", "feedLikeList", "contactsFollowList"][index], 1, "", "", "").await };
                             if GENERATION.load(Ordering::SeqCst) != generation { break; }
                             if let Ok(details) = details {
                                 if let Some(items) = details.get("data").unwrap_or(&details).as_array() {
@@ -157,10 +165,14 @@ mod tests {
     fn filters_disabled_categories_and_handles_total_only_responses() {
         let config = BackgroundConfig { enabled: true, uid: "1".into(), interval_minutes: 1, notify_replies: false, notify_at: true, notify_pm: false, sound: false };
         let empty = counts(&json!({"data": {"badge_v18": 0}}));
-        assert!(!increased(empty, counts(&json!({"data": {"commentme": 2, "message": 1, "badge_v18": 3}})), &config));
+        assert!(!increased(empty, counts(&json!({"data": {"message": 1, "badge_v18": 1}})), &config));
         assert!(increased(empty, counts(&json!({"data": {"atme": "1", "badge_v18": 1}})), &config));
         assert!(increased(empty, counts(&json!({"data": {"badge_v18": 1}})), &config));
         assert!(!increased(counts(&json!({"badge": 2})), counts(&json!({"badge": 2})), &config));
+    }
+    #[test]
+    fn official_v18_total_does_not_double_count_reply_at_or_follow() {
+        assert_eq!(counts(&json!({"data": {"notification_v18": 2, "commentme": 2, "atme": 1, "feedlike": 3, "contacts_follow": 4, "message": 1, "badge_v18": 99}})), [2, 0, 0, 3, 4, 1, 6]);
     }
     #[test]
     fn excludes_only_explicitly_self_sent_unread_messages() {

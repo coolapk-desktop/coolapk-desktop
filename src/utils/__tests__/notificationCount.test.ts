@@ -35,6 +35,7 @@ describe('通知未读数', () => {
     })).toEqual({
       total: 9,
       categories: {
+        notification: 0,
         comment: 1,
         atMe: 2,
         atComment: 1,
@@ -43,6 +44,7 @@ describe('通知未读数', () => {
         message: 1,
       },
       categoryPresence: {
+        notification: false,
         comment: true,
         atMe: true,
         atComment: true,
@@ -62,8 +64,9 @@ describe('通知未读数', () => {
         feedlike: 1,
       },
     })).toEqual({
-      total: 7,
+      total: 5,
       categories: {
+        notification: 4,
         comment: 0,
         atMe: 0,
         atComment: 0,
@@ -72,6 +75,7 @@ describe('通知未读数', () => {
         message: 0,
       },
       categoryPresence: {
+        notification: true,
         comment: false,
         atMe: false,
         atComment: false,

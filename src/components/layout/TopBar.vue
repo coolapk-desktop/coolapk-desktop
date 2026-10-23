@@ -335,18 +335,11 @@ import { CoolapkTauriAPI } from '../../api/coolapk';
 import { androidNotificationContent } from '../../utils/androidNotificationContent';
 import { desktopNotify } from '../../utils/desktopNotify';
 import {
-  getNotificationCategoryCountsFromItems,
   hasNotificationCountIncreased,
   type NotificationCategory,
 } from '../../utils/notificationCount';
 import { getMessageUnreadCount, getSelfMessageUnreadCount } from '../../utils/messageUnread';
 import { getNotificationActor } from '../../utils/notificationItem';
-import {
-  addSeenNotificationCount,
-  hasSeenNotificationItems,
-  markNotificationItemsSeen,
-  takeSeenNotificationCount,
-} from '../../utils/notificationSeen';
 import { markNotificationRead } from '../../utils/notificationRead';
 import { getNotificationExternalUrl, getNotificationFeedId, resolveNotificationTargetRoute } from '../../utils/notificationNavigation';
 import { syncWindowsNotificationIcons } from '../../utils/taskbarNotificationDot';
@@ -435,9 +428,7 @@ const notificationPreviewSources: Array<{
   category: NotificationCategory;
   label: string;
 }> = [
-  { apiType: 'list', category: 'comment', label: '评论回复' },
-  { apiType: 'atMeList', category: 'atMe', label: '@ 提及' },
-  { apiType: 'atCommentMeList', category: 'atComment', label: '评论 @' },
+  { apiType: 'list', category: 'notification', label: '通知' },
   { apiType: 'feedLikeList', category: 'like', label: '收到的赞' },
   { apiType: 'contactsFollowList', category: 'follow', label: '新关注' },
 ];
@@ -447,8 +438,6 @@ const notificationPreviewLoading = ref(false);
 const notificationPreviews = ref<NotificationPreview[]>([]);
 let notificationPopoverHideTimer: ReturnType<typeof setTimeout> | null = null;
 let notificationPreviewLoadedAt = 0;
-let restoredSeenLikeUid = '';
-let restoringSeenLikes = false;
 const isMessagePopoverVisible = ref(false);
 const messagePreviewLoading = ref(false);
 const messagePreviews = ref<MessagePreview[]>([]);
@@ -463,44 +452,13 @@ function isDesktopNotificationEnabledFor(categories: NotificationCategory[]): bo
       || settingsStore.settings.notifyPm;
   }
   return categories.some((category) => {
+    if (category === 'notification') return settingsStore.settings.notifyReplies || settingsStore.settings.notifyAt;
     if (category === 'comment') return settingsStore.settings.notifyReplies;
     if (category === 'atMe' || category === 'atComment') return settingsStore.settings.notifyAt;
     if (category === 'message') return settingsStore.settings.notifyPm;
     // 收到的赞和新关注目前没有独立开关，开启桌面通知后默认提醒。
     return category === 'like' || category === 'follow';
   });
-}
-
-/**
- * 服务端没有单独清除点赞未读的已知类型。启动后恢复本机保存的已读数量，
- * 仅抵消这部分旧 badge，服务端总数归零时会自动清除本机记录。
- */
-async function restoreSeenLikeNotifications(): Promise<number> {
-  const uid = String(authStore.user?.uid || '').trim();
-  if (!uid || restoredSeenLikeUid === uid || restoringSeenLikes || notificationStore.notificationCount <= 0) {
-    return 0;
-  }
-
-  restoringSeenLikes = true;
-  try {
-    let remaining = takeSeenNotificationCount(uid, 'like', notificationStore.notificationCount);
-    // 兼容上一版已经保存了通知标识、但尚未保存数量的用户；当前旧标识至少抵消一条。
-    if (remaining === 0 && hasSeenNotificationItems(uid, 'like')) {
-      remaining = Math.min(1, notificationStore.notificationCount);
-      if (remaining > 0) addSeenNotificationCount(uid, 'like', remaining);
-    }
-    const restoredCount = remaining;
-
-    while (remaining > 0 && notificationStore.categoryCounts.like > 0) {
-      if (!notificationStore.markViewed('like')) break;
-      remaining -= 1;
-    }
-    if (remaining > 0) notificationStore.suppressNotificationCount(remaining);
-    return restoredCount;
-  } finally {
-    restoringSeenLikes = false;
-    restoredSeenLikeUid = uid;
-  }
 }
 
 async function fetchNotificationCount(): Promise<boolean | null> {
@@ -511,15 +469,15 @@ async function fetchNotificationCount(): Promise<boolean | null> {
   if (notificationRequestRunning) return null;
   notificationRequestRunning = true;
   const requestStateVersion = notificationStore.notificationStateVersion;
+  const requestUid = authStore.user?.uid;
   try {
     const res: any = await CoolapkTauriAPI.getNotificationCount();
     // 清除通知期间返回的旧 checkCount 不能再写回红点，否则本地刚消失的角标会被竞态恢复。
-    if (requestStateVersion !== notificationStore.notificationStateVersion) return true;
+    if (requestStateVersion !== notificationStore.notificationStateVersion || requestUid !== authStore.user?.uid) return true;
     const previousMessageCount = notificationStore.messageCount;
     const applied = notificationStore.applyServerResponse(res);
     let { previous, count, increasedCategories } = applied;
 
-    await restoreSeenLikeNotifications();
     if (requestStateVersion !== notificationStore.notificationStateVersion) return true;
     count = notificationStore.unreadCount;
 
@@ -528,6 +486,7 @@ async function fetchNotificationCount(): Promise<boolean | null> {
     if (notificationStore.messageCount > 0) {
       try {
         const messageResponse = await CoolapkTauriAPI.listMessages(1);
+        if (requestUid !== authStore.user?.uid || requestStateVersion !== notificationStore.notificationStateVersion) return true;
         const messageSessions = Array.isArray(messageResponse?.data) ? messageResponse.data : [];
         notificationStore.suppressMessageCount(
           getSelfMessageUnreadCount(messageSessions, authStore.user?.uid),
@@ -614,6 +573,8 @@ async function fetchNotificationPreviews(force = false) {
   if (!authStore.isLoggedIn || notificationPreviewLoading.value) return;
   if (!force && Date.now() - notificationPreviewLoadedAt < 30_000) return;
   notificationPreviewLoading.value = true;
+  const requestUid = authStore.user?.uid;
+  const requestStateVersion = notificationStore.notificationStateVersion;
   try {
     const sourcesWithUnread = notificationPreviewSources.filter(
       (source) => notificationStore.categoryCounts[source.category] > 0
@@ -626,11 +587,9 @@ async function fetchNotificationPreviews(force = false) {
     const responses = await Promise.all(sources.map(async (source) => {
       try {
         const response = await CoolapkTauriAPI.getNotifications(source.apiType, 1);
+        if (!authStore.isLoggedIn || requestUid !== authStore.user?.uid || requestStateVersion !== notificationStore.notificationStateVersion) return [];
         const data = Array.isArray(response?.data) ? response.data : [];
-        const recoveredCounts = getNotificationCategoryCountsFromItems(data);
-        for (const [category, count] of Object.entries(recoveredCounts) as Array<[NotificationCategory, number]>) {
-          notificationStore.applyCategoryCount(category, count);
-        }
+        notificationStore.applyNotifyCount(response);
         const limit = Math.max(1, Math.min(notificationStore.categoryCounts[source.category] || 1, 3));
         return data.slice(0, limit).map((item: any, index: number): NotificationPreview => ({
           key: `${source.apiType}:${item?.id || item?.likeTime || item?.dateline || index}`,
@@ -641,28 +600,13 @@ async function fetchNotificationPreviews(force = false) {
         return [];
       }
     }));
+    if (!authStore.isLoggedIn || requestUid !== authStore.user?.uid || requestStateVersion !== notificationStore.notificationStateVersion) return;
     const previewLimit = Math.max(1, Math.min(notificationStore.notificationCount, 5));
     notificationPreviews.value = responses
       .flat()
       .sort((a, b) => getNotificationItemTime(b.item) - getNotificationItemTime(a.item))
       .slice(0, previewLimit);
 
-    // 部分账号的 checkCount 和列表项都不带 feedlike 等分类字段，但这里已经通过
-    // 实际命中的接口确定了未读来源。全局只剩一条且只有一个预览时，可安全归属给它，
-    // 让“收到的赞”Tab 与左侧红点保持一致。
-    const knownCategoryCount = notificationPreviewSources.reduce(
-      (total, source) => total + notificationStore.categoryCounts[source.category],
-      0,
-    );
-    if (
-      notificationStore.notificationCount - knownCategoryCount === 1
-      && notificationPreviews.value.length === 1
-    ) {
-      const preview = notificationPreviews.value[0];
-      if (notificationStore.categoryCounts[preview.category] === 0) {
-        notificationStore.applyCategoryCount(preview.category, 1);
-      }
-    }
     notificationPreviewLoadedAt = Date.now();
   } finally {
     notificationPreviewLoading.value = false;
@@ -802,6 +746,11 @@ async function openNotificationPreview(preview: NotificationPreview) {
   markNotificationRead(preview.item, preview.category, authStore.user?.uid, true);
   notificationPreviews.value = notificationPreviews.value.filter((item) => item.key !== preview.key);
   isNotificationPopoverVisible.value = false;
+  const fromUid = String(preview.item.fromuid ?? preview.item.from_uid ?? '');
+  if (/^\d+$/.test(fromUid) && Number(fromUid) < 9999 && preview.item.note_type) {
+    void router.push({ path: '/notifications', query: { noteType: String(preview.item.note_type) } });
+    return;
+  }
   const externalUrl = getNotificationExternalUrl(preview.item);
   if (externalUrl) {
     void CoolapkTauriAPI.openUrl(externalUrl);
@@ -909,7 +858,6 @@ watch(
     messagePreviews.value = [];
     messagePreviewLoadedAt = 0;
     isMessagePopoverVisible.value = false;
-    restoredSeenLikeUid = '';
     if (!authStore.isLoggedIn) notificationStore.reset();
     void pollNotificationCountNow();
   }

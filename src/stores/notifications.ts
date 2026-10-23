@@ -1,282 +1,111 @@
 import { computed, reactive, ref } from 'vue';
 import { defineStore } from 'pinia';
-import {
-  normalizeNotificationCounts,
-  reconcileViewedCount,
-  type NotificationCategory,
-} from '../utils/notificationCount';
+import { normalizeNotificationCounts, reconcileViewedCount, type NotificationCategory } from '../utils/notificationCount';
 
-const CATEGORY_NAMES: NotificationCategory[] = [
-  'comment',
-  'atMe',
-  'atComment',
-  'like',
-  'follow',
-  'message',
-];
-
+const CATEGORY_NAMES: NotificationCategory[] = ['notification', 'comment', 'atMe', 'atComment', 'like', 'follow', 'message'];
 function createCategoryCounts(): Record<NotificationCategory, number> {
-  return {
-    comment: 0,
-    atMe: 0,
-    atComment: 0,
-    like: 0,
-    follow: 0,
-    message: 0,
-  };
+  return { notification: 0, comment: 0, atMe: 0, atComment: 0, like: 0, follow: 0, message: 0 };
 }
 
+/** 通知采用官方完整快照；本地抵消仅保留给私信现有的会话已读流程。 */
 export const useNotificationStore = defineStore('notifications', () => {
   const unreadCount = ref(0);
   const categoryCounts = reactive(createCategoryCounts());
-  const serverTotal = ref<number | null>(null);
-  const serverCategoryCounts = reactive<Record<NotificationCategory, number | null>>({
-    comment: null,
-    atMe: null,
-    atComment: null,
-    like: null,
-    follow: null,
-    message: null,
-  });
-  const locallyViewed = reactive(createCategoryCounts());
-  const locallyViewedWithoutCategory = ref(0);
   const notificationStateVersion = ref(0);
-
+  const notificationClearVersion = ref(0);
   const notificationCount = computed(() => Math.max(0, unreadCount.value - categoryCounts.message));
   const messageCount = computed(() => categoryCounts.message);
+  let serverTotal: number | null = null;
+  let serverMessageCount: number | null = null;
+  let locallyViewedMessages = 0;
+  let notifyCountDateline = 0;
+  let officialCounts = false;
 
-  function applyServerResponse(response: unknown): {
-    previous: number | null;
-    count: number;
-    increasedCategories: NotificationCategory[];
-  } {
+  function applyServerResponse(response: unknown): { previous: number | null; count: number; increasedCategories: NotificationCategory[] } {
     const snapshot = normalizeNotificationCounts(response);
-    const previous = serverTotal.value === null ? null : unreadCount.value;
-    const previousCategoryCounts = { ...categoryCounts };
-    let remainingServerTotalDecrease = serverTotal.value === null
-      ? 0
-      : Math.max(0, serverTotal.value - snapshot.total);
-
-    for (const category of CATEGORY_NAMES) {
-      // checkCount 的部分版本只返回总数；缺少分类字段时保留已从通知列表恢复的数字。
-      if (!snapshot.categoryPresence[category]) continue;
-      const previousLocallyViewedCount = locallyViewed[category];
-      const reconciled = reconcileViewedCount(
-        serverCategoryCounts[category],
-        snapshot.categories[category],
-        locallyViewed[category],
-        remainingServerTotalDecrease,
-      );
-      categoryCounts[category] = reconciled.count;
-      locallyViewed[category] = reconciled.locallyViewedCount;
-      serverCategoryCounts[category] = snapshot.categories[category];
-      remainingServerTotalDecrease = Math.max(
-        0,
-        remainingServerTotalDecrease - (previousLocallyViewedCount - reconciled.locallyViewedCount),
-      );
-    }
-
-    const acknowledgedUnknownCount = Math.min(
-      locallyViewedWithoutCategory.value,
-      remainingServerTotalDecrease,
-    );
-    locallyViewedWithoutCategory.value -= acknowledgedUnknownCount;
-    remainingServerTotalDecrease -= acknowledgedUnknownCount;
-
-    // 有些账号会先把分类字段清零、稍后才降低总 badge。总数最终下降时，
-    // 再释放这类分类的本地抵消，避免下一条真实通知被旧状态压住。
-    for (const category of CATEGORY_NAMES) {
-      if (remainingServerTotalDecrease <= 0 || serverCategoryCounts[category] !== 0) continue;
-      const acknowledgedCount = Math.min(locallyViewed[category], remainingServerTotalDecrease);
-      locallyViewed[category] -= acknowledgedCount;
-      remainingServerTotalDecrease -= acknowledgedCount;
-    }
-
-    const locallyViewedCategoryTotal = CATEGORY_NAMES.reduce(
-      (total, category) => total + locallyViewed[category],
-      0,
-    );
-    const locallyViewedTotal = locallyViewedCategoryTotal + locallyViewedWithoutCategory.value;
-    unreadCount.value = Math.max(0, snapshot.total - locallyViewedTotal);
-    const increasedCategories = serverTotal.value === null
-      ? []
-      : CATEGORY_NAMES.filter(
-        (category) => categoryCounts[category] > previousCategoryCounts[category]
-      );
-    serverTotal.value = snapshot.total;
-    return { previous, count: unreadCount.value, increasedCategories };
+    const payload: any = (response as any)?.data ?? response;
+    const dateline = Number(payload?.dateline) || 0;
+    const previous = serverTotal === null ? null : unreadCount.value;
+    // 对齐 AppNotification.update：旧时间戳快照不得覆盖新快照，旧版响应也不得覆盖 v18 状态。
+    if ((officialCounts && !snapshot.categoryPresence.notification) || dateline < notifyCountDateline) return { previous, count: unreadCount.value, increasedCategories: [] };
+    officialCounts ||= snapshot.categoryPresence.notification;
+    notifyCountDateline = Math.max(notifyCountDateline, dateline);
+    const oldCounts = { ...categoryCounts };
+    const messages = reconcileViewedCount(serverMessageCount, snapshot.categories.message, locallyViewedMessages);
+    locallyViewedMessages = messages.locallyViewedCount;
+    serverMessageCount = snapshot.categories.message;
+    for (const category of CATEGORY_NAMES) categoryCounts[category] = snapshot.categories[category];
+    categoryCounts.message = messages.count;
+    serverTotal = snapshot.total;
+    unreadCount.value = Math.max(0, snapshot.total - locallyViewedMessages);
+    return { previous, count: unreadCount.value, increasedCategories: previous === null ? [] : CATEGORY_NAMES.filter(category => categoryCounts[category] > oldCounts[category]) };
   }
 
-  /**
-   * 通知列表项里的 notifyCount 是分类计数的另一条可靠来源。
-   * 同步它时不改变 checkCount 的总数，只让分类角标和本地已读抵消保持一致。
-   */
-  function applyCategoryCount(category: NotificationCategory, currentServerCount: number): number {
-    const count = Number(currentServerCount);
-    if (!Number.isFinite(count)) return categoryCounts[category];
-    const safeCount = Math.max(0, Math.floor(count));
-
-    // 之前只有总 badge 时无法判断分类；分类一旦从列表中识别出来，优先把这部分
-    // 本地抵消量归属到该分类，避免“点过后打开预览又重新出现”。
-    const reattributedCount = Math.min(locallyViewedWithoutCategory.value, safeCount);
-    if (reattributedCount > 0) {
-      locallyViewedWithoutCategory.value -= reattributedCount;
-      locallyViewed[category] += reattributedCount;
-    }
-
-    const reconciled = reconcileViewedCount(
-      serverCategoryCounts[category],
-      safeCount,
-      locallyViewed[category],
-    );
-    categoryCounts[category] = reconciled.count;
-    locallyViewed[category] = reconciled.locallyViewedCount;
-    serverCategoryCounts[category] = safeCount;
-
-    const locallyViewedTotal = CATEGORY_NAMES.reduce(
-      (total, itemCategory) => total + locallyViewed[itemCategory],
-      0,
-    ) + locallyViewedWithoutCategory.value;
-    const visibleCategoryTotal = CATEGORY_NAMES.reduce(
-      (total, itemCategory) => total + categoryCounts[itemCategory],
-      0,
-    );
-    if (serverTotal.value === null) {
-      unreadCount.value = Math.max(unreadCount.value, visibleCategoryTotal);
-    } else {
-      unreadCount.value = Math.max(
-        0,
-        serverTotal.value - locallyViewedTotal,
-        visibleCategoryTotal,
-      );
-    }
-    return categoryCounts[category];
-  }
-
-  /** 用户打开一条通知时先在本地扣减，两个角标会立即同步。 */
-  function markViewed(category: NotificationCategory): boolean {
-    if (unreadCount.value <= 0) return false;
-    if (categoryCounts[category] > 0) {
-      categoryCounts[category] -= 1;
-      locallyViewed[category] += 1;
-    } else {
-      // 部分账号只返回总数 badge，不返回分类数量，仍要保证点击后角标即时消失。
-      locallyViewedWithoutCategory.value += 1;
-    }
-    unreadCount.value -= 1;
+  /** 官方使用第一份 NotifyCount，不按字段取最大值或从列表条数猜测未读。 */
+  function applyNotifyCount(response: any): boolean {
+    const data = response?.data ?? response;
+    const rows = Array.isArray(data) ? data : [data];
+    const count = rows.map(row => row?.notifyCount ?? row?.notify_count).find(value => value && typeof value === 'object');
+    if (!count) return false;
+    applyServerResponse(count);
     return true;
   }
 
+  /** 仅供现有私信会话已读流程调用；站内通知必须经过服务端 v18/read。 */
+  function markViewed(category: NotificationCategory): boolean {
+    if (category !== 'message' || categoryCounts.message <= 0) return false;
+    categoryCounts.message -= 1;
+    locallyViewedMessages += 1;
+    unreadCount.value = Math.max(0, unreadCount.value - 1);
+    return true;
+  }
+
+  /** 官方点赞/关注首屏成功后只清除对应内存计数，不保存跨启动抵消。 */
   function markCategoryViewed(category: NotificationCategory): number {
+    if (!['like', 'follow', 'message'].includes(category)) return 0;
     const count = categoryCounts[category];
-    if (count <= 0) return 0;
     categoryCounts[category] = 0;
-    locallyViewed[category] += count;
-    unreadCount.value = Math.max(0, unreadCount.value - count);
+    if (category === 'message') locallyViewedMessages += count;
+    // 官方总数不包含独立关注数，清关注不能降低通知或私信角标。
+    if (category !== 'follow') unreadCount.value = Math.max(0, unreadCount.value - count);
     return count;
   }
 
-  /**
-   * 启动后经列表标识核对确认的旧通知，可能尚未有可用的分类计数。
-   * 先从总数抵消，后续拿到分类字段时 applyCategoryCount 会自动归属到对应分类。
-   */
-  function suppressNotificationCount(count: number): number {
-    const requested = Number(count);
-    if (!Number.isFinite(requested) || requested <= 0) return 0;
-
-    const suppressed = Math.min(Math.floor(requested), notificationCount.value);
-    if (suppressed <= 0) return 0;
-
-    locallyViewedWithoutCategory.value += suppressed;
-    unreadCount.value = Math.max(0, unreadCount.value - suppressed);
-    return suppressed;
-  }
-
-  /**
-   * 服务端偶尔会把自己发出的最后一条私信也计入 message 未读。
-   * 仅扣除已由会话列表明确识别为“自己发送”的数量，并保留本地抵消量，
-   * 避免下一次 checkCount 在服务端尚未修正前再次显示红点。
-   */
+  /** 仅校正会话列表已明确识别的自己发出的私信，不能用于站内通知。 */
   function suppressMessageCount(count: number): number {
-    const requested = Number(count);
-    if (!Number.isFinite(requested) || requested <= 0) return 0;
-
-    const suppressed = Math.min(Math.floor(requested), categoryCounts.message);
-    if (suppressed <= 0) return 0;
-
+    const parsed = Number(count);
+    const suppressed = Number.isFinite(parsed) ? Math.min(Math.max(0, Math.floor(parsed)), categoryCounts.message) : 0;
     categoryCounts.message -= suppressed;
-    locallyViewed.message += suppressed;
+    locallyViewedMessages += suppressed;
     unreadCount.value = Math.max(0, unreadCount.value - suppressed);
     return suppressed;
   }
 
-  /** 开始清除通知，阻止已经发出的旧 checkCount 响应覆盖当前状态。 */
-  function beginNotificationClear(): void {
-    notificationStateVersion.value += 1;
-  }
+  function beginNotificationClear(): void { notificationStateVersion.value += 1; }
 
-  /** 服务端确认清除后重建基线；官方全部已读包含私信，其余调用默认保留私信。 */
+  /** 仅在服务端全部已读请求成功后调用；官方 all 包含私信。 */
   function markNotificationsCleared(includeMessages = false): void {
-    notificationStateVersion.value += 1;
-    const remainingMessageCount = includeMessages ? 0 : categoryCounts.message;
-    for (const category of CATEGORY_NAMES) {
-      if (category === 'message' && !includeMessages) continue;
-      categoryCounts[category] = 0;
-      serverCategoryCounts[category] = 0;
-      locallyViewed[category] = 0;
-    }
-    locallyViewedWithoutCategory.value = 0;
-    unreadCount.value = remainingMessageCount;
-    // 按本次清除范围建立服务端基线，后续新通知从新基线正常计入。
-    serverTotal.value = remainingMessageCount;
+    notificationClearVersion.value += 1;
+    beginNotificationClear();
+    const remainingMessages = includeMessages ? 0 : categoryCounts.message;
+    for (const category of CATEGORY_NAMES) categoryCounts[category] = 0;
+    categoryCounts.message = remainingMessages;
+    unreadCount.value = remainingMessages;
+    serverTotal = remainingMessages;
+    serverMessageCount = remainingMessages;
+    locallyViewedMessages = 0;
   }
 
-  /** 显式执行全部已读时清除站内通知，私信未读保持不变。 */
-  function markAllNotificationsViewed(): number {
-    const count = notificationCount.value;
-    if (count <= 0) return 0;
-
-    let categorizedCount = 0;
-    for (const category of CATEGORY_NAMES) {
-      if (category === 'message') continue;
-      const categoryCount = categoryCounts[category];
-      if (categoryCount <= 0) continue;
-      categorizedCount += categoryCount;
-      locallyViewed[category] += categoryCount;
-      categoryCounts[category] = 0;
-    }
-    locallyViewedWithoutCategory.value += Math.max(0, count - categorizedCount);
-    unreadCount.value = Math.max(0, unreadCount.value - count);
-    return count;
-  }
-
-  function reset() {
-    notificationStateVersion.value += 1;
+  function reset(): void {
+    notificationClearVersion.value += 1;
+    beginNotificationClear();
     unreadCount.value = 0;
-    serverTotal.value = null;
-    locallyViewedWithoutCategory.value = 0;
-    for (const category of CATEGORY_NAMES) {
-      categoryCounts[category] = 0;
-      serverCategoryCounts[category] = null;
-      locallyViewed[category] = 0;
-    }
+    for (const category of CATEGORY_NAMES) categoryCounts[category] = 0;
+    serverTotal = serverMessageCount = null;
+    locallyViewedMessages = notifyCountDateline = 0;
+    officialCounts = false;
   }
 
-  return {
-    unreadCount,
-    categoryCounts,
-    notificationCount,
-    messageCount,
-    notificationStateVersion,
-    applyServerResponse,
-    applyCategoryCount,
-    markViewed,
-    markCategoryViewed,
-    suppressNotificationCount,
-    suppressMessageCount,
-    beginNotificationClear,
-    markNotificationsCleared,
-    markAllNotificationsViewed,
-    reset,
-  };
+  return { unreadCount, categoryCounts, notificationCount, messageCount, notificationStateVersion, notificationClearVersion, applyServerResponse, applyNotifyCount,
+    markViewed, markCategoryViewed, suppressMessageCount, beginNotificationClear, markNotificationsCleared, reset };
 });

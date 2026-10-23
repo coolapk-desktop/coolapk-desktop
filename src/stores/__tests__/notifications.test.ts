@@ -2,183 +2,91 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../notifications';
 
-describe('通知状态', () => {
-  it('官方全部已读包含私信，清除后新通知仍正常计入', () => {
+describe('官方通知状态', () => {
+  beforeEach(() => setActivePinia(createPinia()));
+
+  it('普通通知和点赞组成通知角标，关注独立显示且私信单独计数', () => {
     const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge: 5, commentme: 2, feedlike: 1, message: 2 } });
+    store.applyServerResponse({ data: { notification_v18: 2, feedlike: 3, contacts_follow: 4, message: 1, badge_v18: 99, dateline: 100 } });
+    expect(store.notificationCount).toBe(5);
+    expect(store.unreadCount).toBe(6);
+    expect(store.categoryCounts.follow).toBe(4);
+    expect(store.messageCount).toBe(1);
+  });
+
+  it('官方 all 包含私信，清除后新通知正常计入', () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ notification_v18: 2, feedlike: 1, message: 2, dateline: 100 });
     store.markNotificationsCleared(true);
     expect(store.unreadCount).toBe(0);
-    expect(store.messageCount).toBe(0);
     expect(Object.values(store.categoryCounts).every(count => count === 0)).toBe(true);
-    store.applyServerResponse({ data: { badge: 2, commentme: 1, message: 1 } });
-    expect(store.unreadCount).toBe(2);
-    expect(store.categoryCounts.comment).toBe(1);
-    expect(store.messageCount).toBe(1);
-  });
-  beforeEach(() => {
-    setActivePinia(createPinia());
-  });
-
-  it('同步顶部、侧栏和私信未读数', () => {
-    const store = useNotificationStore();
-    store.applyServerResponse({
-      data: {
-        badge: 4,
-        commentme: 1,
-        feedlike: 2,
-        message: 1,
-      },
-    });
-
-    expect(store.unreadCount).toBe(4);
-    expect(store.notificationCount).toBe(3);
+    store.applyServerResponse({ notification_v18: 1, message: 1, dateline: 101 });
+    expect(store.notificationCount).toBe(1);
     expect(store.messageCount).toBe(1);
   });
 
-  it('查看收到的赞后立即减少对应栏目和总未读数', () => {
+  it('按服务端时间戳拒绝旧快照和旧版响应，列表只采用第一份 NotifyCount', () => {
     const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge: 2, feedlike: 2 } });
-
-    expect(store.markViewed('like')).toBe(true);
-    expect(store.categoryCounts.like).toBe(1);
+    store.applyServerResponse({ notification_v18: 4, dateline: 100 });
+    store.applyNotifyCount({ data: [{ notifyCount: { notification_v18: 1, dateline: 102 } }, { notifyCount: { notification_v18: 20, dateline: 103 } }] });
     expect(store.notificationCount).toBe(1);
-
-    // 服务端还没有清零时，本地已查看状态仍然生效。
-    store.applyServerResponse({ data: { badge: 2, feedlike: 2 } });
+    store.applyServerResponse({ notification_v18: 4, dateline: 101 });
+    store.applyServerResponse({ badge_v18: 20 });
     expect(store.notificationCount).toBe(1);
+    // 官方使用小于判断，同一时间戳的后到快照仍有效。
+    store.applyServerResponse({ notification_v18: 2, dateline: 102 });
+    expect(store.notificationCount).toBe(2);
   });
 
-  it('接口只返回总数时，点击通知也会立即清除红点', () => {
+  it('点赞关注首屏只更新内存，不抵消下一份服务端快照的新通知', () => {
     const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge: 1 } });
-
-    expect(store.markViewed('comment')).toBe(true);
-    expect(store.notificationCount).toBe(0);
-
-    // 服务端尚未同步时不能把已查看的红点重新显示出来。
-    store.applyServerResponse({ data: { badge: 1 } });
-    expect(store.notificationCount).toBe(0);
-
-    store.applyServerResponse({ data: { badge: 0 } });
-    store.applyServerResponse({ data: { badge: 1 } });
-    expect(store.notificationCount).toBe(1);
-  });
-
-  it('启动时恢复已确认通知的总数抵消，下一轮轮询不会重新显示', () => {
-    const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge_v18: 1 } });
-
-    expect(store.suppressNotificationCount(1)).toBe(1);
-    expect(store.notificationCount).toBe(0);
-
-    store.applyServerResponse({ data: { badge_v18: 1 } });
-    expect(store.notificationCount).toBe(0);
-  });
-
-  it('从通知列表恢复收到的赞后，切换到该分类会同步清除全局角标', () => {
-    const store = useNotificationStore();
-    store.applyServerResponse({
-      data: {
-        badge_v18: 1,
-        notification_v18: 0,
-      },
-    });
-
-    expect(store.categoryCounts.like).toBe(0);
-    expect(store.notificationCount).toBe(1);
-
-    store.applyCategoryCount('like', 1);
-    expect(store.categoryCounts.like).toBe(1);
-    expect(store.notificationCount).toBe(1);
+    store.applyServerResponse({ notification_v18: 2, feedlike: 1, contacts_follow: 3, dateline: 100 });
     expect(store.markCategoryViewed('like')).toBe(1);
-    expect(store.categoryCounts.like).toBe(0);
-    expect(store.notificationCount).toBe(0);
-
-    // 服务端暂时仍返回旧 badge，不能把刚确认已读的点赞重新显示出来。
-    store.applyServerResponse({
-      data: {
-        badge_v18: 1,
-        notification_v18: 0,
-      },
-    });
-    expect(store.categoryCounts.like).toBe(0);
-    expect(store.notificationCount).toBe(0);
+    expect(store.notificationCount).toBe(2);
+    expect(store.markCategoryViewed('follow')).toBe(3);
+    expect(store.notificationCount).toBe(2);
+    store.applyNotifyCount({ data: { notifyCount: { notification_v18: 1, feedlike: 2, dateline: 101 } } });
+    expect(store.notificationCount).toBe(3);
+    expect(store.markViewed('notification')).toBe(false);
+    expect(store.markCategoryViewed('notification')).toBe(0);
+    expect(store.notificationCount).toBe(3);
   });
 
-  it('分类计数先清零、总 badge 滞后时，已读点赞不会重新显示总红点', () => {
+  it('私信会话已读保持独立，不能扣除普通通知', () => {
     const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge_v18: 1 } });
-    store.applyCategoryCount('like', 1);
-    store.markCategoryViewed('like');
-
-    // 实际接口会出现 feedlike 已清零但 badge_v18 尚未清零的短暂不一致。
-    store.applyServerResponse({ data: { badge_v18: 1, feedlike: 0 } });
-    expect(store.categoryCounts.like).toBe(0);
-    expect(store.notificationCount).toBe(0);
-
-    // 总数真正清零后释放本地抵消；后续新点赞仍能正常出现。
-    store.applyServerResponse({ data: { badge_v18: 0, feedlike: 0 } });
-    store.applyServerResponse({ data: { badge_v18: 1, feedlike: 1 } });
-    expect(store.categoryCounts.like).toBe(1);
-    expect(store.notificationCount).toBe(1);
-  });
-
-  it('执行全部已读清除通知红点，但保留私信未读', () => {
-    const store = useNotificationStore();
-    store.applyServerResponse({
-      data: {
-        badge: 4,
-        commentme: 1,
-        feedlike: 2,
-        message: 1,
-      },
-    });
-
-    expect(store.markAllNotificationsViewed()).toBe(3);
-    expect(store.notificationCount).toBe(0);
+    store.applyServerResponse({ notification_v18: 2, message: 2, dateline: 100 });
+    expect(store.markViewed('message')).toBe(true);
+    expect(store.notificationCount).toBe(2);
     expect(store.messageCount).toBe(1);
-    expect(store.unreadCount).toBe(1);
-  });
-
-  it('服务端确认清除站内通知后，下一条新通知不会被旧抵消吞掉', () => {
-    const store = useNotificationStore();
-    store.applyServerResponse({
-      data: {
-        badge: 4,
-        commentme: 1,
-        feedlike: 2,
-        message: 1,
-      },
-    });
-
-    store.markViewed('comment');
-    store.markNotificationsCleared();
-    expect(store.notificationCount).toBe(0);
+    store.applyServerResponse({ notification_v18: 2, message: 2, dateline: 101 });
     expect(store.messageCount).toBe(1);
-
-    // 清除请求成功后，服务端基线按仅剩私信处理；下一条点赞应重新出现。
-    store.applyServerResponse({ data: { badge: 2, message: 1, feedlike: 1 } });
-    expect(store.notificationCount).toBe(1);
-    expect(store.categoryCounts.like).toBe(1);
+    store.applyServerResponse({ notification_v18: 2, message: 1, dateline: 102 });
+    expect(store.messageCount).toBe(1);
+    expect(store.notificationCount).toBe(2);
   });
 
-  it('扣除服务端误报的自己发送私信后，下一轮轮询不会恢复红点', () => {
+  it('自己发送的私信校正只限私信余额，不影响通知或后续新的消息', () => {
     const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge: 1, message: 1 } });
-
-    expect(store.suppressMessageCount(1)).toBe(1);
+    store.applyServerResponse({ notification_v18: 1, message: 1, dateline: 100 });
+    expect(store.suppressMessageCount(10)).toBe(1);
     expect(store.messageCount).toBe(0);
-    expect(store.unreadCount).toBe(0);
-
-    // 服务端暂时仍返回原来的数量，本地抵消状态继续生效。
-    store.applyServerResponse({ data: { badge: 1, message: 1 } });
-    expect(store.messageCount).toBe(0);
-    expect(store.unreadCount).toBe(0);
-
-    // 服务端真正清零后又出现新的真实私信时，应重新显示。
-    store.applyServerResponse({ data: { badge: 0, message: 0 } });
-    store.applyServerResponse({ data: { badge: 1, message: 1 } });
+    expect(store.notificationCount).toBe(1);
+    store.applyServerResponse({ notification_v18: 1, message: 0, dateline: 101 });
+    store.applyServerResponse({ notification_v18: 1, message: 1, dateline: 102 });
     expect(store.messageCount).toBe(1);
-    expect(store.unreadCount).toBe(1);
+  });
+
+  it('账号重置后清除旧时间戳、计数和私信抵消', () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ notification_v18: 1, message: 2, dateline: 100 });
+    store.markViewed('message');
+    const version = store.notificationStateVersion;
+    store.reset();
+    expect(store.notificationStateVersion).toBeGreaterThan(version);
+    expect(store.unreadCount).toBe(0);
+    const applied = store.applyServerResponse({ notification_v18: 4, message: 2, dateline: 1 });
+    expect(applied.previous).toBeNull();
+    expect(store.notificationCount).toBe(4);
+    expect(store.messageCount).toBe(2);
   });
 });

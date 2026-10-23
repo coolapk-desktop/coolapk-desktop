@@ -4,10 +4,10 @@ import { defineComponent, KeepAlive } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../../stores/notifications';
 
-const mocks = vi.hoisted(() => ({ notifications: vi.fn(), reply: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), confirm: vi.fn(), report: vi.fn() }));
+const mocks = vi.hoisted(() => ({ notifications: vi.fn(), reply: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn() }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: {
-  getNotifications: mocks.notifications, getReplyDetail: mocks.reply, clearNotificationCount: mocks.clear, reportNotificationClick: mocks.report,
+  getNotifications: mocks.notifications, getReplyDetail: mocks.reply, clearNotificationCount: mocks.clear, reportNotificationClick: mocks.report, readNotification: mocks.read, getNotificationCount: mocks.count,
 } }));
 vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: true, user: { uid: 'notification-test' } }) }));
 vi.mock('../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
@@ -17,9 +17,9 @@ vi.mock('../../utils/richText', () => ({ renderCoolapkRichText: (text: string) =
 import NotificationsPage from '../NotificationsPage.vue';
 
 describe('通知评论点击入口', () => {
-  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); setActivePinia(createPinia()); mocks.clear.mockResolvedValue({}); mocks.report.mockResolvedValue({}); mocks.confirm.mockResolvedValue(false); });
+  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); setActivePinia(createPinia()); mocks.clear.mockResolvedValue({}); mocks.report.mockResolvedValue({}); mocks.confirm.mockResolvedValue(false); mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 0, dateline: 101 } } }); });
   async function mountPage(item: any) {
-    mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? [item] : [] }));
+    mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? (Array.isArray(item) ? item : [item]) : [] }));
     const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
       global: { stubs: { AppAvatar: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
     });
@@ -27,24 +27,65 @@ describe('通知评论点击入口', () => {
     return wrapper;
   }
 
-  it('进入普通通知分类不清未读，点击只标记当前条目且重复点击不重复扣减', async () => {
+  it.each(['.notify-message', '.original-feed-preview'])('官方 v18 通知点击 %s 后用服务端已读快照更新角标', async selector => {
     const store = useNotificationStore();
-    store.applyServerResponse({ data: { badge: 8, commentme: 3, atme: 2, feedlike: 1, message: 2 } });
-    const wrapper = await mountPage({ id: 'read-1', message: '通知内容', unread_count: 2, url: '/feed/333?reportSubItemId=123' });
+    store.applyServerResponse({ data: { notification_v18: 2, feedlike: 1, message: 2, dateline: 100 } });
+    const item = { id: 'row-id', feedId: '333', message: '通知内容', url: '/feed/333?notificationV18Id=9007199254740993&notificationV18Type=reply&reportSubItemId=123' };
+    mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 1, feedlike: 1, message: 2, dateline: 101 } } });
+    const wrapper = await mountPage(item);
     try {
-      expect(store.categoryCounts.comment).toBe(3);
-      expect(wrapper.get('.notify-unread-badge').text()).toBe('2');
+      expect(store.notificationCount).toBe(3);
+      expect(mocks.read).not.toHaveBeenCalled();
+      await wrapper.get(selector).trigger('click');
+      await flushPromises();
+      expect(mocks.read).toHaveBeenCalledWith('9007199254740993', 'reply');
+      expect(mocks.report).toHaveBeenCalledWith('123');
+      expect(store.notificationCount).toBe(2);
+      expect(store.messageCount).toBe(2);
+      // 旧列表或轮询响应不得恢复已读前的角标。
+      store.applyNotifyCount({ data: [{ notifyCount: { notification_v18: 2, feedlike: 1, message: 2, dateline: 100 } }] });
+      expect(store.notificationCount).toBe(2);
       expect(mocks.clear).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('未带官方已读参数时不猜测扣减总数，也不把通知自身 ID 当已读 ID', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 2, dateline: 100 } });
+    const wrapper = await mountPage({ id: '123', message: '通知内容', isnew: 1 });
+    try {
       await wrapper.get('.notify-message').trigger('click');
       await flushPromises();
-      expect(store.categoryCounts.comment).toBe(1);
-      expect(store.categoryCounts.atMe).toBe(2);
-      expect(store.messageCount).toBe(2);
-      expect(wrapper.find('.notify-unread-badge').exists()).toBe(false);
-      expect(mocks.report).toHaveBeenCalledWith('123');
+      expect(store.notificationCount).toBe(2);
+      expect(mocks.read).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('服务端已读请求失败时保留角标并允许用户重试', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 2, dateline: 100 } });
+    mocks.read.mockRejectedValueOnce(new Error('网络失败'));
+    const wrapper = await mountPage({ id: '123', message: '通知内容', url: '/feed/333?notificationV18Id=123&notificationV18Type=reply' });
+    try {
       await wrapper.get('.notify-message').trigger('click');
-      expect(store.categoryCounts.comment).toBe(1);
-      expect(mocks.clear).not.toHaveBeenCalled();
+      await flushPromises();
+      expect(store.notificationCount).toBe(2);
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(mocks.read).toHaveBeenCalledTimes(2);
+      expect(store.notificationCount).toBe(0);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('普通列表按官方游标翻页，系统聚合卡片进入 noteType 子列表', async () => {
+    const wrapper = await mountPage({ id: '9007199254740993', fromuid: '1', note_type: 'system', message: '系统通知' });
+    try {
+      expect(mocks.notifications).toHaveBeenCalledWith('list', 2, '9007199254740993', '9007199254740993', '');
+      mocks.notifications.mockResolvedValue({ data: [] });
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(mocks.notifications).toHaveBeenLastCalledWith('subList', 1, '', '', 'system');
+      expect(wrapper.text()).toContain('返回通知列表');
     } finally { wrapper.unmount(); }
   });
 
@@ -105,7 +146,7 @@ describe('通知评论点击入口', () => {
     store.applyServerResponse({ data: { badge: 2, commentme: 2, feedlike: 0 } });
     const wrapper = await mountPage({ id: 'zero-like', message: '历史通知' });
     try {
-      await wrapper.findAll('.tab-btn')[3].trigger('click');
+      await wrapper.findAll('.tab-btn')[1].trigger('click');
       await flushPromises();
       expect(store.unreadCount).toBe(2);
       expect(store.categoryCounts.comment).toBe(2);
@@ -123,8 +164,8 @@ describe('通知评论点击入口', () => {
       if (tab === 'contactsFollowList') resolveFollow = resolve;
     }));
     try {
-      await wrapper.findAll('.tab-btn')[3].trigger('click');
-      await wrapper.findAll('.tab-btn')[4].trigger('click');
+      await wrapper.findAll('.tab-btn')[1].trigger('click');
+      await wrapper.findAll('.tab-btn')[2].trigger('click');
       resolveLike({ data: [{ id: 'old-like', message: '旧点赞响应' }] });
       await flushPromises();
       expect(store.categoryCounts.like).toBe(2);

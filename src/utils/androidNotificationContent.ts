@@ -10,7 +10,7 @@ export async function androidNotificationContent(categories: NotificationCategor
   const category = categories[0] || 'comment';
   const fallback = { title: '酷安新通知', body: `你有 ${total} 条未读通知，点击查看详情。`, category,
     route: category === 'message' ? '/messages' : '/notifications' };
-  const types: Record<string, string> = { comment: 'list', atMe: 'atMeList', atComment: 'atCommentMeList', like: 'feedLikeList', follow: 'contactsFollowList' };
+  const types: Record<string, string> = { notification: 'list', comment: 'list', atMe: 'list', atComment: 'list', like: 'feedLikeList', follow: 'contactsFollowList' };
   if (!categories.length) return fallback;
   try {
     const response = category === 'message' ? await CoolapkTauriAPI.listMessages(1)

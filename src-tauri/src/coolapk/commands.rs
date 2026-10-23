@@ -1483,14 +1483,22 @@ pub async fn report_notification_click(state: State<'_, AppState>, task_id: Stri
 }
 
 #[tauri::command]
+pub async fn read_notification(state: State<'_, AppState>, id: String, notification_type: String) -> Result<Value, String> {
+    state.client.read_notification(&id, &notification_type).await
+}
+
+#[tauri::command]
 pub async fn get_notifications(
     state: State<'_, AppState>,
     notification_type: String,
     page: u32,
+    first_item: Option<String>,
+    last_item: Option<String>,
+    note_type: Option<String>,
 ) -> Result<Value, String> {
     state
         .client
-        .get_notifications(&notification_type, page)
+        .get_notifications(&notification_type, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""), note_type.as_deref().unwrap_or(""))
         .await
 }
 

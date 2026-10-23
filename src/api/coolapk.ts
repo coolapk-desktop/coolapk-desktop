@@ -788,8 +788,12 @@ export class CoolapkTauriAPI {
     return await invokeNative('report_notification_click', { taskId }, { retry: false });
   }
 
-  static async getNotifications(notificationType: string = 'atme', page: number = 1) {
-    return await invokeNative('get_notifications', { notificationType, page }, { retry: true });
+  static async readNotification(id: string, notificationType: string) {
+    return await invokeNative('read_notification', { id, notificationType }, { retry: false });
+  }
+
+  static async getNotifications(notificationType: string = 'list', page: number = 1, firstItem = '', lastItem = '', noteType = '') {
+    return await invokeNative('get_notifications', { notificationType, page, firstItem, lastItem, noteType }, { retry: true });
   }
 
   static async listMessages(page: number = 1, firstItem: string = '', lastItem: string = '') {

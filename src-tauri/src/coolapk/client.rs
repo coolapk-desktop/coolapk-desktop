@@ -6261,30 +6261,36 @@ impl CoolapkClient {
         wrap_api_data(self.api_post("/v6/notificationV18/reportPushTaskClick", &[], &[("task_id", task_id.to_string()), ("source", "2".to_string())]).await?)
     }
 
+    /// 对齐 APK AppLinkActivity，应用内点击不携带系统通知来源 source=1。
+    pub async fn read_notification(&self, id: &str, notification_type: &str) -> Result<Value, String> {
+        if id.trim().is_empty() || notification_type.trim().is_empty() { return Err("缺少通知已读参数".to_string()); }
+        wrap_api_data(self.api_post("/v6/notificationV18/read", &[], &[("id", id.trim().to_string()), ("type", notification_type.trim().to_string())]).await?)
+    }
+
     pub async fn get_notifications(
         &self,
         notification_type: &str,
         page: u32,
+        first_item: &str,
+        last_item: &str,
+        note_type: &str,
     ) -> Result<Value, String> {
-        // 酷安官方已下线旧通知路径（atme/comment/like/feedlike，返回 404），
-        // 现行有效路径以官方 UWP 客户端 UriHelper 为准：
-        //   list=评论回复、atMeList=@我、atCommentMeList=评论@我、
-        //   feedLikeList=动态点赞、contactsFollowList=新关注
-        let notification_type = match notification_type {
-            "atMeList" | "list" | "atCommentMeList" | "feedLikeList" | "contactsFollowList" => {
-                notification_type
-            }
-            "atme" => "atMeList",
-            "comment" => "list",
-            "like" | "feedlike" => "feedLikeList",
-            _ => "atMeList",
+        // APK 普通通知统一走 v18，点赞/关注仍使用各自专用列表；旧分类入口归并到通知。
+        let path = match notification_type {
+            "feedLikeList" | "like" | "feedlike" => "/v6/notification/feedLikeList",
+            "contactsFollowList" => "/v6/notification/contactsFollowList",
+            "subList" => "/v6/notificationV18/subList",
+            _ => "/v6/notificationV18/list",
         };
+        let mut query = vec![("page", page.max(1).to_string())];
+        if !first_item.is_empty() { query.push(("firstItem", first_item.to_string())); }
+        if !last_item.is_empty() { query.push(("lastItem", last_item.to_string())); }
+        if notification_type == "subList" {
+            if note_type.trim().is_empty() { return Err("缺少通知分组类型".to_string()); }
+            query.push(("noteType", note_type.to_string()));
+        }
         wrap_api_data(
-            self.api_get(
-                &format!("/v6/notification/{notification_type}"),
-                &[("page", page.to_string())],
-            )
-            .await?,
+            self.api_get(path, &query).await?,
         )
     }
 

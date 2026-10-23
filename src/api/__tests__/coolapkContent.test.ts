@@ -10,6 +10,12 @@ function okResponse(data: unknown) {
 }
 
 describe('CoolapkTauriAPI 内容新页接口封装', () => {
+  it('官方通知已读与列表游标使用独立接口，通知标识始终保留字符串', async () => {
+    await CoolapkTauriAPI.readNotification('9007199254740993', 'reply');
+    expect(invoke).toHaveBeenLastCalledWith('read_notification', { id: '9007199254740993', notificationType: 'reply' });
+    await CoolapkTauriAPI.getNotifications('subList', 2, 'first', 'last', 'feed_reply');
+    expect(invoke).toHaveBeenLastCalledWith('get_notifications', { notificationType: 'subList', page: 2, firstItem: 'first', lastItem: 'last', noteType: 'feed_reply' });
+  });
   it('通知点击上报与全部已读使用独立命令', async () => {
     await CoolapkTauriAPI.reportNotificationClick('123');
     expect(invoke).toHaveBeenLastCalledWith('report_notification_click', { taskId: '123' });

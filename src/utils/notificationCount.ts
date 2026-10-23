@@ -13,6 +13,7 @@ const TOTAL_COUNT_KEYS = [
 const CATEGORY_COUNT_PATTERN = /(notification|message|reply|comment|atme|at_me|like|follow|contact)/i;
 
 export type NotificationCategory =
+  | 'notification'
   | 'comment'
   | 'atMe'
   | 'atComment'
@@ -29,6 +30,7 @@ export interface NotificationCountSnapshot {
 export type NotificationCategoryCounts = Partial<Record<NotificationCategory, number>>;
 
 const CATEGORY_KEYS: Record<NotificationCategory, string[]> = {
+  notification: ['notification_v18'],
   comment: ['commentme', 'commentMe', 'comment'],
   atMe: ['atme', 'atMe'],
   atComment: ['atcommentme', 'atCommentMe'],
@@ -63,6 +65,7 @@ function readCategoryCount(
 
 function createEmptyCategoryCounts(): Record<NotificationCategory, number> {
   return {
+    notification: 0,
     comment: 0,
     atMe: 0,
     atComment: 0,
@@ -74,6 +77,7 @@ function createEmptyCategoryCounts(): Record<NotificationCategory, number> {
 
 function createCategoryPresence(): Record<NotificationCategory, boolean> {
   return {
+    notification: false,
     comment: false,
     atMe: false,
     atComment: false,
@@ -202,6 +206,9 @@ export function normalizeNotificationCounts(response: unknown): NotificationCoun
     categories[category] = result.count;
     categoryPresence[category] = result.present;
   }
+
+  // APK AppNotification.getCount：普通通知 + 点赞，可选包含私信；关注单独显示，不重复相加。
+  if (categoryPresence.notification) return { total: categories.notification + categories.like + categories.message, categories, categoryPresence };
 
   for (const key of TOTAL_COUNT_KEYS) {
     const count = toSafeCount(record[key]);
