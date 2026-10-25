@@ -1,5 +1,6 @@
 import { reactive } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
+import { logDiagnosticLimited, classifyDiagnosticRequestError } from './diagnosticLogger';
 
 interface UserCacheEntry {
   data: any;
@@ -53,6 +54,19 @@ function readProfile(uid: string): UserCacheEntry | undefined {
 const inFlightRequests = new Map<string, Promise<any>>();
 const preloadQueue: string[] = [];
 let activePreloadCount = 0;
+let failedLoads = 0;
+let repeatedFailures = 0;
+const recentlyFailedProfiles = new Set<string>();
+
+function reportProfileFailure(uid: string, source: 'background' | 'hover', error: unknown) {
+  failedLoads++;
+  if (recentlyFailedProfiles.has(uid)) repeatedFailures++;
+  recentlyFailedProfiles.add(uid);
+  if (recentlyFailedProfiles.size > MAX_CACHED_PROFILES) recentlyFailedProfiles.delete(recentlyFailedProfiles.values().next().value!);
+  logDiagnosticLimited('warn', 'user_profile', 'load_failed_summary',
+    `source=${source} category=${classifyDiagnosticRequestError(error)} failed_loads=${failedLoads} repeated_failures=${repeatedFailures} tracked_failed_profiles=${recentlyFailedProfiles.size} queued=${preloadQueue.length} active=${activePreloadCount} in_flight=${inFlightRequests.size} cached=${globalUserCache.size}`,
+    60_000, 'user_profile:load_failed_summary');
+}
 
 /**
  * 调度后台预加载队列
@@ -84,11 +98,12 @@ function pumpPreloadQueue() {
       .then((res: any) => {
         if (!res) return null;
         const data = res?.data || res || {};
+        recentlyFailedProfiles.delete(uid);
         rememberProfile(uid, data);
         return data;
       })
-      .catch(() => {
-        // 静默失败，不打扰控制台
+      .catch((error) => {
+        reportProfileFailure(uid, 'background', error);
         return null;
       })
       .finally(() => {
@@ -176,9 +191,11 @@ export async function getUserProfileCached(rawUid: string | number | undefined |
     }
     const res: any = await CoolapkTauriAPI.getPublicUserSpace(uid);
     const data = res?.data || res || {};
+    recentlyFailedProfiles.delete(uid);
     rememberProfile(uid, data);
     return data;
   } catch (err) {
+    reportProfileFailure(uid, 'hover', err);
     return fallback || null;
   }
 }

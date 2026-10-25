@@ -5,7 +5,7 @@ import { getFeedDetailMessage, hasFeedMoreSuffix, parseWebFeedDetail } from '../
 import { getCoolapkUserLinkName, isCoolapkWebUrl, normalizeCoolapkRoute } from '../utils/coolapkRoute';
 import { normalizeUserUid } from '../utils/userRoute';
 import { requestWithPolicy, type RequestKind } from '../utils/requestCenter';
-import { logDiagnostic, summarizeDiagnosticError } from '../utils/diagnosticLogger';
+import { logDiagnostic, logDiagnosticLimited, classifyDiagnosticRequestError, summarizeDiagnosticError } from '../utils/diagnosticLogger';
 import { extractCaptchaParamsFromError, verifyWithCaptcha } from '../utils/neteaseCaptcha';
 import type { UpdatePackageType } from '../utils/updateChecker';
 import { showToast } from '../utils/toast';
@@ -88,7 +88,9 @@ async function invokeNative(tauriCmd: string, tauriArgs: any = {}, options: Nati
     logDiagnostic('debug', 'api', 'request_ok', `${tauriCmd}${context ? ` ${context}` : ''} elapsed_ms=${Date.now() - started}`);
     return result;
   } catch (error) {
-    logDiagnostic('warn', 'api', 'request_failed', `${tauriCmd}${context ? ` ${context}` : ''} elapsed_ms=${Date.now() - started} reason=${summarizeDiagnosticError(error)}`);
+    const category = classifyDiagnosticRequestError(error);
+    logDiagnosticLimited('warn', 'api', 'request_failed', `${tauriCmd}${context ? ` ${context}` : ''} elapsed_ms=${Date.now() - started} category=${category} reason=${summarizeDiagnosticError(error)}`,
+      60_000, `api:failed:${tauriCmd}:${category}`);
     throw error;
   }
 }

@@ -99,6 +99,21 @@ export function summarizeDiagnosticError(value: unknown): string {
   return redactDiagnosticText(`${value.name}: ${value.message}${frame ? ` frame=${frame}` : ''}`).slice(0, 800);
 }
 
+/** 固定错误类别用于节流键，不把用户 ID、错误正文或凭据放进键。 */
+export function classifyDiagnosticRequestError(value: unknown): string {
+  const text = summarizeDiagnosticError(value).toLowerCase();
+  if (/captcha|验证码|err_request_captcha/.test(text)) return 'captcha';
+  if (text.includes('请求验证错误')) return 'request_validation';
+  if (/不存在|已被删除|已删除/.test(text)) return 'unavailable_content';
+  if (/dns|lookup address|resolve host/.test(text)) return 'dns';
+  if (/timeout|timed out|超时/.test(text)) return 'timeout';
+  if (/connection closed|connection abort|连接中断|连接关闭/.test(text)) return 'connection_closed';
+  if (/429|访问过于频繁|too many/.test(text)) return 'rate_limit';
+  if (/未登录|没有登录|401|权限/.test(text)) return 'authentication';
+  if (/network|fetch|sending request|网络|连接/.test(text)) return 'network';
+  return 'other';
+}
+
 export function logDiagnostic(level: LogLevel, module: string, event: string, detail?: unknown): void {
   if (!loggingAvailable() || writing || (level === 'debug' && !verbose)) return;
   const message = `[frontend][${redactDiagnosticText(module)}] ${redactDiagnosticText(event)} time=${new Date().toISOString()} session=${session} seq=${++sequence} ${diagnosticViewport()}${detail === undefined ? '' : ` ${summarize(detail)}`}`;

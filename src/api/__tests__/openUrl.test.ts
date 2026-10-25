@@ -3,7 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { CoolapkTauriAPI } from '../coolapk';
 import { showToast } from '../../utils/toast';
 vi.mock('../../utils/toast', () => ({ showToast: vi.fn() }));
-vi.mock('../../utils/diagnosticLogger', () => ({ logDiagnostic: vi.fn(), summarizeDiagnosticError: String }));
+vi.mock('../../utils/diagnosticLogger', async (original) => ({
+  ...await original<typeof import('../../utils/diagnosticLogger')>(),
+  logDiagnostic: vi.fn(), logDiagnosticLimited: vi.fn(), summarizeDiagnosticError: String,
+}));
 
 const routerMocks = vi.hoisted(() => ({
   push: vi.fn().mockResolvedValue(undefined),

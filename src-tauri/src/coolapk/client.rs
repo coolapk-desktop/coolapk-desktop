@@ -1976,19 +1976,20 @@ impl CoolapkClient {
         }
 
         let response = request.send().await.map_err(|error| {
-            log::warn!("api.transport_failed method={} path={} timeout={} elapsed_ms={} cause={}",
-                method_name, log_path, error.is_timeout(), started.elapsed().as_millis(), error_cause_chain(&error));
+            log_api_failure_limited("api.transport_failed", &method_name, api_origin, log_path,
+                if error.is_timeout() { "timeout" } else { "transport" },
+                &format!("timeout={} elapsed_ms={} cause={}", error.is_timeout(), started.elapsed().as_millis(), error_cause_chain(&error)));
             error.to_string()
         })?;
         let status = response.status();
         let result = response_json(response).await;
         match &result {
-            Err(error) => log::warn!("api.response_failed method={} path={} status={} reason={} elapsed_ms={}",
-                method_name, log_path, status.as_u16(), classify_api_failure(error), started.elapsed().as_millis()),
+            Err(error) => log_api_failure_limited("api.response_failed", &method_name, api_origin, log_path, classify_api_failure(error),
+                &format!("status={} elapsed_ms={}", status.as_u16(), started.elapsed().as_millis())),
             Ok(value) => {
                 if let Some((code, reason)) = application_failure(value) {
-                    log::warn!("api.application_failed method={} path={} status={} code={} reason={}",
-                        method_name, log_path, status.as_u16(), code, reason);
+                    log_api_failure_limited("api.application_failed", &method_name, api_origin, log_path, reason,
+                        &format!("status={} code={}", status.as_u16(), code));
                 } else {
                     log::debug!("api.response_ok method={} path={} status={} elapsed_ms={}",
                         method_name, log_path, status.as_u16(), started.elapsed().as_millis());
@@ -2055,19 +2056,20 @@ impl CoolapkClient {
             .send()
             .await
             .map_err(|error| {
-                log::warn!("api.guest_transport_failed path={} timeout={} elapsed_ms={} cause={}",
-                    log_path, error.is_timeout(), started.elapsed().as_millis(), error_cause_chain(&error));
+                log_api_failure_limited("api.guest_transport_failed", "GET", api_origin, log_path,
+                    if error.is_timeout() { "timeout" } else { "transport" },
+                    &format!("timeout={} elapsed_ms={} cause={}", error.is_timeout(), started.elapsed().as_millis(), error_cause_chain(&error)));
                 error.to_string()
             })?;
         let status = response.status();
         let result = response_json(response).await;
         match &result {
-            Err(error) => log::warn!("api.guest_response_failed path={} status={} app_code={} reason={} elapsed_ms={}",
-                log_path, status.as_u16(), self.request_app_code().unwrap_or(APP_CODE), classify_api_failure(error), started.elapsed().as_millis()),
+            Err(error) => log_api_failure_limited("api.guest_response_failed", "GET", api_origin, log_path, classify_api_failure(error),
+                &format!("status={} app_code={} elapsed_ms={}", status.as_u16(), self.request_app_code().unwrap_or(APP_CODE), started.elapsed().as_millis())),
             Ok(value) => {
                 if let Some((code, reason)) = application_failure(value) {
-                    log::warn!("api.guest_application_failed path={} status={} app_code={} code={} reason={}",
-                        log_path, status.as_u16(), self.request_app_code().unwrap_or(APP_CODE), code, reason);
+                    log_api_failure_limited("api.guest_application_failed", "GET", api_origin, log_path, reason,
+                        &format!("status={} app_code={} code={}", status.as_u16(), self.request_app_code().unwrap_or(APP_CODE), code));
                 } else {
                     log::debug!("api.guest_response_ok path={} status={} elapsed_ms={}",
                         log_path, status.as_u16(), started.elapsed().as_millis());
@@ -9540,6 +9542,41 @@ fn error_cause_chain(error: &(dyn std::error::Error + 'static)) -> String {
     }
 }
 
+#[derive(Default)]
+struct ApiFailureLogLimiter {
+    // 仅保存固定请求路径和错误类别，限制不同键的数量，避免日志设施持有无界状态。
+    entries: std::collections::HashMap<String, (Option<std::time::Instant>, u64, u64)>,
+}
+
+impl ApiFailureLogLimiter {
+    fn record(&mut self, key: String, now: std::time::Instant) -> Option<(u64, u64)> {
+        if self.entries.len() >= 128 && !self.entries.contains_key(&key) {
+            if let Some(oldest) = self.entries.iter().min_by_key(|(_, entry)| entry.0).map(|(key, _)| key.clone()) {
+                self.entries.remove(&oldest);
+            }
+        }
+        let entry = self.entries.entry(key).or_insert((None, 0, 0));
+        entry.1 = entry.1.saturating_add(1);
+        if entry.0.is_some_and(|last| now.saturating_duration_since(last).as_secs() < 60) {
+            entry.2 = entry.2.saturating_add(1);
+            return None;
+        }
+        let counts = (entry.1, entry.2);
+        entry.0 = Some(now);
+        entry.2 = 0;
+        Some(counts)
+    }
+}
+
+fn log_api_failure_limited(event: &str, method: &str, origin: &str, path: &str, reason: &str, detail: &str) {
+    static LIMITER: std::sync::OnceLock<std::sync::Mutex<ApiFailureLogLimiter>> = std::sync::OnceLock::new();
+    let counts = LIMITER.get_or_init(Default::default).lock().ok()
+        .and_then(|mut limiter| limiter.record(format!("{event}:{method}:{origin}:{path}:{reason}"), std::time::Instant::now()));
+    if let Some((total, suppressed)) = counts {
+        log::warn!("{event} method={method} origin={origin} path={path} reason={reason} failures_total={total} suppressed_failures={suppressed} {detail}");
+    }
+}
+
 fn classify_api_failure(text: &str) -> &'static str {
     let lower = text.to_ascii_lowercase();
     if lower.contains("captcha") || text.contains("验证码") {
@@ -9593,7 +9630,7 @@ async fn response_json(response: reqwest::Response) -> Result<Value, String> {
 
 #[cfg(test)]
 mod api_failure_log_tests {
-    use super::{application_failure, classify_api_failure};
+    use super::{application_failure, classify_api_failure, ApiFailureLogLimiter};
     use serde_json::json;
 
     #[test]
@@ -9605,6 +9642,18 @@ mod api_failure_log_tests {
         assert_eq!(application_failure(&json!({"code": 200, "status": -3, "message": "请求验证错误"})), Some((-3, "request_validation")));
         assert_eq!(application_failure(&json!({"status": 1, "data": {}})), None);
         assert_eq!(classify_api_failure("Coolapk API returned HTTP 403: empty response body"), "empty_body");
+    }
+
+    #[test]
+    fn limits_repeated_failures_but_preserves_counts_and_other_endpoints() {
+        let mut limiter = ApiFailureLogLimiter::default();
+        let now = std::time::Instant::now();
+        assert_eq!(limiter.record("guest:space:validation".into(), now), Some((1, 0)));
+        for _ in 0..20 { assert_eq!(limiter.record("guest:space:validation".into(), now), None); }
+        assert_eq!(limiter.record("notification:dns".into(), now), Some((1, 0)));
+        assert_eq!(limiter.record("guest:space:validation".into(), now + std::time::Duration::from_secs(60)), Some((22, 20)));
+        for i in 0..200 { limiter.record(format!("bounded:{i}"), now); }
+        assert_eq!(limiter.entries.len(), 128);
     }
 }
 

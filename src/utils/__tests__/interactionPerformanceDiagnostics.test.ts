@@ -87,4 +87,31 @@ describe('interaction performance diagnostics', () => {
     monitor!.reset();
     expect(monitor!.summary()).toContain('timed_events=0');
   });
+
+  it('卡顿日志每三十秒最多一条，只保留本应用脚本文件名和耗时', () => {
+    const observed = new Map<string, PerformanceObserverCallback>();
+    vi.stubGlobal('PerformanceObserver', class {
+      static supportedEntryTypes = ['long-animation-frame'];
+      constructor(private callback: PerformanceObserverCallback) {}
+      observe(options: PerformanceObserverInit) { observed.set(options.type!, this.callback); }
+      takeRecords() { return []; }
+      disconnect() {}
+    });
+    const env = setup();
+    const send = (sourceURL: string) => observed.get('long-animation-frame')!({ getEntries: () => [{
+      duration: 300, blockingDuration: 200,
+      scripts: [{ duration: 240, sourceURL, sourceFunctionName: 'private function', forcedStyleAndLayoutDuration: 90 }],
+    }] } as unknown as PerformanceObserverEntryList, {} as PerformanceObserver);
+    send(`${window.location.origin}/assets/Home-abc123.js?token=private-token`);
+    send('https://private-host.example/private-path?token=private-token');
+    expect(env.write).toHaveBeenCalledTimes(1);
+    expect(env.write.mock.calls[0][1]).toContain('script_asset=Home-abc123.js');
+    expect(env.write.mock.calls[0][1]).toContain('slowest_script_ms=240 forced_layout_ms=90');
+    env.setTime(30_010);
+    send('https://private-host.example/private-path?token=private-token');
+    expect(env.write).toHaveBeenCalledTimes(2);
+    expect(env.write.mock.calls[1][1]).toContain('suppressed_events=1');
+    expect(env.write.mock.calls[1][1]).toContain('script_asset=unavailable');
+    expect(JSON.stringify(env.write.mock.calls)).not.toContain('private');
+  });
 });

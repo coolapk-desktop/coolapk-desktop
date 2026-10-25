@@ -8,6 +8,7 @@ export function installInteractionPerformanceDiagnostics(write: (event: string, 
   let previousFrame: number | undefined;
   let pendingInput: number | undefined;
   let lastWarning = -Infinity;
+  let suppressedWarnings = 0;
   let frames = 0, frameTime = 0, maxFrame = 0, slowFrames = 0, stalls = 0, scrollStalls = 0;
   let inputs = 0, maxInputDelay = 0, nextFrames = 0, maxNextFrame = 0;
   let timedEvents = 0, maxEventDuration = 0, maxHandler = 0, slowEvents = 0;
@@ -16,11 +17,13 @@ export function installInteractionPerformanceDiagnostics(write: (event: string, 
   const buckets = bounds.map(() => 0);
   const observers: PerformanceObserver[] = [];
   const available = () => !stopped && !paused && document.visibilityState !== 'hidden';
-  const warn = (kind: string, ms: number) => {
+  const warn = (kind: string, ms: number, detail = '') => {
     const now = performance.now();
-    if (ms < 200 || now - lastWarning < 5000) return;
+    if (ms < 200) return;
+    if (now - lastWarning < 30_000) { suppressedWarnings++; return; }
     lastWarning = now;
-    write('jank', `kind=${kind} duration_ms=${Math.round(ms)} visibility=visible`);
+    write('jank', `kind=${kind} duration_ms=${Math.round(ms)} visibility=visible suppressed_events=${suppressedWarnings}${detail ? ` ${detail}` : ''}`);
+    suppressedWarnings = 0;
   };
   const draw = () => {
     frame = 0;
@@ -96,7 +99,21 @@ export function installInteractionPerformanceDiagnostics(write: (event: string, 
     longAnimations++; maxAnimation = Math.max(maxAnimation, entry.duration);
     const blocking = (entry as PerformanceEntry & { blockingDuration?: number }).blockingDuration;
     if (typeof blocking === 'number' && Number.isFinite(blocking)) animationBlocking += blocking;
-    warn('long_animation_frame', entry.duration);
+    const scripts = (entry as PerformanceEntry & { scripts?: { duration?: number; sourceURL?: string; forcedStyleAndLayoutDuration?: number }[] }).scripts;
+    const slowest = Array.isArray(scripts) ? scripts.reduce<typeof scripts[number] | undefined>((found, script) =>
+      script && Number.isFinite(script.duration) && (script.duration || 0) > (found?.duration || 0) ? script : found, undefined) : undefined;
+    let asset = 'unavailable';
+    if (typeof slowest?.sourceURL === 'string') {
+      try {
+        const url = new URL(slowest.sourceURL, window.location.href);
+        // 仅记录本应用构建产物文件名；外部地址、查询参数和函数参数均不落盘。
+        if (url.protocol === window.location.protocol && url.host === window.location.host
+          && /^\/assets\/[a-zA-Z0-9_-]+\.js$/.test(url.pathname)) asset = url.pathname.slice('/assets/'.length);
+      } catch { /* 非 URL 来源仅计时。 */ }
+    }
+    const millis = (value: number | undefined) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 'unavailable';
+    warn('long_animation_frame', entry.duration,
+      `scripts=${Array.isArray(scripts) ? scripts.length : 0} slowest_script_ms=${millis(slowest?.duration)} forced_layout_ms=${millis(slowest?.forcedStyleAndLayoutDuration)} script_asset=${asset}`);
   });
   const reset = () => {
     frames = frameTime = maxFrame = slowFrames = stalls = scrollStalls = 0;
