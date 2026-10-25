@@ -19,7 +19,47 @@ const fileStoreState = vi.hoisted(() => {
 
 vi.mock('@tauri-apps/plugin-store', () => ({ Store: { load: fileStoreState.load } }));
 
+const windowMocks = vi.hoisted(() => ({
+  setAlwaysOnTop: vi.fn(async (_enabled: boolean) => undefined),
+  setTheme: vi.fn(async () => undefined),
+}));
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => windowMocks }));
+
 describe('settings store', () => {
+  it.each([
+    ['Android', 'Mozilla/5.0 (Linux; Android 17)', 'Linux armv8l', 5, false],
+    ['iPhone', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5, false],
+    ['iPad 桌面 UA', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', 'MacIntel', 5, false],
+    ['Windows', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0, true],
+    ['macOS', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', 'MacIntel', 0, true],
+    ['Linux', 'Mozilla/5.0 (X11; Linux x86_64)', 'Linux x86_64', 0, true],
+  ])('%s 初始化及切换置顶设置时只在桌面调用窗口接口', async (_name, userAgent, platform, maxTouchPoints, desktop) => {
+    const touchDescriptor = Object.getOwnPropertyDescriptor(navigator, 'maxTouchPoints');
+    Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: maxTouchPoints });
+    const spies = [
+      vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent),
+      vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform),
+    ];
+    try {
+      (window as any).__TAURI_INTERNALS__ = { metadata: {} };
+      fileStoreState.values.set('alwaysOnTop', false);
+      const store = useSettingsStore();
+      await store.initializeSettings();
+      if (desktop) expect(windowMocks.setAlwaysOnTop).toHaveBeenCalledWith(false);
+      else expect(windowMocks.setAlwaysOnTop).not.toHaveBeenCalled();
+      windowMocks.setAlwaysOnTop.mockClear();
+      store.settings.alwaysOnTop = true;
+      await nextTick();
+      if (desktop) expect(windowMocks.setAlwaysOnTop).toHaveBeenCalledWith(true);
+      else expect(windowMocks.setAlwaysOnTop).not.toHaveBeenCalled();
+      await store.flushSettings();
+      store.$dispose();
+    } finally {
+      spies.forEach(spy => spy.mockRestore());
+      if (touchDescriptor) Object.defineProperty(navigator, 'maxTouchPoints', touchDescriptor);
+      else delete (navigator as any).maxTouchPoints;
+    }
+  });
   it('右栏资讯默认开启、热榜默认今日，并校验保存的范围', () => {
     expect(normalizeSettings({})).toMatchObject({ showHomeHotNews: true, homeSidebarRankPeriod: 'day' });
     expect(normalizeSettings({ showHomeHotNews: false, homeSidebarRankPeriod: 'week' })).toMatchObject({ showHomeHotNews: false, homeSidebarRankPeriod: 'week' });
@@ -150,6 +190,7 @@ describe('settings store', () => {
     fileStoreState.load.mockClear();
     fileStoreState.store.save.mockClear();
     vi.mocked(invoke).mockClear();
+    windowMocks.setAlwaysOnTop.mockClear();
   });
 
   const defaults: Partial<AppSettings> = {

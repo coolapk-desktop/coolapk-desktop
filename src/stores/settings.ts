@@ -7,6 +7,7 @@ import { resolveDesktopCommentsOnRight } from '../utils/desktopCommentsPreferenc
 import { normalizeSearchTabOrder } from '../utils/searchTabOrder';
 import { normalizeLightBackground, buildLightBackground } from '../utils/lightBackground';
 import { isLinuxDesktopRuntime, observeLinuxSystemTheme, type SystemTheme } from '../utils/linuxSystemTheme';
+import { isTouchMobilePlatform } from '../utils/platform';
 import type {
   AppSettings,
   ThemeMode,
@@ -747,6 +748,8 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function syncAlwaysOnTop(enabled: boolean) {
     if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return;
+    // Android/iOS 不提供桌面窗口置顶接口，初始化与设置同步都应跳过。
+    if (isTouchMobilePlatform()) return;
     if ((window as any).__TAURI_INTERNALS__?.metadata) {
       void getCurrentWindow().setAlwaysOnTop(enabled).catch((err) => {
         console.warn('设置窗口置顶失败:', err);
