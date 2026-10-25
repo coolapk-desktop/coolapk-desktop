@@ -2016,32 +2016,42 @@ impl CoolapkClient {
         }
     }
 
+    fn public_api_request(
+        &self,
+        api_origin: &str,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<reqwest::RequestBuilder, String> {
+        if api_origin != "https://api.coolapk.com" && api_origin != "https://api2.coolapk.com" {
+            return Err("不受信任的酷安 API 主机".to_string());
+        }
+        // 公开内容只读回退使用本机持久化的游客设备码，不携带账号 Cookie。
+        // 这样既能避开登录设备触发的 -415，也不会改变已绑定账号的写操作指纹。
+        let public_device_code = device_code_with_profile(&self.guest_device_code(), &self.effective_device_profile());
+        let public_token = CoolapkAuth::new(public_device_code.clone()).get_app_token_with_app_code(self.request_app_code()?)?;
+        // 与官方统一请求头逻辑一致：签名和实际发送的版本、设备信息必须配套。
+        // 不能只覆盖 Token/Device，否则自定义版本的签名会搭配客户端默认版本头。
+        self.apply_device_profile_with_code(
+            self.api_client()?
+                .get(format!("{api_origin}{path}"))
+                .header("X-App-Token", public_token)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .query(query),
+            &public_device_code,
+        )
+    }
+
     async fn public_api_get_from(
         &self,
         api_origin: &str,
         path: &str,
         query: &[(&str, String)],
     ) -> Result<Value, String> {
-        if api_origin != "https://api.coolapk.com" && api_origin != "https://api2.coolapk.com" {
-            return Err("不受信任的酷安 API 主机".to_string());
-        }
         let started = std::time::Instant::now();
         let log_path = path.split('?').next().unwrap_or(path);
-
-        // 公开内容只读回退使用本机持久化的游客设备码，不携带账号 Cookie。
-        // 这样既能避开登录设备触发的 -415，也不会改变已绑定账号的写操作指纹。
-        let public_device_code = device_code_with_profile(&self.guest_device_code(), &self.effective_device_profile());
-        let public_token = CoolapkAuth::new(public_device_code.clone()).get_app_token_with_app_code(self.request_app_code()?)?;
-        let device_header = HeaderValue::from_str(&public_device_code)
-            .map_err(|_| "公开读取设备码格式无效".to_string())?;
+        let request = self.public_api_request(api_origin, path, query)?;
         log::debug!("api.guest_request path={} cookie_attached=false", log_path);
-        let response = self
-            .api_client()?
-            .get(format!("{api_origin}{path}"))
-            .header("X-App-Token", public_token)
-            .header("X-App-Device", device_header)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .query(query)
+        let response = request
             .send()
             .await
             .map_err(|error| {
@@ -2052,12 +2062,12 @@ impl CoolapkClient {
         let status = response.status();
         let result = response_json(response).await;
         match &result {
-            Err(error) => log::warn!("api.guest_response_failed path={} status={} reason={} elapsed_ms={}",
-                log_path, status.as_u16(), classify_api_failure(error), started.elapsed().as_millis()),
+            Err(error) => log::warn!("api.guest_response_failed path={} status={} app_code={} reason={} elapsed_ms={}",
+                log_path, status.as_u16(), self.request_app_code().unwrap_or(APP_CODE), classify_api_failure(error), started.elapsed().as_millis()),
             Ok(value) => {
                 if let Some((code, reason)) = application_failure(value) {
-                    log::warn!("api.guest_application_failed path={} status={} code={} reason={}",
-                        log_path, status.as_u16(), code, reason);
+                    log::warn!("api.guest_application_failed path={} status={} app_code={} code={} reason={}",
+                        log_path, status.as_u16(), self.request_app_code().unwrap_or(APP_CODE), code, reason);
                 } else {
                     log::debug!("api.guest_response_ok path={} status={} elapsed_ms={}",
                         log_path, status.as_u16(), started.elapsed().as_millis());
@@ -9534,6 +9544,8 @@ fn classify_api_failure(text: &str) -> &'static str {
     let lower = text.to_ascii_lowercase();
     if lower.contains("captcha") || text.contains("验证码") {
         "captcha"
+    } else if text.contains("请求验证错误") {
+        "request_validation"
     } else if lower.contains("rate_limit") || lower.contains("too many") || text.contains("访问过于频繁") {
         "rate_limit"
     } else if lower.contains("login") || lower.contains("auth") || text.contains("未登录") {
@@ -9546,11 +9558,11 @@ fn classify_api_failure(text: &str) -> &'static str {
 }
 
 fn application_failure(value: &Value) -> Option<(i64, &'static str)> {
-    let raw_code = value.get("code")?;
-    let code = raw_code.as_i64().or_else(|| raw_code.as_str()?.parse().ok())?;
-    if code == 0 || code == 200 || (0..400).contains(&code) {
-        return None;
-    }
+    let number = |key| value.get(key).and_then(|raw| raw.as_i64().or_else(|| raw.as_str()?.parse().ok()));
+    // 酷安也使用 HTTP 200 + status=1004 等业务错误信封，不能只检查 code。
+    let code = number("code").filter(|code| !(0..400).contains(code))
+        .or_else(|| number("status").filter(|status| *status != 0 && *status != 1)
+            .filter(|_| value.get("message").and_then(Value::as_str).is_some()))?;
     let reason = ["messageStatus", "messageExtra", "message"]
         .iter()
         .filter_map(|key| value.get(*key).and_then(Value::as_str))
@@ -9589,6 +9601,9 @@ mod api_failure_log_tests {
         assert_eq!(application_failure(&json!({"code": 403, "messageStatus": "err_request_captcha_v2"})), Some((403, "captcha")));
         assert_eq!(application_failure(&json!({"code": -415, "message": "访问过于频繁"})), Some((-415, "rate_limit")));
         assert_eq!(application_failure(&json!({"code": 200, "message": "ok"})), None);
+        assert_eq!(application_failure(&json!({"status": 1004, "message": "请求验证错误"})), Some((1004, "request_validation")));
+        assert_eq!(application_failure(&json!({"code": 200, "status": -3, "message": "请求验证错误"})), Some((-3, "request_validation")));
+        assert_eq!(application_failure(&json!({"status": 1, "data": {}})), None);
         assert_eq!(classify_api_failure("Coolapk API returned HTTP 403: empty response body"), "empty_body");
     }
 }

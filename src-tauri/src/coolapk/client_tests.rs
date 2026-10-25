@@ -39,6 +39,95 @@ fn invalid_custom_request_version_is_rejected_before_signing() {
 }
 
 #[test]
+fn public_user_requests_keep_custom_version_headers_aligned_with_signing() {
+    let client = CoolapkClient::new();
+    *client.user_cookie.write().unwrap() = Some("uid=123; token=test-account-token".into());
+    for code in ["2604201", "2610162"] {
+        client.update_device_profile(DeviceProfile {
+            app_version: Some("16.6.5".into()),
+            app_code: Some(code.into()),
+            sdk_int: Some("37".into()),
+            locale: Some("en-US".into()),
+            api_version: Some("16".into()),
+            dark_mode: Some("1".into()),
+            user_agent: Some("Coolapk-Profile-Test".into()),
+            device_id: Some("DUguestTest123456".into()),
+            ..Default::default()
+        });
+        let active_device = client.device_code.read().unwrap().clone();
+        for origin in ["https://api.coolapk.com", "https://api2.coolapk.com"] {
+            for path in ["/v6/user/space", "/v6/user/profile"] {
+                let request = client.public_api_request(origin, path, &[("uid", "456".into())])
+                    .unwrap().build().unwrap();
+                let headers = request.headers();
+                assert_eq!(headers["X-App-Code"], client.request_app_code().unwrap().to_string());
+                assert_eq!(headers["X-App-Supported"], code);
+                assert_eq!(headers["X-App-Version"], "16.6.5");
+                assert_eq!(headers.get_all("X-App-Code").iter().count(), 1);
+                assert_eq!(headers.get_all("X-App-Supported").iter().count(), 1);
+                assert_eq!(headers["X-Sdk-Int"], "37");
+                assert_eq!(headers["X-Sdk-Locale"], "en-US");
+                assert_eq!(headers["X-Api-Version"], "16");
+                assert_eq!(headers["X-Dark-Mode"], "1");
+                assert_eq!(headers[USER_AGENT], "Coolapk-Profile-Test");
+                let guest_device = device_code_with_profile(&client.guest_device_code(), &client.effective_device_profile());
+                assert_eq!(headers["X-App-Device"], guest_device);
+                assert!(headers["X-App-Token"].to_str().unwrap().starts_with("v3"));
+                assert!(!headers.contains_key(COOKIE));
+                assert_eq!(request.url().query(), Some("uid=456"));
+            }
+        }
+        assert_eq!(*client.device_code.read().unwrap(), active_device);
+        assert_eq!(client.get_user_cookie().as_deref(), Some("uid=123; token=test-account-token"));
+    }
+}
+
+#[test]
+fn public_user_request_rejects_untrusted_host_and_invalid_signing_version() {
+    let client = CoolapkClient::new();
+    assert!(client.public_api_request("https://example.com", "/v6/user/space", &[]).is_err());
+    client.update_device_profile(DeviceProfile { app_code: Some("invalid".into()), ..Default::default() });
+    assert!(client.public_api_request("https://api.coolapk.com", "/v6/user/space", &[])
+        .err().unwrap().contains("版本编码无效"));
+}
+
+/// 使用当前默认版本与临时游客身份实测；不读取账号文件、不打印凭据或资料。
+#[tokio::test]
+#[ignore]
+async fn probe_latest_public_user_data() {
+    let client = CoolapkClient::new();
+    let code = client.request_app_code().unwrap();
+    assert_eq!(code, APP_CODE);
+    let mut successes = 0;
+    for origin in ["https://api.coolapk.com", "https://api2.coolapk.com"] {
+        for path in ["/v6/user/space", "/v6/user/profile"] {
+            let request = client.public_api_request(origin, path, &[("uid", "612390".into())])
+                .unwrap().timeout(std::time::Duration::from_secs(12)).build().unwrap();
+            match client.api_client().unwrap().execute(request).await {
+                Ok(response) => {
+                    let http_status = response.status().as_u16();
+                    match response_json(response).await {
+                        Ok(value) => {
+                            let reason: String = value.get("message").and_then(Value::as_str).unwrap_or("")
+                                .chars().filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c)).take(80).collect();
+                            let profile_received = wrap_api_data(value.clone()).ok().is_some_and(|result|
+                                result.get("data").and_then(|data| data.get("uid")).is_some_and(|uid| value_to_string(uid) == "612390"));
+                            successes += usize::from(profile_received);
+                            println!("origin={origin} path={path} app_code={code} http_status={http_status} api_status={} profile_received={profile_received} reason_zh={reason}",
+                                value.get("status").or_else(|| value.get("code")).unwrap_or(&Value::Null),
+                            );
+                        }
+                        Err(_) => println!("origin={origin} path={path} app_code={code} http_status={http_status} invalid_response=true"),
+                    }
+                }
+                Err(error) => println!("origin={origin} path={path} app_code={code} transport_failed=true timeout={}", error.is_timeout()),
+            }
+        }
+    }
+    assert_eq!(successes, 4, "部分游客资料接口未返回目标用户资料，见上方状态摘要");
+}
+
+#[test]
 fn reply_detail_normalization_preserves_navigation_and_reply_context() {
     let raw = json!({ "data": {
         "id": 222, "fid": "333", "rid": "111", "rrid": "111",
