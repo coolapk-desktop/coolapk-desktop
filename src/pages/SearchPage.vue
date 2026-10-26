@@ -6,7 +6,7 @@
           <div ref="searchAreaRef" class="search-input-area">
             <div class="search-input-wrapper">
               <i class="fas fa-search search-input-icon"></i>
-              <input v-model="searchQuery" type="text" class="search-field" :placeholder="searchPlaceholder" @keydown.enter="doSearch(searchQuery)" @focus="onInputFocus" />
+              <input v-model="searchQuery" type="text" class="search-field" :placeholder="searchPlaceholder" @input="onSearchInput" @keydown.enter="doSearch(searchQuery)" @focus="onInputFocus" @blur="closeSearchDropdowns" />
               <button v-if="searchQuery" type="button" class="clear-btn" aria-label="清空搜索" @click="clearSearch"><i class="fas fa-times"></i></button>
             </div>
             <div v-if="showHistory && !searchQuery.trim() && searchHistory.length" class="search-history-dropdown">
@@ -129,6 +129,7 @@ const showHistory = ref(false);
 const searchSuggestions = ref<SearchEntity[]>([]);
 const searchAreaRef = ref<HTMLElement | null>(null);
 let suggestTimer: ReturnType<typeof setTimeout> | null = null;
+let suggestionSequence = 0;
 let searchSequence = 0;
 let configLoaded = false;
 
@@ -324,14 +325,22 @@ function onInputFocus() {
 }
 
 function handleClickOutside(event: MouseEvent) {
-  if (searchAreaRef.value && !searchAreaRef.value.contains(event.target as Node)) { showSuggestions.value = false; showHistory.value = false; }
+  if (searchAreaRef.value && !searchAreaRef.value.contains(event.target as Node)) closeSearchDropdowns();
+}
+
+// 关闭时同时作废防抖任务和在途请求，避免旧响应再次打开弹层。
+function closeSearchDropdowns() {
+  if (suggestTimer) clearTimeout(suggestTimer);
+  suggestTimer = null;
+  suggestionSequence += 1;
+  searchSuggestions.value = [];
+  showSuggestions.value = false;
+  showHistory.value = false;
 }
 
 function clearSearch() {
   searchQuery.value = '';
-  searchSuggestions.value = [];
-  showSuggestions.value = false;
-  showHistory.value = false;
+  closeSearchDropdowns();
 }
 
 function selectHistory(value: string) {
@@ -356,8 +365,7 @@ function selectSuggestion(item: SearchEntity) {
 function doSearch(value: string, requestedSearchType = '') {
   const trimmed = value.trim();
   if (!trimmed) return;
-  showSuggestions.value = false;
-  showHistory.value = false;
+  closeSearchDropdowns();
   addSearchHistory(trimmed);
   const query: Record<string, string> = { q: trimmed };
   if (isScopedSearch.value) {
@@ -417,15 +425,17 @@ function handleScroll(event: Event) {
   if (target.scrollTop + target.clientHeight >= target.scrollHeight - 120) void fetchTab(activeTab.value, true);
 }
 
-async function fetchSuggestions(value: string) {
+async function fetchSuggestions(value: string, sequence: number) {
   if (isScopedSearch.value) return;
   const trimmed = value.trim();
   if (!trimmed) { searchSuggestions.value = []; return; }
   try {
     let response = await CoolapkTauriAPI.getSearchSuggestionsApp(trimmed);
+    if (sequence !== suggestionSequence) return;
     let rows = extractSearchEntities(response).filter((item) => getSearchEntityTitle(item));
     if (!rows.length) {
       response = await CoolapkTauriAPI.getSearchSuggestions(trimmed);
+      if (sequence !== suggestionSequence) return;
       rows = extractSearchEntities(response).filter((item) => getSearchEntityTitle(item));
     }
     searchSuggestions.value = rows.slice(0, 8);
@@ -435,12 +445,15 @@ async function fetchSuggestions(value: string) {
   }
 }
 
-watch(searchQuery, (value) => {
+// 仅用户编辑触发联想，路由返回时恢复关键词不应遮挡已有结果。
+function onSearchInput() {
+  closeSearchDropdowns();
+  const value = searchQuery.value;
   showHistory.value = !value.trim();
-  if (suggestTimer) clearTimeout(suggestTimer);
   if (isScopedSearch.value || !value.trim()) { searchSuggestions.value = []; showSuggestions.value = false; return; }
-  suggestTimer = setTimeout(() => void fetchSuggestions(value), 300);
-});
+  const sequence = suggestionSequence;
+  suggestTimer = setTimeout(() => void fetchSuggestions(value, sequence), 300);
+}
 
 watch(() => [
   readQueryString(route.query.q),
@@ -461,8 +474,7 @@ watch(() => [
     syncActiveTab(nextTab || activeTab.value || 'all');
   }
   searchSequence += 1;
-  searchSuggestions.value = [];
-  showSuggestions.value = false;
+  closeSearchDropdowns();
   resetTabStates();
   // 等页签配置就绪再发起首次搜索，避免初始化重置使空首页补查失效。
   if (normalizedQuery && configLoaded) void fetchTab(activeTab.value);
@@ -483,9 +495,9 @@ onMounted(() => {
 });
 
 onActivated(bindGlobalListeners);
-onDeactivated(unbindGlobalListeners);
+onDeactivated(() => { closeSearchDropdowns(); unbindGlobalListeners(); });
 onUnmounted(() => {
-  if (suggestTimer) clearTimeout(suggestTimer);
+  closeSearchDropdowns();
   unbindGlobalListeners();
 });
 

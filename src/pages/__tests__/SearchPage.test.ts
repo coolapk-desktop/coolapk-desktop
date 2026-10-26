@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { createMemoryHistory, createRouter } from 'vue-router';
+import { defineComponent, h, KeepAlive } from 'vue';
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router';
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,63 @@ vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
 
 import SearchPage from '../SearchPage.vue';
 import { useSettingsStore } from '../../stores/settings';
+
+describe('搜索联想弹层生命周期', () => {
+  async function mountCachedSearch() {
+    vi.clearAllMocks();
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockResolvedValue({ data: [{ id: '1', entityType: 'feed' }] });
+    mocks.getSearchSuggestionsApp.mockReset().mockResolvedValue({ data: [{ entityType: 'searchWord', title: 'nuke' }] });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/search', component: SearchPage }, { path: '/feed/1', component: { render: () => h('div', '帖子') } }] });
+    await router.push('/search?q=nuke');
+    await router.isReady();
+    // 与应用相同，按完整路由缓存页面，覆盖进入帖子后返回的流程。
+    const host = defineComponent({ setup: () => () => h(RouterView, null, { default: ({ Component, route }: any) => h(KeepAlive, null, { default: () => Component ? h(Component, { key: route.fullPath }) : null }) }) });
+    const wrapper = mount(host, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
+    await flushPromises();
+    return { wrapper, router };
+  }
+
+  it('进入帖子再返回时恢复关键词和结果，不自动请求或显示联想', async () => {
+    const { wrapper, router } = await mountCachedSearch();
+    try {
+      await router.push('/feed/1');
+      await flushPromises();
+      router.back();
+      await flushPromises();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await flushPromises();
+      expect((wrapper.get('.search-field').element as HTMLInputElement).value).toBe('nuke');
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(mocks.getSearchSuggestionsApp).not.toHaveBeenCalled();
+      expect(wrapper.find('.suggestions-dropdown').exists()).toBe(false);
+      await wrapper.get('.search-field').setValue('nuke2');
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await flushPromises();
+      expect(wrapper.get('.suggestion-item').text()).toBe('nuke');
+    } finally { wrapper.unmount(); }
+  });
+
+  it.each(['submit', 'leave', 'blur', 'clear', 'edit'])('旧联想响应在 %s 后不能重新打开弹层', async (action) => {
+    const { wrapper, router } = await mountCachedSearch();
+    try {
+      let resolveOld!: (value: unknown) => void;
+      mocks.getSearchSuggestionsApp.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
+      await wrapper.get('.search-field').setValue('旧关键词');
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      if (action === 'submit') await wrapper.get('.search-field').trigger('keydown.enter');
+      if (action === 'leave') await router.push('/feed/1');
+      if (action === 'blur') await wrapper.get('.search-field').trigger('blur');
+      if (action === 'clear') await wrapper.get('.clear-btn').trigger('click');
+      if (action === 'edit') await wrapper.get('.search-field').setValue('新关键词');
+      await flushPromises();
+      resolveOld({ data: [{ entityType: 'searchWord', title: '旧联想' }] });
+      await flushPromises();
+      if (action === 'leave') { router.back(); await flushPromises(); }
+      expect(wrapper.find('.suggestions-dropdown').exists()).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+});
 
 describe('搜索分类自定义排序', () => {
   it('应用可排在综合后，远端顺序不能覆盖偏好，切换仍查询应用类型', async () => {
