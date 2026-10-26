@@ -1,5 +1,6 @@
 import type { RouteLocationNormalizedLoaded, RouteLocationNormalized } from 'vue-router';
 import { isFeedReportUrl } from './feedReport';
+import { HOME_TAB_REFRESH_EVENT } from './homeTab';
 
 type TabRoute = Pick<RouteLocationNormalizedLoaded, 'fullPath' | 'name' | 'path' | 'params' | 'query'> | Pick<RouteLocationNormalized, 'fullPath' | 'name' | 'path' | 'params' | 'query'>;
 
@@ -73,6 +74,8 @@ export function getPageTabId(route: TabRoute): string {
 
 /** 递增当前路由标签的视图代数，让页面内容重新挂载并保留应用外壳。 */
 export function refreshPageTabGeneration(tabs: Array<{ id: string; generation: number }>, route: TabRoute): void {
+  // 首页刷新当前栏目，保留栏目选择、子筛选和其他已访问列表的实例。
+  if (route.path === '/') { window.dispatchEvent(new Event(HOME_TAB_REFRESH_EVENT)); return; }
   const tab = tabs.find((item) => item.id === getPageTabId(route));
   if (tab) tab.generation += 1;
 }

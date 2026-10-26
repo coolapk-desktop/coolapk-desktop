@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { RouteLocationNormalizedLoaded } from 'vue-router';
-import { describePageTab, getPageTabId } from '../pageTabs';
+import { describePageTab, getPageTabId, refreshPageTabGeneration } from '../pageTabs';
+import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 import { usePageTabsStore } from '../../stores/pageTabs';
 
 function route(path: string, name: string, params: Record<string, string> = {}, query: Record<string, string> = {}) {
@@ -10,6 +11,19 @@ function route(path: string, name: string, params: Record<string, string> = {}, 
 }
 
 describe('页面标签身份', () => {
+  it('首页刷新保留页面实例，其他页面刷新只重建当前标签', () => {
+    const tabs = [{ id: 'home', generation: 0 }, { id: 'Search', generation: 0 }];
+    const refresh = vi.fn();
+    window.addEventListener(HOME_TAB_REFRESH_EVENT, refresh);
+    try {
+      refreshPageTabGeneration(tabs, route('/', 'Home'));
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(tabs.map(tab => tab.generation)).toEqual([0, 0]);
+      refreshPageTabGeneration(tabs, route('/search', 'Search'));
+      expect(tabs.map(tab => tab.generation)).toEqual([0, 1]);
+      expect(refresh).toHaveBeenCalledOnce();
+    } finally { window.removeEventListener(HOME_TAB_REFRESH_EVENT, refresh); }
+  });
   it.each(['', '/profile', '/account', '/notifications', '/privacy', '/content', '/downloads', '/proxy', '/appearance', '/shortcuts', '/startup', '/device', '/diagnostics', '/about'])('设置子页 %s 共用设置标签', (section) => {
     expect(describePageTab(route(`/settings${section}`, 'Settings'))).toMatchObject({ id: 'settings', title: '设置', icon: 'fas fa-gear', closable: true });
   });

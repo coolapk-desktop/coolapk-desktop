@@ -3,12 +3,13 @@ import { useAppStore } from '../stores/app';
 import { useSettingsStore } from '../stores/settings';
 import { hasActiveComments, collapseActiveComments } from './activeCommentTracker';
 import { usePageTabsStore } from '../stores/pageTabs';
+import { refreshPageTabGeneration } from './pageTabs';
 
 /**
  * 全局快捷键注册：
  *  - Ctrl+N 发布动态
  *  - Ctrl+, 打开设置
- *  - Ctrl+R 刷新当前信息流（派发 refresh-feeds 事件，由列表页监听）
+ *  - Ctrl+R 与工具栏一致，刷新当前页面或首页的当前栏目
  *  - Ctrl+ / Ctrl- 调整界面缩放
  *  - Ctrl+1..9 快速切换常用页面
  *  - Ctrl+Shift+B 折叠或展开侧边栏
@@ -98,7 +99,7 @@ export function registerGlobalHotkeys() {
 
     if (ctrl && e.key.toLowerCase() === 'r') {
       e.preventDefault();
-      window.dispatchEvent(new Event('refresh-feeds'));
+      refreshPageTabGeneration(usePageTabsStore().tabs, router.currentRoute.value);
       return;
     }
 

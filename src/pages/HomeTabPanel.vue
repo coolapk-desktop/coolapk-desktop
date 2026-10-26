@@ -1571,6 +1571,8 @@ const onHomeTabScrollTop = () => resetFeedScroll();
  * 当前选中栏目（关注 / 热榜 / 快讯 / 服务端下发的任意频道）的最新内容，不会串到别的栏目。
  */
 const onHomeTabRefresh = () => {
+  if (props.embedded && (!props.selected || route.path !== '/')) return;
+  if (loading.value || loadingMore.value) return;
   resetFeedScroll();
   onRefreshFeeds();
 };

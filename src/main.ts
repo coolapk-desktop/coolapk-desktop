@@ -14,6 +14,10 @@ import { setupGlobalAlertProxy } from './utils/toast';
 import { normalizeCoolapkDeepLink } from './utils/coolapkRoute';
 import { installDiagnosticLogging, logDiagnostic, logDiagnosticLimited, summarizeDiagnosticError } from './utils/diagnosticLogger';
 import { isResizeObserverWarning } from './utils/windowError';
+import { initializeWebViewCompatibility } from './utils/webviewCompatibility';
+
+// 在设置、路由及启动检查开始发起请求前补齐旧 WebView 接口。
+initializeWebViewCompatibility();
 
 // 启动全局原生 alert 代理拦截，统一呈现顶部高质感 Toast
 // 手机上的图标不依赖系统字体；桌面继续沿用现有字体图标。

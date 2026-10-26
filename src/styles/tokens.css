@@ -1,7 +1,7 @@
 /* src/styles/tokens.css - 基础 Token 定义 */
 :root {
   /* iOS 使用系统安全区，Android 使用原生传入的值；两端共享顶部布局。 */
-  --app-safe-area-top: max(env(safe-area-inset-top, 0px), var(--android-safe-area-top, 0px));
+  --app-safe-area-top: var(--android-safe-area-top, env(safe-area-inset-top, 0px));
   /* 基础字号规范 */
   --font-family-system: Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-family-base: var(--font-family-system);
@@ -66,4 +66,9 @@
   --duration-normal: 180ms;
   --duration-slow: 220ms;
   --ease-default: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 支持 max 的内核同时考虑系统安全区；旧 WebView 使用上方原生安全区回退。 */
+@supports (padding-top: max(0px, 1px)) {
+  :root { --app-safe-area-top: max(env(safe-area-inset-top, 0px), var(--android-safe-area-top, 0px)); }
 }

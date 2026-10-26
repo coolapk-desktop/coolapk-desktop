@@ -110,6 +110,8 @@ onDeactivated(() => { categoriesOpen.value = false; });
 .settings-category-card:hover { background: var(--brand-soft); }
 .settings-category-card.is-active { color: var(--brand-primary); background: var(--brand-soft); }
 .settings-content { flex: 1; min-width: 0; min-height: 0; padding: var(--space-6); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+/* 子设置页共享可用宽度，移除各页遗留的固定上限，同时允许窄窗口收缩。 */
+.settings-content :deep(.settings-section) { width: 100%; max-width: none; min-width: 0; box-sizing: border-box; }
 /* 按内容所需宽度换行，系统放大字体或 PC 窄窗口时也不能让操作挤扁说明。 */
 .settings-content :deep(.setting-row) { flex-wrap: wrap; gap: 12px 16px; }
 .settings-content :deep(.setting-row > .row-info) { flex: 1 1 200px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }

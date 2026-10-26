@@ -1311,7 +1311,8 @@ async function refreshMobilePage() { await fetchAppDetail(); if (activeDetailTab
 
 .page-container {
   width: 100%;
-  max-width: 820px;
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   padding: var(--space-5);

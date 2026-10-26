@@ -79,7 +79,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch } from 'vue';
+import { computed, getCurrentInstance, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import EmptyState from '../components/common/EmptyState.vue';
@@ -97,6 +97,9 @@ import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchE
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
 
 const route = useRoute();
+// App 按完整地址缓存搜索页；带路由键的旧实例不能响应另一组搜索条件。
+const instanceKey = getCurrentInstance()?.vnode.key;
+const cachedSearchPath = instanceKey === route.fullPath || String(instanceKey).startsWith(`${route.fullPath}:`) ? route.fullPath : '';
 const router = useRouter();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -455,14 +458,22 @@ function onSearchInput() {
   suggestTimer = setTimeout(() => void fetchSuggestions(value, sequence), 300);
 }
 
+let appliedSearchKey = '';
+let searchPageActive = true;
 watch(() => [
+  route.path,
   readQueryString(route.query.q),
   readQueryString(route.query.tab),
   readQueryString(route.query.pageType),
   readQueryString(route.query.pageParam),
   readQueryString(route.query.feedType),
   readQueryString(route.query.sort),
-], ([nextQuery, nextTab, , , nextFeedType, nextSort]) => {
+], ([path, nextQuery, nextTab, , , nextFeedType, nextSort]) => {
+  // 缓存页仍能收到全局路由变化；离开搜索及返回相同条件时不能清空结果和分页。
+  if (path !== '/search' || !searchPageActive || (cachedSearchPath && cachedSearchPath !== route.fullPath)) return;
+  const key = JSON.stringify([nextQuery, nextTab, readQueryString(route.query.pageType), readQueryString(route.query.pageParam), nextFeedType, nextSort]);
+  if (key === appliedSearchKey) return;
+  appliedSearchKey = key;
   const normalizedQuery = nextQuery;
   queryStr.value = normalizedQuery;
   searchQuery.value = normalizedQuery;
@@ -494,8 +505,8 @@ onMounted(() => {
   void loadSearchConfig();
 });
 
-onActivated(bindGlobalListeners);
-onDeactivated(() => { closeSearchDropdowns(); unbindGlobalListeners(); });
+onActivated(() => { searchPageActive = true; bindGlobalListeners(); });
+onDeactivated(() => { searchPageActive = false; closeSearchDropdowns(); unbindGlobalListeners(); });
 onUnmounted(() => {
   closeSearchDropdowns();
   unbindGlobalListeners();

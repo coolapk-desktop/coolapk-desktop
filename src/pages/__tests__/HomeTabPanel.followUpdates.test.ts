@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { expect, it, vi } from 'vitest';
 import HomeTabPanel from '../HomeTabPanel.vue';
 import { useAuthStore } from '../../stores/auth';
+import { HOME_TAB_REFRESH_EVENT } from '../../utils/homeTab';
 
 const api = vi.hoisted(() => ({
   getFollowingFeeds: vi.fn(),
@@ -45,6 +46,19 @@ it.each([390, 1280])('宽度 %s 的首页全部关注展示更新名单，其他
     await channels[2]!.trigger('click');
     await flushPromises();
     expect(wrapper.find('.updated-follow-users').exists()).toBe(false);
+    const activeChannel = wrapper.get('.follow-subchannel-item.active').element;
+    const channelRequests = api.getDiscoveryPageData.mock.calls.length;
+    const request = api.getDiscoveryPageData.mock.calls.at(-1)?.[0];
+    window.dispatchEvent(new Event(HOME_TAB_REFRESH_EVENT));
+    await flushPromises();
+    expect(wrapper.get('.follow-subchannel-item.active').element).toBe(activeChannel);
+    expect(api.getDiscoveryPageData).toHaveBeenCalledTimes(channelRequests + 1);
+    expect(api.getDiscoveryPageData.mock.calls.at(-1)?.[0]).toEqual(request);
+    await wrapper.setProps({ selected: false });
+    window.dispatchEvent(new Event(HOME_TAB_REFRESH_EVENT));
+    await flushPromises();
+    expect(api.getDiscoveryPageData).toHaveBeenCalledTimes(channelRequests + 1);
+    await wrapper.setProps({ selected: true });
     await channels[0]!.trigger('click');
     await flushPromises();
     expect(wrapper.get('.updated-follow-users').text()).toContain('关注酷友');

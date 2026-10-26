@@ -80,7 +80,8 @@ function selectVideoRequestParams(value: unknown): string {
 
   // The APK normally selects the last provider entry for the current player
   // mode. Keep that ordering so the desktop request matches the APK payload.
-  const selected = Object.values(requestParams).at(-1);
+  const providers = Object.values(requestParams);
+  const selected = providers[providers.length - 1];
   if (typeof selected === 'string') return selected.trim();
   if (selected && typeof selected === 'object' && !Array.isArray(selected)) {
     return JSON.stringify(selected);

@@ -13,7 +13,9 @@ function ensureNativeListener(): void {
   if (!isAndroidTauri() || listenerPromise) return;
 
   listenerPromise = onBackButtonPress(() => {
-    const topHandler = Array.from(handlers.values()).at(-1);
+    // 旧 WebView 没有 Array.at，返回键仍须命中最上层处理器。
+    const stack = Array.from(handlers.values());
+    const topHandler = stack[stack.length - 1];
     topHandler?.();
   }).then(() => undefined).catch((error) => {
     listenerPromise = null;

@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { registerGlobalHotkeys } from '../hotkeys';
 import * as commentTracker from '../activeCommentTracker';
+import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
     push: vi.fn(),
     back: vi.fn(),
     forward: vi.fn(),
+    currentRoute: { value: { path: '/' } },
   }),
 }));
+
+vi.mock('../../stores/pageTabs', () => ({ usePageTabsStore: () => ({ tabs: [{ id: 'home', generation: 0 }] }) }));
 
 vi.mock('../../stores/app', () => ({
   useAppStore: () => ({
@@ -28,6 +32,14 @@ vi.mock('../../stores/settings', () => ({
 }));
 
 describe('registerGlobalHotkeys', () => {
+  it('Ctrl+R 刷新首页当前栏目', () => {
+    const listener = vi.fn();
+    window.addEventListener(HOME_TAB_REFRESH_EVENT, listener);
+    try {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', ctrlKey: true, bubbles: true, cancelable: true }));
+      expect(listener).toHaveBeenCalledOnce();
+    } finally { window.removeEventListener(HOME_TAB_REFRESH_EVENT, listener); }
+  });
   let unregister: () => void;
 
   beforeEach(() => {

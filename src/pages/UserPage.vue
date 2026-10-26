@@ -1454,7 +1454,8 @@ async function refreshMobilePage() { await fetchUserProfile(); await fetchTabFee
 .user-page-wrapper {
   width: 100%;
   /* 用户页是沉浸式主页，铺满右侧主容器，不使用动态/列表页的窄栏宽度。 */
-  max-width: var(--feed-max-width);
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   margin: 0 auto;

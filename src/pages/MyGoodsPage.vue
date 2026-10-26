@@ -317,7 +317,8 @@ async function refreshMobilePage() { await load(true); }
 <style scoped>
 .page-container {
   width: 100%;
-  max-width: var(--feed-max-width);
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   padding: var(--space-5);

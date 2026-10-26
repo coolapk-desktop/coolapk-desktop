@@ -104,7 +104,7 @@ async function search(reset: boolean) {
     const unique = incoming.filter(product => { if (ids.has(product.id)) return false; ids.add(product.id); return true; });
     products.value.push(...unique);
     hasMore.value = unique.length > 0;
-    lastItem = incoming.at(-1)?.id || lastItem;
+    lastItem = incoming[incoming.length - 1]?.id || lastItem;
     page++;
     searched.value = true;
   } catch (err: any) {

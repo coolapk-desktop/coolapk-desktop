@@ -103,7 +103,8 @@ async function loadTabs() {
     error.value = hadTabs ? '栏目暂时无法更新，已保留当前栏目' : '栏目暂时无法加载，已启用基础栏目';
     logDiagnostic('warn', 'home', 'tab_config_fallback', summarizeDiagnosticError(err));
   }
-  activeKey.value = resolvePreferredHomeTab(tabs.value, settings.settings.defaultHomeTab);
+  // 更新栏目配置时保留当前选择，仅在栏目已移除或首次加载时采用默认项。
+  if (!tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = resolvePreferredHomeTab(tabs.value, settings.settings.defaultHomeTab);
   setPosition(activeIndex.value);
   visited.add(activeKey.value);
   await nextTick(); measure();
@@ -250,6 +251,8 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
 .pager-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: pan-y; }
 .pager-track { position: relative; height: 100%; width: 100%; will-change: transform; }
 .pager-page { position: absolute; top: 0; width: 100%; height: 100%; overflow: hidden; }
+/* 旧 WebView 不支持 inert，隐藏栏目也不能接收点击。 */
+.pager-page[aria-hidden='true'] { pointer-events: none; }
 .pager-warning { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 12px; font-size: 12px; color: var(--text-secondary); }
 .pager-warning button { min-height: 32px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: inherit; cursor: pointer; }
 .pager-state { padding: 24px; text-align: center; color: var(--text-secondary); }

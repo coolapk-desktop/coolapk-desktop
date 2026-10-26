@@ -212,7 +212,7 @@ async function fetchNotifications(): Promise<boolean> {
   let fetchSucceeded = false;
   try {
     const firstItem = requestedPage > 1 ? String(items.value[0]?.id || '') : '';
-    const lastItem = requestedPage > 1 ? String(items.value.at(-1)?.id || '') : '';
+    const lastItem = requestedPage > 1 ? String(items.value[items.value.length - 1]?.id || '') : '';
     const res = await CoolapkTauriAPI.getNotifications(subNoteType.value ? 'subList' : requestedTab, requestedPage, firstItem, lastItem, subNoteType.value);
     // 分类切换后丢弃旧请求，避免旧分类响应标记新分类已读。
     if (requestId !== notificationRequestId || requestedUid !== authStore.user?.uid) return false;
@@ -579,7 +579,8 @@ async function refreshMobilePage() { await refreshNotifications(); }
 <style scoped>
 .page-container {
   width: 100%;
-  max-width: var(--feed-max-width);
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   overflow-y: auto;
   padding: 0;

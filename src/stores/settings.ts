@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { listenMediaQuery } from '../utils/mediaQuery';
 import { ref, watch, onScopeDispose } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -644,8 +645,8 @@ export const useSettingsStore = defineStore('settings', () => {
     applyTheme('system');
     applyAccent(settings.value.accentColor);
   };
-  systemThemeMedia?.addEventListener('change', onSystemThemeChange);
-  onScopeDispose(() => systemThemeMedia?.removeEventListener('change', onSystemThemeChange));
+  const stopSystemTheme = systemThemeMedia ? listenMediaQuery(systemThemeMedia, onSystemThemeChange) : undefined;
+  onScopeDispose(() => stopSystemTheme?.());
   if (isLinuxDesktopRuntime()) {
     const stop = observeLinuxSystemTheme(theme => {
       linuxSystemTheme.value = theme;

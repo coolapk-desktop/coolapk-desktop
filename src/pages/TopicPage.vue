@@ -6,7 +6,7 @@
   >
     <!-- 1. 话题头部卡片 -->
     <div v-if="topicDetail && !isRatingView" class="topic-official-hero" :class="{ 'has-rating': ratingAvailable }" :style="{ '--topic-color': /^#[\da-f]{6}$/i.test(topicDetail.bgColor || '') ? topicDetail.bgColor : '#4a6263' }">
-    <AppImage v-if="topicDetail.cover" :src="topicDetail.cover" fit="contain" image-class="topic-cover" />
+    <AppImage v-if="topicDetail.cover" :src="topicDetail.cover" fit="cover" image-class="topic-cover" />
     <div class="topic-header-card">
       <div class="header-content">
         <div class="topic-icon-wrapper">
@@ -834,8 +834,9 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
 
 <style scoped>
 .topic-official-hero { flex: 0 0 auto; }
-.topic-official-hero :deep(.topic-cover) { height: auto; min-height: 160px; width: 100%; border-radius: 12px; margin-bottom: -28px; background: var(--topic-color); }
-.topic-official-hero :deep(.topic-cover img) { width: 100%; height: auto; object-fit: contain; object-position: center top; }
+/* 封面按横幅铺满并居中裁切，限制首屏占用，避免完整缩图在两侧留下大块空白。 */
+.topic-official-hero :deep(.topic-cover) { height: 240px; max-height: 30vh; min-height: 0; width: 100%; overflow: hidden; border-radius: 12px; margin-bottom: -28px; background: var(--topic-color); }
+.topic-official-hero :deep(.topic-cover img) { width: 100%; height: 100%; object-fit: cover; object-position: center; }
 @media(min-width:721px){
   .topic-official-hero.has-rating { background: var(--topic-color); border-radius: 12px; overflow: hidden; padding: 0 16px 4px; }
   .topic-official-hero.has-rating :deep(.topic-cover) { width: calc(100% + 32px); margin: 0 -16px -24px; border-radius: 0; }
@@ -851,7 +852,7 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
 .topic-rating-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }.topic-rating-toolbar > div { display: flex; padding: 2px; background: var(--background-secondary); border-radius: 20px; }.topic-rating-toolbar button { border: 0; background: transparent; color: var(--text-secondary); font: inherit; padding: 6px 12px; border-radius: 20px; cursor: pointer; }.topic-rating-toolbar button[aria-pressed="true"] { color: var(--text-primary); background: var(--surface); }
 @media(max-width:720px){
   .topic-official-hero { margin: -14px -16px 0; padding: 0 12px 12px; background: var(--topic-color); }
-  .topic-official-hero :deep(.topic-cover) { margin: 0 -12px -40px; width: calc(100% + 24px); border-radius: 0; }
+  .topic-official-hero :deep(.topic-cover) { height: 160px; max-height: 24vh; margin: 0 -12px -40px; width: calc(100% + 24px); border-radius: 0; }
   .topic-official-hero .topic-header-card { position: relative; background: color-mix(in srgb, var(--topic-color) 88%, black); color: white; border: 0; margin-bottom: 12px; }
   .topic-official-hero .topic-title,.topic-official-hero .topic-stats-text { color: #fffc; }
   .topic-official-hero .topic-icon-wrapper { width: 64px; height: 64px; }
@@ -869,6 +870,8 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
   --topic-page-side-space: 16px;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
+  flex: 1 1 0;
   height: 100%;
   overflow-y: auto;
   padding: var(--topic-page-top-space) var(--topic-page-side-space);

@@ -36,20 +36,48 @@ describe('搜索联想弹层生命周期', () => {
   it('进入帖子再返回时恢复关键词和结果，不自动请求或显示联想', async () => {
     const { wrapper, router } = await mountCachedSearch();
     try {
+      const scroller = wrapper.get('.search-scroll-container').element;
+      scroller.scrollTop = 650;
+      const requests = mocks.searchByType.mock.calls.length;
+      const result = wrapper.find('search-result-item-stub').element;
       await router.push('/feed/1');
       await flushPromises();
+      expect(scroller.scrollTop).toBe(650);
       router.back();
       await flushPromises();
       await new Promise((resolve) => setTimeout(resolve, 350));
       await flushPromises();
       expect((wrapper.get('.search-field').element as HTMLInputElement).value).toBe('nuke');
       expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(wrapper.find('search-result-item-stub').element).toBe(result);
+      expect(wrapper.get('.search-scroll-container').element).toBe(scroller);
+      expect(scroller.scrollTop).toBe(650);
+      expect(mocks.searchByType).toHaveBeenCalledTimes(requests);
       expect(mocks.getSearchSuggestionsApp).not.toHaveBeenCalled();
       expect(wrapper.find('.suggestions-dropdown').exists()).toBe(false);
       await wrapper.get('.search-field').setValue('nuke2');
       await new Promise((resolve) => setTimeout(resolve, 350));
       await flushPromises();
       expect(wrapper.get('.suggestion-item').text()).toBe('nuke');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('搜索不同关键词后返回，保留前一次搜索的结果实例和分页', async () => {
+    const { wrapper, router } = await mountCachedSearch();
+    try {
+      const scroller = wrapper.get('.search-scroll-container').element;
+      const result = wrapper.get('search-result-item-stub').element;
+      scroller.scrollTop = 480;
+      await router.push('/search?q=another');
+      await flushPromises();
+      const requests = mocks.searchByType.mock.calls.length;
+      router.back();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      await flushPromises();
+      expect(wrapper.get('.search-scroll-container').element).toBe(scroller);
+      expect(wrapper.get('search-result-item-stub').element).toBe(result);
+      expect(scroller.scrollTop).toBe(480);
+      expect(mocks.searchByType).toHaveBeenCalledTimes(requests);
     } finally { wrapper.unmount(); }
   });
 

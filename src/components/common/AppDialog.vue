@@ -67,7 +67,8 @@ function handleBackdropClick() {
 
 function handleKeydown(e: KeyboardEvent) {
   // 只处理最上层弹窗，取消确认时保留下方的用户操作窗口。
-  if (props.isOpen && e.key === 'Escape' && Array.from(openDialogs.keys()).at(-1) === dialogId) {
+  const stack = Array.from(openDialogs.keys());
+  if (props.isOpen && e.key === 'Escape' && stack[stack.length - 1] === dialogId) {
     e.stopImmediatePropagation();
     close();
   }

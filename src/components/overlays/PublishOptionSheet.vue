@@ -26,7 +26,7 @@ function close() { emit('close'); void nextTick(() => previousFocus.value?.focus
 // 键盘循环留在当前选择页，防止误触后方的发布按钮。
 function keepFocus(event: KeyboardEvent) {
   const controls = Array.from(sheet.value?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]') || []);
-  const first = controls[0], last = controls.at(-1);
+  const first = controls[0], last = controls[controls.length - 1];
   if (!first) { event.preventDefault(); return; }
   if (event.shiftKey && (document.activeElement === first || document.activeElement === sheet.value)) { event.preventDefault(); last?.focus(); }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
