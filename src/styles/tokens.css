@@ -58,6 +58,8 @@
   --mobile-topbar-height: 52px;
   --mobile-window-controls-height: 32px;
   --mobile-bottom-nav-height: 56px;
+  /* 旧 WebView 不支持 max()，导航定位、正文留白和收起距离共享有效回退值。 */
+  --mobile-bottom-nav-offset: 20px;
   --mobile-page-padding: 10px;
   --mobile-feed-gap: 8px;
 
@@ -70,5 +72,5 @@
 
 /* 支持 max 的内核同时考虑系统安全区；旧 WebView 使用上方原生安全区回退。 */
 @supports (padding-top: max(0px, 1px)) {
-  :root { --app-safe-area-top: max(env(safe-area-inset-top, 0px), var(--android-safe-area-top, 0px)); }
+  :root { --app-safe-area-top: max(env(safe-area-inset-top, 0px), var(--android-safe-area-top, 0px)); --mobile-bottom-nav-offset: max(20px, env(safe-area-inset-bottom, 0px)); }
 }

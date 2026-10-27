@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke: mocks.invoke }));
 vi.mock('@tauri-apps/plugin-log', () => ({ info: mocks.info, warn: mocks.warn, error: mocks.error, debug: mocks.debug }));
 
-import { installDiagnosticLogging, logDiagnostic, logDiagnosticLayout, logDiagnosticLimited, redactDiagnosticText, setDiagnosticPage, setVerboseDiagnosticLogging, summarizeDiagnosticError, classifyDiagnosticRequestError } from '../diagnosticLogger';
+import { installDiagnosticLogging, logDiagnostic, logDiagnosticLayout, logDiagnosticLimited, logWindowErrorDiagnostic, redactDiagnosticText, setDiagnosticPage, setVerboseDiagnosticLogging, summarizeDiagnosticError, classifyDiagnosticRequestError } from '../diagnosticLogger';
 
 describe('diagnosticLogger', () => {
   beforeEach(() => { (window as any).__TAURI_INTERNALS__ = {}; });
@@ -36,6 +36,39 @@ describe('diagnosticLogger', () => {
     logDiagnostic('error', 'login', 'failed', { cookie: 'private-value' });
     expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining('[object]'));
     expect(mocks.error.mock.calls[0][0]).not.toContain('private-value');
+  });
+
+  it('不透明脚本异常记录运行环境与脱敏脚本来源，不读取内联内容', () => {
+    const external = document.createElement('script');
+    external.src = 'https://example.com/sdk.js?token=private-query#private-fragment';
+    external.crossOrigin = 'anonymous';
+    external.type = 'application/json';
+    const inline = document.createElement('script');
+    inline.type = 'application/json';
+    inline.textContent = '{"cookie":"private-inline"}';
+    document.head.append(external, inline);
+    try {
+      logWindowErrorDiagnostic(new ErrorEvent('error', { message: 'Script error.' }));
+      const messages = mocks.error.mock.calls.map(call => call[0]).join('\n');
+      expect(messages).toContain('opaque=true error_present=false');
+      expect(messages).toContain('source=unknown line=0 column=0');
+      expect(messages).toContain('exception_context');
+      expect(messages).toContain('user_agent=');
+      expect(messages).toContain('source=https://example.com/sdk.js');
+      expect(messages).toContain('crossorigin=anonymous');
+      expect(messages).toContain('source=inline');
+      expect(messages).not.toContain('private-');
+    } finally { external.remove(); inline.remove(); }
+  });
+
+  it('真实脚本异常保留错误堆栈和独立行列号', () => {
+    const error = new Error('failure');
+    error.stack = 'Error: failure\n    at load (https://example.com/app.js:12:3)';
+    logWindowErrorDiagnostic(new ErrorEvent('error', { message: 'failure', error, filename: 'https://example.com/app.js?token=private-value', lineno: 12, colno: 3 }));
+    const message = mocks.error.mock.calls[0][0];
+    expect(message).toContain('frame=at load');
+    expect(message).toContain('source=https://example.com/app.js line=12 column=3 opaque=false error_present=true');
+    expect(message).not.toContain('private-value');
   });
 
   it('每条日志包含时间、运行标识、序号及安全的页面视口信息', () => {

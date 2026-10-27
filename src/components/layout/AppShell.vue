@@ -255,7 +255,7 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden .mobile-reading-topbar { grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
   .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { transition: transform 200ms ease, opacity 200ms ease; }
-  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translateY(calc(100% + max(20px, env(safe-area-inset-bottom)))); opacity: 0; pointer-events: none; }
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translateY(calc(100% + var(--mobile-bottom-nav-offset, 20px))); opacity: 0; pointer-events: none; }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav { --mobile-bottom-overlay-space: env(safe-area-inset-bottom, 0px); }
   .app-shell:not(.prevent-mobile-layout) :deep(.feed-scroll-container) { transition: padding-bottom 200ms ease; }
   @media (prefers-reduced-motion: reduce) {
@@ -273,7 +273,7 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   }
 
   .app-shell:not(.prevent-mobile-layout).has-mobile-bottom-nav {
-    --mobile-bottom-overlay-space: calc(var(--mobile-bottom-nav-height) + max(20px, env(safe-area-inset-bottom)) + 8px);
+    --mobile-bottom-overlay-space: calc(var(--mobile-bottom-nav-height) + var(--mobile-bottom-nav-offset, 20px) + 8px);
   }
 
   /* 首页与话题的滚动区域延伸至屏幕顶部，玻璃顶栏覆盖其上；首屏按钮和正文分别预留安全区。 */

@@ -84,7 +84,10 @@ function activate(path: string) {
     --nav-glass-highlight: rgba(255, 255, 255, .42);
     --nav-glass-selection: rgba(255, 255, 255, .4);
     position: absolute;
-    bottom: max(20px, env(safe-area-inset-bottom));
+    bottom: var(--mobile-bottom-nav-offset, 20px);
+    /* 普通声明保证旧 WebView 仍能横向撑开；新内核继续避让横屏安全区。 */
+    left: 20px;
+    right: 20px;
     left: max(20px, env(safe-area-inset-left));
     right: max(20px, env(safe-area-inset-right));
     border: 1px solid var(--nav-glass-edge);

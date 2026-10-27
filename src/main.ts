@@ -12,7 +12,7 @@ import { CoolapkTauriAPI } from './api/coolapk';
 import { useSettingsStore } from './stores/settings';
 import { setupGlobalAlertProxy } from './utils/toast';
 import { normalizeCoolapkDeepLink } from './utils/coolapkRoute';
-import { installDiagnosticLogging, logDiagnostic, logDiagnosticLimited, summarizeDiagnosticError } from './utils/diagnosticLogger';
+import { installDiagnosticLogging, logDiagnostic, logDiagnosticLimited, logWindowErrorDiagnostic, summarizeDiagnosticError } from './utils/diagnosticLogger';
 import { isResizeObserverWarning } from './utils/windowError';
 import { initializeWebViewCompatibility } from './utils/webviewCompatibility';
 
@@ -100,8 +100,7 @@ window.addEventListener('error', (e) => {
     return;
   }
   const msg = `${e.message || 'unknown'} @ ${e.filename || ''}:${e.lineno || ''}:${e.colno || ''}`;
-  const location = `${e.filename || 'unknown'}:${e.lineno || 0}:${e.colno || 0}`;
-  logDiagnostic('error', 'window', 'uncaught_exception', `${summarizeDiagnosticError(e.error || e.message)} location=${location}`);
+  logWindowErrorDiagnostic(e);
   console.error('[window-error]', msg, e.error);
   showGlobalError(msg);
 });

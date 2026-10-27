@@ -99,6 +99,26 @@ export function summarizeDiagnosticError(value: unknown): string {
   return redactDiagnosticText(`${value.name}: ${value.message}${frame ? ` frame=${frame}` : ''}`).slice(0, 800);
 }
 
+/** 只保留脚本来源与路径，不记录查询凭据、片段或内联脚本内容。 */
+function diagnosticScriptUrl(value: string): string {
+  if (!value) return 'inline';
+  try {
+    const url = new URL(value, document.baseURI);
+    return /^https?:$/.test(url.protocol) ? `${url.origin}${url.pathname}`.slice(0, 240) : url.protocol;
+  } catch { return 'unknown'; }
+}
+
+/** 不透明的 Script error 无法恢复堆栈，额外保存运行环境与脚本清单供复现排查。 */
+export function logWindowErrorDiagnostic(event: ErrorEvent): void {
+  const opaque = /^Script error\.?$/i.test(event.message.trim()) && !event.filename && event.error == null;
+  logDiagnostic('error', 'window', 'uncaught_exception', `${summarizeDiagnosticError(event.error || event.message)} source=${event.filename ? diagnosticScriptUrl(event.filename) : 'unknown'} line=${event.lineno || 0} column=${event.colno || 0} opaque=${opaque} error_present=${event.error != null} trusted=${event.isTrusted}`);
+  logDiagnostic('error', 'window', 'exception_context', `ready_state=${document.readyState} user_agent=${navigator.userAgent} scripts=${document.scripts.length}`);
+  // 清单只是排查线索，不能把最后加载的脚本认定为异常来源；逐条写入避免整行截断。
+  Array.from(document.scripts).slice(-8).forEach((script, index) => {
+    logDiagnostic('error', 'window', 'exception_script', `index=${index} source=${diagnosticScriptUrl(script.src)} type=${script.type || 'classic'} crossorigin=${script.crossOrigin || 'unset'} async=${script.async} defer=${script.defer}`);
+  });
+}
+
 /** 固定错误类别用于节流键，不把用户 ID、错误正文或凭据放进键。 */
 export function classifyDiagnosticRequestError(value: unknown): string {
   const text = summarizeDiagnosticError(value).toLowerCase();
@@ -240,6 +260,7 @@ export function installDiagnosticLogging(): void {
   window.addEventListener('error', event => {
     const target = event.target;
     if (!(target instanceof HTMLElement) || !['IMG', 'VIDEO', 'AUDIO', 'SCRIPT', 'LINK'].includes(target.tagName)) return;
-    logDiagnosticLimited('warn', 'resource', 'load_failed', `element=${target.tagName.toLowerCase()}`, 5000, `resource:${target.tagName}`);
+    const scriptSource = target instanceof HTMLScriptElement ? diagnosticScriptUrl(target.src) : '';
+    logDiagnosticLimited('warn', 'resource', 'load_failed', `element=${target.tagName.toLowerCase()}${scriptSource ? ` source=${scriptSource}` : ''}`, 5000, `resource:${target.tagName}:${scriptSource}`);
   }, true);
 }

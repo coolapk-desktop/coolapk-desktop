@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse, compileStyle } from '@vue/compiler-sfc';
+import postcss from 'postcss';
 
 // 使用实际组件样式检查收起后的空间释放、栏目保留和桌面标题栏，避免只测状态开关。
 const browser = process.env.LAYOUT_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
@@ -14,9 +15,13 @@ const css = ['tokens.css', 'themes.css', 'reset.css'].map(file => readFileSync('
   const descriptor = parse(readFileSync(`src/components/${name}.vue`, 'utf8')).descriptor;
   return descriptor.styles.map(style => compileStyle({ source: style.content, filename: name + '.vue', id: 'data-v-reading', scoped: true }).code).join('\n');
 }).join('\n') + parse(readFileSync('src/pages/HomeTabPanel.vue', 'utf8')).descriptor.styles.map(style => compileStyle({ source: style.content, filename: 'HomeTabPanel.vue', id: 'data-v-reading', scoped: true }).code).join('\n');
-const cases = [390, 600, 1280];
-const frames = cases.map(width => {
-  const html = `<!doctype html><html><head><style>${css}
+// 模拟旧内核丢弃 max() 声明；自定义属性仍保留原样，才能发现计算时失效的问题。
+const legacyStyles = postcss.parse(css);
+legacyStyles.walkAtRules('supports', rule => { if (/\bmax\(/.test(rule.params)) rule.remove(); });
+legacyStyles.walkDecls(declaration => { if (!declaration.prop.startsWith('--') && /\bmax\(/.test(declaration.value)) declaration.remove(); });
+const cases = [390, 600, 1280].flatMap(width => [{ width, legacy: false }, { width, legacy: true }]);
+const frames = cases.map(({ width, legacy }) => {
+  const html = `<!doctype html><html><head><style>${legacy ? legacyStyles.toString() : css}
     html,body{height:100%;margin:0;} .home-toolbar{height:48px;background:var(--surface);} .follow-subchannel-bar{height:40px;flex-shrink:0;}
     .top-bar{height:32px;min-height:32px;flex-shrink:0;display:flex;} .content{height:2400px;} .mobile-bottom-nav{height:56px;}
     </style></head><body><div class="app-shell has-mobile-window-controls has-mobile-bottom-nav">
@@ -34,11 +39,13 @@ const frames = cases.map(width => {
       const shell=document.querySelector('.app-shell'), list=document.querySelector('.feed-scroll-container');
       const box=selector=>document.querySelector(selector).getBoundingClientRect();
       const sample=()=>({top:box('.mobile-reading-topbar').height,tabs:box('.home-toolbar').height,filters:box('.follow-subchannel-bar').height,viewport:box('.pager-viewport').height,padding:parseFloat(getComputedStyle(list).paddingBottom),dock:box('.mobile-bottom-nav').top,controls:box('.top-bar').height});
-      await wait();const before=sample();shell.classList.add('reading-navigation-hidden');await wait();const hidden=sample();
+      await wait();const before=sample();const dock=box('.mobile-bottom-nav');shell.classList.add('reading-navigation-hidden');await wait();const hidden=sample();
       shell.classList.remove('reading-navigation-hidden');await wait();const restored=sample();
       const mobile=${width<=720};
       const checks={width:${width},searchCollapsed:!mobile||hidden.top<1,spaceReleased:mobile?hidden.viewport>before.viewport+40&&hidden.padding<before.padding:Math.abs(hidden.viewport-before.viewport)<1,tabsPreserved:hidden.tabs===before.tabs&&hidden.tabs>0,filtersPreserved:hidden.filters===before.filters&&hidden.filters>0,controlsPreserved:hidden.controls===before.controls&&hidden.controls>0,dockHidden:!mobile||hidden.dock>=innerHeight,restored:Math.abs(before.top-restored.top)<1&&Math.abs(before.viewport-restored.viewport)<1};
-      parent.postMessage({checks,before,hidden,restored},'*');
+      checks.dockPositioned=!mobile||(Math.abs(dock.left-20)<1&&Math.abs(innerWidth-dock.right-20)<1&&Math.abs(innerHeight-dock.bottom-20)<1);
+      checks.contentReserved=!mobile||before.padding>=84;
+      parent.postMessage({checks,legacy:${legacy},before,hidden,restored},'*');
     })();</script></body></html>`;
   const scopedHtml = html.replace(/<([a-zA-Z][\w-]*)(?=[\s>])/g, '<$1 data-v-reading');
   return `<iframe style="width:${width}px;height:700px;border:0" srcdoc="${scopedHtml.replaceAll('&','&amp;').replaceAll('"','&quot;')}"></iframe>`;
