@@ -12,6 +12,25 @@ const liveItem: FeedImageItem = {
   isLivePhoto: true,
 };
 
+const gifItem: FeedImageItem = {
+  key: 'gif-1',
+  sourceUrl: 'https://image.coolapk.com/test@1200x2608.gif',
+  coverUrl: 'https://image.coolapk.com/test@1200x2608.gif',
+  liveVideoUrl: '',
+  isLivePhoto: false,
+};
+
+const imageStub = defineComponent({
+  props: ['src', 'imageClass', 'hideSpinner'],
+  emits: ['load', 'error'],
+  setup: (props, { emit }) => () => h('img', {
+    src: props.src,
+    class: props.imageClass,
+    onLoad: (event: Event) => emit('load', event),
+    onError: (event: Event) => emit('error', event),
+  }),
+});
+
 const originalMatchMedia = window.matchMedia;
 
 /** jsdom 的 matchMedia 桩固定返回 false，这里按用例覆盖指针类型。 */
@@ -118,6 +137,95 @@ describe('LivePhotoPreview 触摸端播放', () => {
     visible.value = true;
     await flushPromises();
     expect(wrapper.find('video').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('九张 GIF 默认只加载静态封面，悬浮仅挂载当前动图，移出释放', async () => {
+    stubPointer(false);
+    const wrapper = mount(defineComponent(() => () => h('div', Array.from({ length: 9 }, (_, index) =>
+      h(LivePhotoPreview, { item: { ...gifItem, key: `gif-${index}` } })))), {
+      global: { stubs: { AppImage: imageStub } },
+    });
+    const previews = wrapper.findAllComponents(LivePhotoPreview);
+    expect(wrapper.findAll('.gif-badge')).toHaveLength(9);
+    expect(wrapper.findAll('img')).toHaveLength(9);
+    expect(wrapper.findAll('img').every(img => img.attributes('src') === `${gifItem.sourceUrl}.m.jpg`)).toBe(true);
+    await previews[0].trigger('mouseenter');
+    expect(wrapper.findAll('.gif-preview-image')).toHaveLength(1);
+    expect(previews[0].get('.gif-preview-image').attributes('src')).toBe(gifItem.sourceUrl);
+    expect(previews[0].get('.gif-preview-image').attributes('style')).toContain('opacity: 0');
+    expect(previews[0].find('.live-photo-loading').exists()).toBe(false);
+    expect(previews[0].findAll('img')).toHaveLength(2);
+    await previews[0].get('.gif-preview-image').trigger('load');
+    expect(previews[0].classes()).toContain('is-playing');
+    expect(previews[0].get('.gif-preview-image').attributes('style')).toContain('opacity: 1');
+    await previews[0].trigger('mouseleave');
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(false);
+    expect(previews[0].classes()).not.toContain('is-playing');
+    wrapper.unmount();
+  });
+
+  it('触摸端点 GIF 角标播放和暂停，点图片仍可冒泡打开查看器', async () => {
+    stubPointer(true);
+    const onClick = vi.fn();
+    const wrapper = mount(LivePhotoPreview, {
+      props: { item: gifItem }, attrs: { onClick }, global: { stubs: { AppImage: imageStub } },
+    });
+    await wrapper.trigger('mouseenter');
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(false);
+    await wrapper.get('.gif-badge').trigger('click');
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(true);
+    expect(onClick).not.toHaveBeenCalled();
+    await wrapper.get('.gif-badge').trigger('click');
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(false);
+    await wrapper.get('img').trigger('click');
+    expect(onClick).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('单张 GIF 可自动播放，鼠标移出不暂停，关闭自动播放后释放', async () => {
+    stubPointer(false);
+    const wrapper = mount(LivePhotoPreview, {
+      props: { item: gifItem, gifAutoPlay: true }, global: { stubs: { AppImage: imageStub } },
+    });
+    await flushPromises();
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(true);
+    await wrapper.trigger('mouseleave');
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(true);
+    await wrapper.setProps({ gifAutoPlay: false, autoPlayGif: false });
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('关闭自动播放后不悬浮加载 GIF，桌面点击角标仍打开查看器', async () => {
+    stubPointer(false);
+    const onClick = vi.fn();
+    const wrapper = mount(LivePhotoPreview, {
+      props: { item: gifItem, autoPlayGif: false }, attrs: { onClick }, global: { stubs: { AppImage: imageStub } },
+    });
+    await wrapper.trigger('mouseenter');
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(false);
+    await wrapper.get('.gif-badge').trigger('click');
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('.gif-preview-image').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('切换图片或页面进入后台时卸载 GIF 预览', async () => {
+    stubPointer(false);
+    const visible = ref(true);
+    const wrapper = mount(defineComponent(() => () => h(KeepAlive, null, {
+      default: () => visible.value ? h(LivePhotoPreview, { item: gifItem }) : h('div'),
+    })), { global: { stubs: { AppImage: imageStub } } });
+    const preview = wrapper.getComponent(LivePhotoPreview);
+    await preview.trigger('mouseenter');
+    expect(preview.find('.gif-preview-image').exists()).toBe(true);
+    visible.value = false;
+    await nextTick();
+    expect(preview.find('.gif-preview-image').exists()).toBe(false);
+    visible.value = true;
+    await nextTick();
+    expect(preview.find('.gif-preview-image').exists()).toBe(false);
     wrapper.unmount();
   });
 });

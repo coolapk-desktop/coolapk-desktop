@@ -47,7 +47,7 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">动图自动播放</span>
-          <span class="row-sub">关闭后列表中的 GIF 动图将不加载，节省流量</span>
+          <span class="row-sub">关闭后 GIF 默认显示静态封面，仍可手动播放或点击查看</span>
         </div>
         <AppSwitch v-model="settingsStore.settings.autoPlayGif" />
       </div>

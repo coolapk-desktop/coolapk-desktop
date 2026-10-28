@@ -4,11 +4,12 @@
     class="live-photo-preview"
     :class="{
       'is-live-photo': item.isLivePhoto,
+      'is-gif': isGif,
       'is-playing': isPlaying,
       'is-single': isSingle,
       'is-long': isLong,
     }"
-    :aria-label="item.isLivePhoto ? 'Live Photo，悬浮播放' : '图片'"
+    :aria-label="item.isLivePhoto ? 'Live Photo，悬浮播放' : isGif ? 'GIF 动图，悬浮播放' : '图片'"
     @mouseenter="handleMouseEnter"
     @mouseleave="handleMouseLeave"
   >
@@ -17,6 +18,17 @@
       alt="动态图片"
       image-class="grid-img"
       @load="forwardLoad"
+    />
+
+    <AppImage
+      v-if="isGif && gifMounted"
+      :src="item.sourceUrl"
+      alt="GIF 动图预览"
+      image-class="grid-img gif-preview-image"
+      :hide-spinner="true"
+      :style="{ opacity: isPlaying ? 1 : 0 }"
+      @load="handleGifLoad"
+      @error="handleGifError"
     />
 
     <video
@@ -38,17 +50,18 @@
     ></video>
 
     <span
-      v-if="item.isLivePhoto"
+      v-if="item.isLivePhoto || isGif"
       class="live-badge"
+      :class="{ 'gif-badge': isGif }"
       role="button"
-      :aria-label="isPlaying ? '暂停实况' : '播放实况'"
-      title="Live Photo 实况"
+      :aria-label="isGif ? (isPlaying ? '暂停动图' : '播放动图') : (isPlaying ? '暂停实况' : '播放实况')"
+      :title="isGif ? 'GIF 动图' : 'Live Photo 实况'"
       @click="handlePreviewTap"
     >
-      Live
+      {{ isGif ? 'GIF' : 'Live' }}
     </span>
 
-    <span v-if="resolving" class="live-photo-loading" aria-live="polite">
+    <span v-if="resolving && !isGif" class="live-photo-loading" aria-live="polite">
       <i class="fas fa-circle-notch fa-spin"></i>
     </span>
   </div>
@@ -57,7 +70,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, onDeactivated, onUnmounted, ref, watch } from 'vue';
 import AppImage from '../common/AppImage.vue';
-import { getHdImageUrl } from '../../utils/image';
+import { getHdImageUrl, getStaticAnimatedImageUrl, isAnimatedImageUrl } from '../../utils/image';
 import { normalizeResourceUrl } from '../../utils/resourceCache';
 import { isCoarsePointer } from '../../utils/platform';
 import { observeResourceVisibility } from '../../utils/resourceVisibility';
@@ -74,10 +87,14 @@ const props = withDefaults(defineProps<{
   contentType?: LivePhotoContextType;
   isSingle?: boolean;
   isLong?: boolean;
+  autoPlayGif?: boolean;
+  gifAutoPlay?: boolean;
 }>(), {
   contentType: 'feed',
   isSingle: false,
   isLong: false,
+  autoPlayGif: true,
+  gifAutoPlay: false,
 });
 
 const emit = defineEmits<{
@@ -87,11 +104,16 @@ const emit = defineEmits<{
 const videoRef = ref<HTMLVideoElement | null>(null);
 const previewRef = ref<HTMLElement | null>(null);
 let stopObserving = () => {};
+let previewVisible = false;
+let previewActive = true;
+let autoGifPaused = false;
 function observePreview() {
   stopObserving();
   if (!previewRef.value) return;
   stopObserving = observeResourceVisibility(previewRef.value, visible => {
-    if (!visible) handleMouseLeave();
+    previewVisible = visible;
+    if (!visible) stopPreview();
+    else resumeSingleGif();
   });
 }
 // 列表默认只挂载静态封面；视频地址在首次悬浮时才交给 <video>。
@@ -105,9 +127,12 @@ const videoError = ref(false);
 const videoSource = ref<'metadata' | 'resolver' | 'none'>('none');
 const fallbackAttempted = ref(false);
 const isHovered = ref(false);
+const gifMounted = ref(false);
+const isGif = computed(() => !props.item.isLivePhoto && isAnimatedImageUrl(props.item.sourceUrl));
 let resolveSequence = 0;
 
 const staticCoverUrl = computed(() => {
+  if (isGif.value) return getStaticAnimatedImageUrl(props.item.sourceUrl);
   const url = props.item.coverUrl || props.item.sourceUrl;
   return props.item.isLivePhoto ? normalizeResourceUrl(url) : getHdImageUrl(url);
 });
@@ -136,6 +161,20 @@ function handleCanPlay() {
 }
 
 async function handleMouseEnter() {
+  // 触摸端使用角标显式播放，避免兼容 mouseenter 导致点按时重复切换。
+  if (isCoarsePointer() || (isGif.value && !props.autoPlayGif)) return;
+  await startPreview();
+}
+
+async function startPreview() {
+  if (isGif.value) {
+    if (gifMounted.value) return;
+    autoGifPaused = false;
+    isHovered.value = true;
+    resolving.value = true;
+    gifMounted.value = true;
+    return;
+  }
   if (!props.item.isLivePhoto) return;
   isHovered.value = true;
   videoError.value = false;
@@ -211,20 +250,43 @@ async function retryThroughResolver() {
  * 桌面端保持原行为：不拦截点击，让它冒泡到宫格打开查看器。
  */
 function handlePreviewTap(event: MouseEvent) {
-  if (!props.item.isLivePhoto || !isCoarsePointer()) return;
+  if ((!props.item.isLivePhoto && !isGif.value) || !isCoarsePointer()) return;
   event.preventDefault();
   event.stopPropagation();
   if (isHovered.value) {
-    handleMouseLeave();
+    autoGifPaused = true;
+    stopPreview();
     return;
   }
-  void handleMouseEnter();
+  void startPreview();
+}
+
+function handleGifLoad() {
+  if (!gifMounted.value || !isHovered.value) return;
+  resolving.value = false;
+  isPlaying.value = true;
+}
+
+function handleGifError() {
+  autoGifPaused = true;
+  stopPreview();
 }
 
 function handleMouseLeave() {
+  if (isGif.value && props.gifAutoPlay) return;
+  stopPreview();
+}
+
+function resumeSingleGif() {
+  if (isGif.value && props.gifAutoPlay && previewVisible && previewActive
+    && !autoGifPaused && document.visibilityState !== 'hidden') void startPreview();
+}
+
+function stopPreview() {
   isHovered.value = false;
   resolveSequence += 1;
   resolving.value = false;
+  gifMounted.value = false;
   const video = videoRef.value;
   if (video) {
     video.pause();
@@ -255,23 +317,43 @@ function handleVideoError(event: Event) {
 }
 
 watch(() => props.item.key, () => {
-  handleMouseLeave();
+  stopPreview();
+  autoGifPaused = false;
   resolvedVideoUrl.value = '';
   videoError.value = false;
   videoSource.value = 'none';
   fallbackAttempted.value = false;
+  resumeSingleGif();
 });
 
 onUnmounted(() => {
   stopObserving();
-  handleMouseLeave();
+  previewActive = false;
+  stopPreview();
 });
 onDeactivated(() => {
   stopObserving();
-  handleMouseLeave();
+  previewActive = false;
+  stopPreview();
 });
 onMounted(observePreview);
-onActivated(observePreview);
+onActivated(() => {
+  previewActive = true;
+  observePreview();
+});
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') stopPreview();
+  else resumeSingleGif();
+}
+onMounted(() => document.addEventListener('visibilitychange', handleVisibilityChange));
+onUnmounted(() => document.removeEventListener('visibilitychange', handleVisibilityChange));
+watch(() => props.autoPlayGif, enabled => {
+  if (!enabled && isGif.value) stopPreview();
+});
+watch(() => props.gifAutoPlay, enabled => {
+  if (enabled) resumeSingleGif();
+  else if (isGif.value) stopPreview();
+});
 </script>
 
 <style scoped>
@@ -305,6 +387,11 @@ onActivated(observePreview);
   inset: auto;
   width: 100%;
   height: 100%;
+}
+
+.live-photo-preview :deep(.gif-preview-image) {
+  position: absolute !important;
+  inset: 0;
 }
 
 .live-photo-preview :deep(.grid-img img) {

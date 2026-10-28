@@ -38,6 +38,23 @@ function mountGrid() {
 }
 
 describe('FeedImageGrid 点击打开方式', () => {
+  it('按宫格中 GIF 数量限制预览，单张 GIF 混合普通图片时仍自动播放', async () => {
+    const settings = useSettingsStore();
+    settings.settings.autoPlayGif = true;
+    const wrapper = mount(FeedImageGrid, {
+      props: { images: ['https://image.coolapk.com/1.gif', 'https://image.coolapk.com/2.jpg'] },
+      global: { stubs: { LivePhotoPreview: true } },
+    });
+    try {
+      expect(wrapper.findComponent({ name: 'LivePhotoPreview' }).props('gifAutoPlay')).toBe(true);
+      await wrapper.setProps({ images: ['https://image.coolapk.com/1.gif', 'https://image.coolapk.com/2.gif'] });
+      expect(wrapper.findAllComponents({ name: 'LivePhotoPreview' }).every(preview => !preview.props('gifAutoPlay'))).toBe(true);
+      await wrapper.setProps({ images: ['https://image.coolapk.com/1.gif'] });
+      settings.settings.autoPlayGif = false;
+      await flushPromises();
+      expect(wrapper.findComponent({ name: 'LivePhotoPreview' }).props('gifAutoPlay')).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
   it('桌面多图响应排列开关，单图和评论保留原布局', async () => {
     const settings = useSettingsStore();
     const wrapper = mountGrid();
