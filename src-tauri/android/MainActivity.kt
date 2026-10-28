@@ -139,9 +139,10 @@ class MainActivity : TauriActivity() {
                     }
                 })
                 // 仅采集计数和状态：上一轮 rAF 标记可区分脚本响应与浏览器动画帧回调。
+                // 注入脚本不经过 Vite 转译，必须避免 WebView 77 不支持的可选链语法。
                 webView.evaluateJavascript("""(() => {
                     const style = document.documentElement ? getComputedStyle(document.documentElement) : null;
-                    const result = { visibility: document.visibilityState, ready: document.readyState, elements: document.getElementsByTagName('*').length, raf: window.__coolapkForegroundFrame || 0, viewport: [innerWidth, innerHeight], root_display: style?.display, root_visibility: style?.visibility, root_opacity: style?.opacity };
+                    const result = { visibility: document.visibilityState, ready: document.readyState, elements: document.getElementsByTagName('*').length, raf: window.__coolapkForegroundFrame || 0, viewport: [innerWidth, innerHeight], root_display: style ? style.display : undefined, root_visibility: style ? style.visibility : undefined, root_opacity: style ? style.opacity : undefined };
                     requestAnimationFrame(() => { window.__coolapkForegroundFrame = $request; });
                     return JSON.stringify(result);
                 })()""".trimIndent()) { result ->

@@ -754,7 +754,10 @@ function handleLogout() {
   .mobile-sidebar-backdrop {
     position: absolute;
     /* Keep this inside AppShell to share its floating-nav and safe-area space. */
-    inset: calc(var(--mobile-navigation-top) - 8px) 0 var(--mobile-bottom-overlay-space);
+    top: calc(var(--mobile-navigation-top) - 8px);
+    right: 0;
+    bottom: var(--mobile-bottom-overlay-space);
+    left: 0;
     z-index: 1000;
     display: block;
     padding: 0;

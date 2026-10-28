@@ -342,7 +342,9 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
     bottom: auto;
     left: 50%;
     z-index: 1001;
-    width: min(460px, calc(100vw - 24px)) !important;
+    /* WebView 77 不支持 min()，使用宽度上限避免退回折叠侧栏的 56px。 */
+    width: calc(100vw - 24px) !important;
+    max-width: 460px;
     height: max-content;
     max-height: calc(100% - var(--mobile-navigation-top) - var(--mobile-bottom-overlay-space) - 12px);
     transform: translate(-50%, -8px);
