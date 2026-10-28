@@ -175,7 +175,7 @@ describe('按实际尺寸缩放图片，避免合成图层放大接缝', () => {
     wrapper.unmount();
   });
 
-  it('窗口调整时重新适配，不将小图片默认放大', async () => {
+  it('桌面不将小图片默认放大，窄窗口改用移动端全宽适配', async () => {
     const { wrapper } = await mountViewer();
     const image = wrapper.get('.viewer-img').element as HTMLImageElement;
     expect(image.style.width).toBe('200px');
@@ -183,8 +183,8 @@ describe('按实际尺寸缩放图片，避免合成图层放大接缝', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 });
     window.dispatchEvent(new Event('resize'));
     await flushPromises();
-    expect(image.style.width).toBe('450px');
-    expect(image.style.height).toBe('337.5px');
+    expect(image.style.width).toBe('500px');
+    expect(image.style.height).toBe('375px');
     wrapper.unmount();
   });
 
@@ -272,7 +272,7 @@ describe('仅移动端单击图片退出', () => {
     await wrapper.get('.viewer-img').trigger('click');
     await vi.advanceTimersByTimeAsync(400);
     expect(store.activeImageViewer).not.toBeNull();
-    expect(wrapper.get('.zoom-text').text()).toBe('180%');
+    expect(wrapper.get('.zoom-text').text()).toBe('300%');
     wrapper.unmount();
   });
 
@@ -305,6 +305,108 @@ describe('仅移动端单击图片退出', () => {
     await flushPromises();
     await vi.advanceTimersByTimeAsync(400);
     expect(store.activeImageViewer).not.toBeNull();
+    wrapper.unmount();
+  });
+});
+
+describe.each(['Android', 'Desktop'])('全平台取消最大缩放限制：%s', userAgent => {
+  beforeEach(() => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+    loadResourceMock.mockImplementation(async url => dataOf(url));
+    memoryCacheMock.mockReturnValue(null);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('按钮和滚轮都能持续放大，重置后恢复默认尺寸', async () => {
+    const { wrapper } = await mountViewer();
+    for (let i = 0; i < 40; i++) await wrapper.get('[title="放大"]').trigger('click');
+    expect(wrapper.get('.zoom-text').text()).toBe('1100%');
+    for (let i = 0; i < 60; i++) await wrapper.get('.image-stage').trigger('wheel', { deltaY: -1 });
+    expect(wrapper.get('.zoom-text').text()).toBe('2000%');
+    await wrapper.get('[title="重置"]').trigger('click');
+    expect(wrapper.get('.zoom-text').text()).toBe('100%');
+    wrapper.unmount();
+  });
+});
+
+describe.each(['Android', 'Desktop'])('移动布局官方长图阅读策略：%s', userAgent => {
+  beforeEach(() => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(400);
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+    loadResourceMock.mockImplementation(async url => dataOf(url));
+    memoryCacheMock.mockReturnValue(null);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('超长图按宽度从顶部显示，可滑动读到底部且不会误关闭', async () => {
+    const { wrapper, store, stage } = await mountViewer();
+    await loadImageDimensions(wrapper, 1000, 20000);
+    const image = wrapper.get('.viewer-img').element as HTMLImageElement;
+    expect(image.style.width).toBe('400px');
+    expect(image.style.height).toBe('8000px');
+    expect(image.style.top).toBe('calc(50% - 400px)');
+    await swipe(stage, point(200, 600), point(200, -10000));
+    expect(image.style.transform).toContain('translate(0px, -7200px)');
+    await swipe(stage, point(200, 200), point(200, 10000));
+    expect(image.style.transform).toContain('translate(0px, 0px)');
+    expect(store.activeImageViewer).not.toBeNull();
+    await swipe(stage, point(300, 400), point(100, 400));
+    expect(counter(wrapper)).toBe('2 / 3');
+    wrapper.unmount();
+  });
+
+  it('横屏移动布局长图使用屏幕高度的 9/16 作为阅读宽度，实况图片保持全图适配', async () => {
+    // 桌面窄窗口保持在移动布局断点内，真移动设备允许使用更宽的横屏。
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(userAgent === 'Android' ? 800 : 700);
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(400);
+    const { wrapper, store } = await mountViewer();
+    await loadImageDimensions(wrapper, 1000, 20000);
+    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.width).toBe('225px');
+    store.openImageViewer([{ sourceUrl: 'https://img.example/live.jpg', livePhotoEnable: 1, liveVideoUrl: 'https://img.example/live.mp4' }]);
+    await flushPromises();
+    await loadImageDimensions(wrapper, 1000, 20000);
+    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.width).toBe('20px');
+    wrapper.unmount();
+  });
+
+  it('长宽比与视口共同决定阅读模式，普通竖图仍完整显示', async () => {
+    const { wrapper } = await mountViewer();
+    await loadImageDimensions(wrapper, 1000, 2000);
+    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.height).toBe('800px');
+    await loadImageDimensions(wrapper, 1000, 2500);
+    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.height).toBe('1000px');
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(300);
+    window.dispatchEvent(new Event('resize'));
+    await flushPromises();
+    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.height).toBe('750px');
+    wrapper.unmount();
+  });
+
+  it('高分辨率普通图按像素尺寸动态放大，双指可超过旧的四倍限制', async () => {
+    const { wrapper, stage } = await mountViewer();
+    await loadImageDimensions(wrapper, 4000, 2000);
+    await wrapper.get('.image-stage').trigger('dblclick');
+    expect(wrapper.get('.zoom-text').text()).toBe('1000%');
+    dispatchTouch(stage, 'touchstart', [point(100, 400), point(200, 400)]);
+    dispatchTouch(stage, 'touchmove', [point(0, 400), point(1000, 400)]);
+    dispatchTouch(stage, 'touchend', []);
+    await flushPromises();
+    expect(wrapper.get('.zoom-text').text()).toBe('10000%');
+    wrapper.unmount();
+  });
+
+  it('按实际舞台高度顶部对齐，鼠标也能拖动阅读长图', async () => {
+    const { wrapper, stage } = await mountViewer();
+    // 模拟顶栏占用空间后的实际舞台，避免只验证 jsdom 的零尺寸回退。
+    Object.defineProperties(stage, { clientWidth: { value: 400 }, clientHeight: { value: 740 } });
+    await loadImageDimensions(wrapper, 1000, 20000);
+    const image = wrapper.get('.viewer-img').element as HTMLImageElement;
+    expect(image.style.width).toBe('400px');
+    expect(image.style.top).toBe('calc(50% - 370px)');
+    await wrapper.get('.viewer-img').trigger('mousedown', { button: 0, clientX: 200, clientY: 600 });
+    await wrapper.get('.image-stage').trigger('mousemove', { clientX: 200, clientY: -10000 });
+    expect(image.style.transform).toContain('translate(0px, -7260px)');
     wrapper.unmount();
   });
 });
@@ -498,14 +600,14 @@ describe('图片查看器触摸手势', () => {
     wrapper.unmount();
   });
 
-  it('捏合缩放上限被夹住', async () => {
+  it('捏合缩放不再限制最大倍数', async () => {
     const { wrapper, stage } = await mountViewer(3, 0);
 
     dispatchTouch(stage, 'touchstart', [point(200, 300), point(210, 300)]);
     dispatchTouch(stage, 'touchmove', [point(100, 300), point(310, 300)]);
     await flushPromises();
 
-    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.width).toBe('800px');
+    expect((wrapper.get('.viewer-img').element as HTMLImageElement).style.width).toBe('4200px');
     wrapper.unmount();
   });
 

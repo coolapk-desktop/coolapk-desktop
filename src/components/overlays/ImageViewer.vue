@@ -165,6 +165,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useAppStore } from '../../stores/app';
 import { useShortcutHints } from '../../composables/useShortcutHints';
+import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
 import { useSettingsStore } from '../../stores/settings';
 import { useNoImageMode, provideDetailImageScope } from '../../composables/useNoImageMode';
 import { CoolapkTauriAPI } from '../../api/coolapk';
@@ -182,6 +183,8 @@ import { detectLiveVideoCodec, getLiveVideoCodecSupport, waitForDecodedVideoFram
 const appStore = useAppStore();
 const showShortcutHints = useShortcutHints();
 const settingsStore = useSettingsStore();
+// 与页面共用移动布局判定，桌面浏览器窄窗口也必须进入长图阅读模式。
+const mobileLayout = useMobileLayout();
 const viewerData = computed(() => appStore.activeImageViewer);
 const viewerDetailScope = computed(() => Boolean(viewerData.value?.fromDetail));
 const detailImagesEnabled = provideDetailImageScope(viewerDetailScope);
@@ -218,7 +221,7 @@ interface SlideGhost {
   offsetX: number;
   scale: number;
   rotation: number;
-  imageSize: ImageSize | null;
+  imageStyle: ReturnType<typeof scaledImageSize>;
 }
 
 /** 正在滑出的旧画面，与 SLIDE_DURATION_MS / CSS 里的过渡时长一起决定滑出动画。 */
@@ -255,12 +258,53 @@ const imageItems = computed(() => normalizeFeedImageItems(viewerData.value?.urls
 const currentItem = computed(() => imageItems.value[currentIndex.value] || null);
 const totalCount = computed(() => imageItems.value.length);
 const rawUrl = computed(() => currentItem.value?.sourceUrl || '');
+/** 对照官方 shouldBeReadMode：长图从顶部阅读，横屏将阅读宽度限制为高度的 9/16。 */
+function imageLayout(size: ImageSize) {
+  const mobile = mobileLayout.value;
+  const width = mobile ? stageRef.value?.clientWidth || viewportSize.value.width : viewportSize.value.width * 0.9;
+  const height = mobile ? stageRef.value?.clientHeight || viewportSize.value.height : viewportSize.value.height * 0.88;
+  const ratio = size.width / size.height;
+  const readMode = mobile && !currentItem.value?.isLivePhoto && ratio < 0.4090909 && (width / height >= 0.75 || ratio < width / height / 1.2);
+  const fit = readMode ? (width / height >= 0.75 ? height * 9 / 16 : width) / size.width : Math.min(mobile ? Infinity : 1, width / size.width, height / size.height);
+  return { width, height, fit, readMode };
+}
+
+/** 双击档位参考官方动态计算；它只是快捷档位，不限制用户继续放大。 */
+const mobileDoubleTapScale = computed(() => {
+  const size = imageSize.value;
+  if (!size) return 3;
+  const layout = imageLayout(size);
+  const native = 1 / layout.fit;
+  return layout.readMode ? 3 : Math.max(3, native, layout.width / (size.width * layout.fit), layout.height / (size.height * layout.fit));
+});
+
+/** 移动端限制平移边界，阅读长图时以顶部作为默认原点。 */
+function imagePanBounds(size: ImageSize, zoom: number) {
+  const layout = imageLayout(size);
+  const turned = Math.abs(rotation.value % 180) === 90;
+  const width = (turned ? size.height : size.width) * layout.fit * zoom;
+  const height = (turned ? size.width : size.height) * layout.fit * zoom;
+  const x = Math.max(0, (width - layout.width) / 2);
+  const y = Math.max(0, (height - layout.height) / 2);
+  return { x, y, originY: layout.readMode && !turned ? y : 0 };
+}
+
+function clampMobilePan() {
+  if (!mobileLayout.value || !imageSize.value) return;
+  const { x, y, originY } = imagePanBounds(imageSize.value, scale.value);
+  translateX.value = Math.min(x, Math.max(-x, translateX.value));
+  translateY.value = Math.min(y - originY, Math.max(-y - originY, translateY.value));
+}
+
+watch([scale, rotation, imageSize, viewportSize, mobileLayout], clampMobilePan);
+
 /** 让浏览器按实际尺寸重绘，避免 transform 放大合成图层时出现分块接缝。 */
 function scaledImageSize(size: ImageSize | null, zoom: number) {
   if (!size) return {};
-  const fit = Math.min(1, viewportSize.value.width * 0.9 / size.width, viewportSize.value.height * 0.88 / size.height);
+  const { fit, readMode } = imageLayout(size);
   const width = size.width * fit * zoom;
   const height = size.height * fit * zoom;
+  const originY = readMode && rotation.value % 180 === 0 ? imagePanBounds(size, zoom).originY : 0;
   return {
     width: `${width}px`,
     height: `${height}px`,
@@ -271,7 +315,7 @@ function scaledImageSize(size: ImageSize | null, zoom: number) {
     inset: 'auto',
     margin: '0',
     left: `calc(50% - ${width / 2}px)`,
-    top: `calc(50% - ${height / 2}px)`,
+    top: `calc(50% - ${height / 2 - originY}px)`,
   };
 }
 
@@ -304,7 +348,8 @@ const ghostTransformStyle = computed(() => {
   const ghost = slideGhost.value;
   if (!ghost) return {};
   return {
-    ...scaledImageSize(ghost.imageSize, ghost.scale),
+    // 保留离场图片的阅读布局，避免下一张是否为实况图改变旧图的适配方式。
+    ...ghost.imageStyle,
     transform: `translate(${ghost.offsetX}px, 0) rotate(${ghost.rotation}deg)`,
   };
 });
@@ -818,7 +863,7 @@ function slideTo(direction: 1 | -1, fromOffsetX = 0): boolean {
   const ghostSrc = displaySrc.value;
   clearTransitionTimer();
   slideGhost.value = ghostSrc
-    ? { src: ghostSrc, offsetX: fromOffsetX, scale: scale.value, rotation: rotation.value, imageSize: imageSize.value }
+    ? { src: ghostSrc, offsetX: fromOffsetX, scale: scale.value, rotation: rotation.value, imageStyle: scaledImageSize(imageSize.value, scale.value) }
     : null;
   // 跟手位移交接给过渡位移：新画面从手指另一侧的屏幕外滑入。
   swipeOffsetX.value = 0;
@@ -843,22 +888,24 @@ function slideTo(direction: 1 | -1, fromOffsetX = 0): boolean {
 }
 
 function zoomIn() {
-  scale.value = Math.min(Number((scale.value + 0.25).toFixed(2)), 4);
+  // 全平台不设最大倍数，避免超长图或高分辨率图片无法继续放大。
+  scale.value = Number((scale.value + 0.25).toFixed(2));
 }
 
 function zoomOut() {
-  scale.value = Math.max(Number((scale.value - 0.25).toFixed(2)), 0.3);
+  scale.value = Math.max(Number((scale.value - 0.25).toFixed(2)), mobileLayout.value ? 1 : 0.3);
 }
 
 function handleWheel(e: WheelEvent) {
   const delta = e.deltaY < 0 ? 0.15 : -0.15;
-  const newScale = Math.min(Math.max(scale.value + delta, 0.3), 5);
+  const mobile = mobileLayout.value;
+  const newScale = Math.max(scale.value + delta, mobile ? 1 : 0.3);
   scale.value = Number(newScale.toFixed(2));
 }
 
 function toggleZoom() {
   if (scale.value === 1) {
-    scale.value = 1.8;
+    scale.value = mobileLayout.value ? mobileDoubleTapScale.value : 1.8;
   } else {
     resetTransform();
   }
@@ -893,6 +940,7 @@ function onDrag(e: MouseEvent) {
   }
   translateX.value = e.clientX - startX;
   translateY.value = e.clientY - startY;
+  clampMobilePan();
 }
 
 function stopDrag() {
@@ -916,7 +964,6 @@ const BACKDROP_TAP_GUARD_MS = 400;
 // 触摸端双击判定窗口；与 utils/homeTab 的 360ms 取值保持同一量级。
 const DOUBLE_TAP_MS = 300;
 const PINCH_MIN_SCALE = 0.3;
-const PINCH_MAX_SCALE = 4;
 
 let touchActive = false;
 let touchMoved = false;
@@ -980,11 +1027,11 @@ function onTouchStart(e: TouchEvent) {
   const touch = e.touches[0];
   touchStartX = touch.clientX;
   touchStartY = touch.clientY;
+  startX = touch.clientX - translateX.value;
+  startY = touch.clientY - translateY.value;
   if (scale.value > 1) {
     touchPanMode = true;
     isDragging.value = true;
-    startX = touch.clientX - translateX.value;
-    startY = touch.clientY - translateY.value;
   }
 }
 
@@ -995,7 +1042,8 @@ function onTouchMove(e: TouchEvent) {
     const distance = touchDistance(e.touches[0], e.touches[1]);
     if (Math.abs(distance - pinchStartDistance) > 8) touchMoved = true;
     const next = pinchStartScale * (distance / pinchStartDistance);
-    scale.value = Math.min(Math.max(Number(next.toFixed(2)), PINCH_MIN_SCALE), PINCH_MAX_SCALE);
+    const mobile = mobileLayout.value;
+    if (Number.isFinite(next)) scale.value = Math.max(Number(next.toFixed(2)), mobile ? 1 : PINCH_MIN_SCALE);
     return;
   }
 
@@ -1016,10 +1064,19 @@ function onTouchMove(e: TouchEvent) {
     if (e.cancelable) e.preventDefault();
     translateX.value = touch.clientX - startX;
     translateY.value = touch.clientY - startY;
+    clampMobilePan();
     return;
   }
 
   if (Math.abs(dy) > Math.abs(dx) * SWIPE_AXIS_LOCK_RATIO) {
+    // 阅读模式下先滚动长图，避免上下阅读被识别成下滑关闭；横滑仍可切图。
+    if (mobileLayout.value && imageSize.value && imageLayout(imageSize.value).readMode) {
+      touchPanMode = true;
+      translateY.value = touch.clientY - startY;
+      clampMobilePan();
+      if (e.cancelable) e.preventDefault();
+      return;
+    }
     // 竖向手势：下滑关闭。上滑不接管，留给后续可能加入的手势。
     swipeOffsetX.value = 0;
     swipeOffsetY.value = dy > 0 ? dy : 0;
