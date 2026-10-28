@@ -122,6 +122,19 @@ describe('WebView2 视频编码能力判断', () => {
     expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).toContain('hresult=not_exposed license_check=unknown');
   });
 
+  it('记录时间推进但无视频帧的轨道状态，不将缺少轨道 API 误报为零', () => {
+    const video = { error: null, readyState: 4, networkState: 1, videoWidth: 0, videoHeight: 0, paused: false,
+      currentTime: 1.5, duration: 3, videoTracks: { length: 0 }, audioTracks: { length: 1 },
+      getVideoPlaybackQuality: () => ({ totalVideoFrames: 0, droppedVideoFrames: 0 }),
+    } as unknown as HTMLVideoElement;
+    logLiveVideoState('viewer_frame_failed', video);
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).toContain('current_time=1.5 duration=3 total_frames=0 dropped_frames=0 video_tracks=0 audio_tracks=1');
+    Reflect.deleteProperty(video, 'videoTracks');
+    Reflect.deleteProperty(video, 'audioTracks');
+    logLiveVideoState('viewer_frame_failed', video);
+    expect(vi.mocked(logDiagnostic).mock.calls.at(-1)?.[3]).toContain('video_tracks=unknown audio_tracks=unknown');
+  });
+
   it('能力查询异常时记录安全的错误线索并保留实际播放机会', async () => {
     vi.stubGlobal('navigator', { mediaCapabilities: { decodingInfo: vi.fn().mockRejectedValue(new DOMException('private message', 'SecurityError')) } });
     await expect(getLiveVideoCodecSupport(hevc)).resolves.toBe('unknown');

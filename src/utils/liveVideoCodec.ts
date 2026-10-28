@@ -231,8 +231,12 @@ function liveVideoFailureDetail(mediaError?: MediaError | null, error?: unknown)
 export function logLiveVideoState(event: string, video: HTMLVideoElement, error?: unknown): void {
   // UA 中的 Chrome 版本用于定位内核差异，不将其当成已读取的 WebView2 Runtime 版本。
   const chromiumVersion = navigator.userAgent?.match(/Chrome\/([\d.]+)/)?.[1] || 'unknown';
+  // 时间推进但视频帧始终为零时，需要区分空播与仍在等待数据，不能只依据 play()。
+  const quality = video.getVideoPlaybackQuality?.();
+  const tracks = video as HTMLVideoElement & { videoTracks?: { length: number }; audioTracks?: { length: number } };
+  const finiteNumber = (value: number | undefined) => typeof value === 'number' && Number.isFinite(value) ? value : 'unknown';
   logDiagnostic(event.includes('failed') ? 'warn' : 'info', 'live-photo', event,
-    `media_error=${video.error?.code || 0} ready_state=${video.readyState} network_state=${video.networkState} width=${video.videoWidth} height=${video.videoHeight} paused=${video.paused} chromium_version=${chromiumVersion} ${liveVideoFailureDetail(video.error, error)}`);
+    `media_error=${video.error?.code || 0} ready_state=${video.readyState} network_state=${video.networkState} width=${video.videoWidth} height=${video.videoHeight} paused=${video.paused} current_time=${finiteNumber(video.currentTime)} duration=${finiteNumber(video.duration)} total_frames=${finiteNumber(quality?.totalVideoFrames)} dropped_frames=${finiteNumber(quality?.droppedVideoFrames)} video_tracks=${finiteNumber(tracks.videoTracks?.length)} audio_tracks=${finiteNumber(tracks.audioTracks?.length)} chromium_version=${chromiumVersion} ${liveVideoFailureDetail(video.error, error)}`);
 }
 
 export function hasDecodedVideoFrame(video: HTMLVideoElement): boolean {
