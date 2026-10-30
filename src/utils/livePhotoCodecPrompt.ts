@@ -23,8 +23,8 @@ export async function showLivePhotoCodecPrompt(codec: LiveVideoCodec, dismiss: (
   actions.push({ label: '不再提醒', onClick: dismiss });
   showToast(
     canInstallHevc
-      ? `当前播放环境无法解码该实况照片（${codec.name}），可能是 HEVC 视频扩展缺失或兼容性问题。未安装时可下载安装；已安装时请检查扩展、WebView2 和显卡驱动的更新，并重启应用后再试。`
-      : `当前播放环境无法解码该实况照片（${codec.name}），请检查对应的解码组件及兼容性后重启应用。`,
+      ? `当前系统不支持该实况照片的视频编码格式（${codec.name}），可前往下载并安装 HEVC 视频扩展，安装后重启应用再试。`
+      : `当前系统不支持该实况照片的视频编码格式（${codec.name}），请安装对应的视频解码组件后重启应用。`,
     'warning',
     canInstallHevc ? 12000 : 6000,
     actions,

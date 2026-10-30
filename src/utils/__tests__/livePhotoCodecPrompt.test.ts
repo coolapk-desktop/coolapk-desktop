@@ -24,7 +24,6 @@ describe('实况解码扩展提示', () => {
   it.each(['hvc1', 'hev1'])('Windows %s 提供下载和不再提醒两个入口', async id => {
     const dismiss = vi.fn();
     await showLivePhotoCodecPrompt({ ...hevc, id }, dismiss);
-    expect(vi.mocked(showToast).mock.calls[0][0]).toContain('可能是 HEVC 视频扩展缺失或兼容性问题');
     expect(actions().map(action => action.label)).toEqual(['下载 HEVC 扩展', '不再提醒']);
     actions()[0].onClick();
     await Promise.resolve();
