@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import HomeTabPanel from '../HomeTabPanel.vue';
 import { useSettingsStore } from '../../stores/settings';
 
-const api = vi.hoisted(() => ({ getIndexV8EntitiesPaged: vi.fn(), getHotSearchKeywords: vi.fn().mockResolvedValue([]) }));
+const api = vi.hoisted(() => ({ getIndexV8EntitiesPaged: vi.fn(), getDiscoveryPageData: vi.fn(), getHotSearchKeywords: vi.fn().mockResolvedValue([]) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: api }));
 
 it.each([390, 1280])('宽度 %s 下头条刷新保留首条锚点，分页只传末条游标', async (width) => {
@@ -77,4 +77,64 @@ it.each(['scroll', 'load'])('双列通过 %s 提前按短列加载，不等待�
     await flushPromises();
     expect(api.getIndexV8EntitiesPaged).toHaveBeenCalledTimes(2);
   } finally { wrapper.unmount(); vi.restoreAllMocks(); }
+});
+
+
+it.each([
+  [false, 'flat'], [true, 'flat'], [true, 'string'], [true, 'object'],
+] as const)('官方快捷入口分页配置 pagination=%s、来源=%s：每页一行五个并切换指示器', async (pagination, source) => {
+  const channels = Array.from({ length: 10 }, (_, index) => ({ id: `link-${index}`, title: `入口${index}`, url: `/page?url=link-${index}`, logo: `https://example.com/${index}.png` }));
+  api.getIndexV8EntitiesPaged.mockReset();
+  const config = { column: 5, row: 1, pagination: String(pagination) };
+  const metadata = source === 'flat' ? config : { extraData: source === 'string' ? JSON.stringify(config) : config };
+  api.getIndexV8EntitiesPaged.mockResolvedValue({ data: [{ entityType: 'card', entityTemplate: 'iconLinkGridCard', ...metadata, entities: channels }] });
+  const tab = { title: '头条', page_name: 'V9_HOME_TAB_HEADLINE', url: '/main/headline' };
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+  await router.push('/');
+  const wrapper = mount(HomeTabPanel, { props: { embedded: true, selected: true, tabKey: tab.page_name, tabs: [tab] }, global: { plugins: [router, createPinia()], stubs: { FeedCard: true, AppImage: true } } });
+  try {
+    await flushPromises();
+    expect(wrapper.findAll('.icon-btn-item')).toHaveLength(10);
+    expect(wrapper.findAll('.headline-icon-page')).toHaveLength(pagination ? 2 : 1);
+    expect(wrapper.find('.headline-page-indicator').exists()).toBe(pagination);
+    if (pagination) {
+      expect(wrapper.findAll('.headline-icon-page').map(page => page.findAll('.icon-btn-item').length)).toEqual([5, 5]);
+      const scroll = wrapper.get('.quick-icons-grid').element as HTMLElement;
+      Object.defineProperty(scroll, 'clientWidth', { value: 360 });
+      scroll.scrollLeft = 360;
+      await wrapper.get('.quick-icons-grid').trigger('scroll');
+      expect(wrapper.findAll('.headline-page-indicator button')[1].attributes('aria-current')).toBe('page');
+      const scrollTo = vi.fn();
+      scroll.scrollTo = scrollTo;
+      await wrapper.findAll('.headline-page-indicator button')[0].trigger('click');
+      expect(scrollTo).toHaveBeenCalledWith({ left: 0, behavior: 'smooth' });
+    }
+  } finally { wrapper.unmount(); }
+});
+
+
+it('进入头条不自动选择快捷入口，离开后再进入恢复推荐流并收起子栏目', async () => {
+  const feed = { id: '100', entityType: 'feed', message: '推荐动态', uid: '123', username: '酷友' };
+  const quickLinks = { entityType: 'card', entityTemplate: 'iconLinkGridCard', extraData: JSON.stringify({ row: 1, column: 5, pagination: 'true' }), entities: [{ id: 'worth', title: '值得看', url: '/page?url=worth' }] };
+  api.getIndexV8EntitiesPaged.mockReset();
+  api.getIndexV8EntitiesPaged.mockResolvedValue({ data: [quickLinks, feed] });
+  api.getDiscoveryPageData.mockResolvedValue({ data: [{ entityType: 'card', entityTemplate: 'iconTabLinkGridCard', entities: [{ title: '图文', url: '/page?url=worth-picture' }, { title: '全部', url: '/page?url=worth-all' }] }, feed] });
+  const tab = { title: '头条', page_name: 'V9_HOME_TAB_HEADLINE', url: '/main/headline' };
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+  await router.push('/');
+  const wrapper = mount(HomeTabPanel, { props: { embedded: true, selected: true, tabKey: tab.page_name, tabs: [tab] }, global: { plugins: [router, createPinia()], stubs: { FeedCard: true, AppImage: true } } });
+  try {
+    await flushPromises();
+    expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(false);
+    expect(wrapper.find('.headline-nested-tabs').exists()).toBe(false);
+    expect(api.getDiscoveryPageData).not.toHaveBeenCalled();
+    await wrapper.get('.icon-btn-item').trigger('click'); await flushPromises();
+    expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(true);
+    expect(wrapper.find('.headline-nested-tabs').exists()).toBe(true);
+    await wrapper.setProps({ selected: false });
+    await wrapper.setProps({ selected: true }); await flushPromises();
+    expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(false);
+    expect(wrapper.find('.headline-nested-tabs').exists()).toBe(false);
+    expect(api.getIndexV8EntitiesPaged).toHaveBeenLastCalledWith({ page: 1, firstItem: '', lastItem: '' });
+  } finally { wrapper.unmount(); }
 });

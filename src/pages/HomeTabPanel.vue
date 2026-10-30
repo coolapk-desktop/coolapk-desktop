@@ -55,10 +55,13 @@
             ref="subChannelsContainer"
             class="quick-icons-grid custom-scrollbar"
             data-discovery-horizontal-scroll
+            :style="{ '--headline-columns': headlineGridColumns }"
+            @scroll.passive="updateHeadlinePage"
             @wheel.passive="handleSubChannelsWheel"
           >
+            <div v-for="(channels, pageIndex) in headlineGridPages" :key="pageIndex" class="headline-icon-page">
             <button
-              v-for="channel in headlineSubChannels"
+              v-for="channel in channels"
               :key="channel.key"
               type="button"
               :class="['icon-btn-item', { selected: isSubChannelSelected(channel) }]"
@@ -77,8 +80,12 @@
               </span>
               <span class="channel-title">{{ channel.title }}</span>
             </button>
+            </div>
           </div>
-          <div v-if="headlineNestedSubChannels.length" data-discovery-horizontal-scroll class="headline-nested-tabs" role="tablist" aria-label="头条子栏目">
+          <div v-if="headlineGridPages.length > 1" class="headline-page-indicator" aria-label="快捷入口分页">
+            <button v-for="(_, pageIndex) in headlineGridPages" :key="pageIndex" type="button" :class="{ active: headlinePage === pageIndex }" :aria-label="`第 ${pageIndex + 1} 页`" :aria-current="headlinePage === pageIndex ? 'page' : undefined" @click="scrollHeadlinePage(pageIndex)"></button>
+          </div>
+          <div v-if="selectedHeadlineSubChannelUrl && headlineNestedSubChannels.length" data-discovery-horizontal-scroll class="headline-nested-tabs" role="tablist" aria-label="头条子栏目">
             <button
               v-for="channel in headlineNestedSubChannels"
               :key="channel.key"
@@ -527,6 +534,31 @@ const headlineResolvedUrl = ref('');
 const selectedHeadlineSubChannelUrl = ref('');
 const failedHeadlineSubChannelLogos = reactive(new Set<string>());
 const headlineQuickLinks = ref<any[]>([]);
+const headlineGridConfig = ref({ column: 0, row: 0, pagination: false });
+const headlinePage = ref(0);
+// APK 非分页时根据入口数量使用 3/4/5 列；分页时遵循服务端 row、column。
+const headlineGridColumns = computed(() => {
+  if (headlineGridConfig.value.column > 0) return headlineGridConfig.value.column;
+  if (headlineGridConfig.value.pagination) return 5;
+  const count = headlineSubChannels.value.length;
+  return count > 0 && count % 3 === 0 ? 3 : count > 0 && count % 4 === 0 ? 4 : 5;
+});
+const headlineGridPages = computed(() => {
+  const channels = headlineSubChannels.value;
+  if (!headlineGridConfig.value.pagination) return [channels];
+  const { column, row } = headlineGridConfig.value;
+  const size = column > 0 && row > 0 ? column * row : 10;
+  return Array.from({ length: Math.ceil(channels.length / size) }, (_, index) => channels.slice(index * size, (index + 1) * size));
+});
+function updateHeadlinePage() {
+  const element = subChannelsContainer.value;
+  if (element?.clientWidth) headlinePage.value = Math.max(0, Math.min(headlineGridPages.value.length - 1, Math.round(element.scrollLeft / element.clientWidth)));
+}
+function scrollHeadlinePage(index: number) {
+  const element = subChannelsContainer.value;
+  element?.scrollTo({ left: index * element.clientWidth, behavior: 'smooth' });
+}
+
 const headlineDiscoveryItems = ref<any[]>([]);
 const headlineUserItems = ref<any[]>([]);
 const headlineNestedSubChannels = ref<Array<{ key: string; title: string; url: string }>>([]);
@@ -700,6 +732,19 @@ function updateHeadlineQuickLinks(items: any[]) {
   );
   const entities = Array.isArray(card?.entities) ? card.entities : [];
   if (entities.length > 0) {
+    // APK 从 Entity.extraData 中读取网格配置，接口可能返回 JSON 字符串或对象。
+    let extra = card.extraData ?? card.extra_data;
+    if (typeof extra === 'string') {
+      try { extra = JSON.parse(extra); } catch { extra = null; }
+    }
+    const config = extra && typeof extra === 'object' && !Array.isArray(extra) ? { ...card, ...extra } : card;
+    headlineGridConfig.value = {
+      column: Math.max(0, Math.floor(Number(config.column) || 0)),
+      row: Math.max(0, Math.floor(Number(config.row) || 0)),
+      pagination: String(config.pagination) === 'true',
+    };
+    headlinePage.value = 0;
+    if (subChannelsContainer.value) subChannelsContainer.value.scrollLeft = 0;
     headlineQuickLinks.value = entities;
     failedHeadlineSubChannelLogos.clear();
   }
@@ -1231,7 +1276,7 @@ async function loadFeeds(isRefresh: boolean = false) {
         rawItems = res.data;
         if (isHotTab.value) updateHotNavigation(rawItems);
         if (isFollowingTab.value && rawItems.some(isFollowUpdateCard)) followingUpdateFeeds.value = rawItems.filter(isFollowUpdateCard);
-        if (isHeadlineTab.value) updateHeadlineQuickLinks(rawItems);
+        if (isHeadlineTab.value && !selectedHeadlineSubChannelUrl.value && page.value === 1) updateHeadlineQuickLinks(rawItems);
         validItems = rawItems.filter((item: any) => !isFollowUpdateCard(item) && hasFeedRenderableContent(item) && !shouldHideFeed(item, settingsStore.settings));
         if (
           isHeadlineTab.value
@@ -1667,8 +1712,18 @@ onMounted(() => {
   void initializeHome();
 });
 
-onActivated(bindGlobalListeners);
-watch(() => props.selected, (selected) => { unbindGlobalListeners(); if (selected) bindGlobalListeners(); });
+// 重新进入头条时回到推荐流，不把上次主动打开的快捷入口当作默认栏目。
+function restoreHeadlineRecommendation() {
+  if (isInitializingHome || !props.selected || !isHeadlineTab.value || !selectedHeadlineSubChannelUrl.value) return;
+  selectedHeadlineSubChannelUrl.value = '';
+  resetHeadlineCursor();
+  void loadFeeds(true);
+}
+onActivated(() => { bindGlobalListeners(); restoreHeadlineRecommendation(); });
+watch(() => props.selected, (selected) => {
+  unbindGlobalListeners();
+  if (selected) { bindGlobalListeners(); restoreHeadlineRecommendation(); }
+});
 watch(() => props.tabs, (tabs) => { if (props.embedded && tabs) serverTabs.value = tabs; });
 onDeactivated(unbindGlobalListeners);
 onUnmounted(() => { feedRequestSequence += 1; unbindGlobalListeners(); });
@@ -1789,6 +1844,9 @@ async function refreshMobilePage() { await loadFeeds(true); }
   /* 软键盘弹出时补出底部留白，否则评论框无法滚到键盘上方。 */
   padding-bottom: calc(var(--keyboard-inset, 0px) + var(--mobile-bottom-overlay-space, 0px));
 }
+
+.headline-icon-page { display: contents; }
+.headline-page-indicator { display: none; }
 
 /* 1. 头条 Tab 头部样式 */
 .headline-header-section {
@@ -2298,6 +2356,18 @@ async function refreshMobilePage() { await loadFeeds(true); }
 }
 
 @media (max-width: 720px) {
+  .headline-header-section { padding-top: 8px; gap: 0; }
+  .quick-icons-grid { gap: 0; padding: 0; scrollbar-width: none; scroll-snap-type: x mandatory; }
+  .quick-icons-grid::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  .headline-icon-page { display: grid; grid-template-columns: repeat(var(--headline-columns, 5), minmax(0, 1fr)); flex: 0 0 100%; min-width: 0; align-content: start; scroll-snap-align: start; }
+  .icon-btn-item { gap: 3px; min-width: 0; padding: 8px 4px; }
+  .icon-circle { flex: 0 0 36px; width: 36px; height: 36px; margin-top: 1px; border-radius: 10px; font-size: 18px; }
+  .headline-sub-channel-logo { width: 36px; height: 36px; border-radius: 10px; }
+  .channel-title { max-width: 100%; overflow: hidden; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+  .headline-page-indicator { display: flex; justify-content: center; gap: 4px; margin: -2px 0 8px; }
+  .headline-page-indicator button { border: 0; padding: 0; width: 8px; height: 4px; border-radius: 2px; background: #bdbdbd; transition: width .15s ease, background-color .15s ease; }
+  .headline-page-indicator button.active { width: 20px; background: var(--brand-primary, #10b981); }
+
   .home-page-layout {
     height: 100%;
   }
