@@ -69,7 +69,7 @@
           <UserEntityCard
             v-for="(entity, entityIndex) in allRowFeeds(row)"
             :key="entityKey(entity, entityIndex)"
-            :entity="entity"
+            :entity="entity" :profile-uid="uid" @pin-changed="emit('pin-changed')"
             :tab="row.tab"
             @deleted="(id) => emit('deleted', id)"
           />
@@ -98,6 +98,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'deleted', id: string | number): void;
+  (event: 'pin-changed'): void;
   (event: 'switch-tab', tabKey: string): void;
 }>();
 

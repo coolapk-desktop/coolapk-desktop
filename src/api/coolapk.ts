@@ -1238,6 +1238,10 @@ export class CoolapkTauriAPI {
     return await invokeNative('unfavorite_apk', { packageName });
   }
 
+  static async setUserFeedTop(uid: string, feedId: string, top: boolean) {
+    return await invokeNative('set_user_feed_top', { uid, feedId, top });
+  }
+
   static async deleteFeed(feedId: string) {
     return await invokeNative('delete_feed', { feedId });
   }

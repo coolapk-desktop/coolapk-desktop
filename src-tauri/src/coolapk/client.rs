@@ -1437,7 +1437,7 @@ impl CoolapkClient {
     }
 
     fn default_publish_device_model(&self) -> bool {
-        cfg!(any(target_os = "android", target_os = "ios")) && self.native_device_profile.model.is_some()
+        true
     }
 
     /// 更新设备信息覆盖配置（由设置页调用；传空字段即恢复默认）
@@ -2432,6 +2432,11 @@ impl CoolapkClient {
             "dateline": get_u64_by_keys(obj, &["dateline", "create_time", "lastupdate", "createTime"])
         });
 
+        // 保留官方不同上下文中的置顶字段，不能只读取 isTop。
+        copy_first_field(&mut cleaned, obj, "isStickTop", &["isStickTop"]);
+        copy_first_field(&mut cleaned, obj, "is_editor_title_top", &["is_editor_title_top"]);
+        copy_first_field(&mut cleaned, obj, "collectionItem", &["collectionItem"]);
+        copy_first_field(&mut cleaned, obj, "topInfo", &["topInfo"]);
         // APK 列表分页使用 Entity.entityId 生成 firstItem 和 lastItem，清洗时需要保留该游标字段。
         copy_first_field(&mut cleaned, obj, "entityId", &["entityId", "entity_id"]);
         copy_first_field(&mut cleaned, obj, "enableModify", &["enableModify", "enable_modify"]);
@@ -6477,6 +6482,16 @@ impl CoolapkClient {
     pub async fn unfavorite_apk(&self, package_name: &str) -> Result<Value, String> {
         self.favorite_action("/v6/apk/unFavorite", package_name)
             .await
+    }
+
+    /// APK 个人主页置顶：member 节点，不使用编辑推荐置顶接口。
+    pub async fn set_user_feed_top(&self, uid: &str, feed_id: &str, top: bool) -> Result<Value, String> {
+        let path = if top { "/v6/feed/addTopToNode" } else { "/v6/feed/cancelTopFromNode" };
+        wrap_api_data(self.api_post(path, &[], &[
+            ("nodeType", "member".to_string()),
+            ("nodeId", uid.to_string()),
+            ("feedId", feed_id.to_string()),
+        ]).await?)
     }
 
     /// 删除自己发布的动态（需登录）

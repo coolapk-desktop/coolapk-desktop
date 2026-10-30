@@ -347,8 +347,7 @@ fn test_publish_device_model_is_scoped_and_preserves_identity() {
     assert_eq!(hidden.body().unwrap().as_bytes(), visible.body().unwrap().as_bytes());
     assert_eq!(*client.device_code.read().unwrap(), original_code);
     assert!(device_code_without_model("invalid").is_err());
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    assert!(!client.default_publish_device_model());
+    assert!(client.default_publish_device_model());
 }
 
 #[test]
@@ -2129,4 +2128,14 @@ fn following_card_only_page_does_not_stop_feed_fallback() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0], card);
     assert_eq!(rows[1]["id"], "123");
+}
+
+#[test]
+fn test_feed_cleaning_preserves_official_top_fields() {
+    let raw = json!({ "id": "42", "uid": "123", "username": "作者", "message": "正文",
+        "isStickTop": 1, "is_editor_title_top": 0, "collectionItem": { "is_top": 1 }, "topInfo": { "title": "推荐" } });
+    let cleaned = CoolapkClient::clean_single_feed(&raw, 0).unwrap();
+    for key in ["isStickTop", "is_editor_title_top", "collectionItem", "topInfo"] {
+        assert_eq!(cleaned[key], raw[key]);
+    }
 }

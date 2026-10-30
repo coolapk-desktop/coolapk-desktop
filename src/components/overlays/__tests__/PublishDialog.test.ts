@@ -100,23 +100,23 @@ describe('完整发帖流程', () => {
       expect(wrapper.get('[role=textbox]').text()).toBe('😀');
     } finally { wrapper.unmount(); }
   });
-  it.each([false, true])('按原生设备默认值 %s 附带型号，并允许手动覆盖和保存草稿', async (defaultValue) => {
+  it.each([false, true])('原生设备默认值为 %s 时仍默认附带型号，并允许关闭和保存草稿', async (defaultValue) => {
     vi.mocked(CoolapkTauriAPI.getDeviceInfo).mockResolvedValue({ code: 200, data: { defaultProfile: { includeDeviceModel: defaultValue } } });
     vi.mocked(CoolapkTauriAPI.createFeed).mockResolvedValue({ code: 400, message: '测试停止发送' });
     const wrapper = await openDialog();
     const toggle = wrapper.get('.publish-device-option');
-    expect(toggle.attributes('aria-checked')).toBe(String(defaultValue));
+    expect(toggle.attributes('aria-checked')).toBe('true');
     await typeText(wrapper, '型号开关');
     await wrapper.findAll('button').find(button => button.text() === '立即发布')!.trigger('click');
     await flushPromises();
-    expect(CoolapkTauriAPI.createFeed).toHaveBeenLastCalledWith('型号开关', undefined, undefined, expect.objectContaining({ includeDeviceModel: defaultValue }));
+    expect(CoolapkTauriAPI.createFeed).toHaveBeenLastCalledWith('型号开关', undefined, undefined, expect.objectContaining({ includeDeviceModel: true }));
     await toggle.trigger('click');
     await wrapper.findAll('button').find(button => button.text() === '立即发布')!.trigger('click');
     await flushPromises();
-    expect(CoolapkTauriAPI.createFeed).toHaveBeenLastCalledWith('型号开关', undefined, undefined, expect.objectContaining({ includeDeviceModel: !defaultValue }));
+    expect(CoolapkTauriAPI.createFeed).toHaveBeenLastCalledWith('型号开关', undefined, undefined, expect.objectContaining({ includeDeviceModel: false }));
     await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click');
     await flushPromises();
-    expect(saveFullPublishDraft).toHaveBeenLastCalledWith('123', expect.any(String), expect.objectContaining({ extraOptions: expect.objectContaining({ includeDeviceModel: !defaultValue }) }));
+    expect(saveFullPublishDraft).toHaveBeenLastCalledWith('123', expect.any(String), expect.objectContaining({ extraOptions: expect.objectContaining({ includeDeviceModel: false }) }));
     wrapper.unmount();
   });
   it('输入井号触发话题选择并替换正在输入的片段', async () => {

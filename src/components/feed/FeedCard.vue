@@ -24,6 +24,7 @@
 
     <AppImage v-if="!officialMobileDetail && feedPluginUrl" :src="feedPluginUrl" class="feed-plugin-decoration" fit="contain" aria-hidden="true" />
 
+    <div v-if="isPinnedFeed" class="feed-pinned-label"><i class="fas fa-thumbtack" aria-hidden="true"></i><span>置顶</span></div>
     <!-- targetType 是关联标的标题，由下方关联卡片展示；头部只显示明确的推荐来源。 -->
     <div :class="{ 'official-detail-author': officialMobileDetail }">
     <button v-if="officialMobileDetail" class="official-back" type="button" aria-label="返回" @click.stop="navigateBack(router)"><i class="fas fa-arrow-left"></i></button>
@@ -89,6 +90,9 @@
       </button>
       <button v-if="isMyFeed" class="more-menu-item" :disabled="!canEditFeed" :title="canEditFeed ? '重新编辑动态' : '此动态当前不能编辑'" @click="handleEditFeed">
         <i class="fas fa-pen"></i> 重新编辑
+      </button>
+      <button v-if="canPinFeed" class="more-menu-item" :disabled="pinPending" @click="handlePinFeed">
+        <i class="fas fa-thumbtack"></i> {{ isMemberPinned ? '取消置顶' : '置顶' }}
       </button>
       <button v-if="isMyFeed" class="more-menu-item is-danger" @click="handleDeleteFeed">
         <i class="fas fa-trash-alt"></i> 删除动态
@@ -432,6 +436,7 @@ const showDeviceInfo = computed(() => settingsStore.settings.showDeviceInfo);
 const props = defineProps<{
   feed: FeedItem;
   rankIndex?: number;
+  profileUid?: string | number;
   detailMode?: boolean;
   officialMobileDetail?: boolean;
   autoOpenComments?: boolean;
@@ -588,6 +593,7 @@ function openSecondHandLink() {
 
 const emit = defineEmits<{
   (e: 'deleted', id: string | number): void;
+  (e: 'pin-changed'): void;
   (e: 'favorite-changed', payload: { id: string | number; favorited: boolean }): void;
   (e: 'open-comment', feed: FeedItem): void;
   (e: 'open-like-list'): void;
@@ -608,6 +614,27 @@ const isMyFeed = computed(() => {
   if (!authStore.isLoggedIn || !authStore.user) return false;
   return !!authorUid.value && authorUid.value === String(authStore.user.uid);
 });
+
+const isMemberPinned = computed(() => Number(props.feed.isStickTop) === 1);
+const isPinnedFeed = computed(() => isMemberPinned.value || Number(props.feed.is_editor_title_top) === 1 || Number(props.feed.collectionItem?.is_top) === 1);
+const canPinFeed = computed(() => isMyFeed.value && !props.replyMode && String(props.profileUid || '') === String(authStore.user?.uid));
+const pinPending = ref(false);
+async function handlePinFeed() {
+  if (!canPinFeed.value || pinPending.value) return;
+  pinPending.value = true;
+  try {
+    const top = !isMemberPinned.value;
+    if (top && !await requestConfirmation({ title: '置顶动态', message: '将此动态置顶到个人主页；如果已有置顶动态，将替换原来的置顶。是否继续？', confirmText: '置顶' })) return;
+    const response = await CoolapkTauriAPI.setUserFeedTop(String(props.profileUid), String(props.feed.id), top);
+    if (response?.code !== 200) throw new Error(response?.message || '设置置顶失败');
+    props.feed.isStickTop = top ? 1 : 0;
+    moreMenuOpen.value = false;
+    showToast(top ? '动态已置顶' : '已取消置顶');
+    emit('pin-changed');
+  } catch (error) {
+    showToast(getErrorMessage(error, '设置置顶失败'), 'error');
+  } finally { pinPending.value = false; }
+}
 
 const canEditFeed = computed(() => {
   const value = (props.feed as any).enableModify ?? (props.feed as any).enable_modify;
@@ -1614,6 +1641,7 @@ defineExpose({
 </script>
 
 <style scoped>
+.feed-pinned-label { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: #f44336; font-size: 12px; }
 .feed-target-chip.rating-detail-target { display: flex; width: 100%; max-width: 680px; height: auto; min-height: 80px; border-radius: 10px; padding: 14px; gap: 12px; background: var(--background-secondary); align-items: center; }
 .rating-detail-target .target-chip-media { width: 46px; height: 46px; min-width: 46px; max-width: 46px; min-height: 46px; max-height: 46px; }
 .rating-detail-target :deep(.target-chip-logo) { width: 46px !important; height: 46px !important; }

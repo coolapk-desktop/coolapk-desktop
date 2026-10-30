@@ -1587,6 +1587,11 @@ pub async fn unfavorite_apk(
 }
 
 #[tauri::command]
+pub async fn set_user_feed_top(state: State<'_, AppState>, uid: String, feed_id: String, top: bool) -> Result<Value, String> {
+    state.client.set_user_feed_top(&uid, &feed_id, top).await
+}
+
+#[tauri::command]
 pub async fn delete_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
     state.client.delete_feed(&feed_id).await
 }

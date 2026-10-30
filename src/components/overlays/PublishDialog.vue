@@ -268,7 +268,7 @@ const topicSourceText = computed(() => publishMode.value === 'article'
 const publishTarget = ref<PublishTarget | null>(null);
 const productOptions = ref<PublishOptions>({});
 const extraOptions = ref<PublishOptions>({ originalType: 0, extraUrl: '', dyhId: '' });
-const defaultIncludeDeviceModel = ref(false);
+const defaultIncludeDeviceModel = ref(true);
 const includeDeviceModel = computed({
   get: () => extraOptions.value.includeDeviceModel ?? defaultIncludeDeviceModel.value,
   set: (value: boolean) => { extraOptions.value = { ...extraOptions.value, includeDeviceModel: value }; },
@@ -517,12 +517,7 @@ watch(() => appStore.isPublishOpen, async (open) => {
         if (revision === openRevision) editLoading.value = false;
       }
     } else {
-      defaultIncludeDeviceModel.value = false;
-      try {
-        const response = await CoolapkTauriAPI.getDeviceInfo();
-        if (revision !== openRevision || !appStore.isPublishOpen) return;
-        defaultIncludeDeviceModel.value = response?.data?.defaultProfile?.includeDeviceModel === true;
-      } catch { /* 无法确认真实设备时默认不附带型号。 */ }
+      defaultIncludeDeviceModel.value = true;
       try {
         draftList.value = await listFullPublishDrafts(draftAccount);
         if (revision !== openRevision || !appStore.isPublishOpen) return;

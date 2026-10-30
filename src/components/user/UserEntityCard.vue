@@ -1,5 +1,5 @@
 <template>
-  <FeedCard v-if="isFeedEntity" :feed="entity" :reply-mode="tab === 'reply' || /reply|comment/.test(type)" @deleted="(id) => emit('deleted', id)" />
+  <FeedCard v-if="isFeedEntity" :feed="entity" :profile-uid="profileUid" @pin-changed="emit('pin-changed')" :reply-mode="tab === 'reply' || /reply|comment/.test(type)" @deleted="(id) => emit('deleted', id)" />
   <RatingCard v-else-if="isRatingEntity" :feed="entity" />
   <article v-else class="user-entity-card" :class="`entity-${variant}`" @click="openEntity">
     <template v-if="variant === 'collection'">
@@ -76,8 +76,8 @@ import RatingCard from '../feed/RatingCard.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import type { UserSpaceEntity } from '../../types/userSpace';
 
-const props = defineProps<{ entity: UserSpaceEntity; tab?: string }>();
-const emit = defineEmits<{ (event: 'deleted', id: string | number): void }>();
+const props = defineProps<{ entity: UserSpaceEntity; tab?: string; profileUid?: string | number }>();
+const emit = defineEmits<{ (event: 'pin-changed'): void; (event: 'deleted', id: string | number): void }>();
 const router = useRouter();
 const entity = computed(() => props.entity as any);
 const type = computed(() => String(entity.value.entityType ?? entity.value.entityTypeName ?? entity.value.type ?? '').toLowerCase());

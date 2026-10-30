@@ -198,6 +198,7 @@
           :uid="effectiveUid"
           :is-self="isSelfUser"
           @switch-tab="activeTab = $event"
+          @pin-changed="handleFeedPinChanged"
           @deleted="handleFeedDeleted"
         />
         <div v-else class="empty-wrapper"><EmptyState title="暂无主页卡片" /></div>
@@ -227,7 +228,7 @@
           <EmptyState title="暂无点评记录" />
         </div>
         <div v-else class="feed-list">
-          <UserEntityCard v-for="(item, index) in userFeeds" :key="item.id || item.entityId || index" :entity="item" tab="rating" @deleted="handleFeedDeleted" />
+          <UserEntityCard v-for="(item, index) in userFeeds" :key="item.id || item.entityId || index" :entity="item" :profile-uid="effectiveUid" @pin-changed="handleFeedPinChanged" tab="rating" @deleted="handleFeedDeleted" />
         </div>
       </div>
 
@@ -240,7 +241,7 @@
           <EmptyState title="暂无相关内容" />
         </div>
         <div v-else class="feed-list">
-          <UserEntityCard v-for="(item, index) in userFeeds" :key="item.id || item.entityId || index" :entity="item" :tab="activeTab" @deleted="handleFeedDeleted" />
+          <UserEntityCard v-for="(item, index) in userFeeds" :key="item.id || item.entityId || index" :entity="item" :profile-uid="effectiveUid" @pin-changed="handleFeedPinChanged" :tab="activeTab" @deleted="handleFeedDeleted" />
         </div>
       </div>
 
@@ -1095,6 +1096,12 @@ async function fetchTabFeeds(isRefresh = true, tabKey = activeTab.value) {
 
 function handleFeedDeleted(id: string | number) {
   activeTabState.value.items = activeTabState.value.items.filter((item: any) => String(item.id ?? item.entityId) !== String(id));
+}
+
+async function handleFeedPinChanged() {
+  resetTabStates();
+  await fetchUserProfile();
+  await fetchTabFeeds(true);
 }
 
 function refreshActiveTab() { void fetchTabFeeds(true); }

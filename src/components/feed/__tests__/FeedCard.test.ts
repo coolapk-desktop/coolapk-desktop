@@ -6,6 +6,8 @@ import { nextTick, ref } from 'vue';
 import { feedPageVisibleKey } from '../../../utils/feedPageVisibility';
 
 const mocks = vi.hoisted(() => ({
+  setUserFeedTop: vi.fn(),
+  requestConfirmation: vi.fn(),
   getFeedChangeHistory: vi.fn(),
   getHotReplies: vi.fn(),
   getFeedReplies: vi.fn(),
@@ -24,6 +26,7 @@ vi.mock('../../../router', () => ({
 
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
+    setUserFeedTop: mocks.setUserFeedTop,
     getFeedChangeHistory: mocks.getFeedChangeHistory,
     getHotReplies: mocks.getHotReplies,
     getFeedReplies: mocks.getFeedReplies,
@@ -31,6 +34,8 @@ vi.mock('../../../api/coolapk', () => ({
     openUrl: mocks.openUrl,
   },
 }));
+
+vi.mock('../../../utils/confirm', () => ({ requestConfirmation: mocks.requestConfirmation }));
 
 import FeedCard from '../FeedCard.vue';
 import { useAuthStore } from '../../../stores/auth';
@@ -1216,5 +1221,51 @@ describe('互动列表外置', () => {
     expect(wrapper.emitted('open-like-list')).toHaveLength(1);
     expect(wrapper.emitted('open-forward-list')).toHaveLength(1);
     wrapper.unmount();
+  });
+});
+
+
+describe('个人主页动态置顶', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setActivePinia(createPinia());
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    auth.user = { uid: '456', username: '作者' } as any;
+    mocks.requestConfirmation.mockResolvedValue(true);
+    mocks.setUserFeedTop.mockResolvedValue({ code: 200 });
+  });
+  const stubs = { FeedHeader: { template: '<button class="pin-test-more" @click="$emit(\'more\')">更多</button>' }, FeedContent: true, FeedImageGrid: true, FeedActionBar: true, FeedCommentSection: true, FeedDyhShareDialog: true, FeedShareImageDialog: true, FeedInteractionListDialog: true, FeedCollectionPickerDialog: true, AppDialog: true, ForwardDialog: true };
+  it.each([false, true])('置顶切换成功后更新标签并通知列表刷新，原置顶=%s', async pinned => {
+    const feed = { id: '42', uid: '456', username: '作者', message: '正文', isStickTop: pinned ? 1 : 0 };
+    const wrapper = mount(FeedCard, { props: { feed, profileUid: '456', officialMobileDetail: true }, global: { stubs } });
+    try {
+      await wrapper.get('.pin-test-more').trigger('click');
+      const button = wrapper.findAll('.more-menu-item').find(item => item.text().trim() === (pinned ? '取消置顶' : '置顶'))!;
+      await button.trigger('click'); await flushPromises();
+      expect(mocks.setUserFeedTop).toHaveBeenCalledWith('456', '42', !pinned);
+      expect(wrapper.find('.feed-pinned-label').exists()).toBe(!pinned);
+      expect(wrapper.emitted('pin-changed')).toHaveLength(1);
+    } finally { wrapper.unmount(); }
+  });
+  it.each(['cancel', 'failure'])('取消确认或接口失败不改变置顶状态：%s', async scenario => {
+    if (scenario === 'cancel') mocks.requestConfirmation.mockResolvedValue(false);
+    else mocks.setUserFeedTop.mockRejectedValue(new Error('请求失败'));
+    const wrapper = mount(FeedCard, { props: { feed: { id: '42', uid: '456', message: '正文' }, profileUid: '456', officialMobileDetail: true }, global: { stubs } });
+    try {
+      await wrapper.get('.pin-test-more').trigger('click');
+      await wrapper.findAll('.more-menu-item').find(item => item.text().trim() === '置顶')!.trigger('click'); await flushPromises();
+      expect(wrapper.find('.feed-pinned-label').exists()).toBe(false);
+      expect(wrapper.emitted('pin-changed')).toBeUndefined();
+      if (scenario === 'cancel') expect(mocks.setUserFeedTop).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+  it('他人主页不提供个人置顶操作，仍显示官方置顶标签', async () => {
+    const wrapper = mount(FeedCard, { props: { feed: { id: '42', uid: '123', message: '正文', isStickTop: '1' }, profileUid: '123', officialMobileDetail: true }, global: { stubs } });
+    try {
+      expect(wrapper.get('.feed-pinned-label').text()).toBe('置顶');
+      await wrapper.get('.pin-test-more').trigger('click');
+      expect(wrapper.findAll('.more-menu-item').some(item => /置顶/.test(item.text()))).toBe(false);
+    } finally { wrapper.unmount(); }
   });
 });

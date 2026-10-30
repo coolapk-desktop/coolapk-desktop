@@ -19,7 +19,7 @@
       <ErrorState v-else-if="error && items.length === 0" title="加载动态记录失败" :message="error" @retry="load(true)" />
       <EmptyState v-else-if="!items.length" title="暂无动态记录" description="你发布过的动态会出现在这里" />
       <div v-else class="feed-list">
-        <FeedCard v-for="(item, index) in items" :key="item.id || item.entityId || index" :feed="item" @deleted="removeItem" />
+        <FeedCard v-for="(item, index) in items" :key="item.id || item.entityId || index" :feed="item" :profile-uid="authStore.user?.uid" @pin-changed="load(true)" @deleted="removeItem" />
         <div class="pagination-footer">
           <LoadingState v-if="loadingMore" text="正在加载更多..." />
           <div v-else-if="noMore" class="no-more">已加载全部动态记录</div>
