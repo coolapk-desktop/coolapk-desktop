@@ -122,13 +122,14 @@
       :answer-mode="isAnswerCard"
     />
 
-    <!-- APK 闲置动态的外部商品链接，保留为显式按钮避免被整张动态卡片点击吞掉。 -->
-    <div v-if="secondHandLink" class="secondhand-link-card">
+    <!-- 闲置价格不依赖外链；外部商品链接保留为显式按钮。 -->
+    <div v-if="secondHandPrice || secondHandLink" class="secondhand-link-card">
       <div class="secondhand-link-copy">
-        <span class="secondhand-link-source"><i class="fas fa-link"></i>{{ secondHandLinkSource }}链接</span>
-        <span class="secondhand-link-description">查看闲置商品详情</span>
+        <strong v-if="secondHandPrice" class="secondhand-price">{{ secondHandPrice }}</strong>
+        <span v-if="secondHandLink" class="secondhand-link-source"><i class="fas fa-link"></i>{{ secondHandLinkSource }}链接</span>
+        <span v-if="secondHandLink" class="secondhand-link-description">查看闲置商品详情</span>
       </div>
-      <button type="button" class="secondhand-link-button" @click.stop="openSecondHandLink"><i class="fas fa-arrow-up-right-from-square"></i>打开</button>
+      <button v-if="secondHandLink" type="button" class="secondhand-link-button" @click.stop="openSecondHandLink"><i class="fas fa-arrow-up-right-from-square"></i>打开</button>
     </div>
 
     <VoteCard v-if="feed.vote" :feed-id="feed.id" :vote="feed.vote" />
@@ -583,6 +584,16 @@ const secondHandLink = computed(() => {
   const rawUrl = secondHandInfo.value?.link_url || secondHandInfo.value?.linkUrl || secondHandInfo.value?.url || secondHandInfo.value?.link;
   const url = String(rawUrl || '').trim();
   return /^https?:\/\//i.test(url) ? url : '';
+});
+
+const secondHandPrice = computed(() => {
+  const info = secondHandInfo.value;
+  if (!info) return '';
+  if (Number(info.is_face_deal) === 1) return '价格面议';
+  const rawPrice = info.product_price;
+  if (typeof rawPrice !== 'string' && typeof rawPrice !== 'number') return '';
+  const price = String(rawPrice).trim();
+  return price ? `¥${price}` : '';
 });
 
 const secondHandLinkSource = computed(() => String(secondHandInfo.value?.link_source || secondHandInfo.value?.linkSource || '闲鱼').trim() || '闲鱼');
@@ -2217,6 +2228,13 @@ defineExpose({
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+}
+
+.secondhand-price {
+  color: var(--danger, #ff4848);
+  font-size: var(--font-size-title-md);
+  font-weight: var(--font-weight-semibold);
+  overflow-wrap: anywhere;
 }
 
 .secondhand-link-source {

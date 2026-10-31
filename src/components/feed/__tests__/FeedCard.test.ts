@@ -165,7 +165,7 @@ describe('动态卡片编辑记录', () => {
     const link = 'https://m.tb.cn/h.example?tk=test';
     const wrapper = mount(FeedCard, {
       props: {
-        feed: { id: 'secondhand-feed', uid: '456', username: '测试用户', message: '闲置商品', ershou_info: { link_source: '闲鱼', link_url: link } },
+        feed: { id: 'secondhand-feed', uid: '456', username: '测试用户', message: '闲置商品', ershou_info: { product_price: '1299.50', link_source: '闲鱼', link_url: link } },
       },
       global: {
         plugins: [createPinia()],
@@ -187,8 +187,34 @@ describe('动态卡片编辑记录', () => {
     });
 
     expect(wrapper.find('.secondhand-link-card').text()).toContain('闲鱼链接');
+    expect(wrapper.get('.secondhand-price').text()).toBe('¥1299.50');
     await wrapper.find('.secondhand-link-button').trigger('click');
     expect(mocks.openUrl).toHaveBeenCalledWith(link, 'internal');
+    wrapper.unmount();
+  });
+
+  it.each([
+    ['ershou_info', { product_price: 660 }, '¥660'],
+    ['ershouInfo', { product_price: 0 }, '¥0'],
+    ['second_hand_info', { product_price: ' 128.50 ' }, '¥128.50'],
+    ['secondHandInfo', JSON.stringify({ product_price: '1000' }), '¥1000'],
+    ['ershou_info', { is_face_deal: 1, product_price: 999 }, '价格面议'],
+    ['ershou_info', JSON.stringify({ is_face_deal: '1', product_price: 0 }), '价格面议'],
+    ['ershou_info', { product_price: '' }, ''],
+    ['ershou_info', { product_price: null }, ''],
+    ['ershou_info', { product_price: {} }, ''],
+    ['ershou_info', '{invalid', ''],
+    ['ershou_info', '[]', ''],
+    ['ershou_info', undefined, ''],
+  ])('闲置价格兼容 %s 数据 %j，无外链仍展示有效价格', (field, info, price) => {
+    const wrapper = mount(FeedCard, {
+      props: { feed: { id: 'price-feed', uid: '456', username: '卖家', message: '闲置商品', [field]: info } },
+      global: { stubs: { FeedHeader: true, FeedContent: true, FeedImageGrid: true, FeedVideoCard: true, FeedActionBar: true, FeedCommentSection: true, ForwardDialog: true, FeedShareImageDialog: true, FeedInteractionListDialog: true, FeedCollectionPickerDialog: true, AppDialog: true, LoadingState: true } },
+    });
+    expect(wrapper.find('.secondhand-price').exists()).toBe(Boolean(price));
+    if (price) expect(wrapper.get('.secondhand-price').text()).toBe(price);
+    expect(wrapper.find('.secondhand-link-card').exists()).toBe(Boolean(price));
+    expect(wrapper.find('.secondhand-link-button').exists()).toBe(false);
     wrapper.unmount();
   });
 
