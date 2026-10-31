@@ -3,9 +3,10 @@ import { getPlatformInfo } from './platform';
 
 const platformOs = ref<string>('windows');
 
-export function formatShortcut(shortcut: string, os: string): string {
+export function formatShortcut(shortcut: string, os: string, macShortcut?: string): string {
   if (os !== 'macos') return shortcut;
-  return shortcut
+  return (macShortcut ?? shortcut)
+    .replace(/Control/gi, '⌃')
     .replace(/Ctrl/gi, '⌘')
     .replace(/Alt/gi, '⌥')
     .replace(/Shift/gi, '⇧')
@@ -21,6 +22,6 @@ export function usePlatformShortcuts() {
     });
   });
   return {
-    formatShortcut: (shortcut: string) => formatShortcut(shortcut, platformOs.value),
+    formatShortcut: (shortcut: string, macShortcut?: string) => formatShortcut(shortcut, platformOs.value, macShortcut),
   };
 }

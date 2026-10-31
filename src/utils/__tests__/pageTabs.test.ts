@@ -123,6 +123,20 @@ describe('页面标签状态', () => {
     expect(store.tabs.map((tab) => tab.id)).toEqual(['home', 'Topic:摄影']);
   });
 
+  it('按显示顺序双向循环切换标签，包含固定标签并使用拖动后的顺序', () => {
+    const store = usePageTabsStore();
+    expect(store.cycle(1)).toBeNull();
+    store.syncRoute(route('/topic/摄影', 'Topic', { tag: '摄影' }));
+    store.syncRoute(route('/feed/100', 'FeedDetail', { feedId: '100' }));
+    store.togglePin('Topic:摄影');
+    expect(store.cycle(1)).toBe('/');
+    expect(store.cycle(-1)).toBe('/feed/100');
+    expect(store.cycle(-1)).toBe('/topic/摄影');
+    store.move('FeedDetail:100', 'home', false);
+    expect(store.cycle(1)).toBe('/feed/100');
+    expect(store.activeId).toBe('FeedDetail:100');
+  });
+
   it('拖动标签只调整顺序，不改变当前标签', () => {
     const store = usePageTabsStore();
     store.syncRoute(route('/topic/摄影', 'Topic', { tag: '摄影' }));

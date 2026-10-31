@@ -13,7 +13,8 @@ import { refreshPageTabGeneration } from './pageTabs';
  *  - Ctrl+ / Ctrl- 调整界面缩放
  *  - Ctrl+1..9 快速切换常用页面
  *  - Ctrl+Shift+B 折叠或展开侧边栏
- *  - Ctrl+W 关闭当前标签页，Ctrl+Tab 切换标签页
+ *  - Ctrl+W 关闭当前标签页，Ctrl+Tab / Ctrl+Shift+Tab 循环切换标签页
+ *  - Ctrl+PageUp / PageDown、⌘⇧[ / ⌘⇧] 切换上一个 / 下一个标签页
  *  - Alt+Left / Alt+Right 前进后退页面
  *  - J / K 上下一条动态（派发 feed-nav-next / feed-nav-prev，由首页监听）
  *  - J / K / C 单键导航忽略修饰键，保留 Ctrl+C 等系统快捷键
@@ -37,6 +38,7 @@ export function registerGlobalHotkeys() {
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.isComposing) return;
     const ctrl = e.ctrlKey || e.metaKey;
     const isAltArrow = e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
 
@@ -50,9 +52,18 @@ export function registerGlobalHotkeys() {
       return;
     }
 
-    if (ctrl && e.key === 'Tab') {
+    // macOS 的 ⌘Tab 由系统切换应用；标签切换使用真正的 Control 键。
+    const controlTab = e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab';
+    const controlPage = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+      && (e.key === 'PageUp' || e.key === 'PageDown');
+    // Shift 后 key 可能是花括号，code 则仍是方括号物理键。
+    const commandBracket = e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey
+      && (['[', ']', '{', '}'].includes(e.key) || ['BracketLeft', 'BracketRight'].includes(e.code));
+    if (controlTab || controlPage || commandBracket) {
       e.preventDefault();
-      const route = usePageTabsStore().cycle(e.shiftKey ? -1 : 1);
+      const previous = controlTab ? e.shiftKey : controlPage ? e.key === 'PageUp'
+        : e.code === 'BracketLeft' || e.key === '[' || e.key === '{';
+      const route = usePageTabsStore().cycle(previous ? -1 : 1);
       if (route) void router.replace(route);
       return;
     }
