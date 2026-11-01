@@ -91,13 +91,14 @@
         <span v-if="!isCollapsed || mobileOpen" class="nav-label">我的</span>
       </router-link>
 
-      <div class="nav-divider"></div>
-
-      <div class="nav-group">
-        <router-link to="/settings" class="nav-item" active-class="is-active" title="设置" @click="handleNavSelection">
-          <i class="fas fa-cog nav-icon"></i>
-          <span v-if="!isCollapsed || mobileOpen" class="nav-label">设置</span>
-        </router-link>
+      <div class="sidebar-settings">
+        <div class="nav-divider"></div>
+        <div class="nav-group">
+          <router-link to="/settings" class="nav-item" active-class="is-active" title="设置" @click="handleNavSelection">
+            <i class="fas fa-cog nav-icon"></i>
+            <span v-if="!isCollapsed || mobileOpen" class="nav-label">设置</span>
+          </router-link>
+        </div>
       </div>
     </nav>
 
@@ -378,8 +379,20 @@ function handleLogout() {
 
 .sidebar-nav {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: var(--space-3) var(--space-3);
   overflow-y: auto;
+}
+
+.sidebar-nav > * {
+  flex-shrink: 0;
+}
+
+/* 桌面设置入口靠近版本与更新区；空间不足时随菜单正常滚动。 */
+.main-sidebar:not(.is-mobile-open) .sidebar-settings {
+  margin-top: auto;
 }
 
 .nav-group {
@@ -568,6 +581,7 @@ function handleLogout() {
 }
 
 .sidebar-footer {
+  flex-shrink: 0;
   padding: 8px 12px 10px;
   border-top: 1px solid var(--border-light, rgba(0, 0, 0, 0.06));
 }
