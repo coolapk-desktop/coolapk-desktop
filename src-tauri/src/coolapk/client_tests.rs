@@ -963,6 +963,41 @@ fn test_clean_feed_preserves_relation_and_video_fields() {
 }
 
 #[test]
+fn test_clean_secondhand_list_keeps_price_and_link() {
+    let info = json!({
+        "product_price": "4199",
+        "is_face_deal": 0,
+        "link_source": "闲鱼",
+        "link_url": "https://example.com/item/123"
+    });
+    for key in ["ershou_info", "ershouInfo", "second_hand_info", "secondHandInfo"] {
+        for payload in [info.clone(), Value::String(info.to_string())] {
+            let mut feed = json!({"id": 123, "uid": 456, "username": "卖家", "message": "闲置商品", "feedType": "ershou"});
+            feed[key] = payload.clone();
+            // 产品交易等列表都经过 extract_cleaned_list；同时覆盖顶层与分组内动态。
+            for raw in [json!({"data": [feed.clone()]}), json!({"data": [{"entityType": "card", "entities": [feed.clone()]}]})] {
+                let cleaned = CoolapkClient::extract_cleaned_list(&raw);
+                assert_eq!(cleaned.len(), 1);
+                assert_eq!(cleaned[0]["ershou_info"], payload, "商品信息应原样传到前端: {key}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_clean_secondhand_list_keeps_negotiable_price_without_link() {
+    let info = json!({"product_price": 0, "is_face_deal": 1});
+    let raw = json!({"data": [
+        {"id": 123, "username": "卖家", "message": "面议商品", "ershou_info": info},
+        {"id": 124, "username": "用户", "message": "普通动态"}
+    ]});
+    let cleaned = CoolapkClient::extract_cleaned_list(&raw);
+    assert_eq!(cleaned.len(), 2);
+    assert_eq!(cleaned[0]["ershou_info"], info);
+    assert!(cleaned[1].get("ershou_info").is_none());
+}
+
+#[test]
 fn test_clean_answer_keeps_parent_question_id() {
     let raw = json!({
         "id": 123,

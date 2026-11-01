@@ -2474,6 +2474,8 @@ impl CoolapkClient {
         copy_first_field(&mut cleaned, obj, "mediaType", &["mediaType", "media_type"]);
         copy_first_field(&mut cleaned, obj, "feedType", &["feedType", "feed_type", "type"]);
         copy_first_field(&mut cleaned, obj, "feedTypeName", &["feedTypeName", "feed_type_name"]);
+        // 交易列表与详情使用同一商品卡片，不能在列表清洗时丢失价格、面议状态和外链。
+        copy_first_field(&mut cleaned, obj, "ershou_info", &["ershou_info", "ershouInfo", "second_hand_info", "secondHandInfo"]);
         copy_first_field(&mut cleaned, obj, "type", &["type"]);
         copy_first_field(&mut cleaned, obj, "message_title", &["message_title", "messageTitle"]);
         copy_first_field(&mut cleaned, obj, "message_raw_output", &["message_raw_output", "messageRawOutput"]);
