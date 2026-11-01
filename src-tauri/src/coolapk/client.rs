@@ -1153,7 +1153,7 @@ impl CoolapkClient {
         }
     }
 
-    fn current_uid(&self) -> Option<String> {
+    pub(crate) fn current_uid(&self) -> Option<String> {
         self.get_user_cookie()?.split(';').find_map(|kv| {
             let mut parts = kv.trim().splitn(2, '=');
             match (parts.next(), parts.next()) {

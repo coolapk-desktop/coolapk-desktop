@@ -69,6 +69,7 @@ const AboutSettingsPage = () => import('../pages/settings/AboutSettingsPage.vue'
 const StartupSettingsPage = () => import('../pages/settings/StartupSettingsPage.vue');
 const DeviceSettingsPage = () => import('../pages/settings/DeviceSettingsPage.vue');
 const DiagnosticsSettingsPage = () => import('../pages/settings/DiagnosticsSettingsPage.vue');
+const AgentSettingsPage = () => import('../pages/settings/AgentSettingsPage.vue');
 import { restoreRouteScrollPosition, routeNavigationIsHistory, saveRouteScrollPosition } from '../utils/routeScroll';
 import { logDiagnostic, setDiagnosticPage, summarizeDiagnosticError } from '../utils/diagnosticLogger';
 
@@ -160,6 +161,7 @@ const routes = [
       { path: 'shortcuts', component: ShortcutSettingsPage },
       { path: 'startup', component: StartupSettingsPage },
       { path: 'device', component: DeviceSettingsPage },
+      { path: 'agent', component: AgentSettingsPage },
       { path: 'diagnostics', component: DiagnosticsSettingsPage, props: (route: import('vue-router').RouteLocationNormalized) => ({ reportUrl: String(route.query.report || '') }) },
       { path: 'about', component: AboutSettingsPage },
     ]

@@ -1940,4 +1940,25 @@ export class CoolapkTauriAPI {
   static async bindFeedToGoodsList(feedId: string, goodsListId: string) {
     return await invokeNative('bind_feed_to_goods_list', { feedId, goodsListId }, { retry: false });
   }
+
+  static async agentBridgeStatus() {
+    return await invokeNative('agent_bridge_status', {}, { retry: false });
+  }
+
+  static async agentBridgeStart(options: { scopes: string[]; transport?: string; writeMode?: string; allowedAccounts?: string[] }) {
+    return await invokeNative('agent_bridge_start', {
+      scopes: options.scopes,
+      transport: options.transport ?? null,
+      writeMode: options.writeMode ?? null,
+      allowedAccounts: options.allowedAccounts ?? [],
+    }, { retry: false });
+  }
+
+  static async agentBridgeStop() {
+    return await invokeNative('agent_bridge_stop', {}, { retry: false });
+  }
+
+  static async agentBridgeRotateToken() {
+    return await invokeNative('agent_bridge_rotate_token', {}, { retry: false });
+  }
 }
