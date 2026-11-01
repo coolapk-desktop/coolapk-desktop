@@ -22,7 +22,8 @@
           <ErrorState title="加载历史失败" :message="error" @retry="fetchHistory(true)" />
         </div>
         <div v-else-if="filteredMainTimelineItems.length === 0" class="empty-wrapper">
-          <EmptyState title="暂无帖子浏览记录" description="打开帖子后，浏览记录会显示在此处" />
+          <EmptyState :title="noMore ? '暂无帖子浏览记录' : '当前记录中暂无帖子'" description="打开帖子后，浏览记录会显示在此处" />
+          <AppButton v-if="!noMore" size="sm" :disabled="loadingMore" @click="fetchHistory(false)">{{ loadingMore ? '正在查找...' : '继续加载帖子记录' }}</AppButton>
         </div>
 
         <div v-else class="timeline-tree">
@@ -63,10 +64,14 @@
                             {{ typeLabel(item) }}
                           </span>
                         </div>
-                        <span class="feed-time-text"><i class="far fa-clock"></i> {{ formatTimeExact(item.dateline) }}</span>
+                        <div class="feed-time-text">
+                          <span><i class="far fa-clock"></i> 浏览 {{ formatTimeExact(item.dateline) }}</span>
+                          <span v-if="itemPublishTime(item)">发布 {{ itemPublishTime(item) }}</span>
+                        </div>
                       </div>
                     </div>
 
+                    <div v-if="itemPostTitle(item)" class="history-post-title">{{ itemPostTitle(item) }}</div>
                     <div
                       v-if="richDescription(item)"
                       class="feed-text-content history-desc"
@@ -90,6 +95,7 @@
           <div class="pagination-footer">
             <LoadingState v-if="loadingMore" text="正在读取更多历史足迹..." />
             <div v-else-if="noMore" class="no-more">已加载全部历史记录</div>
+            <AppButton v-else size="sm" @click="fetchHistory(false)">加载更多浏览记录</AppButton>
           </div>
         </div>
       </main>
@@ -100,7 +106,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import LoadingState from '../components/common/LoadingState.vue';
@@ -111,6 +117,8 @@ import AppImage from '../components/common/AppImage.vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { renderCoolapkRichText } from '../utils/richText';
 import { useAuthStore } from '../stores/auth';
+import { useAppStore } from '../stores/app';
+import { htmlToPlainText } from '../utils/htmlText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
 
@@ -123,6 +131,56 @@ const noMore = ref(false);
 const feeds = ref<any[]>([]);
 const page = ref(1);
 const error = ref('');
+const historyPageCursor = ref<{ firstItem?: string; lastItem?: string }>({});
+const feedDetails = ref<Record<string, any>>({});
+let metadataGeneration = 0;
+let metadataQueue: any[] = [];
+let metadataRequests = 0;
+const requestedMetadata = new Set<string>();
+
+function itemFeedId(item: any): string {
+  return firstText(item?.url, item?.targetUrl).match(/\/?feed\/(\d+)/)?.[1]
+    || firstText(item?.id, item?.entityId).match(/^(?:feed:)?(\d+)$/)?.[1] || '';
+}
+
+function itemFeed(item: any): any {
+  return feedDetails.value[itemFeedId(item)] || item?.feed || null;
+}
+
+// 历史实体只提供摘要 title；游客详情补齐作者和发布时间，不产生账号浏览记录。
+function loadHistoryMetadata(items: any[]) {
+  for (const item of items) {
+    const id = itemFeedId(item);
+    if (!id || requestedMetadata.has(id)) continue;
+    requestedMetadata.add(id);
+    const cached = useAppStore().getFeedDetailContext(id);
+    if (cached?.username && cached?.entityType !== 'history') {
+      feedDetails.value[id] = cached;
+    } else metadataQueue.push({ id, generation: metadataGeneration });
+  }
+  drainMetadataQueue();
+}
+
+function drainMetadataQueue() {
+  while (metadataRequests < 2 && metadataQueue.length) {
+    const { id, generation } = metadataQueue.shift();
+    metadataRequests++;
+    void CoolapkTauriAPI.getPublicFeedDetail(id).then((response) => {
+      if (generation === metadataGeneration && String(response?.data?.id) === id) feedDetails.value[id] = response.data;
+    }).catch(() => {
+      // 已删除、私密或暂不可访问的帖子仍展示历史摘要，不阻塞列表。
+    }).finally(() => { metadataRequests--; drainMetadataQueue(); });
+  }
+}
+
+function resetMetadata() {
+  metadataGeneration++;
+  metadataQueue = [];
+  requestedMetadata.clear();
+  feedDetails.value = {};
+}
+
+onUnmounted(resetMetadata);
 
 function asText(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -152,9 +210,7 @@ function entityId(item: any): string {
 }
 
 function historyCursor(): { firstItem?: string; lastItem?: string } {
-  const first = feeds.value[0];
-  const last = feeds.value[feeds.value.length - 1];
-  return { firstItem: entityId(first) || undefined, lastItem: entityId(last) || undefined };
+  return historyPageCursor.value;
 }
 
 function getItemType(item: any): 'feed' | 'user' | 'topic' | 'apk' {
@@ -186,13 +242,24 @@ function typeLabel(item: any): string {
 }
 
 function itemAuthorName(item: any): string {
-  const title = asText(item?.title || '').trim();
-  if (!title) return '历史记录';
-  // 如果形如 "刘唐亡命天涯的动态" -> 优化为 "刘唐亡命天涯"
-  if (title.endsWith('的动态')) {
-    return title.replace(/的动态$/, '').trim() || title;
-  }
-  return title;
+  const feed = itemFeed(item);
+  const username = firstText(feed?.username, feed?.userInfo?.username, item?.username, item?.userInfo?.username).trim();
+  if (username) return username;
+  const title = asText(item?.title).trim();
+  return title.endsWith('的动态') ? title.replace(/的动态$/, '').trim() || '未知用户' : '未知用户';
+}
+
+function itemPostTitle(item: any): string {
+  const feed = itemFeed(item);
+  const title = htmlToPlainText(firstText(feed?.message_title, feed?.messageTitle, feed?.title, item?.title)).trim();
+  return title && !title.endsWith('的动态') ? title : '';
+}
+
+function itemPublishTime(item: any): string {
+  // 历史 dateline 是浏览时间，绝不能拿来充当发布时间。
+  const date = timestampToDate(itemFeed(item)?.dateline);
+  if (!date) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${formatTimeExact(date.getTime())}`;
 }
 
 function itemAvatar(item: any): string {
@@ -418,6 +485,7 @@ async function fetchHistory(isRefresh = false) {
     page.value = 1;
     noMore.value = false;
     feeds.value = [];
+    historyPageCursor.value = {};
     loading.value = true;
   } else {
     if (noMore.value) return;
@@ -426,32 +494,23 @@ async function fetchHistory(isRefresh = false) {
   error.value = '';
 
   try {
-    const cursor = isRefresh ? {} : historyCursor();
-    const res = await CoolapkTauriAPI.getHitHistory(page.value, 'feed', cursor.firstItem, cursor.lastItem);
-    const newFeeds = (res && res.data && Array.isArray(res.data))
-      ? deduplicateHistoryItems(res.data.filter(isFeedHistoryItem))
-      : [];
-    if (newFeeds.length === 0) {
-      noMore.value = true;
-    } else {
-      if (isRefresh) {
-        feeds.value = newFeeds;
-      } else {
-        const existingKeys = new Set(feeds.value.map(historyRowKey).filter(Boolean));
-        const appendedFeeds = newFeeds.filter((item: any) => {
-          const key = historyRowKey(item);
-          if (!key) return true;
-          if (existingKeys.has(key)) return false;
-          existingKeys.add(key);
-          return true;
-        });
-        if (appendedFeeds.length === 0) {
-          noMore.value = true;
-        } else {
-          feeds.value.push(...appendedFeeds);
-        }
-      }
-      if (!noMore.value) page.value++;
+    // 与官方 HistoryTimeV9Fragment 一致：空 type 才返回带浏览时间的 history 实体。
+    // type=feed 返回帖子实体，其中 dateline 是发布时间，不能用于历史时间轴。
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const cursor = historyCursor();
+      const res = await CoolapkTauriAPI.getHitHistory(page.value, '', cursor.firstItem, cursor.lastItem);
+      const rawItems: any[] = Array.isArray(res?.data) ? res.data : [];
+      if (!rawItems.length) { noMore.value = true; break; }
+      const lastItem = entityId(rawItems[rawItems.length - 1]) || undefined;
+      if (lastItem && lastItem === cursor.lastItem) { noMore.value = true; break; }
+      // 游标取完整历史列表，不能用筛选后的帖子替换用户、话题等末尾记录。
+      historyPageCursor.value = { firstItem: cursor.firstItem || entityId(rawItems[0]) || undefined, lastItem };
+      page.value++;
+      const existingKeys = new Set(feeds.value.map(historyRowKey).filter(Boolean));
+      const newFeeds = deduplicateHistoryItems(rawItems.filter(isFeedHistoryItem)).filter(item => !existingKeys.has(historyRowKey(item)));
+      feeds.value.push(...newFeeds);
+      loadHistoryMetadata(newFeeds);
+      if (newFeeds.length) break;
     }
   } catch (err: any) {
     error.value = err?.message || '加载失败，请检查网络';
@@ -475,6 +534,7 @@ function handleScroll(e: Event) {
 watch(
   () => authStore.user?.uid,
   () => {
+    resetMetadata();
     if (!authStore.isLoggedIn) return;
     if (feeds.value.length === 0) void fetchHistory(true);
   }
@@ -524,10 +584,7 @@ async function refreshMobilePage() { await fetchHistory(true); }
   display: flex;
   align-items: center;
   min-width: 0;
-  min-height: 48px;
-  padding: 0 16px;
-  background-color: var(--surface);
-  border-bottom: 1px solid var(--border-light, rgba(0, 0, 0, 0.06));
+  padding: 8px 0 16px;
 }
 
 .section-title-row h2 {
@@ -725,8 +782,20 @@ async function refreshMobilePage() { await fetchHistory(true); }
   font-size: 11.5px;
   color: var(--text-tertiary);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+.history-post-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .arrow-icon {
