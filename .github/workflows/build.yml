@@ -158,6 +158,9 @@ jobs:
 
       - name: Rust 测试
         working-directory: src-tauri
+        # 库测试需要额外清单；仅在此步骤启用，应用打包继续使用 Tauri 自带清单。
+        env:
+          COOLAPK_RUST_TEST_MANIFEST: '1'
         run: cargo test --lib
 
       - name: 更新助手替换与回滚测试
