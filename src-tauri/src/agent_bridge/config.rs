@@ -4,6 +4,11 @@ use std::path::{Path, PathBuf};
 /// Agent 接口的配置文件名，保存在应用数据目录，权限 0600。
 pub const CONFIG_FILE_NAME: &str = "agent-bridge.json";
 pub const AUDIT_FILE_NAME: &str = "agent-bridge-audit.jsonl";
+/// access token 单独持久化：重启应用后本机客户端不必重新配置；「重新生成」会覆盖它。
+pub const TOKEN_FILE_NAME: &str = "agent-bridge-token";
+/// 优先使用的固定回环端口，便于客户端配置长期有效；被占用时回退到系统随机端口。
+pub const PREFERRED_REST_PORT: u16 = 47653;
+pub const PREFERRED_MCP_PORT: u16 = 47654;
 #[cfg(unix)]
 pub const SOCKET_FILE_NAME: &str = "agent-bridge.sock";
 
@@ -142,6 +147,35 @@ impl AgentBridgeConfig {
 
 pub fn config_path(dir: &Path) -> PathBuf {
     dir.join(CONFIG_FILE_NAME)
+}
+
+pub fn token_path(dir: &Path) -> PathBuf {
+    dir.join(TOKEN_FILE_NAME)
+}
+
+/// 读取已持久化的 token；格式不符（被损坏或手工改过）时视为不存在。
+pub fn load_token(dir: &Path) -> Option<String> {
+    let token = std::fs::read_to_string(token_path(dir)).ok()?;
+    let token = token.trim().to_string();
+    (token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit())).then_some(token)
+}
+
+pub fn save_token(dir: &Path, token: &str) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("无法创建应用数据目录: {e}"))?;
+    let path = token_path(dir);
+    std::fs::write(&path, token.trim()).map_err(|e| format!("无法写入 Agent 接口 token: {e}"))?;
+    set_private_permissions(&path).map_err(|e| format!("无法设置 token 文件权限: {e}"))?;
+    Ok(())
+}
+
+/// 首次启用时生成并持久化；之后复用同一个 token，只有「重新生成」才会更换。
+pub fn load_or_create_token(dir: &Path) -> Result<String, String> {
+    if let Some(token) = load_token(dir) {
+        return Ok(token);
+    }
+    let token = generate_token()?;
+    save_token(dir, &token)?;
+    Ok(token)
 }
 
 /// 生成 32 字节随机 token（hex，64 字符）。

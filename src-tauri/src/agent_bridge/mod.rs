@@ -121,10 +121,8 @@ pub async fn start(app: AppHandle, runtime: &AgentBridgeRuntime, options: StartO
         Some(value) => AgentBridgeWriteMode::parse(value).ok_or_else(|| format!("未知写入模式：{value}"))?,
         None => AgentBridgeWriteMode::Confirm,
     };
-    let token = match options.token {
-        Some(token) if !token.is_empty() => token,
-        _ => config::generate_token()?,
-    };
+    // 空 token 表示沿用已持久化的 token（首次启用时才生成）。
+    let token = options.token.unwrap_or_default();
 
     let config = AgentBridgeConfig {
         version: 1,
@@ -151,6 +149,10 @@ async fn start_with_config(
     std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建应用数据目录: {error}"))?;
 
     stop_running(&runtime.running);
+
+    if config.token.is_empty() {
+        config.token = config::load_or_create_token(&dir)?;
+    }
 
     let (shutdown_tx, _shutdown_guard) = watch::channel(false);
 
@@ -181,7 +183,7 @@ async fn start_with_config(
             }
         }
         AgentBridgeTransport::Tcp => {
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            let listener = bind_loopback(config::PREFERRED_REST_PORT)
                 .await
                 .map_err(|error| format!("无法监听回环地址: {error}"))?;
             let address = listener.local_addr().map_err(|error| format!("无法读取监听地址: {error}"))?;
@@ -193,7 +195,7 @@ async fn start_with_config(
 
     // MCP 总是独立监听回环端口：Unix Socket 无法被 MCP 客户端直接使用，Windows 也没有 UDS。
     let mcp_listener = if config.mcp_enabled {
-        let bound = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await;
+        let bound = bind_loopback(config::PREFERRED_MCP_PORT).await;
         match bound {
             Ok(listener) => {
                 let port = listener
@@ -221,6 +223,8 @@ async fn start_with_config(
         }
         return Err(error);
     }
+    // token 持久化到独立文件，重启应用后 MCP/REST 客户端无需重新配置。
+    config::save_token(&dir, &config.token)?;
 
     let ctx = Arc::new(BridgeCtx {
         app: Some(app.clone()),
@@ -274,6 +278,17 @@ async fn start_with_config(
     let mut guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
     *guard = Some(RunningBridge { config, shutdown: Some(shutdown_tx), dir });
     Ok(value)
+}
+
+/// 优先占用固定端口，被占用时回退到系统随机端口，避免多开或端口冲突导致开启失败。
+pub(super) async fn bind_loopback(preferred: u16) -> std::io::Result<tokio::net::TcpListener> {
+    match tokio::net::TcpListener::bind(("127.0.0.1", preferred)).await {
+        Ok(listener) => Ok(listener),
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+            tokio::net::TcpListener::bind(("127.0.0.1", 0)).await
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn stop_running(running: &Mutex<Option<RunningBridge>>) {
@@ -348,7 +363,7 @@ pub async fn agent_bridge_rotate_token(
                 write_mode: Some(bridge.config.write_mode.as_str().to_string()),
                 allowed_accounts: bridge.config.allowed_accounts.clone(),
                 mcp: bridge.config.mcp_enabled,
-                token: None,
+                token: Some(config::generate_token()?),
             },
             None => return Ok(status_value(None)),
         }

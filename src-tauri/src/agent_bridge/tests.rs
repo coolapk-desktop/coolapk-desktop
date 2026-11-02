@@ -201,6 +201,26 @@ fn tool_names(value: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+#[test]
+fn token_is_persisted_across_restarts() {
+    let dir = test_dir("token-persist");
+    let _ = std::fs::remove_file(super::config::token_path(&dir));
+    let first = super::config::load_or_create_token(&dir).unwrap();
+    let second = super::config::load_or_create_token(&dir).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 64);
+    assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+/// 首选端口被占用时必须回退到随机端口，而不是直接开启失败。
+#[tokio::test]
+async fn preferred_port_falls_back_when_busy() {
+    let held = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let busy = held.local_addr().unwrap().port();
+    let fallback = super::bind_loopback(busy).await.unwrap();
+    assert_ne!(fallback.local_addr().unwrap().port(), busy);
+}
+
 #[tokio::test]
 async fn mcp_requires_token() {
     let ctx = test_ctx("mcp-no-token", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
