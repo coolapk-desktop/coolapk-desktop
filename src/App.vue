@@ -206,6 +206,7 @@ import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
 import { logDiagnostic } from './utils/diagnosticLogger';
 import { setupKeyboardScrollAssist, setupViewportHeight } from './utils/viewport';
+import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
 
 const { isSidebarTransitionActive, resetSidebarTransition } = useSidebarTransition();
 
@@ -599,6 +600,7 @@ const handleCheckForUpdate = () => void checkForUpdate(true);
 let unregisterAndroidBackground: (() => void) | null = null;
 let unregisterAndroidCounts: (() => void) | null = null;
 let unregisterAndroidError: (() => void) | null = null;
+let unregisterAgentBridgeConfirm: (() => void) | null = null;
 
 onMounted(() => {
   void downloadStore.initialize();
@@ -612,6 +614,8 @@ onMounted(() => {
       showToast(event.payload, 'info', 6000);
     }).then(unlisten => { unregisterAndroidError = unlisten; });
   }
+  // Agent 写操作确认：只在本机 MCP 客户端请求时触发，未开启接口时不会收到事件。
+  void registerAgentBridgeConfirm().then(unlisten => { unregisterAgentBridgeConfirm = unlisten; });
   unregisterViewport = setupViewportHeight();
   unregisterKeyboardAssist = setupKeyboardScrollAssist();
   window.addEventListener('resize', settingsStore.refreshAutoZoom);
@@ -660,6 +664,7 @@ onUnmounted(() => {
   unregisterAndroidBackground?.();
   unregisterAndroidCounts?.();
   unregisterAndroidError?.();
+  unregisterAgentBridgeConfirm?.();
   window.removeEventListener('check-for-update', handleCheckForUpdate);
   window.removeEventListener('resize', settingsStore.refreshAutoZoom);
   unregisterHotkeys?.();

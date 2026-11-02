@@ -1966,4 +1966,8 @@ export class CoolapkTauriAPI {
   static async agentBridgeSetMcp(enabled: boolean) {
     return await invokeNative('agent_bridge_set_mcp', { enabled }, { retry: false });
   }
+
+  static async agentBridgeConfirmResult(id: string, approved: boolean) {
+    return await invokeNative('agent_bridge_confirm_result', { id, approved }, { retry: false });
+  }
 }
