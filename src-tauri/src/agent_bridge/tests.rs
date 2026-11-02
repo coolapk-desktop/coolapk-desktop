@@ -446,6 +446,45 @@ async fn confirm_broker_replacement_rejects_previous_request() {
 }
 
 #[test]
+fn write_limits_are_split_by_scope() {
+    let limits = Limits::new();
+    // 发布：1 次/分钟
+    assert!(limits.check("write.publish").is_ok());
+    assert!(limits.check("write.publish").is_err());
+    // 互动：6 次/分钟，且不被发布桶占用
+    for _ in 0..6 {
+        assert!(limits.check("write.interact").is_ok());
+    }
+    assert!(limits.check("write.interact").is_err());
+    // 读桶独立
+    assert!(limits.check("read").is_ok());
+}
+
+#[test]
+fn write_dedupe_caches_by_tool_account_and_request_id() {
+    use super::write::WriteDedupe;
+    let dedupe = WriteDedupe::new();
+    let value = serde_json::json!({ "code": 200, "data": { "feedId": "1" } });
+    let key = WriteDedupe::key("coolapk_publish_feed", Some("u1"), "req-1");
+    dedupe.store(key.clone(), &value);
+    assert_eq!(dedupe.get(&key), Some(value));
+    assert!(dedupe.get(&WriteDedupe::key("coolapk_publish_feed", Some("u2"), "req-1")).is_none());
+    assert!(dedupe.get(&WriteDedupe::key("coolapk_reply_feed", Some("u1"), "req-1")).is_none());
+    assert!(dedupe.get(&WriteDedupe::key("coolapk_publish_feed", Some("u1"), "req-2")).is_none());
+}
+
+#[test]
+fn write_dedupe_expires_after_ttl() {
+    use super::write::WriteDedupe;
+    use std::time::Duration;
+    let dedupe = WriteDedupe::with_ttl(Duration::from_millis(20));
+    let key = WriteDedupe::key("coolapk_publish_feed", Some("u1"), "req-ttl");
+    dedupe.store(key.clone(), &serde_json::json!({ "ok": true }));
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(dedupe.get(&key).is_none());
+}
+
+#[test]
 fn write_parse_publish_rejects_invalid_visible_status() {
     let args = serde_json::json!({ "message": "正文", "visibleStatus": 0 });
     let error = super::write::parse_publish_args(&args).unwrap_err();

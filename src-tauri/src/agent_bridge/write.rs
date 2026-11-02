@@ -4,8 +4,9 @@
 //! 大小、可见范围、幂等 requestId。真正的执行闸门（disabled / dry-run / confirm /
 //! auto）在后续任务接入。
 
+use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde_json::{json, Value};
@@ -307,6 +308,55 @@ impl ConfirmBroker {
             let _ = item.tx.send(approved);
         }
         true
+    }
+}
+
+/// 写操作的幂等缓存：同一 `tool + account + requestId` 在 TTL 内复用上次成功结果。
+///
+/// 没有 `requestId` 时不参与去重（客户端重试会造成重复内容，由文档提示）。
+#[derive(Default)]
+pub(super) struct WriteDedupe {
+    ttl: Duration,
+    entries: Mutex<HashMap<String, CachedWrite>>,
+}
+
+struct CachedWrite {
+    at: Instant,
+    value: Value,
+}
+
+const DEDUPE_TTL: Duration = Duration::from_secs(300);
+
+impl WriteDedupe {
+    pub(super) fn new() -> Self {
+        Self::with_ttl(DEDUPE_TTL)
+    }
+
+    pub(super) fn with_ttl(ttl: Duration) -> Self {
+        Self { ttl, entries: Mutex::new(HashMap::new()) }
+    }
+
+    /// 幂等键：用单元分隔符拼接，避免工具名/账号/requestId 相互污染。
+    pub(super) fn key(tool: &str, account: Option<&str>, request_id: &str) -> String {
+        format!("{tool}\u{1f}{}\u{1f}{request_id}", account.unwrap_or_default())
+    }
+
+    pub(super) fn get(&self, key: &str) -> Option<Value> {
+        let now = Instant::now();
+        let mut entries = self.entries.lock().ok()?;
+        Self::prune(&mut entries, now, self.ttl);
+        entries.get(key).map(|entry| entry.value.clone())
+    }
+
+    pub(super) fn store(&self, key: String, value: &Value) {
+        let now = Instant::now();
+        let Ok(mut entries) = self.entries.lock() else { return };
+        Self::prune(&mut entries, now, self.ttl);
+        entries.insert(key, CachedWrite { at: now, value: value.clone() });
+    }
+
+    fn prune(entries: &mut HashMap<String, CachedWrite>, now: Instant, ttl: Duration) {
+        entries.retain(|_, entry| now.duration_since(entry.at) < ttl);
     }
 }
 

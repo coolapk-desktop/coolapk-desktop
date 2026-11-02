@@ -83,19 +83,30 @@ impl Limits {
         };
         let hits = buckets.entry(class).or_default();
         hits.retain(|at| now.duration_since(*at) < Duration::from_secs(3600));
-        let (window, limit) = match class {
-            "write" => (Duration::from_secs(60), 1usize),
-            _ => (Duration::from_secs(60), 60usize),
+        // 写操作按 scope 分桶：发帖/评论 1 次/分钟、10 次/小时；点赞/关注 6 次/分钟、60 次/小时。
+        // "write" 是旧 REST 入口的通用桶，等价于发布额度。
+        let (window, limit, hourly_limit) = match class {
+            "write" | "write.publish" => (Duration::from_secs(60), 1usize, Some(10usize)),
+            "write.interact" => (Duration::from_secs(60), 6usize, Some(60usize)),
+            _ => (Duration::from_secs(60), 60usize, None),
         };
         let in_window = hits.iter().filter(|at| now.duration_since(**at) < window).count();
         let hourly = hits.len();
-        if in_window >= limit || (class == "write" && hourly >= 10) {
-            let wait = hits
-                .iter()
-                .map(|at| now.duration_since(*at))
-                .min()
-                .map(|elapsed| window.saturating_sub(elapsed).as_secs().max(1))
-                .unwrap_or(1);
+        let window_limited = in_window >= limit;
+        let hourly_limited = hourly_limit.is_some_and(|limit| hourly >= limit);
+        if window_limited || hourly_limited {
+            let wait = if window_limited {
+                hits.iter()
+                    .filter(|at| now.duration_since(**at) < window)
+                    .map(|at| now.duration_since(*at))
+                    .min()
+                    .map(|elapsed| window.saturating_sub(elapsed).as_secs().max(1))
+                    .unwrap_or(1)
+            } else {
+                hits.first()
+                    .map(|at| Duration::from_secs(3600).saturating_sub(now.duration_since(*at)).as_secs().max(1))
+                    .unwrap_or(1)
+            };
             return Err(wait);
         }
         hits.push(now);
