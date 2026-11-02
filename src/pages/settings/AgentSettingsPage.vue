@@ -72,7 +72,7 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">读取内容</span>
-          <span class="row-sub">动态、评论、用户、话题、搜索、通知的只读访问</span>
+          <span class="row-sub">动态、评论、用户、话题、搜索的只读访问</span>
         </div>
         <AppSwitch v-model="readEnabled" :disabled="busy" />
       </div>
@@ -90,9 +90,9 @@
         </div>
         <AppSwitch v-model="interactEnabled" :disabled="busy" />
       </div>
-      <p v-if="status.enabled" class="tray-tip">
+      <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        修改授权范围后需要关闭再重新开启服务才会生效。
+        当前版本只开放只读能力，写授权（发布内容、互动操作）为预留项，写接口落地后才会生效；修改授权范围后需要关闭再重新开启服务。
       </p>
     </div>
 
@@ -124,6 +124,10 @@
           <option value="auto">直接执行</option>
         </select>
       </div>
+      <p class="tray-tip">
+        <i class="fas fa-lock"></i>
+        写操作接口与 MCP 写工具尚未提供，此处的闸门设置会在写接口开放后生效。
+      </p>
     </div>
 
     <div class="setting-group">
