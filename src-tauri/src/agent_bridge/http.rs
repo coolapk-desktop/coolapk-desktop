@@ -103,6 +103,7 @@ impl Limits {
     }
 }
 
+#[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
     message: String,

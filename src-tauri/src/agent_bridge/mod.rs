@@ -9,6 +9,9 @@ mod config;
 mod http;
 mod mcp;
 mod ops;
+// Task 2 接入写闸门后即可移除这里的 allow；当前只有测试与后续任务会用到这些参数模型。
+#[cfg_attr(not(test), allow(dead_code))]
+mod write;
 #[cfg(test)]
 mod tests;
 

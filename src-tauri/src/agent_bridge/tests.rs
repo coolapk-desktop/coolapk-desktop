@@ -221,6 +221,95 @@ async fn preferred_port_falls_back_when_busy() {
     assert_ne!(fallback.local_addr().unwrap().port(), busy);
 }
 
+// ---------- 写工具参数模型（Task 1） ----------
+
+fn tiny_png_base64() -> String {
+    use base64::Engine;
+    // 1x1 透明 PNG
+    base64::engine::general_purpose::STANDARD.encode([
+        0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+        0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+    ])
+}
+
+fn image_arg(name: &str, mime: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "mimeType": mime, "dataBase64": tiny_png_base64() })
+}
+
+#[test]
+fn write_parse_publish_rejects_empty_message() {
+    let args = serde_json::json!({ "message": "   " });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("正文"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_rejects_too_many_images() {
+    let images: Vec<_> = (0..5).map(|i| image_arg(&format!("{i}.png"), "image/png")).collect();
+    let args = serde_json::json!({ "message": "动态正文", "images": images });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("4 张"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_rejects_bad_mime() {
+    let args = serde_json::json!({ "message": "正文", "images": [image_arg("a.gif", "image/gif")] });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("格式"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_rejects_invalid_base64() {
+    let args = serde_json::json!({ "message": "正文", "images": [{ "name": "a.png", "mimeType": "image/png", "dataBase64": "not*base64" }] });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("base64") || error.message().contains("Base64"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_image_limits_reject_oversized_and_total() {
+    // 单张超过 8 MB
+    let oversize = super::write::enforce_image_limits(1, 8 * 1024 * 1024 + 1, 8 * 1024 * 1024 + 1).unwrap_err();
+    assert!(oversize.message().contains("8 MB"), "实际错误：{}", oversize.message());
+    // 总计超过 20 MB（单张都未超）
+    let total = super::write::enforce_image_limits(3, 7 * 1024 * 1024, 21 * 1024 * 1024).unwrap_err();
+    assert!(total.message().contains("20 MB"), "实际错误：{}", total.message());
+}
+
+#[test]
+fn write_parse_publish_accepts_data_url_and_sanitizes_name() {
+    let data_url = format!("data:image/png;base64,{}", tiny_png_base64());
+    let args = serde_json::json!({
+        "message": "  你好酷安  ",
+        "images": [{ "name": "../../etc/passwd.png", "dataBase64": data_url }],
+        "visibleStatus": -1,
+        "requestId": "req-1"
+    });
+    let parsed = super::write::parse_publish_args(&args).unwrap();
+    assert_eq!(parsed.message, "你好酷安");
+    assert_eq!(parsed.images.len(), 1);
+    assert_eq!(parsed.images[0].name, "passwd.png");
+    assert_eq!(parsed.images[0].mime, "image/png");
+    assert!(!parsed.images[0].bytes.is_empty());
+    assert_eq!(parsed.visible_status, Some(-1));
+    assert_eq!(parsed.request_id.as_deref(), Some("req-1"));
+
+    let preview = super::write::preview_publish(&parsed);
+    assert_eq!(preview["messageChars"], 4);
+    assert_eq!(preview["imageCount"], 1);
+    assert_eq!(preview["visibleStatus"], -1);
+    assert!(preview["images"][0].get("dataBase64").is_none(), "预览不能包含图片内容");
+}
+
+#[test]
+fn write_parse_publish_rejects_invalid_visible_status() {
+    let args = serde_json::json!({ "message": "正文", "visibleStatus": 0 });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("可见"), "实际错误：{}", error.message());
+}
+
 #[tokio::test]
 async fn mcp_requires_token() {
     let ctx = test_ctx("mcp-no-token", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
