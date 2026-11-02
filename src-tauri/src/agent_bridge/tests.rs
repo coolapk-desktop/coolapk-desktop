@@ -59,6 +59,38 @@ fn token_compare_requires_exact_match() {
 }
 
 #[test]
+fn preferences_survive_runtime_config_cleanup() {
+    let dir = test_dir("preferences-runtime-cleanup");
+    let preferences = super::config::AgentBridgePreferences {
+        enabled: true,
+        transport: AgentBridgeTransport::Tcp,
+        scopes: vec![AgentBridgeScope::Read, AgentBridgeScope::WriteInteract],
+        write_mode: AgentBridgeWriteMode::Confirm,
+        allowed_accounts: vec!["123".to_string()],
+        mcp_enabled: true,
+    };
+    super::config::save_preferences(&dir, &preferences).unwrap();
+    // 退出应用只清理运行时配置，开关和授权偏好应继续保留。
+    std::fs::write(super::config::config_path(&dir), "{}").unwrap();
+    super::config::remove_config(&dir);
+    let restored = super::config::load_preferences(&dir);
+    assert!(restored.enabled && restored.mcp_enabled);
+    assert_eq!(restored.transport, preferences.transport);
+    assert_eq!(restored.scopes, preferences.scopes);
+    assert_eq!(restored.write_mode, preferences.write_mode);
+    assert_eq!(restored.allowed_accounts, preferences.allowed_accounts);
+    let text = std::fs::read_to_string(super::config::preferences_path(&dir)).unwrap();
+    let stored: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(stored.get("token").is_none() && stored.get("port").is_none() && stored.get("mcpPort").is_none());
+    // 手动关闭总开关后，再次读取应保持关闭，其他选项仍保留。
+    super::config::save_preferences(&dir, &super::config::AgentBridgePreferences { enabled: false, ..restored }).unwrap();
+    let disabled = super::config::load_preferences(&dir);
+    assert!(!disabled.enabled);
+    assert!(disabled.mcp_enabled);
+    std::fs::remove_file(super::config::preferences_path(&dir)).unwrap();
+}
+
+#[test]
 fn scope_parse_matches_wire_names() {
     assert_eq!(AgentBridgeScope::parse("read"), Some(AgentBridgeScope::Read));
     assert_eq!(AgentBridgeScope::parse("write.publish"), Some(AgentBridgeScope::WritePublish));

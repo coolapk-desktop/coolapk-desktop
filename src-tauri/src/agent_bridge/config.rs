@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// Agent 接口的配置文件名，保存在应用数据目录，权限 0600。
 pub const CONFIG_FILE_NAME: &str = "agent-bridge.json";
+pub const PREFERENCES_FILE_NAME: &str = "agent-bridge-preferences.json";
 pub const AUDIT_FILE_NAME: &str = "agent-bridge-audit.jsonl";
 /// access token 单独持久化：重启应用后本机客户端不必重新配置；「重新生成」会覆盖它。
 pub const TOKEN_FILE_NAME: &str = "agent-bridge-token";
@@ -121,6 +122,31 @@ pub struct AgentBridgeConfig {
     pub mcp_port: Option<u16>,
 }
 
+/// 持久化用户选择的服务状态与授权选项，不包含 token 或运行时端口。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct AgentBridgePreferences {
+    pub enabled: bool,
+    pub transport: AgentBridgeTransport,
+    pub scopes: Vec<AgentBridgeScope>,
+    pub write_mode: AgentBridgeWriteMode,
+    pub allowed_accounts: Vec<String>,
+    pub mcp_enabled: bool,
+}
+
+impl Default for AgentBridgePreferences {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            transport: if cfg!(unix) { AgentBridgeTransport::Uds } else { AgentBridgeTransport::Tcp },
+            scopes: vec![AgentBridgeScope::Read],
+            write_mode: AgentBridgeWriteMode::Disabled,
+            allowed_accounts: Vec::new(),
+            mcp_enabled: false,
+        }
+    }
+}
+
 impl AgentBridgeConfig {
     pub fn scope_set(&self) -> std::collections::BTreeSet<AgentBridgeScope> {
         self.scopes.iter().copied().collect()
@@ -147,6 +173,23 @@ impl AgentBridgeConfig {
 
 pub fn config_path(dir: &Path) -> PathBuf {
     dir.join(CONFIG_FILE_NAME)
+}
+
+pub fn preferences_path(dir: &Path) -> PathBuf {
+    dir.join(PREFERENCES_FILE_NAME)
+}
+
+pub fn load_preferences(dir: &Path) -> AgentBridgePreferences {
+    std::fs::read_to_string(preferences_path(dir)).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+}
+
+pub fn save_preferences(dir: &Path, preferences: &AgentBridgePreferences) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|error| format!("无法创建应用数据目录: {error}"))?;
+    let path = preferences_path(dir);
+    let text = serde_json::to_string_pretty(preferences).map_err(|error| format!("Agent 接口设置序列化失败: {error}"))?;
+    std::fs::write(&path, text).map_err(|error| format!("无法写入 Agent 接口设置: {error}"))?;
+    set_private_permissions(&path).map_err(|error| format!("无法设置 Agent 接口设置权限: {error}"))?;
+    Ok(())
 }
 
 pub fn token_path(dir: &Path) -> PathBuf {

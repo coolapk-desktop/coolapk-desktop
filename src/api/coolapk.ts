@@ -1950,13 +1950,22 @@ export class CoolapkTauriAPI {
       scopes: options.scopes,
       transport: options.transport ?? null,
       writeMode: options.writeMode ?? null,
-      allowedAccounts: options.allowedAccounts ?? [],
+      allowedAccounts: options.allowedAccounts ?? null,
       mcp: options.mcp ?? null,
     }, { retry: false });
   }
 
   static async agentBridgeStop() {
     return await invokeNative('agent_bridge_stop', {}, { retry: false });
+  }
+
+  static async agentBridgeSavePreferences(options: { scopes: string[]; transport: string; writeMode: string; allowedAccounts?: string[] }) {
+    return await invokeNative('agent_bridge_save_preferences', {
+      scopes: options.scopes,
+      transport: options.transport,
+      writeMode: options.writeMode,
+      allowedAccounts: options.allowedAccounts ?? [],
+    }, { retry: false });
   }
 
   static async agentBridgeRotateToken() {

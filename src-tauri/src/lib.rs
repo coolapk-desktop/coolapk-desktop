@@ -1094,12 +1094,12 @@ pub fn run() {
                 app.deep_link().register_all()?;
             }
 
-            // 仅调试构建：设置该环境变量即可在启动时直接开放本地 Agent 接口，便于联调与自动化验证。
-            #[cfg(debug_assertions)]
-            if std::env::var("COOLAPK_AGENT_BRIDGE_AUTOSTART").is_ok() {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let runtime = handle.state::<agent_bridge::AgentBridgeRuntime>();
+            let handle = app.handle().clone();
+            let runtime = app.state::<agent_bridge::AgentBridgeRuntime>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                // 仅调试构建允许用环境变量覆盖保存的偏好，便于本地联调。
+                #[cfg(debug_assertions)]
+                if std::env::var("COOLAPK_AGENT_BRIDGE_AUTOSTART").is_ok() {
                     // 调试联调开关：SCOPES 逗号分隔、WRITE 取 disabled/dry-run/confirm/auto。
                     let scopes = std::env::var("COOLAPK_AGENT_BRIDGE_SCOPES")
                         .map(|raw| {
@@ -1117,20 +1117,22 @@ pub fn run() {
                         transport: Some("tcp".to_string()),
                         write_mode: std::env::var("COOLAPK_AGENT_BRIDGE_WRITE").ok(),
                         allowed_accounts: Vec::new(),
-                        // 调试构建的自动启动同时打开 MCP，便于本地联调；
-                        // 设 COOLAPK_AGENT_BRIDGE_MCP=0 可关闭，用于对照内存占用。
+                        // 调试构建默认同时开启 MCP；设 COOLAPK_AGENT_BRIDGE_MCP=0 可关闭。
                         mcp: std::env::var("COOLAPK_AGENT_BRIDGE_MCP").map(|value| value != "0").unwrap_or(true),
                         token: None,
                     };
-                    match agent_bridge::start(handle.clone(), runtime.inner(), options).await {
-                        Ok(value) => log::info!(
-                            "agent_bridge.autostart endpoint={}",
-                            value["data"]["endpoint"].as_str().unwrap_or_default()
-                        ),
+                    match agent_bridge::start(handle.clone(), &runtime, options).await {
+                        Ok(value) => log::info!("agent_bridge.autostart endpoint={}", value["data"]["endpoint"].as_str().unwrap_or_default()),
                         Err(error) => log::error!("agent_bridge.autostart_failed {error}"),
                     }
-                });
-            }
+                    return;
+                }
+                match agent_bridge::restore_preferences(handle.clone(), &runtime).await {
+                    Ok(Some(value)) => log::info!("agent_bridge.restored endpoint={}", value["data"]["endpoint"].as_str().unwrap_or_default()),
+                    Ok(None) => {},
+                    Err(error) => log::error!("agent_bridge.restore_failed {error}"),
+                }
+            });
 
             #[cfg(windows)]
             if let Err(error) = register_windows_notification_identity(app.app_handle()) {
@@ -1692,6 +1694,7 @@ pub fn run() {
             agent_bridge::agent_bridge_status,
             agent_bridge::agent_bridge_start,
             agent_bridge::agent_bridge_stop,
+            agent_bridge::agent_bridge_save_preferences,
             agent_bridge::agent_bridge_rotate_token,
             agent_bridge::agent_bridge_set_mcp,
             agent_bridge::agent_bridge_confirm_result,

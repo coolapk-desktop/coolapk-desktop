@@ -48,7 +48,7 @@
           </span>
         </div>
         <AppSwitch
-          :model-value="status.mcpEnabled"
+          :model-value="preferences.mcpEnabled"
           :disabled="busy || !status.enabled"
           @update:model-value="toggleMcp"
         />
@@ -74,21 +74,21 @@
           <span class="row-label">读取内容</span>
           <span class="row-sub">动态、评论、用户、话题、搜索的只读访问</span>
         </div>
-        <AppSwitch v-model="readEnabled" :disabled="busy" />
+        <AppSwitch :model-value="readEnabled" :disabled="busy" @update:model-value="value => updateScope('read', value)" />
       </div>
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">发布内容</span>
           <span class="row-sub">发动态、发图文、评论回复；受下方写操作闸门约束</span>
         </div>
-        <AppSwitch v-model="publishEnabled" :disabled="busy" />
+        <AppSwitch :model-value="publishEnabled" :disabled="busy" @update:model-value="value => updateScope('write.publish', value)" />
       </div>
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">互动操作</span>
           <span class="row-sub">点赞、关注等轻量互动</span>
         </div>
-        <AppSwitch v-model="interactEnabled" :disabled="busy" />
+        <AppSwitch :model-value="interactEnabled" :disabled="busy" @update:model-value="value => updateScope('write.interact', value)" />
       </div>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
@@ -103,7 +103,7 @@
           <span class="row-label">监听方式</span>
           <span class="row-sub">{{ transportHint }}</span>
         </div>
-        <select v-model="transport" class="select-control" :disabled="busy" aria-label="Agent 接口传输方式">
+        <select v-model="transport" class="select-control" :disabled="busy" aria-label="Agent 接口传输方式" @change="persistPreferences">
           <option value="uds">Unix Socket（推荐）</option>
           <option value="tcp">TCP 127.0.0.1</option>
         </select>
@@ -117,7 +117,7 @@
           <span class="row-label">写操作模式</span>
           <span class="row-sub">{{ writeModeHint }}</span>
         </div>
-        <select v-model="writeMode" class="select-control" :disabled="busy" aria-label="Agent 写操作模式">
+        <select v-model="writeMode" class="select-control" :disabled="busy" aria-label="Agent 写操作模式" @change="persistPreferences">
           <option value="disabled">禁用写操作</option>
           <option value="dry-run">只预演不提交</option>
           <option value="confirm">每次在应用内确认</option>
@@ -147,7 +147,15 @@ import AppSwitch from '../../components/common/AppSwitch.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { showToast } from '../../utils/toast';
 import { logDiagnostic, summarizeDiagnosticError } from '../../utils/diagnosticLogger';
-import { getPlatformInfo } from '../../utils/platform';
+
+type BridgePreferences = {
+  enabled: boolean;
+  transport: string;
+  scopes: string[];
+  writeMode: string;
+  allowedAccounts: string[];
+  mcpEnabled: boolean;
+};
 
 type BridgeStatus = {
   enabled: boolean;
@@ -160,6 +168,7 @@ type BridgeStatus = {
   writeMode: string;
   mcpEnabled: boolean;
   mcpEndpoint?: string | null;
+  preferences?: BridgePreferences;
 };
 
 const emptyStatus: BridgeStatus = {
@@ -176,6 +185,8 @@ const emptyStatus: BridgeStatus = {
 };
 
 const status = reactive<BridgeStatus>({ ...emptyStatus });
+const preferences = reactive<BridgePreferences>({ enabled: false, transport: 'uds', scopes: ['read'], writeMode: 'disabled', allowedAccounts: [], mcpEnabled: false });
+const savedPreferences = ref<BridgePreferences>({ ...preferences, scopes: [...preferences.scopes], allowedAccounts: [...preferences.allowedAccounts] });
 const busy = ref(false);
 const tokenVisible = ref(false);
 const readEnabled = ref(true);
@@ -212,12 +223,21 @@ const exampleCommand = computed(() => {
 function applyStatus(data: Partial<BridgeStatus> | null | undefined) {
   const next = { ...emptyStatus, ...(data || {}) } as BridgeStatus;
   Object.assign(status, next);
-  if (!status.enabled) return;
-  readEnabled.value = status.scopes.includes('read');
-  publishEnabled.value = status.scopes.includes('write.publish');
-  interactEnabled.value = status.scopes.includes('write.interact');
-  transport.value = status.transport || transport.value;
-  writeMode.value = status.writeMode || writeMode.value;
+  if (next.preferences) {
+    applyPreferences(next.preferences);
+  } else if (status.enabled) {
+    applyPreferences({ enabled: true, transport: status.transport, scopes: status.scopes, writeMode: status.writeMode, allowedAccounts: [], mcpEnabled: status.mcpEnabled });
+  }
+}
+
+function applyPreferences(next: BridgePreferences) {
+  Object.assign(preferences, { ...next, scopes: [...next.scopes], allowedAccounts: [...next.allowedAccounts] });
+  savedPreferences.value = { ...preferences, scopes: [...preferences.scopes], allowedAccounts: [...preferences.allowedAccounts] };
+  readEnabled.value = preferences.scopes.includes('read');
+  publishEnabled.value = preferences.scopes.includes('write.publish');
+  interactEnabled.value = preferences.scopes.includes('write.interact');
+  transport.value = preferences.transport || transport.value;
+  writeMode.value = preferences.writeMode || writeMode.value;
 }
 
 function selectedScopes(): string[] {
@@ -236,6 +256,30 @@ async function refresh() {
     showToast('读取 Agent 接口状态失败', 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_status_failed', summarizeDiagnosticError(error));
   }
+}
+
+async function persistPreferences() {
+  if (busy.value) return;
+  const previous = { ...savedPreferences.value, scopes: [...savedPreferences.value.scopes], allowedAccounts: [...savedPreferences.value.allowedAccounts] };
+  busy.value = true;
+  try {
+    const response = await CoolapkTauriAPI.agentBridgeSavePreferences({ scopes: selectedScopes(), transport: transport.value, writeMode: writeMode.value, allowedAccounts: preferences.allowedAccounts });
+    applyStatus(response?.data);
+  } catch (error) {
+    applyPreferences(previous);
+    showToast('保存 Agent 接口设置失败', 'error');
+    logDiagnostic('warn', 'settings', 'agent_bridge_preferences_failed', summarizeDiagnosticError(error));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function updateScope(scope: string, enabled: boolean) {
+  if (busy.value) return;
+  if (scope === 'read') readEnabled.value = enabled;
+  else if (scope === 'write.publish') publishEnabled.value = enabled;
+  else interactEnabled.value = enabled;
+  await persistPreferences();
 }
 
 async function toggleService(enabled: boolean) {
@@ -299,14 +343,7 @@ async function copyText(text: string) {
   }
 }
 
-onMounted(async () => {
-  await refresh();
-  if (!status.enabled) {
-    // 未启用时按当前系统给出默认传输方式：Windows 没有 Unix domain socket。
-    const info = await getPlatformInfo().catch(() => ({ os: 'unknown' } as { os: string }));
-    transport.value = info.os === 'windows' ? 'tcp' : 'uds';
-  }
-});
+onMounted(refresh);
 </script>
 
 <style scoped>

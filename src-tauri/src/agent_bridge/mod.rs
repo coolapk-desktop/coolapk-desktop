@@ -23,14 +23,14 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::watch;
 
-pub use config::{AgentBridgeConfig, AgentBridgeScope, AgentBridgeTransport, AgentBridgeWriteMode};
+pub use config::{AgentBridgeConfig, AgentBridgePreferences, AgentBridgeScope, AgentBridgeTransport, AgentBridgeWriteMode};
 pub use http::{BridgeCtx, Limits};
 
 use audit::AuditSink;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AgentBridgeRuntime {
-    running: Mutex<Option<RunningBridge>>,
+    running: Arc<Mutex<Option<RunningBridge>>>,
     confirm: Arc<write::ConfirmBroker>,
     dedupe: Arc<write::WriteDedupe>,
 }
@@ -324,9 +324,48 @@ pub fn status(runtime: &AgentBridgeRuntime) -> Value {
     status_value(guard.as_ref())
 }
 
+fn status_with_preferences(app: &AppHandle, runtime: &AgentBridgeRuntime) -> Result<Value, String> {
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let mut value = status(runtime);
+    value["data"]["preferences"] = serde_json::to_value(config::load_preferences(&dir)).map_err(|error| format!("Agent 接口设置读取失败: {error}"))?;
+    Ok(value)
+}
+
+fn save_active_preferences(app: &AppHandle, runtime: &AgentBridgeRuntime) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
+    let bridge = guard.as_ref().ok_or_else(|| "Agent 接口尚未启动".to_string())?;
+    let config = &bridge.config;
+    config::save_preferences(&dir, &AgentBridgePreferences {
+        enabled: true,
+        transport: config.transport,
+        scopes: config.scopes.clone(),
+        write_mode: config.write_mode,
+        allowed_accounts: config.allowed_accounts.clone(),
+        mcp_enabled: config.mcp_enabled,
+    })
+}
+
+pub async fn restore_preferences(app: AppHandle, runtime: &AgentBridgeRuntime) -> Result<Option<Value>, String> {
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let preferences = config::load_preferences(&dir);
+    if !preferences.enabled {
+        return Ok(None);
+    }
+    let options = StartOptions {
+        scopes: preferences.scopes.iter().map(|scope| scope.as_str().to_string()).collect(),
+        transport: Some(preferences.transport.as_str().to_string()),
+        write_mode: Some(preferences.write_mode.as_str().to_string()),
+        allowed_accounts: preferences.allowed_accounts,
+        mcp: preferences.mcp_enabled,
+        token: None,
+    };
+    start(app, runtime, options).await.map(Some)
+}
+
 #[tauri::command]
-pub async fn agent_bridge_status(runtime: State<'_, AgentBridgeRuntime>) -> Result<Value, String> {
-    Ok(status(&runtime))
+pub async fn agent_bridge_status(app: AppHandle, runtime: State<'_, AgentBridgeRuntime>) -> Result<Value, String> {
+    status_with_preferences(&app, &runtime)
 }
 
 #[tauri::command]
@@ -339,20 +378,75 @@ pub async fn agent_bridge_start(
     allowed_accounts: Option<Vec<String>>,
     mcp: Option<bool>,
 ) -> Result<Value, String> {
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let saved_preferences = config::load_preferences(&dir);
     let options = StartOptions {
-        scopes: scopes.unwrap_or_else(|| vec!["read".to_string()]),
-        transport,
-        write_mode,
-        allowed_accounts: allowed_accounts.unwrap_or_default(),
-        mcp: mcp.unwrap_or(false),
+        scopes: scopes.unwrap_or_else(|| saved_preferences.scopes.iter().map(|scope| scope.as_str().to_string()).collect()),
+        transport: transport.or_else(|| Some(saved_preferences.transport.as_str().to_string())),
+        write_mode: write_mode.or_else(|| Some(saved_preferences.write_mode.as_str().to_string())),
+        allowed_accounts: allowed_accounts.unwrap_or(saved_preferences.allowed_accounts),
+        mcp: mcp.unwrap_or(saved_preferences.mcp_enabled),
         token: None,
     };
-    start(app, &runtime, options).await
+    start(app.clone(), &runtime, options).await?;
+    if let Err(error) = save_active_preferences(&app, &runtime) {
+        stop(&runtime);
+        return Err(error);
+    }
+    status_with_preferences(&app, &runtime)
 }
 
 #[tauri::command]
-pub async fn agent_bridge_stop(runtime: State<'_, AgentBridgeRuntime>) -> Result<Value, String> {
-    Ok(stop(&runtime))
+pub async fn agent_bridge_stop(app: AppHandle, runtime: State<'_, AgentBridgeRuntime>) -> Result<Value, String> {
+    let save_result = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}")).and_then(|dir| {
+        let mut preferences = config::load_preferences(&dir);
+        preferences.enabled = false;
+        config::save_preferences(&dir, &preferences)
+    });
+    stop(&runtime);
+    save_result?;
+    status_with_preferences(&app, &runtime)
+}
+
+#[tauri::command]
+pub async fn agent_bridge_save_preferences(
+    app: AppHandle,
+    runtime: State<'_, AgentBridgeRuntime>,
+    scopes: Vec<String>,
+    transport: String,
+    write_mode: String,
+    allowed_accounts: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let previous_preferences = config::load_preferences(&dir);
+    let mut preferences = previous_preferences.clone();
+    preferences.scopes = parse_scopes(&scopes)?;
+    preferences.transport = AgentBridgeTransport::parse(&transport).ok_or_else(|| format!("未知传输方式：{transport}"))?;
+    preferences.write_mode = AgentBridgeWriteMode::parse(&write_mode).ok_or_else(|| format!("未知写入模式：{write_mode}"))?;
+    if let Some(allowed_accounts) = allowed_accounts { preferences.allowed_accounts = allowed_accounts; }
+    let active_config = {
+        let guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
+        guard.as_ref().map(|bridge| bridge.config.clone())
+    };
+    config::save_preferences(&dir, &preferences)?;
+    if let Some(mut config) = active_config {
+        let restore_config = config.clone();
+        config.transport = preferences.transport;
+        config.scopes = preferences.scopes.clone();
+        config.write_mode = preferences.write_mode;
+        config.allowed_accounts = preferences.allowed_accounts.clone();
+        match start_with_config(app.clone(), &runtime, config.clone()).await {
+            Ok(_) => {},
+            Err(error) => {
+                let _ = config::save_preferences(&dir, &previous_preferences);
+                return match start_with_config(app.clone(), &runtime, restore_config).await {
+                    Ok(_) => Err(error),
+                    Err(restore_error) => Err(format!("{error}；恢复原 Agent 接口失败：{restore_error}")),
+                };
+            }
+        }
+    }
+    status_with_preferences(&app, &runtime)
 }
 
 /// 换发 token：使用当前授权范围重启服务，旧 token 立即失效。
@@ -364,18 +458,20 @@ pub async fn agent_bridge_rotate_token(
     let options = {
         let guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
         match guard.as_ref() {
-            Some(bridge) => StartOptions {
+            Some(bridge) => Some(StartOptions {
                 scopes: bridge.config.scopes.iter().map(|scope| scope.as_str().to_string()).collect(),
                 transport: Some(bridge.config.transport.as_str().to_string()),
                 write_mode: Some(bridge.config.write_mode.as_str().to_string()),
                 allowed_accounts: bridge.config.allowed_accounts.clone(),
                 mcp: bridge.config.mcp_enabled,
                 token: Some(config::generate_token()?),
-            },
-            None => return Ok(status_value(None)),
+            }),
+            None => None,
         }
     };
-    start(app, &runtime, options).await
+    let Some(options) = options else { return status_with_preferences(&app, &runtime) };
+    start(app.clone(), &runtime, options).await?;
+    status_with_preferences(&app, &runtime)
 }
 
 /// 前端回传写操作确认结果；超时/已结束/未知 id 都会被忽略。
@@ -401,8 +497,24 @@ pub async fn agent_bridge_set_mcp(
         guard.as_ref().map(|bridge| bridge.config.clone())
     };
     let Some(mut config) = config else {
-        return Ok(status_value(None));
+        return status_with_preferences(&app, &runtime);
     };
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    let previous_preferences = config::load_preferences(&dir);
+    let mut preferences = previous_preferences.clone();
+    preferences.enabled = true;
+    preferences.mcp_enabled = enabled;
+    config::save_preferences(&dir, &preferences)?;
+    let restore_config = config.clone();
     config.mcp_enabled = enabled;
-    start_with_config(app, &runtime, config).await
+    match start_with_config(app.clone(), &runtime, config).await {
+        Ok(_) => status_with_preferences(&app, &runtime),
+        Err(error) => {
+            let _ = config::save_preferences(&dir, &previous_preferences);
+            match start_with_config(app.clone(), &runtime, restore_config).await {
+                Ok(_) => Err(error),
+                Err(restore_error) => Err(format!("{error}；恢复原 Agent 接口失败：{restore_error}")),
+            }
+        }
+    }
 }
