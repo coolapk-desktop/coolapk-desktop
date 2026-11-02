@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   openUrl: vi.fn().mockResolvedValue(undefined),
   saveFile: vi.fn().mockResolvedValue('/downloads/file.custom'),
   saveImage: vi.fn().mockResolvedValue('/downloads/image.png'),
+  resolveLivePhotoVideo: vi.fn().mockResolvedValue({ data: { url: 'https://video.coolapk.com/live/original.mp4?token=123' } }),
 }));
 
 vi.mock('vue-router', () => ({
@@ -23,6 +24,7 @@ vi.mock('../../../api/coolapk', () => ({
     openUrl: mocks.openUrl,
     saveImage: mocks.saveImage,
     saveFile: mocks.saveFile,
+    resolveLivePhotoVideo: mocks.resolveLivePhotoVideo,
   },
 }));
 
@@ -51,6 +53,33 @@ function appendChatMessage(text: string, id: string): HTMLElement {
 }
 
 describe('AppContextMenu', () => {
+  it.each(['保存视频', '复制视频地址'])('未播放的实况图可以%s，并保留视频鉴权参数', async (label) => {
+    const wrapper = mount(AppContextMenu, { attachTo: document.body });
+    const carrier = document.createElement('div');
+    const sourceUrl = 'https://image.coolapk.com/live.jpg';
+    carrier.dataset.contextImageUrl = sourceUrl;
+    carrier.dataset.contextLivePhoto = JSON.stringify({ sourceUrl, livePhotoEnable: 1 });
+    carrier.dataset.contextContentId = `reply-${label}`;
+    carrier.dataset.contextContentType = 'reply';
+    const image = document.createElement('img');
+    image.src = sourceUrl;
+    carrier.appendChild(image);
+    document.body.appendChild(carrier);
+    try {
+      image.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 100 }));
+      await wrapper.vm.$nextTick();
+      expect(mocks.resolveLivePhotoVideo).not.toHaveBeenCalled();
+      const action = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(item => item.textContent?.trim() === label);
+      expect(action).toBeDefined();
+      action!.click();
+      await flushPromises();
+      expect(mocks.resolveLivePhotoVideo).toHaveBeenCalledWith(sourceUrl, `reply-${label}`, 'reply');
+      const videoUrl = 'https://video.coolapk.com/live/original.mp4?token=123';
+      if (label === '保存视频') expect(mocks.saveFile).toHaveBeenCalledWith(videoUrl, expect.any(String));
+      else expect(mocks.writeText).toHaveBeenCalledWith(videoUrl);
+    } finally { carrier.remove(); wrapper.unmount(); }
+  });
+
   it('右键已显示的 Blob 原图直接传给保存入口，保留远端原图地址', async () => {
     const wrapper = mount(AppContextMenu, { attachTo: document.body });
     const image = document.createElement('img');
@@ -63,6 +92,7 @@ describe('AppContextMenu', () => {
       await wrapper.vm.$nextTick();
       const action = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(item => item.textContent?.trim() === '保存图片');
       expect(action).toBeDefined();
+      expect(document.body.textContent).not.toContain('复制视频地址');
       action!.click();
       await flushPromises();
       expect(mocks.saveImage).toHaveBeenCalledWith(url, expect.any(String), 'blob:displayed-original');

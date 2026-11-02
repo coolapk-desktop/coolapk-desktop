@@ -2,6 +2,10 @@
   <div
     ref="previewRef"
     class="live-photo-preview"
+    :data-context-image-url="item.isLivePhoto ? item.sourceUrl : undefined"
+    :data-context-live-photo="item.isLivePhoto ? JSON.stringify(item) : undefined"
+    :data-context-content-id="contentId"
+    :data-context-content-type="contentType"
     :class="{
       'is-live-photo': item.isLivePhoto,
       'is-gif': isGif,

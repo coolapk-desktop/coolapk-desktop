@@ -51,6 +51,10 @@
         <div
           ref="stageRef"
           class="image-stage"
+          :data-context-image-url="currentItem?.isLivePhoto ? currentItem.sourceUrl : undefined"
+          :data-context-live-photo="currentItem?.isLivePhoto ? JSON.stringify({ ...currentItem, liveVideoUrl: liveVideoUrl || currentItem.liveVideoUrl }) : undefined"
+          :data-context-content-id="viewerData.contentId"
+          :data-context-content-type="viewerData.contentType"
           @dblclick="handleDoubleClick"
           @mousedown="startDrag"
           @mousemove="onDrag"

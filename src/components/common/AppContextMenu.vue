@@ -46,6 +46,7 @@ import { refreshPageTabGeneration } from '../../utils/pageTabs';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { copyImageToClipboard } from '../../utils/imageClipboard';
 import { isTouchMobilePlatform } from '../../utils/platform';
+import { normalizeFeedImageItems, resolveLivePhotoVideo, type FeedImageItem, type LivePhotoContextType } from '../../utils/livePhoto';
 
 type ContextKind = 'page' | 'selection' | 'link' | 'image' | 'comment' | 'feed' | 'message' | 'chat-message';
 
@@ -58,6 +59,9 @@ type ContextState = {
   linkText: string;
   imageUrl: string;
   imageDataUrl?: string;
+  livePhoto?: FeedImageItem;
+  contentId?: string;
+  contentType?: LivePhotoContextType;
   fromDetail?: boolean;
   imageUrls: string[];
   feedId: string;
@@ -123,6 +127,16 @@ function getImageUrl(element: HTMLElement): string {
   if (carrier?.dataset.contextImageUrl) return carrier.dataset.contextImageUrl;
   const image = element.closest('img') as HTMLImageElement | null;
   return image?.dataset.originalUrl || image?.currentSrc || image?.src || '';
+}
+
+/** 从缩略图或大图宿主恢复实况元数据；没有播放过的视频也能按内容 ID 解析。 */
+function getLivePhotoContext(element: HTMLElement, imageUrl: string) {
+  const carrier = element.closest<HTMLElement>('[data-context-live-photo]');
+  let images = normalizeFeedImageItems([imageUrl]);
+  try { if (carrier?.dataset.contextLivePhoto) images = normalizeFeedImageItems([JSON.parse(carrier.dataset.contextLivePhoto)]); } catch { /* 元数据损坏时仍按图片地址识别。 */ }
+  const livePhoto = images.find(image => image.isLivePhoto);
+  const contentType = carrier?.dataset.contextContentType;
+  return { livePhoto, contentId: carrier?.dataset.contextContentId || element.closest<HTMLElement>('[data-feed-id]')?.dataset.feedId, contentType: contentType === 'reply' || contentType === 'article' ? contentType : 'feed' as LivePhotoContextType };
 }
 
 /** 构建菜单只需要命中元素与坐标，因此鼠标右键和触摸长按可以共用同一份逻辑。 */
@@ -194,6 +208,7 @@ function buildContext(event: ContextPoint): ContextState | null {
       linkUrl: '',
       linkText: '',
       imageUrl,
+      ...getLivePhotoContext(element, imageUrl),
       // 大图可能超过内存缓存上限；直接复用当前元素持有的完整原图数据。
       imageDataUrl: getLoadedOriginalImage(element, imageUrl),
       fromDetail: Boolean(element.closest('.no-image-detail-enabled')),
@@ -369,12 +384,17 @@ function createItems(state: ContextState): MenuItem[] {
 
   if (state.kind === 'image') {
     return [
-      item('view-image', '查看大图', 'fas fa-expand', () => appStore.openImageViewer([state.imageUrl], 0, { fromDetail: state.fromDetail })),
-      item('view-original', '查看原图', 'fas fa-file-image', () => appStore.openImageViewer([state.imageUrl], 0, { fromDetail: state.fromDetail })),
+      item('view-image', '查看大图', 'fas fa-expand', () => openContextImage(state)),
+      item('view-original', '查看原图', 'fas fa-file-image', () => openContextImage(state)),
       separator('image-separator'),
       item('save-image', '保存图片', 'fas fa-download', () => saveImage(state.imageUrl, state.imageDataUrl)),
       item('copy-image', '复制图片', 'far fa-copy', () => copyImage(state.imageUrl, state.imageDataUrl)),
       item('copy-image-url', '复制图片地址', 'fas fa-link', () => copyText(state.imageUrl)),
+      ...(state.livePhoto ? [
+        separator('live-video-separator'),
+        item('save-live-video', '保存视频', 'fas fa-download', () => useLiveVideo(state, 'save')),
+        item('copy-live-video-url', '复制视频地址', 'fas fa-link', () => useLiveVideo(state, 'copy')),
+      ] : []),
       item('open-image-system', '使用系统程序打开', 'fas fa-external-link-alt', () => CoolapkTauriAPI.openImageInSystemViewer(state.imageUrl)),
     ];
   }
@@ -429,6 +449,19 @@ function createItems(state: ContextState): MenuItem[] {
     item('open-page-system', '使用系统浏览器打开当前页', 'fas fa-external-link-alt', () => CoolapkTauriAPI.openUrl(window.location.href, 'system')),
     item('open-settings', '打开设置', 'fas fa-cog', () => router.push('/settings')),
   ];
+}
+
+function openContextImage(state: ContextState) {
+  appStore.openImageViewer([state.livePhoto || state.imageUrl], 0, { fromDetail: state.fromDetail, contentId: state.contentId, contentType: state.contentType });
+}
+
+/** 延迟解析并复用实况缓存，下载沿用图片所使用的下载目录与通用文件保存流程。 */
+async function useLiveVideo(state: ContextState, action: 'save' | 'copy') {
+  if (!state.livePhoto) return;
+  const url = await resolveLivePhotoVideo(state.livePhoto, state.contentId, state.contentType);
+  if (!url) throw new Error('无法获取实况视频地址');
+  if (action === 'copy') await copyText(url);
+  else await saveFile(url);
 }
 
 async function copyText(text: string) {
