@@ -146,6 +146,22 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用")
     }
 
+    /// 写闸门处于 disabled：明确告诉调用方是配置拒绝，而不是参数错误。
+    pub(super) fn write_disabled() -> Self {
+        Self {
+            error_code: Some("write_disabled"),
+            ..Self::new(StatusCode::FORBIDDEN, "写操作已禁用，请在设置中调整写操作闸门")
+        }
+    }
+
+    /// 写闸门的 confirm / auto 执行通道尚未接入（Task 3 之后替换）。
+    pub(super) fn write_not_implemented() -> Self {
+        Self {
+            error_code: Some("write_not_implemented"),
+            ..Self::new(StatusCode::NOT_IMPLEMENTED, "写执行通道尚未启用")
+        }
+    }
+
     pub(super) fn status_code(&self) -> u16 {
         self.status.as_u16()
     }
@@ -326,6 +342,31 @@ pub(super) fn audit(ctx: &BridgeCtx, scope: &str, route: &str, ok: bool) {
         "ok": ok,
         "account": account,
     }));
+}
+
+/// 写操作审计：在通用字段上追加工具名与写操作细节（正文只记长度）。
+pub(super) fn audit_write(ctx: &BridgeCtx, tool: &str, scope: &str, ok: bool, details: Value) {
+    let account = ctx
+        .config
+        .read()
+        .ok()
+        .and_then(|_| ctx.app_state())
+        .and_then(|state| state.client.current_uid());
+    let mut entry = json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "route": format!("MCP {tool}"),
+        "tool": tool,
+        "scope": scope,
+        "ok": ok,
+        "write": true,
+        "account": account,
+    });
+    if let (Some(entry), Some(details)) = (entry.as_object_mut(), details.as_object()) {
+        for (key, value) in details {
+            entry.insert(key.clone(), value.clone());
+        }
+    }
+    ctx.audit.record(entry);
 }
 
 async fn health(State(ctx): State<Arc<BridgeCtx>>, auth: Auth) -> Result<Json<Value>, ApiError> {

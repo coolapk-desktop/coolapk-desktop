@@ -303,6 +303,76 @@ fn write_parse_publish_accepts_data_url_and_sanitizes_name() {
     assert!(preview["images"][0].get("dataBase64").is_none(), "预览不能包含图片内容");
 }
 
+fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
+    let dir = test_dir(name);
+    let _ = std::fs::remove_file(dir.join(super::config::AUDIT_FILE_NAME));
+    Arc::new(BridgeCtx {
+        app: None,
+        state: None,
+        config: Arc::new(RwLock::new(AgentBridgeConfig {
+            version: 1,
+            transport: AgentBridgeTransport::Tcp,
+            socket_path: None,
+            port: Some(1),
+            token: "test-token".to_string(),
+            scopes: vec![AgentBridgeScope::Read, AgentBridgeScope::WritePublish],
+            write_mode: mode,
+            allowed_accounts: Vec::new(),
+            mcp_enabled: false,
+            mcp_port: None,
+        })),
+        audit: AuditSink::new(&dir),
+        limits: Limits::new(),
+    })
+}
+
+fn parse_publish(message: &str) -> super::write::PublishArgs {
+    super::write::parse_publish_args(&serde_json::json!({ "message": message })).unwrap()
+}
+
+#[tokio::test]
+async fn write_gate_disabled_rejects_and_audits() {
+    let ctx = write_ctx("write-gate-disabled", AgentBridgeWriteMode::Disabled);
+    let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
+        .await
+        .unwrap_err();
+    assert_eq!(error.error_code(), Some("write_disabled"));
+    let log = std::fs::read_to_string(ctx.audit.path()).unwrap();
+    assert!(log.contains(r#""ok":false"#), "审计：{log}");
+    assert!(log.contains(r#""write":true"#), "审计：{log}");
+    assert!(log.contains("write_disabled"), "审计：{log}");
+}
+
+#[tokio::test]
+async fn write_gate_dry_run_previews_without_network() {
+    let ctx = write_ctx("write-gate-dry-run", AgentBridgeWriteMode::DryRun);
+    let value = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("秘密内容")))
+        .await
+        .unwrap();
+    assert_eq!(value["dryRun"], true);
+    assert_eq!(value["preview"]["messageChars"], 4);
+    assert_eq!(value["preview"]["imageCount"], 0);
+
+    let log = std::fs::read_to_string(ctx.audit.path()).unwrap();
+    assert!(log.contains(r#""dryRun":true"#), "审计：{log}");
+    assert!(log.contains(r#""messageChars":4"#), "审计：{log}");
+    assert!(!log.contains("秘密内容"), "审计不能落正文：{log}");
+}
+
+#[tokio::test]
+async fn write_gate_confirm_and_auto_are_not_wired_yet() {
+    for (name, mode) in [
+        ("write-gate-confirm", AgentBridgeWriteMode::Confirm),
+        ("write-gate-auto", AgentBridgeWriteMode::Auto),
+    ] {
+        let ctx = write_ctx(name, mode);
+        let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
+            .await
+            .unwrap_err();
+        assert_eq!(error.error_code(), Some("write_not_implemented"));
+    }
+}
+
 #[test]
 fn write_parse_publish_rejects_invalid_visible_status() {
     let args = serde_json::json!({ "message": "正文", "visibleStatus": 0 });

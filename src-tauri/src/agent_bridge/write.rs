@@ -7,7 +7,8 @@
 use base64::Engine;
 use serde_json::{json, Value};
 
-use super::http::ApiError;
+use super::config::AgentBridgeWriteMode;
+use super::http::{audit_write, ApiError, BridgeCtx};
 
 const MAX_MESSAGE_CHARS: usize = 5000;
 const MAX_IMAGES: usize = 4;
@@ -174,6 +175,76 @@ fn sanitize_name(raw: &str, mime: &str) -> String {
         };
     }
     cleaned.to_string()
+}
+
+/// 一次写调用的强类型描述；后续任务按工具增加变体。
+pub(super) enum WriteCall {
+    Publish(PublishArgs),
+}
+
+impl WriteCall {
+    pub(super) fn tool(&self) -> &'static str {
+        match self {
+            Self::Publish(_) => "coolapk_publish_feed",
+        }
+    }
+
+    pub(super) fn scope(&self) -> &'static str {
+        match self {
+            Self::Publish(_) => "write.publish",
+        }
+    }
+
+    fn preview(&self) -> Value {
+        match self {
+            Self::Publish(args) => preview_publish(args),
+        }
+    }
+
+    /// 审计细节：只记录长度/数量与目标，不落正文和图片内容。
+    fn audit_details(&self) -> Value {
+        match self {
+            Self::Publish(args) => json!({
+                "messageChars": args.message.chars().count(),
+                "imageCount": args.images.len(),
+                "target": Value::Null,
+            }),
+        }
+    }
+}
+
+/// 写闸门：disabled 直接拒绝，dry-run 只返回预览；confirm / auto 在后续任务接入。
+pub(super) async fn execute(ctx: &BridgeCtx, call: WriteCall) -> Result<Value, ApiError> {
+    let mode = {
+        let config = ctx
+            .config
+            .read()
+            .map_err(|_| ApiError::unauthorized("Agent 接口状态异常"))?;
+        config.write_mode
+    };
+    match mode {
+        AgentBridgeWriteMode::Disabled => {
+            let mut details = call.audit_details();
+            details["dryRun"] = json!(false);
+            details["error"] = json!("write_disabled");
+            audit_write(ctx, call.tool(), call.scope(), false, details);
+            Err(ApiError::write_disabled())
+        }
+        AgentBridgeWriteMode::DryRun => {
+            let preview = call.preview();
+            let mut details = call.audit_details();
+            details["dryRun"] = json!(true);
+            audit_write(ctx, call.tool(), call.scope(), true, details);
+            Ok(json!({ "dryRun": true, "preview": preview }))
+        }
+        AgentBridgeWriteMode::Confirm | AgentBridgeWriteMode::Auto => {
+            let mut details = call.audit_details();
+            details["dryRun"] = json!(false);
+            details["error"] = json!("write_not_implemented");
+            audit_write(ctx, call.tool(), call.scope(), false, details);
+            Err(ApiError::write_not_implemented())
+        }
+    }
 }
 
 fn normalize_request_id(value: Option<&Value>) -> Result<Option<String>, ApiError> {
