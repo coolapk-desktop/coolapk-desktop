@@ -591,6 +591,54 @@ async fn mcp_every_listed_tool_dispatches() {
 
 /// MCP 全部走 POST，不能因此被 REST 的「写操作 1 次/分钟」限流误伤。
 #[tokio::test]
+async fn mcp_write_tools_follow_scope() {
+    let write_scope = write_ctx("mcp-write-tools", AgentBridgeWriteMode::DryRun);
+    let (_, listed) = mcp_send(&write_scope, serde_json::json!({ "jsonrpc": "2.0", "id": 20, "method": "tools/list" })).await;
+    assert!(tool_names(&listed).contains(&"coolapk_publish_feed".to_string()));
+
+    let read_only = test_ctx("mcp-read-only-tools", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
+    let (_, listed) = mcp_send(&read_only, serde_json::json!({ "jsonrpc": "2.0", "id": 21, "method": "tools/list" })).await;
+    assert!(!tool_names(&listed).contains(&"coolapk_publish_feed".to_string()));
+}
+
+#[tokio::test]
+async fn mcp_publish_dry_run_returns_preview() {
+    let ctx = write_ctx("mcp-publish-dry-run", AgentBridgeWriteMode::DryRun);
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": { "name": "coolapk_publish_feed", "arguments": { "message": "预览正文" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], false);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(r#""dryRun":true"#), "{text}");
+    assert!(text.contains("预览正文"), "{text}");
+}
+
+#[tokio::test]
+async fn mcp_publish_respects_write_gate() {
+    let ctx = write_ctx("mcp-publish-disabled", AgentBridgeWriteMode::Disabled);
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "tools/call",
+            "params": { "name": "coolapk_publish_feed", "arguments": { "message": "正文" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], true);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("写操作已禁用"), "{text}");
+}
+
+#[tokio::test]
 async fn mcp_post_is_not_rate_limited_as_write() {
     let ctx = test_ctx("mcp-rate", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
     for _ in 0..3 {

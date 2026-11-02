@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use super::config::AgentBridgeScope;
 use super::http::{audit, authorize_tcp, ApiError, Auth, BridgeCtx};
 use super::ops;
+use super::write;
 
 /// 支持协商的 MCP 协议版本，新的在前。
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -120,6 +121,36 @@ static TOOLS: &[ToolSpec] = &[
                     "feedType": { "type": "string", "description": "动态类型过滤，留空表示全部" }
                 }),
                 vec!["uid"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_publish_feed",
+        description: "发布一条酷安动态（需要 write.publish 授权）。受写操作闸门约束：dry-run 只返回预览，confirm 需要在应用内确认，auto 直接提交。",
+        scope: Some(AgentBridgeScope::WritePublish),
+        schema: || {
+            object_schema(
+                json!({
+                    "message": { "type": "string", "description": "动态正文，最多 5000 字" },
+                    "images": {
+                        "type": "array",
+                        "maxItems": 4,
+                        "description": "可选图片（base64），最多 4 张、单张 8 MB、总计 20 MB",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "上传文件名" },
+                                "mimeType": { "type": "string", "enum": ["image/jpeg", "image/png", "image/webp"] },
+                                "dataBase64": { "type": "string", "description": "base64 或 data URL" }
+                            },
+                            "required": ["dataBase64"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "visibleStatus": { "type": "integer", "enum": [1, -1], "description": "1 公开、-1 仅自己" },
+                    "requestId": { "type": "string", "description": "幂等请求 id；客户端重试时带上可避免重复发布" }
+                }),
+                vec!["message"],
             )
         },
     },
@@ -260,12 +291,23 @@ async fn tools_call(ctx: &BridgeCtx, auth: &Auth, id: Value, params: &Value) -> 
             );
         }
     }
-    if let Err(retry_after) = ctx.limits.check("read") {
+    let limit_class = match spec.scope {
+        Some(AgentBridgeScope::WritePublish) => "write.publish",
+        Some(AgentBridgeScope::WriteInteract) => "write.interact",
+        _ => "read",
+    };
+    if let Err(retry_after) = ctx.limits.check(limit_class) {
         return rpc_result(id, tool_error(ApiError::rate_limited(retry_after)));
     }
 
     let result = dispatch(ctx, spec.name, &args).await;
-    audit(ctx, "read", &format!("MCP {}", spec.name), result.is_ok());
+    // 写工具的审计由 write::execute 记录（含 dryRun/目标/正文字数），这里只审计只读调用。
+    if !matches!(
+        spec.scope,
+        Some(AgentBridgeScope::WritePublish | AgentBridgeScope::WriteInteract)
+    ) {
+        audit(ctx, "read", &format!("MCP {}", spec.name), result.is_ok());
+    }
     match result {
         Ok(value) => rpc_result(
             id,
@@ -317,6 +359,10 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
         "coolapk_topic_detail" => {
             let tag = required_arg(args, "tag", "话题 tag")?;
             ops::topic_detail(ctx, &tag).await
+        }
+        "coolapk_publish_feed" => {
+            let publish = write::parse_publish_args(args)?;
+            write::execute(ctx, write::WriteCall::Publish(publish)).await
         }
         other => Err(ApiError::bad_request(format!("未知工具：{other}"))),
     }
