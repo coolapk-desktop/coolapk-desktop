@@ -9,6 +9,9 @@ mod config;
 mod http;
 mod mcp;
 mod ops;
+// Task 2 接入写闸门后即可移除这里的 allow；当前只有测试与后续任务会用到这些参数模型。
+#[cfg_attr(not(test), allow(dead_code))]
+mod write;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +31,8 @@ use audit::AuditSink;
 #[derive(Default)]
 pub struct AgentBridgeRuntime {
     running: Mutex<Option<RunningBridge>>,
+    confirm: Arc<write::ConfirmBroker>,
+    dedupe: Arc<write::WriteDedupe>,
 }
 
 struct RunningBridge {
@@ -232,6 +237,8 @@ async fn start_with_config(
         config: Arc::new(RwLock::new(config.clone())),
         audit: AuditSink::new(&dir),
         limits: Limits::new(),
+        confirm: Some(Arc::clone(&runtime.confirm)),
+        dedupe: Some(Arc::clone(&runtime.dedupe)),
     });
 
     let router = http::build_router(Arc::clone(&ctx));
@@ -369,6 +376,17 @@ pub async fn agent_bridge_rotate_token(
         }
     };
     start(app, &runtime, options).await
+}
+
+/// 前端回传写操作确认结果；超时/已结束/未知 id 都会被忽略。
+#[tauri::command]
+pub async fn agent_bridge_confirm_result(
+    runtime: State<'_, AgentBridgeRuntime>,
+    id: String,
+    approved: bool,
+) -> Result<Value, String> {
+    let accepted = runtime.confirm.resolve(&id, approved);
+    Ok(json!({ "code": 200, "message": "", "data": { "accepted": accepted } }))
 }
 
 /// 单独开关 MCP 门面：只重建监听，保留现有 token、授权范围与写操作闸门。

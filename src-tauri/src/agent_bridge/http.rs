@@ -16,6 +16,7 @@ use tauri::Manager;
 use super::audit::AuditSink;
 use super::config::{token_matches, AgentBridgeConfig, AgentBridgeScope, AgentBridgeTransport};
 use super::ops;
+use super::write::{ConfirmBroker, WriteDedupe};
 use crate::coolapk::commands::AppState;
 
 /// 浏览器/网页发起的请求必须被拒绝，避免本地服务被 CSRF 或 DNS rebinding 利用。
@@ -29,6 +30,9 @@ pub struct BridgeCtx {
     pub config: Arc<RwLock<AgentBridgeConfig>>,
     pub audit: AuditSink,
     pub limits: Limits,
+    /// 写操作确认通道与幂等缓存；测试可注入独立实例。
+    pub(super) confirm: Option<Arc<ConfirmBroker>>,
+    pub(super) dedupe: Option<Arc<WriteDedupe>>,
 }
 
 impl BridgeCtx {
@@ -83,19 +87,30 @@ impl Limits {
         };
         let hits = buckets.entry(class).or_default();
         hits.retain(|at| now.duration_since(*at) < Duration::from_secs(3600));
-        let (window, limit) = match class {
-            "write" => (Duration::from_secs(60), 1usize),
-            _ => (Duration::from_secs(60), 60usize),
+        // 写操作按 scope 分桶：发帖/评论 1 次/分钟、10 次/小时；点赞/关注 6 次/分钟、60 次/小时。
+        // "write" 是旧 REST 入口的通用桶，等价于发布额度。
+        let (window, limit, hourly_limit) = match class {
+            "write" | "write.publish" => (Duration::from_secs(60), 1usize, Some(10usize)),
+            "write.interact" => (Duration::from_secs(60), 6usize, Some(60usize)),
+            _ => (Duration::from_secs(60), 60usize, None),
         };
         let in_window = hits.iter().filter(|at| now.duration_since(**at) < window).count();
         let hourly = hits.len();
-        if in_window >= limit || (class == "write" && hourly >= 10) {
-            let wait = hits
-                .iter()
-                .map(|at| now.duration_since(*at))
-                .min()
-                .map(|elapsed| window.saturating_sub(elapsed).as_secs().max(1))
-                .unwrap_or(1);
+        let window_limited = in_window >= limit;
+        let hourly_limited = hourly_limit.is_some_and(|limit| hourly >= limit);
+        if window_limited || hourly_limited {
+            let wait = if window_limited {
+                hits.iter()
+                    .filter(|at| now.duration_since(**at) < window)
+                    .map(|at| now.duration_since(*at))
+                    .min()
+                    .map(|elapsed| window.saturating_sub(elapsed).as_secs().max(1))
+                    .unwrap_or(1)
+            } else {
+                hits.first()
+                    .map(|at| Duration::from_secs(3600).saturating_sub(now.duration_since(*at)).as_secs().max(1))
+                    .unwrap_or(1)
+            };
             return Err(wait);
         }
         hits.push(now);
@@ -103,6 +118,7 @@ impl Limits {
     }
 }
 
+#[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
     message: String,
@@ -143,6 +159,35 @@ impl ApiError {
 
     pub(super) fn service_unavailable() -> Self {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用")
+    }
+
+    /// 写闸门处于 disabled：明确告诉调用方是配置拒绝，而不是参数错误。
+    pub(super) fn write_disabled() -> Self {
+        Self {
+            error_code: Some("write_disabled"),
+            ..Self::new(StatusCode::FORBIDDEN, "写操作已禁用，请在设置中调整写操作闸门")
+        }
+    }
+
+    /// 用户在应用内拒绝，或确认弹窗超时。
+    pub(super) fn write_confirm_denied() -> Self {
+        Self {
+            error_code: Some("write_confirm_denied"),
+            retryable: true,
+            ..Self::new(StatusCode::FORBIDDEN, "写操作未获确认（用户拒绝或确认超时）")
+        }
+    }
+
+    pub(super) fn internal(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
+    }
+
+    /// 写闸门的 confirm / auto 执行通道尚未接入（Task 3 之后替换）。
+    pub(super) fn write_not_implemented() -> Self {
+        Self {
+            error_code: Some("write_not_implemented"),
+            ..Self::new(StatusCode::NOT_IMPLEMENTED, "写执行通道尚未启用")
+        }
     }
 
     pub(super) fn status_code(&self) -> u16 {
@@ -325,6 +370,31 @@ pub(super) fn audit(ctx: &BridgeCtx, scope: &str, route: &str, ok: bool) {
         "ok": ok,
         "account": account,
     }));
+}
+
+/// 写操作审计：在通用字段上追加工具名与写操作细节（正文只记长度）。
+pub(super) fn audit_write(ctx: &BridgeCtx, tool: &str, scope: &str, ok: bool, details: Value) {
+    let account = ctx
+        .config
+        .read()
+        .ok()
+        .and_then(|_| ctx.app_state())
+        .and_then(|state| state.client.current_uid());
+    let mut entry = json!({
+        "ts": chrono::Utc::now().to_rfc3339(),
+        "route": format!("MCP {tool}"),
+        "tool": tool,
+        "scope": scope,
+        "ok": ok,
+        "write": true,
+        "account": account,
+    });
+    if let (Some(entry), Some(details)) = (entry.as_object_mut(), details.as_object()) {
+        for (key, value) in details {
+            entry.insert(key.clone(), value.clone());
+        }
+    }
+    ctx.audit.record(entry);
 }
 
 async fn health(State(ctx): State<Arc<BridgeCtx>>, auth: Auth) -> Result<Json<Value>, ApiError> {

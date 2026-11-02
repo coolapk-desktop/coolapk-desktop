@@ -36,6 +36,8 @@ fn test_ctx(name: &str, scopes: Vec<AgentBridgeScope>, transport: AgentBridgeTra
         })),
         audit: AuditSink::new(&dir),
         limits: Limits::new(),
+        confirm: Some(Arc::new(super::write::ConfirmBroker::default())),
+        dedupe: Some(Arc::new(super::write::WriteDedupe::new())),
     })
 }
 
@@ -221,6 +223,346 @@ async fn preferred_port_falls_back_when_busy() {
     assert_ne!(fallback.local_addr().unwrap().port(), busy);
 }
 
+// ---------- 写工具参数模型（Task 1） ----------
+
+fn tiny_png_base64() -> String {
+    use base64::Engine;
+    // 1x1 透明 PNG
+    base64::engine::general_purpose::STANDARD.encode([
+        0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+        0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+        0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+    ])
+}
+
+fn image_arg(name: &str, mime: &str) -> serde_json::Value {
+    serde_json::json!({ "name": name, "mimeType": mime, "dataBase64": tiny_png_base64() })
+}
+
+#[test]
+fn write_parse_publish_rejects_empty_message() {
+    let args = serde_json::json!({ "message": "   " });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("正文"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_rejects_too_many_images() {
+    let images: Vec<_> = (0..5).map(|i| image_arg(&format!("{i}.png"), "image/png")).collect();
+    let args = serde_json::json!({ "message": "动态正文", "images": images });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("4 张"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_rejects_bad_mime() {
+    let args = serde_json::json!({ "message": "正文", "images": [image_arg("a.gif", "image/gif")] });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("格式"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_rejects_invalid_base64() {
+    let args = serde_json::json!({ "message": "正文", "images": [{ "name": "a.png", "mimeType": "image/png", "dataBase64": "not*base64" }] });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("base64") || error.message().contains("Base64"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_image_limits_reject_oversized_and_total() {
+    // 单张超过 8 MB
+    let oversize = super::write::enforce_image_limits(1, 8 * 1024 * 1024 + 1, 8 * 1024 * 1024 + 1).unwrap_err();
+    assert!(oversize.message().contains("8 MB"), "实际错误：{}", oversize.message());
+    // 总计超过 20 MB（单张都未超）
+    let total = super::write::enforce_image_limits(3, 7 * 1024 * 1024, 21 * 1024 * 1024).unwrap_err();
+    assert!(total.message().contains("20 MB"), "实际错误：{}", total.message());
+}
+
+#[test]
+fn write_parse_publish_accepts_data_url_and_sanitizes_name() {
+    let data_url = format!("data:image/png;base64,{}", tiny_png_base64());
+    let args = serde_json::json!({
+        "message": "  你好酷安  ",
+        "images": [{ "name": "../../etc/passwd.png", "dataBase64": data_url }],
+        "visibleStatus": -1,
+        "requestId": "req-1"
+    });
+    let parsed = super::write::parse_publish_args(&args).unwrap();
+    assert_eq!(parsed.message, "你好酷安");
+    assert_eq!(parsed.images.len(), 1);
+    assert_eq!(parsed.images[0].name, "passwd.png");
+    assert_eq!(parsed.images[0].mime, "image/png");
+    assert!(!parsed.images[0].bytes.is_empty());
+    assert_eq!(parsed.visible_status, Some(-1));
+    assert_eq!(parsed.request_id.as_deref(), Some("req-1"));
+
+    let preview = super::write::preview_publish(&parsed);
+    assert_eq!(preview["messageChars"], 4);
+    assert_eq!(preview["imageCount"], 1);
+    assert_eq!(preview["visibleStatus"], -1);
+    assert!(preview["images"][0].get("dataBase64").is_none(), "预览不能包含图片内容");
+}
+
+fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
+    write_ctx_with_scopes(
+        name,
+        mode,
+        vec![
+            AgentBridgeScope::Read,
+            AgentBridgeScope::WritePublish,
+            AgentBridgeScope::WriteInteract,
+        ],
+    )
+}
+
+fn write_ctx_with_scopes(name: &str, mode: AgentBridgeWriteMode, scopes: Vec<AgentBridgeScope>) -> Arc<BridgeCtx> {
+    let dir = test_dir(name);
+    let _ = std::fs::remove_file(dir.join(super::config::AUDIT_FILE_NAME));
+    Arc::new(BridgeCtx {
+        app: None,
+        state: None,
+        config: Arc::new(RwLock::new(AgentBridgeConfig {
+            version: 1,
+            transport: AgentBridgeTransport::Tcp,
+            socket_path: None,
+            port: Some(1),
+            token: "test-token".to_string(),
+            scopes,
+            write_mode: mode,
+            allowed_accounts: Vec::new(),
+            mcp_enabled: false,
+            mcp_port: None,
+        })),
+        audit: AuditSink::new(&dir),
+        limits: Limits::new(),
+        confirm: Some(Arc::new(super::write::ConfirmBroker::default())),
+        dedupe: Some(Arc::new(super::write::WriteDedupe::new())),
+    })
+}
+
+fn parse_publish(message: &str) -> super::write::PublishArgs {
+    super::write::parse_publish_args(&serde_json::json!({ "message": message })).unwrap()
+}
+
+#[tokio::test]
+async fn write_gate_disabled_rejects_and_audits() {
+    let ctx = write_ctx("write-gate-disabled", AgentBridgeWriteMode::Disabled);
+    let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
+        .await
+        .unwrap_err();
+    assert_eq!(error.error_code(), Some("write_disabled"));
+    let log = std::fs::read_to_string(ctx.audit.path()).unwrap();
+    assert!(log.contains(r#""ok":false"#), "审计：{log}");
+    assert!(log.contains(r#""write":true"#), "审计：{log}");
+    assert!(log.contains("write_disabled"), "审计：{log}");
+}
+
+#[tokio::test]
+async fn write_gate_dry_run_previews_without_network() {
+    let ctx = write_ctx("write-gate-dry-run", AgentBridgeWriteMode::DryRun);
+    let value = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("秘密内容")))
+        .await
+        .unwrap();
+    assert_eq!(value["dryRun"], true);
+    assert_eq!(value["preview"]["messageChars"], 4);
+    assert_eq!(value["preview"]["imageCount"], 0);
+
+    let log = std::fs::read_to_string(ctx.audit.path()).unwrap();
+    assert!(log.contains(r#""dryRun":true"#), "审计：{log}");
+    assert!(log.contains(r#""messageChars":4"#), "审计：{log}");
+    assert!(!log.contains("秘密内容"), "审计不能落正文：{log}");
+}
+
+#[tokio::test]
+async fn write_gate_confirm_and_auto_are_not_wired_yet() {
+    for (name, mode) in [
+        ("write-gate-confirm", AgentBridgeWriteMode::Confirm),
+        ("write-gate-auto", AgentBridgeWriteMode::Auto),
+    ] {
+        let ctx = write_ctx(name, mode);
+        let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
+            .await
+            .unwrap_err();
+        assert_eq!(error.error_code(), Some("write_not_implemented"));
+    }
+}
+
+#[tokio::test]
+async fn confirm_broker_resolves_approval() {
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = emitted.clone();
+    let waiting = tokio::spawn(async move {
+        worker.request("id-1", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    emitted.notified().await;
+
+    assert!(broker.resolve("id-1", true));
+    assert!(waiting.await.unwrap());
+    // 同一次请求不能重复结算
+    assert!(!broker.resolve("id-1", true));
+}
+
+#[tokio::test]
+async fn confirm_broker_denies_and_times_out() {
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    // 用户拒绝
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = emitted.clone();
+    let waiting = tokio::spawn(async move {
+        worker.request("id-deny", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    emitted.notified().await;
+    assert!(broker.resolve("id-deny", false));
+    assert!(!waiting.await.unwrap());
+
+    // 超时未回应：迟到结果被忽略
+    let broker = super::write::ConfirmBroker::default();
+    assert!(!broker.request("id-timeout", Duration::from_millis(30), || {}).await);
+    assert!(!broker.resolve("id-timeout", true));
+}
+
+#[tokio::test]
+async fn confirm_broker_replacement_rejects_previous_request() {
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let first_emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = first_emitted.clone();
+    let first = tokio::spawn(async move {
+        worker.request("id-a", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    first_emitted.notified().await;
+
+    let second_emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = second_emitted.clone();
+    let second = tokio::spawn(async move {
+        worker.request("id-b", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    second_emitted.notified().await;
+
+    // 旧请求被自动拒绝，且不能再被结算
+    assert!(!first.await.unwrap());
+    assert!(!broker.resolve("id-a", true));
+    assert!(broker.resolve("id-b", true));
+    assert!(second.await.unwrap());
+}
+
+fn like_call(feed_id: &str) -> super::write::WriteCall {
+    super::write::WriteCall::LikeFeed { feed_id: feed_id.to_string(), unlike: false }
+}
+
+#[tokio::test]
+async fn write_interact_dry_run_previews_target() {
+    let ctx = write_ctx("write-interact-dry-run", AgentBridgeWriteMode::DryRun);
+    let value = super::write::execute(&ctx, like_call("12345678")).await.unwrap();
+    assert_eq!(value["dryRun"], true);
+    assert_eq!(value["preview"]["feedId"], "12345678");
+    assert_eq!(value["preview"]["action"], "like");
+}
+
+#[tokio::test]
+async fn write_requires_matching_scope() {
+    let ctx = write_ctx_with_scopes(
+        "write-scope-denied",
+        AgentBridgeWriteMode::Auto,
+        vec![AgentBridgeScope::Read],
+    );
+    let error = super::write::execute(&ctx, like_call("12345678")).await.unwrap_err();
+    assert_eq!(error.status_code(), 403);
+    assert!(error.message().contains("缺少授权范围"), "实际错误：{}", error.message());
+}
+
+#[tokio::test]
+async fn write_confirm_without_app_reports_not_implemented() {
+    let ctx = write_ctx("write-confirm-no-app", AgentBridgeWriteMode::Confirm);
+    let error = super::write::execute(&ctx, like_call("12345678")).await.unwrap_err();
+    assert_eq!(error.error_code(), Some("write_not_implemented"));
+}
+
+#[tokio::test]
+async fn mcp_interact_tools_follow_scope_and_dry_run() {
+    let ctx = write_ctx("mcp-interact-tools", AgentBridgeWriteMode::DryRun);
+    let (_, listed) = mcp_send(&ctx, serde_json::json!({ "jsonrpc": "2.0", "id": 30, "method": "tools/list" })).await;
+    let names = tool_names(&listed);
+    for name in ["coolapk_like_feed", "coolapk_unlike_feed", "coolapk_follow_user", "coolapk_unfollow_user"] {
+        assert!(names.contains(&name.to_string()), "缺少 {name}");
+    }
+
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": { "name": "coolapk_like_feed", "arguments": { "feedId": "12345678" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], false);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(r#""feedId":"12345678""#), "{text}");
+}
+
+#[test]
+fn write_limits_are_split_by_scope() {
+    let limits = Limits::new();
+    // 发布：1 次/分钟
+    assert!(limits.check("write.publish").is_ok());
+    assert!(limits.check("write.publish").is_err());
+    // 互动：6 次/分钟，且不被发布桶占用
+    for _ in 0..6 {
+        assert!(limits.check("write.interact").is_ok());
+    }
+    assert!(limits.check("write.interact").is_err());
+    // 读桶独立
+    assert!(limits.check("read").is_ok());
+}
+
+#[test]
+fn write_dedupe_caches_by_tool_account_and_request_id() {
+    use super::write::WriteDedupe;
+    let dedupe = WriteDedupe::new();
+    let value = serde_json::json!({ "code": 200, "data": { "feedId": "1" } });
+    let key = WriteDedupe::key("coolapk_publish_feed", Some("u1"), "req-1");
+    dedupe.store(key.clone(), &value);
+    assert_eq!(dedupe.get(&key), Some(value));
+    assert!(dedupe.get(&WriteDedupe::key("coolapk_publish_feed", Some("u2"), "req-1")).is_none());
+    assert!(dedupe.get(&WriteDedupe::key("coolapk_reply_feed", Some("u1"), "req-1")).is_none());
+    assert!(dedupe.get(&WriteDedupe::key("coolapk_publish_feed", Some("u1"), "req-2")).is_none());
+}
+
+#[test]
+fn write_dedupe_expires_after_ttl() {
+    use super::write::WriteDedupe;
+    use std::time::Duration;
+    let dedupe = WriteDedupe::with_ttl(Duration::from_millis(20));
+    let key = WriteDedupe::key("coolapk_publish_feed", Some("u1"), "req-ttl");
+    dedupe.store(key.clone(), &serde_json::json!({ "ok": true }));
+    std::thread::sleep(Duration::from_millis(40));
+    assert!(dedupe.get(&key).is_none());
+}
+
+#[test]
+fn write_parse_publish_rejects_invalid_visible_status() {
+    let args = serde_json::json!({ "message": "正文", "visibleStatus": 0 });
+    let error = super::write::parse_publish_args(&args).unwrap_err();
+    assert!(error.message().contains("可见"), "实际错误：{}", error.message());
+}
+
 #[tokio::test]
 async fn mcp_requires_token() {
     let ctx = test_ctx("mcp-no-token", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
@@ -320,6 +662,54 @@ async fn mcp_every_listed_tool_dispatches() {
 }
 
 /// MCP 全部走 POST，不能因此被 REST 的「写操作 1 次/分钟」限流误伤。
+#[tokio::test]
+async fn mcp_write_tools_follow_scope() {
+    let write_scope = write_ctx("mcp-write-tools", AgentBridgeWriteMode::DryRun);
+    let (_, listed) = mcp_send(&write_scope, serde_json::json!({ "jsonrpc": "2.0", "id": 20, "method": "tools/list" })).await;
+    assert!(tool_names(&listed).contains(&"coolapk_publish_feed".to_string()));
+
+    let read_only = test_ctx("mcp-read-only-tools", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
+    let (_, listed) = mcp_send(&read_only, serde_json::json!({ "jsonrpc": "2.0", "id": 21, "method": "tools/list" })).await;
+    assert!(!tool_names(&listed).contains(&"coolapk_publish_feed".to_string()));
+}
+
+#[tokio::test]
+async fn mcp_publish_dry_run_returns_preview() {
+    let ctx = write_ctx("mcp-publish-dry-run", AgentBridgeWriteMode::DryRun);
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": { "name": "coolapk_publish_feed", "arguments": { "message": "预览正文" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], false);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(r#""dryRun":true"#), "{text}");
+    assert!(text.contains("预览正文"), "{text}");
+}
+
+#[tokio::test]
+async fn mcp_publish_respects_write_gate() {
+    let ctx = write_ctx("mcp-publish-disabled", AgentBridgeWriteMode::Disabled);
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "tools/call",
+            "params": { "name": "coolapk_publish_feed", "arguments": { "message": "正文" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], true);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("写操作已禁用"), "{text}");
+}
+
 #[tokio::test]
 async fn mcp_post_is_not_rate_limited_as_write() {
     let ctx = test_ctx("mcp-rate", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);

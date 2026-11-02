@@ -72,7 +72,7 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">读取内容</span>
-          <span class="row-sub">动态、评论、用户、话题、搜索、通知的只读访问</span>
+          <span class="row-sub">动态、评论、用户、话题、搜索的只读访问</span>
         </div>
         <AppSwitch v-model="readEnabled" :disabled="busy" />
       </div>
@@ -90,9 +90,9 @@
         </div>
         <AppSwitch v-model="interactEnabled" :disabled="busy" />
       </div>
-      <p v-if="status.enabled" class="tray-tip">
+      <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        修改授权范围后需要关闭再重新开启服务才会生效。
+        写授权覆盖点赞、取消点赞、关注、取消关注；发帖工具目前只支持 dry-run 预览，评论工具尚未提供。修改授权范围后需要关闭再重新开启服务。
       </p>
     </div>
 
@@ -124,6 +124,10 @@
           <option value="auto">直接执行</option>
         </select>
       </div>
+      <p class="tray-tip">
+        <i class="fas fa-lock"></i>
+        点赞、关注等互动工具会按此处的闸门执行；发帖的 confirm / auto 提交尚未接入，目前只能 dry-run 预览。
+      </p>
     </div>
 
     <div class="setting-group">
