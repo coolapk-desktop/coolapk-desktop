@@ -199,11 +199,6 @@ pub fn token_matches(expected: &str, provided: &str) -> bool {
     diff == 0
 }
 
-pub fn load_config(dir: &Path) -> Option<AgentBridgeConfig> {
-    let text = std::fs::read_to_string(config_path(dir)).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
 /// 写入配置文件；unix 下收紧为 0600，避免同机其他用户读取 token。
 pub fn save_config(dir: &Path, config: &AgentBridgeConfig) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("无法创建应用数据目录: {e}"))?;
