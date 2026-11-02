@@ -108,11 +108,25 @@ pub struct AgentBridgeConfig {
     /// 允许 agent 使用的账号 uid；空表示只允许当前登录账号。
     #[serde(default)]
     pub allowed_accounts: Vec<String>,
+    /// 是否同时开启 MCP 门面（独立回环端口，/mcp 路径）。
+    #[serde(default)]
+    pub mcp_enabled: bool,
+    /// MCP 服务监听的回环端口；mcp_enabled 为 false 时为空。
+    #[serde(default)]
+    pub mcp_port: Option<u16>,
 }
 
 impl AgentBridgeConfig {
     pub fn scope_set(&self) -> std::collections::BTreeSet<AgentBridgeScope> {
         self.scopes.iter().copied().collect()
+    }
+
+    /// MCP 客户端应连接的地址；总是走 TCP 回环，Unix Socket 无法直接被 MCP 客户端使用。
+    pub fn mcp_endpoint(&self) -> Option<String> {
+        if !self.mcp_enabled {
+            return None;
+        }
+        self.mcp_port.map(|port| format!("http://127.0.0.1:{port}/mcp"))
     }
 
     pub fn endpoint(&self) -> String {

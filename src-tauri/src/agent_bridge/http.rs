@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
-use axum::http::{header, Method, StatusCode};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -15,6 +15,7 @@ use tauri::Manager;
 
 use super::audit::AuditSink;
 use super::config::{token_matches, AgentBridgeConfig, AgentBridgeScope, AgentBridgeTransport};
+use super::ops;
 use crate::coolapk::commands::AppState;
 
 /// 浏览器/网页发起的请求必须被拒绝，避免本地服务被 CSRF 或 DNS rebinding 利用。
@@ -111,29 +112,53 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+    pub(super) fn new(status: StatusCode, message: impl Into<String>) -> Self {
         Self { status, message: message.into(), retryable: false, retry_after: None, error_code: None }
     }
 
-    fn unauthorized(message: impl Into<String>) -> Self {
+    pub(super) fn unauthorized(message: impl Into<String>) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, message)
     }
 
-    fn forbidden(message: impl Into<String>) -> Self {
+    pub(super) fn forbidden(message: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, message)
     }
 
-    fn rate_limited(retry_after: u64) -> Self {
+    pub(super) fn rate_limited(retry_after: u64) -> Self {
         Self { retry_after: Some(retry_after), retryable: true, ..Self::new(StatusCode::TOO_MANY_REQUESTS, "请求过于频繁，请稍后重试") }
     }
 
     /// 酷安要求人工验证码：不能自动重试，必须由应用内用户完成。
-    fn captcha() -> Self {
+    pub(super) fn captcha() -> Self {
         Self {
             error_code: Some("captcha_required"),
             retryable: false,
             ..Self::new(StatusCode::PRECONDITION_REQUIRED, "需要人工完成酷安验证码，请在应用内处理后重试")
         }
+    }
+
+    pub(super) fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, message)
+    }
+
+    pub(super) fn service_unavailable() -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用")
+    }
+
+    pub(super) fn status_code(&self) -> u16 {
+        self.status.as_u16()
+    }
+
+    pub(super) fn message(&self) -> &str {
+        self.message.as_str()
+    }
+
+    pub(super) fn retryable(&self) -> bool {
+        self.retryable
+    }
+
+    pub(super) fn error_code(&self) -> Option<&'static str> {
+        self.error_code
     }
 
     /// 把 CoolapkClient 的 Err(String) 转成 HTTP 语义。
@@ -204,31 +229,45 @@ impl FromRequestParts<Arc<BridgeCtx>> for Auth {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, ctx: &Arc<BridgeCtx>) -> Result<Self, Self::Rejection> {
-        let config = ctx.config.read().map_err(|_| ApiError::unauthorized("Agent 接口状态异常"))?;
-        if config.transport == AgentBridgeTransport::Tcp {
-            check_loopback_host(&parts.headers)?;
-        }
-        check_origin(&parts.headers)?;
-
-        let provided = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| ApiError::unauthorized("缺少 Authorization: Bearer <token>"))?;
-        if !token_matches(&config.token, provided) {
-            return Err(ApiError::unauthorized("token 无效"));
-        }
-
+        let auth = authorize(ctx, &parts.headers)?;
+        // REST 侧按方法区分读写限流；MCP 全部走 POST，由工具表决定限流类别。
         let class = if parts.method == Method::POST { "write" } else { "read" };
         ctx.limits.check(class).map_err(ApiError::rate_limited)?;
-        Ok(Self { scopes: config.scope_set() })
+        Ok(auth)
     }
 }
 
-fn check_loopback_host(headers: &axum::http::HeaderMap) -> Result<(), ApiError> {
+/// 校验 Host / Origin / token，返回授权范围；不含限流，供 REST 与 MCP 复用。
+pub(super) fn authorize(ctx: &Arc<BridgeCtx>, headers: &HeaderMap) -> Result<Auth, ApiError> {
+    authorize_inner(ctx, headers, false)
+}
+
+/// MCP 端点永远走 TCP 回环，即使 REST 侧用的是 Unix Socket 也必须校验 Host。
+pub(super) fn authorize_tcp(ctx: &Arc<BridgeCtx>, headers: &HeaderMap) -> Result<Auth, ApiError> {
+    authorize_inner(ctx, headers, true)
+}
+
+fn authorize_inner(ctx: &Arc<BridgeCtx>, headers: &HeaderMap, require_host: bool) -> Result<Auth, ApiError> {
+    let config = ctx.config.read().map_err(|_| ApiError::unauthorized("Agent 接口状态异常"))?;
+    if require_host || config.transport == AgentBridgeTransport::Tcp {
+        check_loopback_host(headers)?;
+    }
+    check_origin(headers)?;
+
+    let provided = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::unauthorized("缺少 Authorization: Bearer <token>"))?;
+    if !token_matches(&config.token, provided) {
+        return Err(ApiError::unauthorized("token 无效"));
+    }
+    Ok(Auth { scopes: config.scope_set() })
+}
+
+fn check_loopback_host(headers: &HeaderMap) -> Result<(), ApiError> {
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -237,7 +276,7 @@ fn check_loopback_host(headers: &axum::http::HeaderMap) -> Result<(), ApiError> 
     if valid { Ok(()) } else { Err(ApiError::forbidden("只接受本机回环地址的请求")) }
 }
 
-fn check_origin(headers: &axum::http::HeaderMap) -> Result<(), ApiError> {
+fn check_origin(headers: &HeaderMap) -> Result<(), ApiError> {
     // 任何带 Origin 的跨界请求一律拒绝；本地 agent 不使用浏览器，不需要 CORS。
     if let Some(origin) = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()) {
         if !ALLOWED_ORIGINS.contains(&origin) {
@@ -255,11 +294,8 @@ fn envelope(value: Value) -> Value {
     }
 }
 
-fn client_result(result: Result<Value, String>) -> Result<Json<Value>, ApiError> {
-    match result {
-        Ok(value) => Ok(Json(envelope(value))),
-        Err(error) => Err(ApiError::from_client_error(error)),
-    }
+fn ops_result(result: Result<Value, ApiError>) -> Result<Json<Value>, ApiError> {
+    result.map(|value| Json(envelope(value)))
 }
 
 pub fn build_router(ctx: Arc<BridgeCtx>) -> Router {
@@ -275,7 +311,7 @@ pub fn build_router(ctx: Arc<BridgeCtx>) -> Router {
         .with_state(ctx)
 }
 
-fn audit(ctx: &BridgeCtx, scope: &str, route: &str, ok: bool) {
+pub(super) fn audit(ctx: &BridgeCtx, scope: &str, route: &str, ok: bool) {
     let account = ctx
         .config
         .read()
@@ -292,43 +328,10 @@ fn audit(ctx: &BridgeCtx, scope: &str, route: &str, ok: bool) {
 }
 
 async fn health(State(ctx): State<Arc<BridgeCtx>>, auth: Auth) -> Result<Json<Value>, ApiError> {
-    let scopes: Vec<&str> = auth.scopes.iter().map(|scope| scope.as_str()).collect();
-    let (transport, endpoint, write_mode) = {
-        let config = ctx.config.read().map_err(|_| ApiError::unauthorized("Agent 接口状态异常"))?;
-        (config.transport.as_str(), config.endpoint(), config.write_mode.as_str())
-    };
-    let account = match ctx.app_state() {
-        Some(state) if state.client.get_user_cookie().is_some() => {
-            let uid = state.client.current_uid().unwrap_or_default();
-            let username = state
-                .client
-                .list_accounts()
-                .await
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("data")
-                        .and_then(Value::as_array)
-                        .and_then(|list| list.iter().find(|item| item.get("uid").and_then(Value::as_str) == Some(uid.as_str())).cloned())
-                })
-                .and_then(|item| item.get("username").and_then(Value::as_str).map(str::to_string))
-                .unwrap_or_default();
-            json!({ "uid": uid, "username": username })
-        }
-        _ => Value::Null,
-    };
     Ok(Json(json!({
         "code": 200,
         "message": "",
-        "data": {
-            "version": env!("CARGO_PKG_VERSION"),
-            "transport": transport,
-            "endpoint": endpoint,
-            "writeMode": write_mode,
-            "scopes": scopes,
-            "account": account,
-            "limits": { "readPerMinute": 60, "writePerMinute": 1, "writePerHour": 10 },
-        }
+        "data": ops::health(&ctx, &auth.scopes).await?,
     })))
 }
 
@@ -359,19 +362,16 @@ struct SearchQuery {
 
 async fn me(State(ctx): State<Arc<BridgeCtx>>, auth: Auth) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
-    let uid = state.client.current_uid().ok_or_else(|| ApiError::unauthorized("当前未登录"))?;
-    let result = state.client.get_my_profile(&uid).await;
+    let result = ops::me(&ctx).await;
     audit(&ctx, "read", "GET /v1/me", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }
 
 async fn feed_detail(State(ctx): State<Arc<BridgeCtx>>, auth: Auth, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
-    let result = state.client.get_feed_detail(&id, None, None).await;
+    let result = ops::feed_detail(&ctx, &id).await;
     audit(&ctx, "read", "GET /v1/feed/{id}", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }
 
 async fn feed_replies(
@@ -381,29 +381,18 @@ async fn feed_replies(
     Query(query): Query<RepliesQuery>,
 ) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
     let page = query.page.unwrap_or(1).max(1);
     let list_type = query.list_type.unwrap_or_else(|| "lastupdate_desc".to_string());
-    let result = state.client.get_feed_replies_paged(&id, page, "", "", &list_type, 0).await;
+    let result = ops::feed_replies(&ctx, &id, page, &list_type).await;
     audit(&ctx, "read", "GET /v1/feed/{id}/replies", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }
 
 async fn user_profile(State(ctx): State<Arc<BridgeCtx>>, auth: Auth, Path(uid): Path<String>) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
-    let result = match state.client.get_user_profile(&uid).await {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            if state.client.get_user_cookie().is_some() {
-                Err(error)
-            } else {
-                state.client.get_public_user_profile(&uid).await
-            }
-        }
-    };
+    let result = ops::user_profile(&ctx, &uid).await;
     audit(&ctx, "read", "GET /v1/user/{uid}", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }
 
 async fn user_feeds(
@@ -413,20 +402,18 @@ async fn user_feeds(
     Query(query): Query<UserFeedsQuery>,
 ) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
     let page = query.page.unwrap_or(1).max(1);
     let feed_type = query.feed_type.unwrap_or_default();
-    let result = state.client.get_user_feeds(&uid, page, &feed_type).await;
+    let result = ops::user_feeds(&ctx, &uid, page, &feed_type).await;
     audit(&ctx, "read", "GET /v1/user/{uid}/feeds", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }
 
 async fn topic_detail(State(ctx): State<Arc<BridgeCtx>>, auth: Auth, Path(tag): Path<String>) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
-    let result = state.client.get_topic_detail(&tag).await;
+    let result = ops::topic_detail(&ctx, &tag).await;
     audit(&ctx, "read", "GET /v1/topic/{tag}", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }
 
 async fn search(
@@ -435,21 +422,9 @@ async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     auth.require(AgentBridgeScope::Read)?;
-    let state = ctx.app_state().ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "应用状态不可用"))?;
-    let keyword = query.q.trim();
-    if keyword.is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "q 不能为空"));
-    }
     let page = query.page.unwrap_or(1).max(1);
     let search_type = query.search_type.unwrap_or_else(|| "all".to_string());
-    let result = if search_type == "all" || search_type.is_empty() {
-        state.client.search_all(keyword, page).await
-    } else {
-        state
-            .client
-            .search_by_type(&search_type, keyword, page, "", "", "", "", "", "", 0, "", "")
-            .await
-    };
+    let result = ops::search(&ctx, &query.q, &search_type, page).await;
     audit(&ctx, "read", "GET /v1/search", result.is_ok());
-    client_result(result)
+    ops_result(result)
 }

@@ -117,11 +117,69 @@ print(json.load(urllib.request.urlopen(request)))
 
 ---
 
+## MCP 客户端接入
+
+设置页的「MCP 服务」开关会让桌面端在**另一个本机回环端口**上提供 MCP 端点。它和上面选择的传输方式无关：Unix Socket 不能被 MCP 客户端直接使用，因此 MCP 始终走 TCP 回环，Windows / macOS / Linux 行为一致。
+
+- 端点：`http://127.0.0.1:<端口>/mcp`，端口随机，设置页的「MCP 接入地址」可直接复制。
+- 认证：请求必须带 `Authorization: Bearer <token>`，与 REST 接口共用同一个 token。
+- 协议：MCP Streamable HTTP，只提供 `tools` 能力；不提供服务端推送流（`GET /mcp` 返回 `405`），也不保存会话状态，因此常驻开销只有工具表本身。
+- 开关 MCP 只会重建监听，token、授权范围与写操作闸门保持不变；关闭本地 Agent 接口则 MCP 一并停止。
+
+### 工具列表
+
+| 工具 | 说明 | 授权范围 |
+| --- | --- | --- |
+| `coolapk_health` | 版本、监听地址、MCP 地址、授权范围、当前账号 | 需要 token |
+| `coolapk_me` | 当前登录账号资料 | `read` |
+| `coolapk_search` | 按关键词搜索（`q`，可选 `type`、`page`） | `read` |
+| `coolapk_feed_detail` | 动态详情（`id`） | `read` |
+| `coolapk_feed_replies` | 评论列表（`id`，可选 `page`、`listType`） | `read` |
+| `coolapk_user_profile` | 用户资料（`uid`） | `read` |
+| `coolapk_user_feeds` | 用户动态（`uid`，可选 `page`、`feedType`） | `read` |
+| `coolapk_topic_detail` | 话题详情（`tag`） | `read` |
+
+工具列表会按已勾选的授权范围过滤（例如只勾了「发布内容」时只会看到 `coolapk_health`）。工具与 REST 接口共用同一份业务实现、限流桶和审计文件；工具执行失败时返回 `isError: true` 的文本内容，错误码与 REST 一致（例如 `428` + `captcha_required`）。
+
+### 客户端配置示例
+
+Claude Code：
+
+```bash
+claude mcp add --transport http coolapk http://127.0.0.1:47654/mcp \
+  --header 'Authorization: Bearer <token>'
+```
+
+支持 HTTP transport 的通用 JSON 配置（Claude Desktop、Cursor 等）：
+
+```json
+{
+  "mcpServers": {
+    "coolapk": {
+      "type": "http",
+      "url": "http://127.0.0.1:47654/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+非 Streamable HTTP 的旧客户端（只支持 stdio）需要用 `mcp-remote` 之类的桥接工具把上面的 URL 转成 stdio：
+
+```bash
+npx -y mcp-remote http://127.0.0.1:47654/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+> 端口每次启动应用都会重新分配，token 也会重新生成；请以设置页或 `agent-bridge.json` 中的当前值更新客户端配置。MCP 的调用同样只在本机完成，不会把 token 或请求转发到任何第三方。
+
+---
+
 ## 限制与审计
 
-- **限流**：读取 60 次/分钟；写入（后续版本）1 次/分钟、10 次/小时。超限返回 `429` 并带 `Retry-After`。
+- **限流**：读取 60 次/分钟（REST 与 MCP 的 `tools/call` 共用同一个桶）；写入（后续版本）1 次/分钟、10 次/小时。超限返回 `429` 并带 `Retry-After`，MCP 则在工具结果里返回同样的错误码。
 - **验证码**：酷安要求人工验证时会返回 `428` 与 `"error": "captcha_required"`，需要在本应用内完成拼图，接口不会自动重试或绕过。
-- **审计**：每次调用都会在应用数据目录的 `agent-bridge-audit.jsonl` 追加一行，只记录时间、接口、授权范围、账号与结果，不记录正文和 Cookie。
+- **审计**：每次调用都会在应用数据目录的 `agent-bridge-audit.jsonl` 追加一行，只记录时间、接口（MCP 记为 `MCP <工具名>`）、授权范围、账号与结果，不记录正文和 Cookie。
 - **账号**：默认使用当前登录账号；请求可通过 `X-Coolapk-Account` 指定其他账号，但该账号必须在设置中显式允许。
 
 ---
@@ -144,5 +202,6 @@ print(json.load(urllib.request.urlopen(request)))
 
 - 接口默认关闭，开启后只在本机监听，不提供任何公网访问方式。
 - token 由系统随机数生成，退出应用即失效；「重新生成」会立刻作废旧 token。
+- MCP 与 REST 使用同一套校验：只监听回环、校验 `Host` / `Origin`、必须携带 token；关闭开关后立即停止并吊销 token。
 - 写操作（发帖、评论、点赞）默认禁用，即使开启也默认要求每次在应用内确认。
 - 通过本接口产生的任何操作都会以当前登录账号的身份提交，由此带来的风控或账号风险由使用者自行承担。

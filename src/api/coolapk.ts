@@ -1945,12 +1945,13 @@ export class CoolapkTauriAPI {
     return await invokeNative('agent_bridge_status', {}, { retry: false });
   }
 
-  static async agentBridgeStart(options: { scopes: string[]; transport?: string; writeMode?: string; allowedAccounts?: string[] }) {
+  static async agentBridgeStart(options: { scopes: string[]; transport?: string; writeMode?: string; allowedAccounts?: string[]; mcp?: boolean }) {
     return await invokeNative('agent_bridge_start', {
       scopes: options.scopes,
       transport: options.transport ?? null,
       writeMode: options.writeMode ?? null,
       allowedAccounts: options.allowedAccounts ?? [],
+      mcp: options.mcp ?? null,
     }, { retry: false });
   }
 
@@ -1960,5 +1961,9 @@ export class CoolapkTauriAPI {
 
   static async agentBridgeRotateToken() {
     return await invokeNative('agent_bridge_rotate_token', {}, { retry: false });
+  }
+
+  static async agentBridgeSetMcp(enabled: boolean) {
+    return await invokeNative('agent_bridge_set_mcp', { enabled }, { retry: false });
   }
 }

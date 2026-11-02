@@ -1105,6 +1105,10 @@ pub fn run() {
                         transport: Some("tcp".to_string()),
                         write_mode: Some("disabled".to_string()),
                         allowed_accounts: Vec::new(),
+                        // 调试构建的自动启动同时打开 MCP，便于本地联调；
+                        // 设 COOLAPK_AGENT_BRIDGE_MCP=0 可关闭，用于对照内存占用。
+                        mcp: std::env::var("COOLAPK_AGENT_BRIDGE_MCP").map(|value| value != "0").unwrap_or(true),
+                        token: None,
                     };
                     match agent_bridge::start(handle.clone(), runtime.inner(), options).await {
                         Ok(value) => log::info!(
@@ -1677,6 +1681,7 @@ pub fn run() {
             agent_bridge::agent_bridge_start,
             agent_bridge::agent_bridge_stop,
             agent_bridge::agent_bridge_rotate_token,
+            agent_bridge::agent_bridge_set_mcp,
         ])
         .build(context)
         .expect("error while building tauri application")

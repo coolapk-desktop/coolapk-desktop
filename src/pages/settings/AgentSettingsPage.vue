@@ -39,6 +39,35 @@
     </div>
 
     <div class="setting-group">
+      <h4 class="group-title">MCP 服务</h4>
+      <div class="setting-row">
+        <div class="row-info">
+          <span class="row-label">启用 MCP 服务</span>
+          <span class="row-sub">
+            {{ status.enabled ? '供 Claude Code、Codex 等 MCP 客户端直接调用；开关会重建监听，token 与授权范围保持不变' : '需要先开启上方本地 Agent 接口' }}
+          </span>
+        </div>
+        <AppSwitch
+          :model-value="status.mcpEnabled"
+          :disabled="busy || !status.enabled"
+          @update:model-value="toggleMcp"
+        />
+      </div>
+
+      <div v-if="status.enabled && status.mcpEnabled" class="setting-row">
+        <div class="row-info">
+          <span class="row-label">MCP 接入地址</span>
+          <span class="row-sub mono">{{ status.mcpEndpoint }}</span>
+        </div>
+        <button type="button" class="btn-text" @click="copyText(status.mcpEndpoint || '')">复制</button>
+      </div>
+      <p v-if="status.enabled && status.mcpEnabled" class="tray-tip">
+        <i class="fas fa-info-circle"></i>
+        MCP 固定使用独立的本机回环端口，与上方传输方式无关；服务端只提供工具调用，不提供服务端推送流。
+      </p>
+    </div>
+
+    <div class="setting-group">
       <h4 class="group-title">授权范围</h4>
       <div class="setting-row">
         <div class="row-info">
@@ -125,6 +154,8 @@ type BridgeStatus = {
   token: string;
   scopes: string[];
   writeMode: string;
+  mcpEnabled: boolean;
+  mcpEndpoint?: string | null;
 };
 
 const emptyStatus: BridgeStatus = {
@@ -136,6 +167,8 @@ const emptyStatus: BridgeStatus = {
   token: '',
   scopes: ['read'],
   writeMode: 'disabled',
+  mcpEnabled: false,
+  mcpEndpoint: null,
 };
 
 const status = reactive<BridgeStatus>({ ...emptyStatus });
@@ -163,8 +196,11 @@ const writeModeHint = computed(() => {
 
 const exampleCommand = computed(() => {
   if (!status.enabled) return '开启服务后在这里显示可直接复制的调用示例';
+  if (status.mcpEnabled && status.mcpEndpoint) {
+    return `claude mcp add --transport http coolapk ${status.mcpEndpoint} \\\n  --header 'Authorization: Bearer <token>'`;
+  }
   const target = status.transport === 'uds'
-    ? `--unix-socket '${status.socketPath || '<socket 路径>'} ' http://localhost`
+    ? `--unix-socket '${status.socketPath || '<socket 路径>'}' http://localhost`
     : status.endpoint;
   return `curl ${target}/v1/health \\\n  -H 'Authorization: Bearer <token>'`;
 });
@@ -214,6 +250,21 @@ async function toggleService(enabled: boolean) {
   } catch (error) {
     showToast(enabled ? '开启失败，请查看诊断日志' : '关闭失败，请查看诊断日志', 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_toggle_failed', summarizeDiagnosticError(error));
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggleMcp(enabled: boolean) {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    const response = await CoolapkTauriAPI.agentBridgeSetMcp(enabled);
+    applyStatus(response?.data);
+    showToast(enabled ? 'MCP 服务已开启' : 'MCP 服务已关闭');
+  } catch (error) {
+    showToast('切换 MCP 服务失败，请查看诊断日志', 'error');
+    logDiagnostic('warn', 'settings', 'agent_bridge_mcp_failed', summarizeDiagnosticError(error));
   } finally {
     busy.value = false;
   }

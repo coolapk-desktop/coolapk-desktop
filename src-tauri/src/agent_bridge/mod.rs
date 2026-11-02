@@ -1,11 +1,14 @@
 //! 本地 Agent 接口（Agent Bridge）。
 //!
-//! 在应用进程内复用同一个 CoolapkClient，把少量只读能力以 REST 形式暴露给本机
-//! agent、脚本和 MCP 门面。默认关闭，开启后必须携带 token，写操作另有独立授权与闸门。
+//! 在应用进程内复用同一个 CoolapkClient，把只读能力以 REST 形式暴露给本机
+//! agent、脚本，并在同一进程内提供 MCP 门面。默认关闭，开启后必须携带 token，
+//! 写操作另有独立授权与闸门。
 
 mod audit;
 mod config;
 mod http;
+mod mcp;
+mod ops;
 #[cfg(test)]
 mod tests;
 
@@ -15,7 +18,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
-use tokio::sync::oneshot;
+use tokio::sync::watch;
 
 pub use config::{AgentBridgeConfig, AgentBridgeScope, AgentBridgeTransport, AgentBridgeWriteMode};
 pub use http::{BridgeCtx, Limits};
@@ -29,7 +32,7 @@ pub struct AgentBridgeRuntime {
 
 struct RunningBridge {
     config: AgentBridgeConfig,
-    shutdown: Option<oneshot::Sender<()>>,
+    shutdown: Option<watch::Sender<bool>>,
     dir: PathBuf,
 }
 
@@ -44,6 +47,12 @@ pub struct StartOptions {
     pub write_mode: Option<String>,
     #[serde(default)]
     pub allowed_accounts: Vec<String>,
+    /// 同时开启 MCP 门面。
+    #[serde(default)]
+    pub mcp: bool,
+    /// 内部使用：保留旧 token 重启（前端不传该字段，rotate 时传 None 换新）。
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 fn default_transport() -> AgentBridgeTransport {
@@ -89,23 +98,21 @@ fn status_value(running: Option<&RunningBridge>) -> Value {
                     "scopes": config.scopes.iter().map(|scope| scope.as_str()).collect::<Vec<_>>(),
                     "writeMode": config.write_mode.as_str(),
                     "allowedAccounts": config.allowed_accounts,
+                    "mcpEnabled": config.mcp_enabled,
+                    "mcpEndpoint": config.mcp_endpoint(),
+                    "mcpPort": config.mcp_port,
                 }
             })
         }
         None => json!({
             "code": 200,
             "message": "",
-            "data": { "enabled": false }
+            "data": { "enabled": false, "mcpEnabled": false, "mcpEndpoint": null }
         }),
     }
 }
 
 pub async fn start(app: AppHandle, runtime: &AgentBridgeRuntime, options: StartOptions) -> Result<Value, String> {
-    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
-    std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建应用数据目录: {error}"))?;
-
-    stop_running(&runtime.running);
-
     let transport = match options.transport.as_deref() {
         Some(value) => AgentBridgeTransport::parse(value).ok_or_else(|| format!("未知传输方式：{value}"))?,
         None => default_transport(),
@@ -114,21 +121,46 @@ pub async fn start(app: AppHandle, runtime: &AgentBridgeRuntime, options: StartO
         Some(value) => AgentBridgeWriteMode::parse(value).ok_or_else(|| format!("未知写入模式：{value}"))?,
         None => AgentBridgeWriteMode::Confirm,
     };
+    let token = match options.token {
+        Some(token) if !token.is_empty() => token,
+        _ => config::generate_token()?,
+    };
 
-    let mut config = AgentBridgeConfig {
+    let config = AgentBridgeConfig {
         version: 1,
         transport,
         socket_path: None,
         port: None,
-        token: config::generate_token()?,
+        token,
         scopes: parse_scopes(&options.scopes)?,
         write_mode,
         allowed_accounts: options.allowed_accounts.clone(),
+        mcp_enabled: options.mcp,
+        mcp_port: None,
     };
+    start_with_config(app, runtime, config).await
+}
 
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+/// 按给定配置绑定监听并启动服务；token 由调用方决定是否保留。
+async fn start_with_config(
+    app: AppHandle,
+    runtime: &AgentBridgeRuntime,
+    mut config: AgentBridgeConfig,
+) -> Result<Value, String> {
+    let dir = app.path().app_data_dir().map_err(|error| format!("无法获取应用数据目录: {error}"))?;
+    std::fs::create_dir_all(&dir).map_err(|error| format!("无法创建应用数据目录: {error}"))?;
 
-    match transport {
+    stop_running(&runtime.running);
+
+    let (shutdown_tx, _shutdown_guard) = watch::channel(false);
+
+    enum RestListener {
+        #[cfg(unix)]
+        Uds(tokio::net::UnixListener),
+        Tcp(tokio::net::TcpListener),
+    }
+
+    let rest = match config.transport {
         AgentBridgeTransport::Uds => {
             #[cfg(unix)]
             {
@@ -140,17 +172,8 @@ pub async fn start(app: AppHandle, runtime: &AgentBridgeRuntime, options: StartO
                 let listener = tokio::net::UnixListener::bind(&path).map_err(|error| format!("无法创建 socket: {error}"))?;
                 config::set_private_permissions(&path).map_err(|error| format!("无法设置 socket 权限: {error}"))?;
                 config.socket_path = Some(path.display().to_string());
-
-                config::save_config(&dir, &config)?;
-                let ctx = build_ctx(&app, &config, &dir);
-                let router = http::build_router(ctx);
-                tauri::async_runtime::spawn(async move {
-                    let _ = axum::serve(listener, router)
-                        .with_graceful_shutdown(async move {
-                            let _ = shutdown_rx.await;
-                        })
-                        .await;
-                });
+                config.port = None;
+                RestListener::Uds(listener)
             }
             #[cfg(not(unix))]
             {
@@ -163,41 +186,101 @@ pub async fn start(app: AppHandle, runtime: &AgentBridgeRuntime, options: StartO
                 .map_err(|error| format!("无法监听回环地址: {error}"))?;
             let address = listener.local_addr().map_err(|error| format!("无法读取监听地址: {error}"))?;
             config.port = Some(address.port());
+            config.socket_path = None;
+            RestListener::Tcp(listener)
+        }
+    };
 
-            config::save_config(&dir, &config)?;
-            let ctx = build_ctx(&app, &config, &dir);
-            let router = http::build_router(ctx);
+    // MCP 总是独立监听回环端口：Unix Socket 无法被 MCP 客户端直接使用，Windows 也没有 UDS。
+    let mcp_listener = if config.mcp_enabled {
+        let bound = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await;
+        match bound {
+            Ok(listener) => {
+                let port = listener
+                    .local_addr()
+                    .map_err(|error| format!("无法读取 MCP 监听地址: {error}"))?
+                    .port();
+                config.mcp_port = Some(port);
+                Some(listener)
+            }
+            Err(error) => {
+                if let Some(path) = config.socket_path.as_deref() {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(format!("无法为 MCP 服务监听回环地址: {error}"));
+            }
+        }
+    } else {
+        config.mcp_port = None;
+        None
+    };
+
+    if let Err(error) = config::save_config(&dir, &config) {
+        if let Some(path) = config.socket_path.as_deref() {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(error);
+    }
+
+    let ctx = Arc::new(BridgeCtx {
+        app: Some(app.clone()),
+        state: None,
+        config: Arc::new(RwLock::new(config.clone())),
+        audit: AuditSink::new(&dir),
+        limits: Limits::new(),
+    });
+
+    let router = http::build_router(Arc::clone(&ctx));
+    let mut rest_shutdown = shutdown_tx.subscribe();
+    match rest {
+        #[cfg(unix)]
+        RestListener::Uds(listener) => {
             tauri::async_runtime::spawn(async move {
                 let _ = axum::serve(listener, router)
                     .with_graceful_shutdown(async move {
-                        let _ = shutdown_rx.await;
+                        let _ = rest_shutdown.changed().await;
+                    })
+                    .await;
+            });
+        }
+        RestListener::Tcp(listener) => {
+            tauri::async_runtime::spawn(async move {
+                let _ = axum::serve(listener, router)
+                    .with_graceful_shutdown(async move {
+                        let _ = rest_shutdown.changed().await;
                     })
                     .await;
             });
         }
     }
 
-    let value = status_value(Some(&RunningBridge { config: config.clone(), shutdown: None, dir: dir.clone() }));
+    if let Some(listener) = mcp_listener {
+        let mcp_router = mcp::build_router(ctx);
+        let mut mcp_shutdown = shutdown_tx.subscribe();
+        tauri::async_runtime::spawn(async move {
+            let _ = axum::serve(listener, mcp_router)
+                .with_graceful_shutdown(async move {
+                    let _ = mcp_shutdown.changed().await;
+                })
+                .await;
+        });
+    }
+
+    let value = status_value(Some(&RunningBridge {
+        config: config.clone(),
+        shutdown: None,
+        dir: dir.clone(),
+    }));
     let mut guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
     *guard = Some(RunningBridge { config, shutdown: Some(shutdown_tx), dir });
     Ok(value)
-}
-
-fn build_ctx(app: &AppHandle, config: &AgentBridgeConfig, dir: &std::path::Path) -> Arc<BridgeCtx> {
-    Arc::new(BridgeCtx {
-        app: Some(app.clone()),
-        state: None,
-        config: Arc::new(RwLock::new(config.clone())),
-        audit: AuditSink::new(dir),
-        limits: Limits::new(),
-    })
 }
 
 fn stop_running(running: &Mutex<Option<RunningBridge>>) {
     let Ok(mut guard) = running.lock() else { return };
     if let Some(mut bridge) = guard.take() {
         if let Some(shutdown) = bridge.shutdown.take() {
-            let _ = shutdown.send(());
+            let _ = shutdown.send(true);
         }
         if let Some(socket_path) = bridge.config.socket_path.as_deref() {
             let _ = std::fs::remove_file(socket_path);
@@ -232,12 +315,15 @@ pub async fn agent_bridge_start(
     transport: Option<String>,
     write_mode: Option<String>,
     allowed_accounts: Option<Vec<String>>,
+    mcp: Option<bool>,
 ) -> Result<Value, String> {
     let options = StartOptions {
         scopes: scopes.unwrap_or_else(|| vec!["read".to_string()]),
         transport,
         write_mode,
         allowed_accounts: allowed_accounts.unwrap_or_default(),
+        mcp: mcp.unwrap_or(false),
+        token: None,
     };
     start(app, &runtime, options).await
 }
@@ -261,9 +347,29 @@ pub async fn agent_bridge_rotate_token(
                 transport: Some(bridge.config.transport.as_str().to_string()),
                 write_mode: Some(bridge.config.write_mode.as_str().to_string()),
                 allowed_accounts: bridge.config.allowed_accounts.clone(),
+                mcp: bridge.config.mcp_enabled,
+                token: None,
             },
             None => return Ok(status_value(None)),
         }
     };
     start(app, &runtime, options).await
+}
+
+/// 单独开关 MCP 门面：只重建监听，保留现有 token、授权范围与写操作闸门。
+#[tauri::command]
+pub async fn agent_bridge_set_mcp(
+    app: AppHandle,
+    runtime: State<'_, AgentBridgeRuntime>,
+    enabled: bool,
+) -> Result<Value, String> {
+    let config = {
+        let guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
+        guard.as_ref().map(|bridge| bridge.config.clone())
+    };
+    let Some(mut config) = config else {
+        return Ok(status_value(None));
+    };
+    config.mcp_enabled = enabled;
+    start_with_config(app, &runtime, config).await
 }

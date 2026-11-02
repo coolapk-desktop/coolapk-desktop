@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   rotate: vi.fn(),
+  setMcp: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -15,6 +16,7 @@ vi.mock('../../../api/coolapk', () => ({
     agentBridgeStart: mocks.start,
     agentBridgeStop: mocks.stop,
     agentBridgeRotateToken: mocks.rotate,
+    agentBridgeSetMcp: mocks.setMcp,
   },
 }));
 vi.mock('../../../utils/toast', () => ({ showToast: mocks.toast }));
@@ -39,6 +41,20 @@ describe('AgentSettingsPage', () => {
       },
     });
     mocks.stop.mockResolvedValue({ code: 200, data: { enabled: false } });
+    mocks.setMcp.mockResolvedValue({
+      code: 200,
+      data: {
+        enabled: true,
+        transport: 'uds',
+        endpoint: '/tmp/agent-bridge.sock',
+        socketPath: '/tmp/agent-bridge.sock',
+        token: 'abc123',
+        scopes: ['read'],
+        writeMode: 'disabled',
+        mcpEnabled: true,
+        mcpEndpoint: 'http://127.0.0.1:45678/mcp',
+      },
+    });
   });
 
   it('关闭状态不展示 token 与接入地址', async () => {
@@ -67,5 +83,29 @@ describe('AgentSettingsPage', () => {
     expect(toggle).toBeTruthy();
     await toggle!.trigger('click');
     expect(wrapper.text()).toContain('abc123');
+  });
+
+  it('MCP 开关默认关闭，开启后展示接入地址与客户端示例', async () => {
+    const wrapper = mount(AgentSettingsPage);
+    await flushPromises();
+    await wrapper.find('.app-switch input').setValue(true);
+    await flushPromises();
+
+    const switches = wrapper.findAll('.app-switch input');
+    expect(switches.length).toBeGreaterThanOrEqual(2);
+    await switches[1].setValue(true);
+    await flushPromises();
+
+    expect(mocks.setMcp).toHaveBeenCalledWith(true);
+    expect(wrapper.text()).toContain('http://127.0.0.1:45678/mcp');
+    expect(wrapper.text()).toContain('claude mcp add --transport http coolapk');
+  });
+
+  it('服务未开启时 MCP 开关不可用', async () => {
+    const wrapper = mount(AgentSettingsPage);
+    await flushPromises();
+    const switches = wrapper.findAll('.app-switch input');
+    expect(switches.length).toBeGreaterThanOrEqual(2);
+    expect((switches[1].element as HTMLInputElement).disabled).toBe(true);
   });
 });
