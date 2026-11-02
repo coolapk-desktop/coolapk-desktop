@@ -4,8 +4,12 @@
 //! 大小、可见范围、幂等 requestId。真正的执行闸门（disabled / dry-run / confirm /
 //! auto）在后续任务接入。
 
+use std::sync::Mutex;
+use std::time::Duration;
+
 use base64::Engine;
 use serde_json::{json, Value};
+use tokio::sync::oneshot;
 
 use super::config::AgentBridgeWriteMode;
 use super::http::{audit_write, ApiError, BridgeCtx};
@@ -244,6 +248,65 @@ pub(super) async fn execute(ctx: &BridgeCtx, call: WriteCall) -> Result<Value, A
             audit_write(ctx, call.tool(), call.scope(), false, details);
             Err(ApiError::write_not_implemented())
         }
+    }
+}
+
+/// confirm 模式的一次性确认通道：同一时刻只保留一个待确认请求。
+///
+/// 应用窗口最小化/隐藏时不会自动抢焦点，超时即按拒绝处理；迟到的结果会被忽略。
+#[derive(Default)]
+pub(super) struct ConfirmBroker {
+    pending: Mutex<Option<PendingConfirm>>,
+}
+
+struct PendingConfirm {
+    id: String,
+    tx: oneshot::Sender<bool>,
+}
+
+impl ConfirmBroker {
+    /// 注册请求并触发 `emit`，等待用户结果；超时、通道关闭或请求被新请求替换都返回 false。
+    pub(super) async fn request<F>(&self, id: &str, timeout: Duration, emit: F) -> bool
+    where
+        F: FnOnce(),
+    {
+        let (tx, rx) = oneshot::channel();
+        {
+            let Ok(mut pending) = self.pending.lock() else {
+                return false;
+            };
+            if let Some(previous) = pending.take() {
+                let _ = previous.tx.send(false);
+            }
+            *pending = Some(PendingConfirm { id: id.to_string(), tx });
+        }
+        emit();
+        let approved = tokio::time::timeout(timeout, rx)
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false);
+        if let Ok(mut pending) = self.pending.lock() {
+            if pending.as_ref().is_some_and(|item| item.id == id) {
+                pending.take();
+            }
+        }
+        approved
+    }
+
+    /// 由前端回传确认结果；返回 false 表示请求已超时/已结束或 id 不匹配。
+    pub(super) fn resolve(&self, id: &str, approved: bool) -> bool {
+        let Ok(mut pending) = self.pending.lock() else {
+            return false;
+        };
+        let matches = pending.as_ref().is_some_and(|item| item.id == id);
+        if !matches {
+            return false;
+        }
+        if let Some(item) = pending.take() {
+            let _ = item.tx.send(approved);
+        }
+        true
     }
 }
 

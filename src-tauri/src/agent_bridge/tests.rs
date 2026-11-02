@@ -373,6 +373,78 @@ async fn write_gate_confirm_and_auto_are_not_wired_yet() {
     }
 }
 
+#[tokio::test]
+async fn confirm_broker_resolves_approval() {
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = emitted.clone();
+    let waiting = tokio::spawn(async move {
+        worker.request("id-1", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    emitted.notified().await;
+
+    assert!(broker.resolve("id-1", true));
+    assert!(waiting.await.unwrap());
+    // 同一次请求不能重复结算
+    assert!(!broker.resolve("id-1", true));
+}
+
+#[tokio::test]
+async fn confirm_broker_denies_and_times_out() {
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    // 用户拒绝
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = emitted.clone();
+    let waiting = tokio::spawn(async move {
+        worker.request("id-deny", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    emitted.notified().await;
+    assert!(broker.resolve("id-deny", false));
+    assert!(!waiting.await.unwrap());
+
+    // 超时未回应：迟到结果被忽略
+    let broker = super::write::ConfirmBroker::default();
+    assert!(!broker.request("id-timeout", Duration::from_millis(30), || {}).await);
+    assert!(!broker.resolve("id-timeout", true));
+}
+
+#[tokio::test]
+async fn confirm_broker_replacement_rejects_previous_request() {
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let first_emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = first_emitted.clone();
+    let first = tokio::spawn(async move {
+        worker.request("id-a", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    first_emitted.notified().await;
+
+    let second_emitted = Arc::new(Notify::new());
+    let worker = broker.clone();
+    let notify = second_emitted.clone();
+    let second = tokio::spawn(async move {
+        worker.request("id-b", Duration::from_secs(2), || notify.notify_one()).await
+    });
+    second_emitted.notified().await;
+
+    // 旧请求被自动拒绝，且不能再被结算
+    assert!(!first.await.unwrap());
+    assert!(!broker.resolve("id-a", true));
+    assert!(broker.resolve("id-b", true));
+    assert!(second.await.unwrap());
+}
+
 #[test]
 fn write_parse_publish_rejects_invalid_visible_status() {
     let args = serde_json::json!({ "message": "正文", "visibleStatus": 0 });

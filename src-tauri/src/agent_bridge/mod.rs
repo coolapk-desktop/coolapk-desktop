@@ -31,6 +31,7 @@ use audit::AuditSink;
 #[derive(Default)]
 pub struct AgentBridgeRuntime {
     running: Mutex<Option<RunningBridge>>,
+    confirm: write::ConfirmBroker,
 }
 
 struct RunningBridge {
@@ -372,6 +373,17 @@ pub async fn agent_bridge_rotate_token(
         }
     };
     start(app, &runtime, options).await
+}
+
+/// 前端回传写操作确认结果；超时/已结束/未知 id 都会被忽略。
+#[tauri::command]
+pub async fn agent_bridge_confirm_result(
+    runtime: State<'_, AgentBridgeRuntime>,
+    id: String,
+    approved: bool,
+) -> Result<Value, String> {
+    let accepted = runtime.confirm.resolve(&id, approved);
+    Ok(json!({ "code": 200, "message": "", "data": { "accepted": accepted } }))
 }
 
 /// 单独开关 MCP 门面：只重建监听，保留现有 token、授权范围与写操作闸门。
