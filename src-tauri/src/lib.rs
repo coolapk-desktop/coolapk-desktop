@@ -1100,10 +1100,22 @@ pub fn run() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let runtime = handle.state::<agent_bridge::AgentBridgeRuntime>();
+                    // 调试联调开关：SCOPES 逗号分隔、WRITE 取 disabled/dry-run/confirm/auto。
+                    let scopes = std::env::var("COOLAPK_AGENT_BRIDGE_SCOPES")
+                        .map(|raw| {
+                            let list: Vec<String> = raw
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|item| !item.is_empty())
+                                .map(str::to_string)
+                                .collect();
+                            if list.is_empty() { vec!["read".to_string()] } else { list }
+                        })
+                        .unwrap_or_else(|_| vec!["read".to_string()]);
                     let options = agent_bridge::StartOptions {
-                        scopes: vec!["read".to_string()],
+                        scopes,
                         transport: Some("tcp".to_string()),
-                        write_mode: Some("disabled".to_string()),
+                        write_mode: std::env::var("COOLAPK_AGENT_BRIDGE_WRITE").ok(),
                         allowed_accounts: Vec::new(),
                         // 调试构建的自动启动同时打开 MCP，便于本地联调；
                         // 设 COOLAPK_AGENT_BRIDGE_MCP=0 可关闭，用于对照内存占用。

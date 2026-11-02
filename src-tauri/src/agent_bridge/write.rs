@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde_json::{json, Value};
+use tauri::Emitter;
 use tokio::sync::oneshot;
 
-use super::config::AgentBridgeWriteMode;
+use super::config::{AgentBridgeScope, AgentBridgeWriteMode};
 use super::http::{audit_write, ApiError, BridgeCtx};
 
 const MAX_MESSAGE_CHARS: usize = 5000;
@@ -182,27 +183,68 @@ fn sanitize_name(raw: &str, mime: &str) -> String {
     cleaned.to_string()
 }
 
-/// 一次写调用的强类型描述；后续任务按工具增加变体。
+/// 一次写调用的强类型描述。
 pub(super) enum WriteCall {
     Publish(PublishArgs),
+    LikeFeed { feed_id: String, unlike: bool },
+    FollowUser { uid: String, unfollow: bool },
 }
 
 impl WriteCall {
     pub(super) fn tool(&self) -> &'static str {
         match self {
             Self::Publish(_) => "coolapk_publish_feed",
+            Self::LikeFeed { unlike: false, .. } => "coolapk_like_feed",
+            Self::LikeFeed { unlike: true, .. } => "coolapk_unlike_feed",
+            Self::FollowUser { unfollow: false, .. } => "coolapk_follow_user",
+            Self::FollowUser { unfollow: true, .. } => "coolapk_unfollow_user",
         }
     }
 
     pub(super) fn scope(&self) -> &'static str {
         match self {
-            Self::Publish(_) => "write.publish",
+            Self::Publish(_) => AgentBridgeScope::WritePublish.as_str(),
+            Self::LikeFeed { .. } | Self::FollowUser { .. } => AgentBridgeScope::WriteInteract.as_str(),
+        }
+    }
+
+    fn required_scope(&self) -> AgentBridgeScope {
+        match self {
+            Self::Publish(_) => AgentBridgeScope::WritePublish,
+            Self::LikeFeed { .. } | Self::FollowUser { .. } => AgentBridgeScope::WriteInteract,
+        }
+    }
+
+    fn request_id(&self) -> Option<&str> {
+        match self {
+            Self::Publish(args) => args.request_id.as_deref(),
+            _ => None,
         }
     }
 
     fn preview(&self) -> Value {
         match self {
             Self::Publish(args) => preview_publish(args),
+            Self::LikeFeed { feed_id, unlike } => {
+                json!({ "feedId": feed_id, "action": if *unlike { "unlike" } else { "like" } })
+            }
+            Self::FollowUser { uid, unfollow } => {
+                json!({ "uid": uid, "action": if *unfollow { "unfollow" } else { "follow" } })
+            }
+        }
+    }
+
+    fn summary(&self) -> String {
+        match self {
+            Self::Publish(args) => {
+                format!("发布动态：{} 字、{} 张图片", args.message.chars().count(), args.images.len())
+            }
+            Self::LikeFeed { feed_id, unlike } => {
+                format!("{}动态 {feed_id}", if *unlike { "取消点赞" } else { "点赞" })
+            }
+            Self::FollowUser { uid, unfollow } => {
+                format!("{}用户 {uid}", if *unfollow { "取消关注" } else { "关注" })
+            }
         }
     }
 
@@ -214,42 +256,142 @@ impl WriteCall {
                 "imageCount": args.images.len(),
                 "target": Value::Null,
             }),
+            Self::LikeFeed { feed_id, .. } => json!({ "target": feed_id }),
+            Self::FollowUser { uid, .. } => json!({ "target": uid }),
         }
     }
 }
 
-/// 写闸门：disabled 直接拒绝，dry-run 只返回预览；confirm / auto 在后续任务接入。
+const CONFIRM_TIMEOUT_SEC: u64 = 60;
+
+/// 确认超时；debug 构建可用环境变量缩短，便于无头 e2e 验证「拒绝/超时」路径。
+fn confirm_timeout() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Ok(raw) = std::env::var("COOLAPK_AGENT_BRIDGE_CONFIRM_TIMEOUT") {
+        if let Ok(seconds) = raw.trim().parse::<u64>() {
+            if seconds > 0 {
+                return Duration::from_secs(seconds);
+            }
+        }
+    }
+    Duration::from_secs(CONFIRM_TIMEOUT_SEC)
+}
+
+fn confirmation_id() -> Result<String, ApiError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| ApiError::internal("无法生成确认 id"))?;
+    Ok(hex::encode(bytes))
+}
+
+fn account_uid(ctx: &BridgeCtx) -> Option<String> {
+    ctx.app_state().and_then(|state| state.client.current_uid())
+}
+
+/// 写闸门：disabled 拒绝、dry-run 预览、confirm 应用内确认、auto 直接提交。
 pub(super) async fn execute(ctx: &BridgeCtx, call: WriteCall) -> Result<Value, ApiError> {
-    let mode = {
+    let (mode, granted) = {
         let config = ctx
             .config
             .read()
             .map_err(|_| ApiError::unauthorized("Agent 接口状态异常"))?;
-        config.write_mode
+        (config.write_mode, config.scope_set())
     };
+    if !granted.contains(&call.required_scope()) {
+        let mut details = call.audit_details();
+        details["error"] = json!("missing_scope");
+        audit_write(ctx, call.tool(), call.scope(), false, details);
+        return Err(ApiError::forbidden(format!("缺少授权范围：{}", call.scope())));
+    }
+
+    let preview = call.preview();
     match mode {
         AgentBridgeWriteMode::Disabled => {
             let mut details = call.audit_details();
             details["dryRun"] = json!(false);
             details["error"] = json!("write_disabled");
             audit_write(ctx, call.tool(), call.scope(), false, details);
-            Err(ApiError::write_disabled())
+            return Err(ApiError::write_disabled());
         }
         AgentBridgeWriteMode::DryRun => {
-            let preview = call.preview();
             let mut details = call.audit_details();
             details["dryRun"] = json!(true);
             audit_write(ctx, call.tool(), call.scope(), true, details);
-            Ok(json!({ "dryRun": true, "preview": preview }))
+            return Ok(json!({ "dryRun": true, "preview": preview }));
         }
-        AgentBridgeWriteMode::Confirm | AgentBridgeWriteMode::Auto => {
+        AgentBridgeWriteMode::Confirm => {
+            let (Some(app), Some(broker)) = (ctx.app.clone(), ctx.confirm.clone()) else {
+                return Err(ApiError::write_not_implemented());
+            };
+            let id = confirmation_id()?;
+            let timeout = confirm_timeout();
+            let payload = json!({
+                "id": id,
+                "tool": call.tool(),
+                "scope": call.scope(),
+                "summary": call.summary(),
+                "preview": preview,
+                "expiresInSec": timeout.as_secs(),
+            });
+            let approved = broker
+                .request(&id, timeout, || {
+                    let _ = app.emit("agent-bridge:write-confirm", payload);
+                })
+                .await;
+            if !approved {
+                let mut details = call.audit_details();
+                details["dryRun"] = json!(false);
+                details["error"] = json!("write_confirm_denied");
+                audit_write(ctx, call.tool(), call.scope(), false, details);
+                return Err(ApiError::write_confirm_denied());
+            }
+        }
+        AgentBridgeWriteMode::Auto => {}
+    }
+
+    let dedupe_key = call
+        .request_id()
+        .map(|request_id| WriteDedupe::key(call.tool(), account_uid(ctx).as_deref(), request_id));
+    if let (Some(dedupe), Some(key)) = (ctx.dedupe.as_ref(), dedupe_key.as_ref()) {
+        if let Some(cached) = dedupe.get(key) {
             let mut details = call.audit_details();
             details["dryRun"] = json!(false);
-            details["error"] = json!("write_not_implemented");
-            audit_write(ctx, call.tool(), call.scope(), false, details);
-            Err(ApiError::write_not_implemented())
+            details["deduplicated"] = json!(true);
+            audit_write(ctx, call.tool(), call.scope(), true, details);
+            return Ok(json!({ "dryRun": false, "deduplicated": true, "data": cached }));
         }
     }
+
+    match run(ctx, &call).await {
+        Ok(value) => {
+            if let (Some(dedupe), Some(key)) = (ctx.dedupe.as_ref(), dedupe_key) {
+                dedupe.store(key, &value);
+            }
+            let mut details = call.audit_details();
+            details["dryRun"] = json!(false);
+            audit_write(ctx, call.tool(), call.scope(), true, details);
+            Ok(json!({ "dryRun": false, "deduplicated": false, "data": value }))
+        }
+        Err(error) => {
+            let mut details = call.audit_details();
+            details["dryRun"] = json!(false);
+            details["error"] = json!(error.error_code().unwrap_or("write_failed"));
+            audit_write(ctx, call.tool(), call.scope(), false, details);
+            Err(error)
+        }
+    }
+}
+
+async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
+    let state = || ctx.app_state().ok_or_else(ApiError::service_unavailable);
+    let result = match call {
+        // 发帖的执行（含图片上传）在后续任务接入，这里先明确拒绝而不是假装成功。
+        WriteCall::Publish(_) => return Err(ApiError::write_not_implemented()),
+        WriteCall::LikeFeed { feed_id, unlike: false } => state()?.client.like_feed(feed_id).await,
+        WriteCall::LikeFeed { feed_id, unlike: true } => state()?.client.unlike_feed(feed_id).await,
+        WriteCall::FollowUser { uid, unfollow: false } => state()?.client.follow_user(uid).await,
+        WriteCall::FollowUser { uid, unfollow: true } => state()?.client.unfollow_user(uid).await,
+    };
+    result.map_err(ApiError::from_client_error)
 }
 
 /// confirm 模式的一次性确认通道：同一时刻只保留一个待确认请求。

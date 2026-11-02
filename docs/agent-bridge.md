@@ -25,7 +25,7 @@
 5. 需要给 Claude Code、Codex 等客户端用时，再打开「MCP 服务」开关，复制上方的 **MCP 接入地址**。
 6. 关闭开关即可停止服务；token 与端口会保留，下次开启继续可用，只有点「重新生成」才会更换 token。
 
-> 当前写能力只在 dry-run 下可用：`coolapk_publish_feed` 可以预览将提交的正文与图片但不会真正发布；confirm / auto 执行通道以及点赞、关注、评论工具尚未接通，授权范围里的「互动操作」仍属预留。
+> 写能力现状：点赞/取消点赞、关注/取消关注已接通，受下方写操作闸门约束；`coolapk_publish_feed` 目前只支持 dry-run 预览，confirm / auto 的真正提交尚未接入，评论工具也尚未提供。
 
 > token 等同于本机的通行证，只保存在本机应用数据目录的 `agent-bridge-token`（Unix 下权限为 `0600`），重启应用后复用。不要把它写进仓库、截图或聊天记录，也不要交给不受信任的程序。
 
@@ -144,8 +144,10 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_user_feeds` | 用户动态（`uid`，可选 `page`、`feedType`） | `read` |
 | `coolapk_topic_detail` | 话题详情（`tag`） | `read` |
 | `coolapk_publish_feed` | 发布动态（当前仅 dry-run 预览，不真正提交） | `write.publish` |
+| `coolapk_like_feed` / `coolapk_unlike_feed` | 点赞 / 取消点赞（`feedId`） | `write.interact` |
+| `coolapk_follow_user` / `coolapk_unfollow_user` | 关注 / 取消关注（`uid`） | `write.interact` |
 
-工具列表会按已勾选的授权范围过滤（例如只勾了「发布内容」时只会看到 `coolapk_health`）。工具与 REST 接口共用同一份业务实现、限流桶和审计文件；工具执行失败时返回 `isError: true` 的文本内容，错误码与 REST 一致（例如 `428` + `captcha_required`）。
+工具列表会按已勾选的授权范围过滤（例如只勾了「读取内容」时不会出现任何写工具）。工具与 REST 接口共用同一份业务实现、限流桶和审计文件；工具执行失败时返回 `isError: true` 的文本内容，错误码与 REST 一致（例如 `428` + `captcha_required`）。
 
 ### 客户端配置示例
 
@@ -181,11 +183,30 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 
 ---
 
+## 写操作与闸门
+
+写工具与读工具共用同一个客户端、限流桶和审计文件，但多一层「写操作闸门」（设置页「写操作闸门」）：
+
+| 模式 | 行为 |
+| --- | --- |
+| `disabled`（默认） | 拒绝所有写调用，返回 `403` + `error: "write_disabled"` |
+| `dry-run` | 完整校验参数并返回预览（`{ "dryRun": true, "preview": … }`），不调用酷安接口 |
+| `confirm` | 先在应用内弹窗确认（默认 60 秒，超时或拒绝返回 `403 write_confirm_denied`），批准后才提交 |
+| `auto` | 校验通过直接提交，只写审计；由用户显式选择 |
+
+- `confirm` 需要应用窗口在前台（最小化/托盘时不会自动抢焦点，最终按超时拒绝）；同一时刻只保留一个待确认请求，新请求会让旧请求以拒绝结束。
+- 实际提交成功返回 `{ "dryRun": false, "deduplicated": false, "data": … }`。
+- 发帖工具支持可选的 `requestId`：同一 `工具 + 账号 + requestId` 在 5 分钟内重复调用会直接返回上次成功结果（`"deduplicated": true`），用于抵御 MCP 客户端重试导致的重复发布；不传则不去重。
+- 当前只有 `coolapk_publish_feed` 提供 `requestId`；点赞/关注是幂等语义，不需要。
+- 写操作审计在通用字段上追加 `tool`、`target`（feedId/uid）、`dryRun`、`deduplicated`、`error`；发帖另记 `messageChars`、`imageCount`，**不记录正文或图片内容**。
+
+---
+
 ## 限制与审计
 
-- **限流**：读取 60 次/分钟（REST 与 MCP 的 `tools/call` 共用同一个桶）；发布类写操作 1 次/分钟、10 次/小时，互动类 6 次/分钟、60 次/小时（写工具接通后生效）。超限返回 `429` 并带 `Retry-After`，MCP 则在工具结果里返回同样的错误码。
+- **限流**：读取 60 次/分钟（REST 与 MCP 的 `tools/call` 共用同一个桶）；发布类写操作 1 次/分钟、10 次/小时，互动类写操作 6 次/分钟、60 次/小时。超限返回 `429` 并带 `Retry-After`，MCP 则在工具结果里返回同样的错误码。
 - **验证码**：酷安要求人工验证时会返回 `428` 与 `"error": "captcha_required"`，需要在本应用内完成拼图，接口不会自动重试或绕过。
-- **审计**：每次调用都会在应用数据目录的 `agent-bridge-audit.jsonl` 追加一行，只记录时间、接口（MCP 记为 `MCP <工具名>`）、授权范围、账号与结果，不记录正文和 Cookie。
+- **审计**：每次调用都会在应用数据目录的 `agent-bridge-audit.jsonl` 追加一行，只记录时间、接口（MCP 记为 `MCP <工具名>`）、授权范围、账号与结果；写操作另记 `target`、`dryRun`、`deduplicated` 与正文字数/图片数，不记录正文、图片内容和 Cookie。
 - **账号**：只使用应用当前登录的账号；暂不支持通过请求头切换到其他账号（`allowed_accounts` 字段为后续多账号场景预留）。
 
 ---
@@ -209,5 +230,5 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 - 接口默认关闭，开启后只在本机监听，不提供任何公网访问方式。
 - token 由系统随机数生成并保存在本机（Unix 下 0600），重启应用后复用；「重新生成」会立刻作废旧 token。
 - MCP 与 REST 使用同一套校验：只监听回环、校验 `Host` / `Origin`、必须携带 token；关闭开关会立即停止监听，token 保留在本机，需要作废时点「重新生成」。
-- 写操作（发帖、评论、点赞）默认禁用，即使开启也默认要求每次在应用内确认。
+- 写操作默认禁用；`confirm` 模式每次都需要在应用内确认（60 秒超时自动拒绝），`auto` 只应在本机可信环境中显式开启。
 - 通过本接口产生的任何操作都会以当前登录账号的身份提交，由此带来的风控或账号风险由使用者自行承担。

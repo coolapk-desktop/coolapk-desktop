@@ -16,6 +16,7 @@ use tauri::Manager;
 use super::audit::AuditSink;
 use super::config::{token_matches, AgentBridgeConfig, AgentBridgeScope, AgentBridgeTransport};
 use super::ops;
+use super::write::{ConfirmBroker, WriteDedupe};
 use crate::coolapk::commands::AppState;
 
 /// 浏览器/网页发起的请求必须被拒绝，避免本地服务被 CSRF 或 DNS rebinding 利用。
@@ -29,6 +30,9 @@ pub struct BridgeCtx {
     pub config: Arc<RwLock<AgentBridgeConfig>>,
     pub audit: AuditSink,
     pub limits: Limits,
+    /// 写操作确认通道与幂等缓存；测试可注入独立实例。
+    pub(super) confirm: Option<Arc<ConfirmBroker>>,
+    pub(super) dedupe: Option<Arc<WriteDedupe>>,
 }
 
 impl BridgeCtx {
@@ -163,6 +167,19 @@ impl ApiError {
             error_code: Some("write_disabled"),
             ..Self::new(StatusCode::FORBIDDEN, "写操作已禁用，请在设置中调整写操作闸门")
         }
+    }
+
+    /// 用户在应用内拒绝，或确认弹窗超时。
+    pub(super) fn write_confirm_denied() -> Self {
+        Self {
+            error_code: Some("write_confirm_denied"),
+            retryable: true,
+            ..Self::new(StatusCode::FORBIDDEN, "写操作未获确认（用户拒绝或确认超时）")
+        }
+    }
+
+    pub(super) fn internal(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
 
     /// 写闸门的 confirm / auto 执行通道尚未接入（Task 3 之后替换）。

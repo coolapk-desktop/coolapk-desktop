@@ -92,7 +92,7 @@
       </div>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        写授权目前只覆盖 dry-run：发帖工具可以预览将提交的内容但不会真正发布；点赞、关注等写工具尚未提供。修改授权范围后需要关闭再重新开启服务。
+        写授权覆盖点赞、取消点赞、关注、取消关注；发帖工具目前只支持 dry-run 预览，评论工具尚未提供。修改授权范围后需要关闭再重新开启服务。
       </p>
     </div>
 
@@ -126,7 +126,7 @@
       </div>
       <p class="tray-tip">
         <i class="fas fa-lock"></i>
-        写工具目前只支持 dry-run 预览；confirm / auto 的执行通道接通后，此处设置才会真正生效。
+        点赞、关注等互动工具会按此处的闸门执行；发帖的 confirm / auto 提交尚未接入，目前只能 dry-run 预览。
       </p>
     </div>
 

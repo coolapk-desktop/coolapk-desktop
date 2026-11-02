@@ -31,7 +31,8 @@ use audit::AuditSink;
 #[derive(Default)]
 pub struct AgentBridgeRuntime {
     running: Mutex<Option<RunningBridge>>,
-    confirm: write::ConfirmBroker,
+    confirm: Arc<write::ConfirmBroker>,
+    dedupe: Arc<write::WriteDedupe>,
 }
 
 struct RunningBridge {
@@ -236,6 +237,8 @@ async fn start_with_config(
         config: Arc::new(RwLock::new(config.clone())),
         audit: AuditSink::new(&dir),
         limits: Limits::new(),
+        confirm: Some(Arc::clone(&runtime.confirm)),
+        dedupe: Some(Arc::clone(&runtime.dedupe)),
     });
 
     let router = http::build_router(Arc::clone(&ctx));

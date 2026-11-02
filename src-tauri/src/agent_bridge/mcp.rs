@@ -155,6 +155,30 @@ static TOOLS: &[ToolSpec] = &[
         },
     },
     ToolSpec {
+        name: "coolapk_like_feed",
+        description: "点赞一条动态（需要 write.interact 授权，受写操作闸门约束）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
+        name: "coolapk_unlike_feed",
+        description: "取消点赞一条动态（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
+        name: "coolapk_follow_user",
+        description: "关注指定用户（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "uid": { "type": "string", "description": "用户 uid" } }), vec!["uid"]),
+    },
+    ToolSpec {
+        name: "coolapk_unfollow_user",
+        description: "取消关注指定用户（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "uid": { "type": "string", "description": "用户 uid" } }), vec!["uid"]),
+    },
+    ToolSpec {
         name: "coolapk_topic_detail",
         description: "获取话题详情（按话题 tag）。",
         scope: Some(AgentBridgeScope::Read),
@@ -363,6 +387,16 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
         "coolapk_publish_feed" => {
             let publish = write::parse_publish_args(args)?;
             write::execute(ctx, write::WriteCall::Publish(publish)).await
+        }
+        "coolapk_like_feed" | "coolapk_unlike_feed" => {
+            let feed_id = required_arg(args, "feedId", "动态 ID")?;
+            let unlike = name == "coolapk_unlike_feed";
+            write::execute(ctx, write::WriteCall::LikeFeed { feed_id, unlike }).await
+        }
+        "coolapk_follow_user" | "coolapk_unfollow_user" => {
+            let uid = required_arg(args, "uid", "用户 uid")?;
+            let unfollow = name == "coolapk_unfollow_user";
+            write::execute(ctx, write::WriteCall::FollowUser { uid, unfollow }).await
         }
         other => Err(ApiError::bad_request(format!("未知工具：{other}"))),
     }

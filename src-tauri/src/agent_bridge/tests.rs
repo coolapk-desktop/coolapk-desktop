@@ -36,6 +36,8 @@ fn test_ctx(name: &str, scopes: Vec<AgentBridgeScope>, transport: AgentBridgeTra
         })),
         audit: AuditSink::new(&dir),
         limits: Limits::new(),
+        confirm: Some(Arc::new(super::write::ConfirmBroker::default())),
+        dedupe: Some(Arc::new(super::write::WriteDedupe::new())),
     })
 }
 
@@ -304,6 +306,18 @@ fn write_parse_publish_accepts_data_url_and_sanitizes_name() {
 }
 
 fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
+    write_ctx_with_scopes(
+        name,
+        mode,
+        vec![
+            AgentBridgeScope::Read,
+            AgentBridgeScope::WritePublish,
+            AgentBridgeScope::WriteInteract,
+        ],
+    )
+}
+
+fn write_ctx_with_scopes(name: &str, mode: AgentBridgeWriteMode, scopes: Vec<AgentBridgeScope>) -> Arc<BridgeCtx> {
     let dir = test_dir(name);
     let _ = std::fs::remove_file(dir.join(super::config::AUDIT_FILE_NAME));
     Arc::new(BridgeCtx {
@@ -315,7 +329,7 @@ fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
             socket_path: None,
             port: Some(1),
             token: "test-token".to_string(),
-            scopes: vec![AgentBridgeScope::Read, AgentBridgeScope::WritePublish],
+            scopes,
             write_mode: mode,
             allowed_accounts: Vec::new(),
             mcp_enabled: false,
@@ -323,6 +337,8 @@ fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
         })),
         audit: AuditSink::new(&dir),
         limits: Limits::new(),
+        confirm: Some(Arc::new(super::write::ConfirmBroker::default())),
+        dedupe: Some(Arc::new(super::write::WriteDedupe::new())),
     })
 }
 
@@ -443,6 +459,62 @@ async fn confirm_broker_replacement_rejects_previous_request() {
     assert!(!broker.resolve("id-a", true));
     assert!(broker.resolve("id-b", true));
     assert!(second.await.unwrap());
+}
+
+fn like_call(feed_id: &str) -> super::write::WriteCall {
+    super::write::WriteCall::LikeFeed { feed_id: feed_id.to_string(), unlike: false }
+}
+
+#[tokio::test]
+async fn write_interact_dry_run_previews_target() {
+    let ctx = write_ctx("write-interact-dry-run", AgentBridgeWriteMode::DryRun);
+    let value = super::write::execute(&ctx, like_call("12345678")).await.unwrap();
+    assert_eq!(value["dryRun"], true);
+    assert_eq!(value["preview"]["feedId"], "12345678");
+    assert_eq!(value["preview"]["action"], "like");
+}
+
+#[tokio::test]
+async fn write_requires_matching_scope() {
+    let ctx = write_ctx_with_scopes(
+        "write-scope-denied",
+        AgentBridgeWriteMode::Auto,
+        vec![AgentBridgeScope::Read],
+    );
+    let error = super::write::execute(&ctx, like_call("12345678")).await.unwrap_err();
+    assert_eq!(error.status_code(), 403);
+    assert!(error.message().contains("缺少授权范围"), "实际错误：{}", error.message());
+}
+
+#[tokio::test]
+async fn write_confirm_without_app_reports_not_implemented() {
+    let ctx = write_ctx("write-confirm-no-app", AgentBridgeWriteMode::Confirm);
+    let error = super::write::execute(&ctx, like_call("12345678")).await.unwrap_err();
+    assert_eq!(error.error_code(), Some("write_not_implemented"));
+}
+
+#[tokio::test]
+async fn mcp_interact_tools_follow_scope_and_dry_run() {
+    let ctx = write_ctx("mcp-interact-tools", AgentBridgeWriteMode::DryRun);
+    let (_, listed) = mcp_send(&ctx, serde_json::json!({ "jsonrpc": "2.0", "id": 30, "method": "tools/list" })).await;
+    let names = tool_names(&listed);
+    for name in ["coolapk_like_feed", "coolapk_unlike_feed", "coolapk_follow_user", "coolapk_unfollow_user"] {
+        assert!(names.contains(&name.to_string()), "缺少 {name}");
+    }
+
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": { "name": "coolapk_like_feed", "arguments": { "feedId": "12345678" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], false);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(r#""feedId":"12345678""#), "{text}");
 }
 
 #[test]
