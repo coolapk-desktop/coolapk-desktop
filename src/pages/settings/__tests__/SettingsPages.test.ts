@@ -472,7 +472,7 @@ describe('设置页面交互', () => {
     const pinia = createPinia();
     const settings = useSettingsStore(pinia);
     const wrapper = mount(SettingsLayout, { global: { plugins: [pinia, router], stubs: { 'router-view': RouterViewStub } } });
-    expect(wrapper.findAll('.settings-menu-item')).toHaveLength(13);
+    expect(wrapper.findAll('.settings-menu-item')).toHaveLength(14);
     expect(wrapper.get('.settings-sidebar .settings-title').text()).toBe('设置中心');
     expect(wrapper.get('.settings-menu-item.is-active').text()).toBe('外观设置');
     expect(wrapper.find('.settings-category-trigger').exists()).toBe(false);
@@ -504,12 +504,13 @@ describe('设置页面交互', () => {
     await router.isReady();
     const wrapper = mount(SettingsLayout, { global: { plugins: [createPinia(), router], stubs: { 'router-view': RouterViewStub } } });
     await wrapper.get('.settings-category-trigger').trigger('click');
-    expect(wrapper.findAll('.settings-category-card')).toHaveLength(13);
+    expect(wrapper.findAll('.settings-category-card')).toHaveLength(14);
     expect(wrapper.text()).toContain('网络代理');
     expect(wrapper.text()).toContain('诊断日志');
     expect(wrapper.text()).toContain('账号与安全');
     expect(wrapper.text()).toContain('个人信息');
     expect(wrapper.text()).toContain('设备信息');
+    expect(wrapper.text()).toContain('Agent 接口');
     const trigger = wrapper.get('.settings-category-trigger');
     expect(trigger.text()).toContain('外观设置');
     expect(wrapper.get('.settings-category-card.is-active').text()).toContain('外观设置');

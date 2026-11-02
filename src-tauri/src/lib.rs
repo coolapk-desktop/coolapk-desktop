@@ -1,3 +1,4 @@
+pub mod agent_bridge;
 pub mod coolapk;
 pub mod diagnostics;
 mod performance_diagnostics;
@@ -1081,6 +1082,7 @@ pub fn run() {
             }
         })
         .manage(state)
+        .manage(agent_bridge::AgentBridgeRuntime::default())
         .setup(|app| {
             diagnostics::begin_session(app.handle());
             #[cfg(target_os = "linux")]
@@ -1090,6 +1092,32 @@ pub fn run() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 // 启动时同步当前程序的协议注册，确保正式程序和本地桌面版本都能被冷启动唤起。
                 app.deep_link().register_all()?;
+            }
+
+            // 仅调试构建：设置该环境变量即可在启动时直接开放本地 Agent 接口，便于联调与自动化验证。
+            #[cfg(debug_assertions)]
+            if std::env::var("COOLAPK_AGENT_BRIDGE_AUTOSTART").is_ok() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let runtime = handle.state::<agent_bridge::AgentBridgeRuntime>();
+                    let options = agent_bridge::StartOptions {
+                        scopes: vec!["read".to_string()],
+                        transport: Some("tcp".to_string()),
+                        write_mode: Some("disabled".to_string()),
+                        allowed_accounts: Vec::new(),
+                        // 调试构建的自动启动同时打开 MCP，便于本地联调；
+                        // 设 COOLAPK_AGENT_BRIDGE_MCP=0 可关闭，用于对照内存占用。
+                        mcp: std::env::var("COOLAPK_AGENT_BRIDGE_MCP").map(|value| value != "0").unwrap_or(true),
+                        token: None,
+                    };
+                    match agent_bridge::start(handle.clone(), runtime.inner(), options).await {
+                        Ok(value) => log::info!(
+                            "agent_bridge.autostart endpoint={}",
+                            value["data"]["endpoint"].as_str().unwrap_or_default()
+                        ),
+                        Err(error) => log::error!("agent_bridge.autostart_failed {error}"),
+                    }
+                });
             }
 
             #[cfg(windows)]
@@ -1649,12 +1677,20 @@ pub fn run() {
             edit_goods_list_item,
             vote_goods_list_item,
             bind_feed_to_goods_list,
+            agent_bridge::agent_bridge_status,
+            agent_bridge::agent_bridge_start,
+            agent_bridge::agent_bridge_stop,
+            agent_bridge::agent_bridge_rotate_token,
+            agent_bridge::agent_bridge_set_mcp,
         ])
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
             if matches!(&event, tauri::RunEvent::Exit) {
                 diagnostics::end_session(app);
+                // 退出时关闭本地 Agent 接口并清理 socket/配置文件，避免残留 token。
+                let runtime = app.state::<agent_bridge::AgentBridgeRuntime>();
+                agent_bridge::stop(runtime.inner());
             }
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
