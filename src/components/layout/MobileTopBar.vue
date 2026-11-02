@@ -4,7 +4,7 @@
       <button type="button" class="mobile-icon-button digital-avatar" aria-label="个人主页" @click="router.push('/me')"><AppAvatar :src="authStore.user?.userAvatar" :size="24" /></button>
       <button type="button" class="digital-search-entry" :aria-label="route.path === '/discover' ? '搜索' : '搜索数码'" @click="appStore.openSearch"><span>{{ route.path === '/discover' ? '搜索你感兴趣的内容' : '搜索数码产品' }}</span><i class="fas fa-magnifying-glass"></i></button>
       <button type="button" class="mobile-icon-button has-badge digital-official-icon" aria-label="应用游戏" @click="router.push('/apps')"><span :style="iconStyle(appIcon)"></span></button>
-      <button type="button" class="mobile-icon-button has-badge digital-official-icon" aria-label="私信" @click="router.push('/messages')"><span :style="iconStyle(mailIcon)"></span><span v-if="notificationStore.unreadCount" class="mobile-badge">{{ notificationStore.unreadCount > 99 ? '99+' : notificationStore.unreadCount }}</span></button>
+      <button type="button" class="mobile-icon-button has-badge digital-official-icon" :aria-label="getMessageAriaLabel()" @click="router.push('/messages')"><span :style="iconStyle(mailIcon)"></span><span v-if="notificationStore.messageCount" class="mobile-badge">{{ notificationStore.messageCount > 99 ? '99+' : notificationStore.messageCount }}</span></button>
     </template>
     <template v-else>
     <button
@@ -29,6 +29,11 @@
     <div class="mobile-top-actions">
       <button v-if="route.path !== '/'" type="button" class="mobile-icon-button" aria-label="搜索" @click="appStore.openSearch">
         <i class="fas fa-magnifying-glass"></i>
+      </button>
+      <!-- 首页顶部提供直达私信入口，角标只显示私信分类未读数。 -->
+      <button v-if="route.path === '/'" type="button" class="mobile-icon-button has-badge" :aria-label="getMessageAriaLabel()" @click="router.push('/messages')">
+        <i class="fas fa-envelope" aria-hidden="true"></i>
+        <span v-if="notificationStore.messageCount" class="mobile-badge">{{ notificationStore.messageCount > 99 ? '99+' : notificationStore.messageCount }}</span>
       </button>
       <button type="button" class="mobile-icon-button has-badge" aria-label="通知" @click="router.push('/notifications')">
         <i class="fas fa-bell"></i>
@@ -144,6 +149,12 @@ const isReportPage = computed(() => route.path === '/external' && isFeedReportUr
 
 function iconStyle(url: string) {
   return { maskImage: `url("${url}")`, WebkitMaskImage: `url("${url}")` };
+}
+
+// 私信入口只播报私信分类未读数，不把普通站内通知混入角标。
+function getMessageAriaLabel() {
+  const count = notificationStore.messageCount;
+  return count > 0 ? `私信，${count} 条未读` : '私信';
 }
 
 function goBack() {

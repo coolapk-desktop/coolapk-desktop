@@ -5,7 +5,7 @@
       <button type="button" aria-label="扫一扫（暂未支持）" disabled><span class="official-icon" :style="iconStyle(scanIcon)"></span></button>
       <button type="button" aria-label="设置" @click="go('/settings')"><span class="official-icon" :style="iconStyle(settingsIcon)"></span></button>
       <button type="button" aria-label="应用管理" @click="go('/downloads')"><span class="official-icon" :style="iconStyle(appIcon)"></span></button>
-      <button type="button" aria-label="消息" @click="go('/messages')"><span class="official-icon" :style="iconStyle(mailIcon)"></span><span v-if="notifications.unreadCount" class="message-badge">{{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}</span></button>
+      <button type="button" :aria-label="notifications.messageCount > 0 ? `消息，${notifications.messageCount} 条未读私信` : '消息'" @click="go('/messages')"><span class="official-icon" :style="iconStyle(mailIcon)"></span><span v-if="notifications.messageCount" class="message-badge">{{ notifications.messageCount > 99 ? '99+' : notifications.messageCount }}</span></button>
     </div>
     <section class="profile-identity">
       <button type="button" class="identity-link" @click="openProfile">
