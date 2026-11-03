@@ -9,6 +9,7 @@
 - 本仓库是唯一工作点：会话、资料、项目记忆都收在仓库内，不再散落到 home。
 - `.pi/settings.json` 设 `sessionDir: ".pi/sessions"`，在本目录启动的会话直接写入仓库内。
 - `.pi/memory/`：项目记忆（**入库**，机制/契约/坑写这里；全局 `~/.pi/agent/projects-memory/coolapk-desktop-dev` 是指向它的软链）。
+- `.pi/skills/`：项目专属技能（**入库**，`<name>/SKILL.md`；只放本项目才成立的知识，通用技能仍放 `~/.pi/agent/skills/`）。
 - `.pi/sessions/`：会话原文与 `pi-fold-evidence`（**不入库**，历史会话已从 home 迁入）。
 - `.pi/artifacts/reference/`：官方安装包、上游源码快照等对照资料（**不入库**，清单见该目录 `README.md`）。
 - `.pi/fabric/`、`.pi/trash/`：运行时状态（不入库）。
