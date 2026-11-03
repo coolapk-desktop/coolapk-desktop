@@ -4,6 +4,16 @@
 
 本文件适用于 `coolapk-desktop` 仓库及其子目录。
 
+## 工作目录（.pi/）
+
+- 本仓库是唯一工作点：会话、资料、项目记忆都收在仓库内，不再散落到 home。
+- `.pi/settings.json` 设 `sessionDir: ".pi/sessions"`，在本目录启动的会话直接写入仓库内。
+- `.pi/memory/`：项目记忆（**入库**，机制/契约/坑写这里；全局 `~/.pi/agent/projects-memory/coolapk-desktop-dev` 是指向它的软链）。
+- `.pi/sessions/`：会话原文与 `pi-fold-evidence`（**不入库**，历史会话已从 home 迁入）。
+- `.pi/artifacts/reference/`：官方安装包、上游源码快照等对照资料（**不入库**，清单见该目录 `README.md`）。
+- `.pi/fabric/`、`.pi/trash/`：运行时状态（不入库）。
+- 新增资料优先放 `.pi/artifacts/` 下并登记；不要把 deb/zip 之类二进制放进 `~/下载/` 或提交入库。
+
 ## 更新日志规则
 
 - 用户要求生成或输出更新日志时，使用 Markdown 格式直接在对话中输出；除非用户明确要求将更新日志写入仓库并上传，否则不得将其写入仓库、提交或推送。“全部上传”不视为授权将随后要求输出的更新日志上传到仓库。

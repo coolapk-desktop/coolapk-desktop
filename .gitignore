@@ -36,3 +36,9 @@ raw_debug.json
 Thumbs.db
 desktop.ini
 coolapk_all_decompiled/
+
+# pi 工作目录（2026-11-03 收束）：记忆入库，会话/运行时/参考资料不入库
+/.pi/sessions/
+/.pi/fabric/
+/.pi/trash/
+/.pi/artifacts/
