@@ -673,6 +673,7 @@ describe('评论完整信息展示', () => {
       const toggle = wrapper.get('[aria-label="插入表情"]');
       await toggle.trigger('click');
       expect(wrapper.find('.emoji-picker-popover').exists()).toBe(true);
+      await wrapper.get('[role="tab"][aria-label="酷安表情"]').trigger('click');
       await wrapper.get('.emoji-item-btn').trigger('click');
       expect(wrapper.find('.emoji-picker-popover').exists()).toBe(true);
       await toggle.trigger('click');
@@ -733,7 +734,8 @@ describe('评论完整信息展示', () => {
     expect(wrapper.find('.emoji-picker-popover').exists()).toBe(true);
     // 顶部条已去除（参考微信设计）
     expect(wrapper.find('.emoji-picker-header').exists()).toBe(false);
-    expect(wrapper.find('.emoji-section-title').text()).toBe('酷安表情');
+    expect(wrapper.find('.emoji-section-title').text()).toBe('最近使用');
+    await wrapper.get('[role="tab"][aria-label="酷安表情"]').trigger('click');
 
     // 点击某一个表情
     const firstEmoji = wrapper.find('.emoji-item-btn');
@@ -924,7 +926,31 @@ describe('评论完整信息展示', () => {
     const systemTab = panel.querySelector('[aria-label="系统 Emoji"]')!;
     systemTab.dispatchEvent(new MouseEvent('click', { bubbles: true })); await flushPromises();
     expect(layer.querySelector('.official-composer-emoji')).not.toBeNull();
+    await new DOMWrapper(layer.querySelector('.comment-rich-editor')!).trigger('pointerdown');
+    expect(layer.querySelector('.official-composer-emoji')).toBeNull();
+    await new DOMWrapper(layer.querySelector('[aria-label="插入表情"]')!).trigger('click');
+    expect(layer.querySelector('[aria-label="最近使用"]')?.getAttribute('aria-selected')).toBe('true');
     wrapper.unmount();
+  });
+
+  it('手机选表情不会重新聚焦编辑器，点击输入框后收起面板', async () => {
+    const ua = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Android');
+    const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: 12345, username: '发布者' } as any;
+    const wrapper = mountSection({}, { officialDetail: true, feedId: 'mobile-keyboard-feed' });
+    try {
+      await (wrapper.vm as any).openComposer();
+      const layer = document.body.querySelector('.official-composer-layer')!;
+      const editor = layer.querySelector<HTMLElement>('.comment-rich-editor')!;
+      await new DOMWrapper(layer.querySelector('[aria-label="插入表情"]')!).trigger('click');
+      await new DOMWrapper(layer.querySelector('[aria-label="系统 Emoji"]')!).trigger('click');
+      const focus = vi.spyOn(editor, 'focus');
+      await new DOMWrapper(layer.querySelector('.emoji-item-btn')!).trigger('click');
+      expect(focus).not.toHaveBeenCalled();
+      expect(editor.textContent).toContain('😀');
+      expect(layer.querySelector('.official-composer-emoji')).not.toBeNull();
+      await new DOMWrapper(editor).trigger('focus');
+      expect(layer.querySelector('.official-composer-emoji')).toBeNull();
+    } finally { wrapper.unmount(); ua.mockRestore(); }
   });
 
   it('官方详情初始隐藏编辑框，底部唤起后关闭再打开保留草稿', async () => {

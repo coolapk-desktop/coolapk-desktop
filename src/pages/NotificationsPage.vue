@@ -47,21 +47,21 @@
 
       <div v-else class="notification-list">
         <div v-for="item in items" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]">
-          <div class="notify-avatar-wrap">
+          <button type="button" class="notify-avatar-wrap notify-profile" :disabled="!getActorUid(item)" :aria-label="`查看${getUsername(item)}的主页`" @click.stop="openActor(item)">
             <AppAvatar :src="getAvatar(item)" size="md" class="notify-avatar" />
-          </div>
+          </button>
           <div class="notify-content">
             <div class="notify-header">
-              <span class="notify-user">{{ getUsername(item) }}</span>
+              <button type="button" class="notify-user notify-profile" :disabled="!getActorUid(item)" @click.stop="openActor(item)">{{ getUsername(item) }}</button>
               <span class="notify-header-right">
                 <span class="notify-time">{{ formatTime(item.likeTime || item.dateline) }}</span>
                 <span v-if="getNotificationUnreadCount(item) > 0" class="notify-unread-badge" aria-label="未读通知数">{{ getNotificationUnreadLabel(item) }}</span>
               </span>
             </div>
             
-            <div v-if="getNote(item)" class="notify-action" v-html="renderCoolapkRichText(getNote(item))" @click="handleNotifyClick($event, item)"></div>
+            <div v-if="getNote(item)" class="notify-action" v-html="renderNotificationRichText(getNote(item))" @click="handleNotifyClick($event, item)"></div>
 
-            <div v-if="getMessage(item)" class="notify-message" v-html="renderCoolapkRichText(getMessage(item))" @click="handleNotifyClick($event, item)"></div>
+            <div v-if="getMessage(item)" class="notify-message" v-html="renderNotificationRichText(getMessage(item))" @click="handleNotifyClick($event, item)"></div>
 
             <div v-if="getTarget(item)" class="notify-target">
               <span class="target-title" v-html="renderCoolapkRichText(getTarget(item))" @click="handleNotifyClick($event, item)"></span>
@@ -109,7 +109,7 @@ import { useAuthStore } from '../stores/auth';
 import { useNotificationStore } from '../stores/notifications';
 import type { NotificationCategory } from '../utils/notificationCount';
 import { getNotificationActor } from '../utils/notificationItem';
-import { renderCoolapkRichText } from '../utils/richText';
+import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
 import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
@@ -287,6 +287,20 @@ function getUsername(item: any): string {
   return actor.username === '酷友'
     ? item.messageUserInfo?.username || '匿名用户'
     : actor.username;
+}
+
+/** 人物入口使用发起通知的用户，系统通知不生成无效主页。 */
+function getActorUid(item: any): string {
+  const value = getCurrentCategory() === 'like'
+    ? item.likeUid || item.like_uid || item.likeUserInfo?.uid
+    : item.fromuid || item.from_uid || item.fromUserInfo?.uid || item.uid || item.userInfo?.uid || item.messageUserInfo?.uid;
+  const uid = String(value || '');
+  return /^[1-9]\d*$/.test(uid) && getUsername(item) !== '系统消息' ? uid : '';
+}
+
+function openActor(item: any) {
+  const uid = getActorUid(item);
+  if (uid) void router.push(`/user/${uid}`);
 }
 
 function getNote(item: any): string {
@@ -484,13 +498,13 @@ async function handleNotifyClick(e: Event, item: any) {
     await fetchNotifications();
     return;
   }
-  // 用户和其他正文链接保持独立；评论正文中的动态/评论链接携带定位信息。
-  if (href && /(?:\/feed\/\d+|\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
-    e.preventDefault();
-    if (await openNotificationComment(item, href)) return;
-  }
+  // 正文链接只打开其自身；空白正文点击才进入通知所属动态和评论。
   if (!anchor?.href || !href || href === '#' || /^javascript:/i.test(href.trim())) {
     await openNotificationTarget(item);
+    return;
+  }
+  if (href && /(?:\/feed\/\d+|\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
+    handleAnchorClick(e);
     return;
   }
   const feedMatch = href.match(/^\/feed\/(\d+)/);
@@ -583,6 +597,7 @@ async function refreshMobilePage() { await refreshNotifications(); }
   min-width: 0;
   height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
   margin: 0 auto;
   background-color: var(--background);
@@ -609,8 +624,8 @@ async function refreshMobilePage() { await refreshNotifications(); }
   letter-spacing: -0.02em;
 }
 
-.notification-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.notification-actions { display: flex; gap: var(--space-2); }
+.notification-title-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.notification-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
 .header-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; color: var(--text-secondary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-control); cursor: pointer; font-size: var(--font-size-caption); }
 .header-action-btn:hover:not(:disabled) { color: var(--brand-primary); border-color: var(--brand-primary); background: var(--brand-soft); }
 .header-action-btn:disabled { color: var(--text-disabled); cursor: not-allowed; }
@@ -790,12 +805,13 @@ async function refreshMobilePage() { await refreshNotifications(); }
   cursor: pointer;
 }
 
-.notify-message a,
-.notify-action a {
-  color: var(--brand-primary);
-  text-decoration: underline;
-  cursor: pointer;
-}
+/* v-html 内的链接也应用主题色，长 URL 在卡片内换行。 */
+.notify-content { overflow-wrap: anywhere; }
+.notify-action, .notify-message, .notify-target { min-width: 0; max-width: 100%; }
+.notify-content :deep(a) { color: var(--brand-primary); text-decoration: underline; cursor: pointer; overflow-wrap: anywhere; }
+.notify-profile { padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.notify-profile:disabled { cursor: default; }
+.notify-profile:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 3px; }
 
 .notify-message {
   font-size: var(--font-size-sub);
@@ -829,6 +845,8 @@ async function refreshMobilePage() { await refreshNotifications(); }
 }
 
 .original-feed-preview {
+  min-width: 0;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -849,6 +867,7 @@ async function refreshMobilePage() { await refreshNotifications(); }
 }
 
 .original-feed-label {
+  white-space: nowrap;
   padding: 2px 7px;
   border-radius: var(--radius-full);
   background-color: var(--brand-soft);

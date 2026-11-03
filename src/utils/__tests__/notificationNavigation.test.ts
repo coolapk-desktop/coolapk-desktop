@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { getNotificationExternalUrl, getNotificationFeedId, getNotificationReplyId, getNotificationProductName, getNotificationTargetRoute, resolveNotificationTargetRoute } from '../notificationNavigation';
 
 describe('通知目标导航', () => {
+  it('评论正文分享的动态或评论链接不能覆盖所属动态和回复', () => {
+    const item = { feedId: '333', replyId: '222', message: 'https://www.coolapk.com/feed/72357393?rid=999' };
+    expect(getNotificationFeedId(item)).toBe('333');
+    expect(getNotificationReplyId(item)).toBe('222');
+    expect(getNotificationFeedId({ message: item.message })).toBe('');
+    expect(getNotificationReplyId({ message: item.message })).toBe('');
+  });
+
   it('分别提取评论链接里的动态和评论 ID', () => {
     const item = { id: 111, note: '<a href="/feed/333?rid=222">评论</a>' };
     expect(getNotificationFeedId(item)).toBe('333');

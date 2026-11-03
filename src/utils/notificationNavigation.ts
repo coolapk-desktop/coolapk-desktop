@@ -58,16 +58,12 @@ function getFeedIdFromSource(value: unknown): string {
 export function getNotificationReplyId(item: unknown, href?: string): string {
   const record = asRecord(item);
   if (!record) return '';
+  if (href) {
+    const linkedReply = String(href).match(/(?:\/feed\/reply\/|\/reply\/)(\d+)/i) || String(href).match(/[?&#](?:replyId|reply_id|rid)=(\d+)/i);
+    if (linkedReply?.[1] && linkedReply[1] !== '0') return linkedReply[1];
+  }
   const candidates = [record, record.targetRow, record.feedInfo, record.targetFeed].map(asRecord)
     .filter((candidate): candidate is NotificationRecord => Boolean(candidate));
-  const sources = [href, ...candidates.flatMap(candidate => [candidate.url, candidate.targetUrl,
-    candidate.target_url, candidate.note, candidate.message, candidate.infoHtml])];
-  for (const source of sources) {
-    const text = String(source || '').replace(/&amp;/g, '&');
-    const match = text.match(/(?:\/feed\/reply\/|\/reply\/)(\d+)/i)
-      || text.match(/[?&#](?:replyId|reply_id|rid)=(\d+)/i);
-    if (match?.[1] && match[1] !== '0') return match[1];
-  }
   for (const candidate of candidates) {
     for (const value of [candidate.replyId, candidate.reply_id,
       ...(/reply|comment/.test(entityType(candidate))
@@ -77,6 +73,14 @@ export function getNotificationReplyId(item: unknown, href?: string): string {
       const id = String(value || '').trim();
       if (/^[1-9]\d*$/.test(id)) return id;
     }
+  }
+  const sources = [href, ...candidates.flatMap(candidate => [candidate.url, candidate.targetUrl,
+    candidate.target_url, candidate.note])];
+  for (const source of sources) {
+    const text = String(source || '').replace(/&amp;/g, '&');
+    const match = text.match(/(?:\/feed\/reply\/|\/reply\/)(\d+)/i)
+      || text.match(/[?&#](?:replyId|reply_id|rid)=(\d+)/i);
+    if (match?.[1] && match[1] !== '0') return match[1];
   }
   return '';
 }
@@ -88,15 +92,6 @@ export function getNotificationFeedId(item: unknown): string {
   const candidates = [record, record.feedInfo, record.targetFeed, record.targetRow]
     .map(asRecord)
     .filter((candidate): candidate is NotificationRecord => Boolean(candidate));
-
-  // 通知正文里的原始链接是酷安接口已经确认过的目标，优先使用它，
-  // 避免把评论/通知记录自身的 id 误当成动态 id。
-  for (const candidate of candidates) {
-    for (const value of [candidate.note, candidate.message, candidate.infoHtml, candidate.url, candidate.targetUrl, candidate.target_url, candidate.webUrl, candidate.web_url, candidate.targetTitle]) {
-      const feedId = getFeedIdFromSource(value);
-      if (feedId) return feedId;
-    }
-  }
 
   // feedId/fid 字段本身就明确表示所属动态，优先于通用 id。
   for (const candidate of candidates) {
@@ -122,9 +117,12 @@ export function getNotificationFeedId(item: unknown): string {
     if (feedId) return feedId;
   }
 
-  for (const value of [record.note, record.message, record.targetTitle]) {
-    const feedId = getFeedIdFromSource(value);
-    if (feedId) return feedId;
+  // 仅所属动态字段缺失时兼容旧通知 note 中的入口，评论正文不能决定导航目标。
+  for (const candidate of candidates) {
+    for (const value of [candidate.url, candidate.targetUrl, candidate.target_url, candidate.webUrl, candidate.web_url, candidate.note]) {
+      const feedId = getFeedIdFromSource(value);
+      if (feedId) return feedId;
+    }
   }
   return '';
 }

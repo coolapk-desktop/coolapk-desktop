@@ -73,6 +73,8 @@
         @input="handleEditorInput"
         @paste="handlePaste"
         @keydown="handleKeydown"
+        @pointerdown="showEmojiPicker = false"
+        @focus="handleEditorFocus"
       ></div>
 
       <!-- 已选图片预览列表 -->
@@ -108,7 +110,7 @@
 
       <!-- 工具栏与表情面板 -->
       <div v-if="floatingComposer && showEmojiPicker" ref="officialEmojiPanelRef" class="official-composer-emoji" @click.stop>
-        <EmojiPanel :key="String(feedId)" :disabled="sending" :selected-urls="images.flatMap(image => image.url ? [image.url] : [])" @select="insertEmoji" @picture="selectFavoritePicture" />
+        <EmojiPanel :key="String(feedId)" initial-tab="recent" :disabled="sending" :selected-urls="images.flatMap(image => image.url ? [image.url] : [])" @select="insertEmoji" @picture="selectFavoritePicture" />
       </div>
       <div class="comment-composer-toolbar">
         <div class="composer-tools-left">
@@ -132,7 +134,7 @@
               class="emoji-picker-popover custom-scrollbar"
               @click.stop
             >
-              <EmojiPanel :key="String(feedId)" :disabled="sending" :selected-urls="images.flatMap(image => image.url ? [image.url] : [])" @select="insertEmoji" @picture="selectFavoritePicture" />
+              <EmojiPanel :key="String(feedId)" initial-tab="recent" :disabled="sending" :selected-urls="images.flatMap(image => image.url ? [image.url] : [])" @select="insertEmoji" @picture="selectFavoritePicture" />
             </div>
           </div>
 
@@ -543,6 +545,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { EMOJI_MAP, EMOJI_BASE, getEmojiUrl } from '../../utils/coolapkEmoji';
 import { useRecentEmojis } from '../../utils/recentEmojis';
 import EmojiPanel from '../common/EmojiPanel.vue';
+import { isTouchMobilePlatform, isCoarsePointer } from '../../utils/platform';
 import AppImage from '../common/AppImage.vue';
 import { isSystemEmoji, type EmojiPicture } from '../../utils/emojiPanel';
 import { clearCommentDraft, loadCommentDraft, saveCommentDraft } from '../../utils/commentDrafts';
@@ -1344,8 +1347,19 @@ watch(
   },
 );
 
+let emojiInsertionRange: Range | null = null;
 function toggleEmojiPicker() {
+  const selection = window.getSelection();
+  // 收起键盘前保存光标，连续选表情仍插入原编辑位置。
+  emojiInsertionRange = selection?.rangeCount && inputRef.value?.contains(selection.anchorNode) ? selection.getRangeAt(0).cloneRange() : null;
   showEmojiPicker.value = !showEmojiPicker.value;
+  // 移动端用表情面板替代软键盘，插入表情时不主动唤起键盘。
+  if (showEmojiPicker.value && (isTouchMobilePlatform() || isCoarsePointer())) inputRef.value?.blur();
+}
+
+function handleEditorFocus() {
+  // 软键盘出现前收起表情；桌面端插入表情后的程序聚焦保留面板。
+  if (isTouchMobilePlatform() || isCoarsePointer()) showEmojiPicker.value = false;
 }
 
 function insertEmoji(name: string) {
@@ -1358,20 +1372,22 @@ function insertEmoji(name: string) {
     return;
   }
 
-  el.focus({ preventScroll: true });
+  const mobileInput = isTouchMobilePlatform() || isCoarsePointer();
+  if (!mobileInput) el.focus({ preventScroll: true });
   const sel = window.getSelection();
+  const range = emojiInsertionRange && el.contains(emojiInsertionRange.startContainer) ? emojiInsertionRange : sel?.rangeCount && el.contains(sel.anchorNode) ? sel.getRangeAt(0) : null;
   const img = isSystemEmoji(name) ? document.createTextNode(name) : createEmojiImg(name, filename);
 
-  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
-    const range = sel.getRangeAt(0);
+  if (range) {
     range.deleteContents();
     range.insertNode(img);
 
     const newRange = document.createRange();
     newRange.setStartAfter(img);
     newRange.setEndAfter(img);
-    sel.removeAllRanges();
-    sel.addRange(newRange);
+    // 移动端只更新保存的光标，修改 Selection 会再次聚焦编辑器并弹出键盘。
+    if (!mobileInput && sel) { sel.removeAllRanges(); sel.addRange(newRange); }
+    emojiInsertionRange = newRange.cloneRange();
   } else {
     el.appendChild(img);
   }

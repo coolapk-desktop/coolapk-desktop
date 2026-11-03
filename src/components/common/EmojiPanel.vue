@@ -55,12 +55,13 @@ import { useAuthStore } from '../../stores/auth';
 import { useRecentEmojis } from '../../utils/recentEmojis';
 import { getEmojiUrl } from '../../utils/coolapkEmoji';
 import { EMOJI_GROUPS, normalizeEmojiPictures, type EmojiPicture } from '../../utils/emojiPanel';
-const props = withDefaults(defineProps<{ disabled?: boolean; selectedUrls?: string[] }>(), { disabled: false, selectedUrls: () => [] });
+const props = withDefaults(defineProps<{ disabled?: boolean; selectedUrls?: string[]; initialTab?: string }>(), { disabled: false, selectedUrls: () => [], initialTab: 'coolapk' });
 const emit = defineEmits<{ select: [name: string]; picture: [picture: EmojiPicture] }>();
 const auth = useAuthStore();
 const account = computed(() => auth.isLoggedIn ? String(auth.user?.uid || '') : '');
 const { recentEmojis } = useRecentEmojis();
-const active = ref('coolapk');
+// 评论输入每次打开时进入最近使用，其他调用方保留原分类。
+const active = ref(props.initialTab);
 const tabs = [{ id: 'recent', title: '最近使用', icon: 'fa-clock' }, { id: 'favorites', title: '收藏', icon: 'fa-heart' }, ...EMOJI_GROUPS];
 const activeTitle = computed(() => tabs.find(tab => tab.id === active.value)?.title || '酷安表情');
 const items = computed(() => active.value === 'recent'

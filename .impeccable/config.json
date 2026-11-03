@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/pages/NotificationsPage.vue"
+        ],
+        "createdAt": "2026-11-03T01:24:34.676Z",
+        "reason": "Codex review: existing .notify-card.unread border marks unread notifications; preserve the established notification state indicator during issue 36 fixes"
+      }
+    ]
+  }
+}

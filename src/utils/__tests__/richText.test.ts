@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderCoolapkRichText } from '../richText';
+import { renderCoolapkRichText, renderNotificationRichText } from '../richText';
 
 describe('renderCoolapkRichText', () => {
   it('渲染表情代码并保留站内链接', () => {
@@ -21,4 +21,15 @@ describe('renderCoolapkRichText', () => {
   it('空输入返回空字符串', () => {
     expect(renderCoolapkRichText('')).toBe('');
   });
+});
+
+// 覆盖用户截图中的纯文本分享地址，并确认已有链接不会嵌套或恢复危险标签。
+it('通知纯文本 URL 转为独立链接并保留安全化和表情', () => {
+  const html = renderNotificationRichText('6 月没躲过[doge] https://www.coolapk.com/feed/72357393?s=abc&x=1 <a href="/u/555">用户</a><script>alert(1)</script>');
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  expect(doc.querySelectorAll('a')).toHaveLength(2);
+  expect(doc.querySelector('a')?.getAttribute('href')).toBe('https://www.coolapk.com/feed/72357393?s=abc&x=1');
+  expect(doc.querySelector('a a')).toBeNull();
+  expect(html).not.toContain('alert');
+  expect(html).toContain('doge.png');
 });

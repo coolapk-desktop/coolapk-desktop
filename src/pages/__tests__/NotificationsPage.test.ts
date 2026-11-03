@@ -13,7 +13,7 @@ vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: true, u
 vi.mock('../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
 vi.mock('../../utils/feedNavigation', () => ({ openFeedDetail: mocks.openFeed }));
 vi.mock('../../utils/anchorClick', () => ({ handleAnchorClick: mocks.anchor }));
-vi.mock('../../utils/richText', () => ({ renderCoolapkRichText: (text: string) => text }));
+
 import NotificationsPage from '../NotificationsPage.vue';
 
 describe('通知评论点击入口', () => {
@@ -182,7 +182,7 @@ describe('通知评论点击入口', () => {
     const item = { id: '99', target_type: 'feed_reply', target_id: '222',
       note: '评论了你的动态：<a href="/feed/333?rid=222">评论内容</a>' };
     const wrapper = await mountPage(item);
-    await wrapper.get('.notify-action a').trigger('click');
+    await wrapper.get('.notify-action').trigger('click');
     await flushPromises();
     expect(mocks.openFeed).toHaveBeenLastCalledWith(expect.anything(), '333', item, '222');
     await wrapper.get('.original-feed-preview').trigger('click');
@@ -210,4 +210,20 @@ describe('通知评论点击入口', () => {
     expect(mocks.push).toHaveBeenCalledWith('/user/555');
     wrapper.unmount();
   });
+  it('通知正文打开所属评论，正文分享链接仅打开链接自身，人物入口独立导航', async () => {
+    const item = { id: '99', fromuid: '555', fromusername: '回复者', feedId: '333', replyId: '222', message: '6 月没躲过 https://www.coolapk.com/feed/72357393?s=share' };
+    const wrapper = await mountPage(item);
+    await wrapper.get('.notify-message').trigger('click'); await flushPromises();
+    expect(mocks.openFeed).toHaveBeenLastCalledWith(expect.anything(), '333', item, '222');
+    mocks.openFeed.mockClear();
+    await wrapper.get('.notify-message a').trigger('click'); await flushPromises();
+    expect(mocks.anchor).toHaveBeenCalledOnce();
+    expect(mocks.openFeed).not.toHaveBeenCalled();
+    await wrapper.get('.notify-avatar-wrap').trigger('click');
+    await wrapper.get('.notify-user').trigger('click');
+    expect(mocks.push).toHaveBeenCalledTimes(2);
+    expect(mocks.push).toHaveBeenLastCalledWith('/user/555');
+    wrapper.unmount();
+  });
+
 });
