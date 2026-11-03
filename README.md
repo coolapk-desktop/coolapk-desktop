@@ -31,6 +31,35 @@
 
 > 💡 **提示**：构建产物均由 GitHub Actions 自动化流程在云端打包。Windows 单文件版无需解压或安装，系统需已有 WebView2 Runtime。iOS IPA 为未签名设备包，不能直接安装到普通 iPhone/iPad，需要使用 AltStore、SideStore、Sideloadly 或自己的 Apple 证书完成签名。
 
+### 数据目录
+
+Windows 安装版与单文件便携版在同一 Windows 用户下共用数据目录，切换使用时会沿用账号、设置和草稿等数据。便携版无需安装，但数据仍保存在用户目录中，不保存在 EXE 所在目录。
+
+| 数据类型 | 目录 |
+| :--- | :--- |
+| 账号、设置、草稿等应用数据 | `%APPDATA%\com.coolapk.desktop` |
+| WebView2 数据、缓存和日志 | `%LOCALAPPDATA%\com.coolapk.desktop` |
+
+按 `Win + R`，粘贴上述路径即可打开。备份时请先完全退出程序，再复制这两个文件夹。
+
+macOS 与 Linux 的默认目录如下，同一系统用户下的不同分发包共用应用数据：
+
+| 平台 | 账号、设置、草稿等应用数据 | 默认应用缓存 |
+| :--- | :--- | :--- |
+| macOS | `~/Library/Application Support/com.coolapk.desktop` | `~/Library/Caches/com.coolapk.desktop` |
+| Linux | `~/.local/share/com.coolapk.desktop` | `~/.cache/com.coolapk.desktop` |
+
+`~` 表示当前用户的主目录。macOS 可在访达中按 `Command + Shift + G` 输入路径；Linux 若设置了 `XDG_DATA_HOME` 或 `XDG_CACHE_HOME`，对应目录分别改为 `$XDG_DATA_HOME/com.coolapk.desktop` 和 `$XDG_CACHE_HOME/com.coolapk.desktop`。Linux 的 AppImage 同样将数据保存在用户目录中，不保存在 AppImage 所在目录。
+
+移动端数据保存在系统管理的应用私有目录中：
+
+| 平台 | 应用数据目录 | 默认应用缓存 |
+| :--- | :--- | :--- |
+| Android | `/data/user/<用户编号>/com.coolapk.desktop`（主用户通常为 `/data/user/0/com.coolapk.desktop`） | 应用数据目录下的 `cache` |
+| iOS / iPadOS | 应用沙盒内的 `Library/Application Support/com.coolapk.desktop` | 应用沙盒内的 `Library/Caches/com.coolapk.desktop` |
+
+移动端私有目录通常无法通过普通文件管理器直接访问；iOS / iPadOS 的沙盒完整路径由系统分配，不固定。上述缓存目录为默认位置，自定义图片缓存目录后以设置为准；WebView 的网站数据由各平台的 WebView 单独管理。
+
 ## 界面预览
 
 ![界面预览 1](docs/screenshots/首页.png)
