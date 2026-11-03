@@ -79,6 +79,37 @@ describe('HistoryPage 点击行为', () => {
     mocks.getPublicFeedDetail.mockReset().mockResolvedValue({ data: null });
   });
 
+  it('有标题文章使用详情正文和首图，不重复显示历史中的标题摘要', async () => {
+    const title = '你的手机系统，正偷偷泄漏你的一切';
+    mocks.getPublicFeedDetail.mockResolvedValue({ data: {
+      id: '72727311', username: '遗藏', message_title: title, message: '这是文章真实正文，介绍系统隐私设置。', picArr: ['//image.coolapk.com/feed/article.jpg'],
+    } });
+    const { wrapper } = await mountPage([{ ...feedItem, title, description: title }]);
+    expect(wrapper.get('.history-post-title').text()).toBe(title);
+    expect(wrapper.get('.history-desc').text()).toBe('这是文章真实正文，介绍系统隐私设置。');
+    expect(wrapper.text().split(title)).toHaveLength(2);
+    expect(wrapper.get('.card-thumb-wrap').getComponent({ name: 'AppImage' }).props('src')).toBe('https://image.coolapk.com/feed/article.jpg');
+    wrapper.unmount();
+  });
+
+  it('详情不可访问时只显示一次重复标题，仍保留历史缩略图', async () => {
+    mocks.getPublicFeedDetail.mockRejectedValue(new Error('不可访问'));
+    const { wrapper } = await mountPage([{ ...feedItem, title: '文章标题', description: '<b>文章标题</b>', picArr: ['https://image.coolapk.com/feed/history.jpg'] }]);
+    expect(wrapper.get('.history-post-title').text()).toBe('文章标题');
+    expect(wrapper.find('.history-desc').exists()).toBe(false);
+    expect(wrapper.get('.card-thumb-wrap').getComponent({ name: 'AppImage' }).props('src')).toBe('https://image.coolapk.com/feed/history.jpg');
+    wrapper.unmount();
+  });
+
+  it('普通图文动态不把历史正文摘要当独立标题，缺图时沿用历史封面', async () => {
+    mocks.getPublicFeedDetail.mockResolvedValue({ data: { id: '72727311', username: '作者', message: '完整图文正文' } });
+    const { wrapper } = await mountPage([{ ...feedItem, title: '完整图文正文', cover: 'https://image.coolapk.com/feed/cover.jpg' }]);
+    expect(wrapper.find('.history-post-title').exists()).toBe(false);
+    expect(wrapper.get('.history-desc').text()).toBe('完整图文正文');
+    expect(wrapper.find('.card-thumb-wrap').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it('头像旁统一显示作者，正文首行展示独立标题，发布日期不影响浏览日期分组', async () => {
     const viewed = new Date();
     viewed.setHours(14, 30, 0, 0);

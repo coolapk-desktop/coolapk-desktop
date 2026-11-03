@@ -251,7 +251,8 @@ function itemAuthorName(item: any): string {
 
 function itemPostTitle(item: any): string {
   const feed = itemFeed(item);
-  const title = htmlToPlainText(firstText(feed?.message_title, feed?.messageTitle, feed?.title, item?.title)).trim();
+  // 已有详情正文时，历史 title 可能只是正文摘要，不能再当作独立标题。
+  const title = htmlToPlainText(firstText(feed?.message_title, feed?.messageTitle, feed?.title, !firstText(feed?.message, feed?.message_raw_output) ? item?.title : '')).trim();
   return title && !title.endsWith('的动态') ? title : '';
 }
 
@@ -297,9 +298,11 @@ function cleanDescriptionText(raw: string): string {
 }
 
 function richDescription(item: any): string {
-  // 严格只获取真实正文内容，绝不获取模板字段如 entityTemplate (避免出现 'feedCover' 等字样)
-  const desc = item?.description || item?.message || item?.digest || item?.subTitle || '';
+  // 优先展示详情正文；历史 description 对文章经常只是标题，不能重复渲染。
+  const feed = itemFeed(item);
+  const desc = firstText(feed?.message, feed?.message_raw_output, item?.description, item?.message, item?.digest, item?.subTitle);
   const cleaned = cleanDescriptionText(desc);
+  if (htmlToPlainText(cleaned).replace(/\s+/g, '') === itemPostTitle(item).replace(/\s+/g, '')) return '';
   if (
     cleaned &&
     !['feedcover', 'feed', 'feedarticle', 'feedreply', 'user', 'topic', 'apk', 'history'].includes(cleaned.toLowerCase())
@@ -310,12 +313,13 @@ function richDescription(item: any): string {
 }
 
 function itemCoverPic(item: any): string {
-  const pic = item?.pic || item?.cover || item?.extra_pic || item?.smallPic || item?.image;
-  if (typeof pic === 'string' && pic.trim() && !pic.includes('avatar') && !pic.includes('default') && pic.length > 8) {
-    return pic.trim();
-  }
-  if (Array.isArray(item?.pics) && item.pics.length > 0 && typeof item.pics[0] === 'string' && item.pics[0].length > 8) {
-    return item.pics[0].trim();
+  // 与帖子详情使用同一图片来源；历史摘要无封面时恢复右侧首图缩略图。
+  for (const source of [itemFeed(item), item]) {
+    const pictures = [source?.pic, source?.cover, source?.extra_pic, source?.smallPic, source?.image, ...(Array.isArray(source?.picArr) ? source.picArr : []), ...(Array.isArray(source?.pics) ? source.pics : [])];
+    for (const pic of pictures) {
+      if (typeof pic !== 'string' || !pic.trim() || pic.includes('avatar') || pic.includes('default') || pic.trim().length <= 8) continue;
+      return pic.trim().startsWith('//') ? `https:${pic.trim()}` : pic.trim();
+    }
   }
   return '';
 }
@@ -881,4 +885,12 @@ async function refreshMobilePage() { await fetchHistory(true); }
   color: var(--text-tertiary);
 }
 
+/* 手机缩略图保留在右侧，缩小占位以给标题和正文留出阅读宽度。 */
+@media (max-width: 600px) {
+  .feed-history-card { padding: 12px; }
+  .card-main-layout { gap: 8px; }
+  .card-thumb-wrap { width: 48px; height: 48px; min-width: 48px; max-width: 48px; }
+  .card-arrow-wrap { display: none; }
+  .feed-posts-list { padding-left: 12px; }
+}
 </style>
