@@ -21,6 +21,7 @@ use super::http::{audit_write, ApiError, BridgeCtx};
 
 const MAX_MESSAGE_CHARS: usize = 5000;
 const MAX_REPLY_CHARS: usize = 1000;
+const MAX_TAG_CHARS: usize = 64;
 /// 与官方 App / PublishDialog.vue 的 MAX_IMAGES=9 对齐。
 const MAX_IMAGES: usize = 9;
 const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -379,6 +380,78 @@ pub(super) fn parse_forward_args(args: &Value) -> Result<ForwardArgs, ApiError> 
     })
 }
 
+/// 编辑自己已发布动态的参数；图片集合以本次传入为准，未传时默认沿用原动态配图。
+#[derive(Debug, Clone)]
+pub(super) struct UpdateFeedArgs {
+    pub feed_id: String,
+    pub message: String,
+    pub images: Vec<ImageArg>,
+    pub image_paths: Vec<ImagePath>,
+    pub options: PublishOptions,
+    pub clear_images: bool,
+    pub request_id: Option<String>,
+}
+
+pub(super) fn parse_update_feed_args(args: &Value) -> Result<UpdateFeedArgs, ApiError> {
+    let feed_id = target_id_arg(args, "feedId", "动态 ID")?;
+    let message = trimmed_arg(args, "message").to_string();
+    if message.is_empty() {
+        return Err(ApiError::bad_request("编辑后的正文不能为空"));
+    }
+    if message.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(ApiError::bad_request(format!("动态正文不能超过 {MAX_MESSAGE_CHARS} 字")));
+    }
+    let options = parse_publish_options(args.get("options"))?;
+    // 先判互斥再读图，避免为了报冲突去碰不存在的路径。
+    let clear_images = args.get("clearImages").and_then(Value::as_bool).unwrap_or(false);
+    if clear_images && (args.get("images").is_some() || args.get("imagePaths").is_some()) {
+        return Err(ApiError::bad_request("clearImages 不能与 images/imagePaths 同时使用"));
+    }
+    let (images, image_paths) = parse_image_set(args)?;
+    Ok(UpdateFeedArgs {
+        feed_id,
+        message,
+        images,
+        image_paths,
+        options,
+        clear_images,
+        request_id: normalize_request_id(args.get("requestId"))?,
+    })
+}
+
+/// 评论 id（点赞/删除评论用）。
+pub(super) fn parse_reply_id(args: &Value) -> Result<String, ApiError> {
+    target_id_arg(args, "replyId", "评论 ID")
+}
+
+/// 话题名允许中文，去掉官方写法里的 # 包裹。
+pub(super) fn parse_topic_tag(args: &Value) -> Result<String, ApiError> {
+    let raw = trimmed_arg(args, "tag");
+    let tag = raw.trim_matches('#').trim();
+    if tag.is_empty() {
+        return Err(ApiError::bad_request("缺少参数 tag（话题名）"));
+    }
+    if tag.chars().count() > MAX_TAG_CHARS {
+        return Err(ApiError::bad_request("话题名过长"));
+    }
+    if tag.chars().any(char::is_control) {
+        return Err(ApiError::bad_request("话题名包含非法字符"));
+    }
+    Ok(tag.to_string())
+}
+
+/// 私信参数（uid + 正文）。
+pub(super) fn parse_message_args(args: &Value) -> Result<(String, String), ApiError> {
+    let uid = target_id_arg(args, "uid", "用户 uid")?;
+    let message = trimmed_arg(args, "message").to_string();
+    if message.is_empty() {
+        return Err(ApiError::bad_request("私信内容不能为空"));
+    }
+    if message.chars().count() > MAX_REPLY_CHARS {
+        return Err(ApiError::bad_request(format!("私信内容不能超过 {MAX_REPLY_CHARS} 字")));
+    }
+    Ok((uid, message))
+}
 /// 一次写调用的强类型描述。
 pub(super) enum WriteCall {
     Publish(PublishArgs),
@@ -386,6 +459,11 @@ pub(super) enum WriteCall {
     Forward(ForwardArgs),
     DeleteFeed { feed_id: String },
     FavoriteFeed { feed_id: String, favorite: bool },
+    UpdateFeed(UpdateFeedArgs),
+    DeleteReply { reply_id: String },
+    LikeReply { reply_id: String, unlike: bool },
+    FollowTopic { tag: String, follow: bool },
+    SendMessage { uid: String, message: String },
     LikeFeed { feed_id: String, unlike: bool },
     FollowUser { uid: String, unfollow: bool },
 }
@@ -397,6 +475,13 @@ impl WriteCall {
             Self::Reply(_) => "coolapk_reply_feed",
             Self::Forward(_) => "coolapk_forward_feed",
             Self::DeleteFeed { .. } => "coolapk_delete_feed",
+            Self::UpdateFeed(_) => "coolapk_update_feed",
+            Self::DeleteReply { .. } => "coolapk_delete_reply",
+            Self::LikeReply { unlike: false, .. } => "coolapk_like_reply",
+            Self::LikeReply { unlike: true, .. } => "coolapk_unlike_reply",
+            Self::FollowTopic { follow: true, .. } => "coolapk_follow_topic",
+            Self::FollowTopic { follow: false, .. } => "coolapk_unfollow_topic",
+            Self::SendMessage { .. } => "coolapk_send_message",
             Self::FavoriteFeed { favorite: true, .. } => "coolapk_favorite_feed",
             Self::FavoriteFeed { favorite: false, .. } => "coolapk_unfavorite_feed",
             Self::LikeFeed { unlike: false, .. } => "coolapk_like_feed",
@@ -409,14 +494,16 @@ impl WriteCall {
     pub(super) fn scope(&self) -> &'static str {
         match self {
             // 发布与删除都算「内容管理」，共用 write.publish 授权与限流桶。
-            Self::Publish(_) | Self::DeleteFeed { .. } => AgentBridgeScope::WritePublish.as_str(),
+            Self::Publish(_) | Self::DeleteFeed { .. } | Self::UpdateFeed(_) => {
+                AgentBridgeScope::WritePublish.as_str()
+            }
             _ => AgentBridgeScope::WriteInteract.as_str(),
         }
     }
 
     fn required_scope(&self) -> AgentBridgeScope {
         match self {
-            Self::Publish(_) | Self::DeleteFeed { .. } => AgentBridgeScope::WritePublish,
+            Self::Publish(_) | Self::DeleteFeed { .. } | Self::UpdateFeed(_) => AgentBridgeScope::WritePublish,
             _ => AgentBridgeScope::WriteInteract,
         }
     }
@@ -426,6 +513,7 @@ impl WriteCall {
             Self::Publish(args) => args.request_id.as_deref(),
             Self::Reply(args) => args.request_id.as_deref(),
             Self::Forward(args) => args.request_id.as_deref(),
+            Self::UpdateFeed(args) => args.request_id.as_deref(),
             _ => None,
         }
     }
@@ -445,6 +533,25 @@ impl WriteCall {
                 "imageCount": image_total(&args.images, &args.image_paths),
             }),
             Self::DeleteFeed { feed_id } => json!({ "feedId": feed_id, "action": "delete" }),
+            Self::UpdateFeed(args) => json!({
+                "feedId": args.feed_id,
+                "messageChars": args.message.chars().count(),
+                "imageCount": image_total(&args.images, &args.image_paths),
+                "clearImages": args.clear_images,
+            }),
+            Self::DeleteReply { reply_id } => json!({ "replyId": reply_id, "action": "delete" }),
+            Self::LikeReply { reply_id, unlike } => json!({
+                "replyId": reply_id,
+                "action": if *unlike { "unlike" } else { "like" },
+            }),
+            Self::FollowTopic { tag, follow } => json!({
+                "tag": tag,
+                "action": if *follow { "follow" } else { "unfollow" },
+            }),
+            Self::SendMessage { uid, message } => json!({
+                "uid": uid,
+                "messageChars": message.chars().count(),
+            }),
             Self::FavoriteFeed { feed_id, favorite } => json!({
                 "feedId": feed_id,
                 "action": if *favorite { "favorite" } else { "unfavorite" },
@@ -486,6 +593,23 @@ impl WriteCall {
                 image_total(&args.images, &args.image_paths)
             ),
             Self::DeleteFeed { feed_id } => format!("删除动态 {feed_id}"),
+            Self::UpdateFeed(args) => format!(
+                "编辑动态 {}：{} 字、{} 张图片",
+                args.feed_id,
+                args.message.chars().count(),
+                image_total(&args.images, &args.image_paths)
+            ),
+            Self::DeleteReply { reply_id } => format!("删除评论 {reply_id}"),
+            Self::LikeReply { reply_id, unlike } => format!(
+                "{}评论 {reply_id}",
+                if *unlike { "取消点赞" } else { "点赞" }
+            ),
+            Self::FollowTopic { tag, follow } => {
+                format!("{}话题 {tag}", if *follow { "关注" } else { "取消关注" })
+            }
+            Self::SendMessage { uid, message } => {
+                format!("给用户 {uid} 发私信：{} 字", message.chars().count())
+            }
             Self::FavoriteFeed { feed_id, favorite } => format!(
                 "{}动态 {feed_id}",
                 if *favorite { "收藏" } else { "取消收藏" }
@@ -518,6 +642,18 @@ impl WriteCall {
                 "target": args.feed_id,
             }),
             Self::DeleteFeed { feed_id } => json!({ "target": feed_id }),
+            Self::UpdateFeed(args) => json!({
+                "messageChars": args.message.chars().count(),
+                "imageCount": image_total(&args.images, &args.image_paths),
+                "target": args.feed_id,
+            }),
+            Self::DeleteReply { reply_id } => json!({ "target": reply_id }),
+            Self::LikeReply { reply_id, .. } => json!({ "target": reply_id }),
+            Self::FollowTopic { tag, .. } => json!({ "target": tag }),
+            Self::SendMessage { uid, message } => json!({
+                "messageChars": message.chars().count(),
+                "target": uid,
+            }),
             Self::FavoriteFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::LikeFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::FollowUser { uid, .. } => json!({ "target": uid }),
@@ -651,6 +787,13 @@ async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
         WriteCall::Reply(args) => return reply(ctx, args).await,
         WriteCall::Forward(args) => return forward(ctx, args).await,
         WriteCall::DeleteFeed { feed_id } => state()?.client.delete_feed(feed_id).await,
+        WriteCall::UpdateFeed(args) => return update_feed(ctx, args).await,
+        WriteCall::DeleteReply { reply_id } => state()?.client.delete_reply(reply_id).await,
+        WriteCall::LikeReply { reply_id, unlike: false } => state()?.client.like_reply(reply_id).await,
+        WriteCall::LikeReply { reply_id, unlike: true } => state()?.client.unlike_reply(reply_id).await,
+        WriteCall::FollowTopic { tag, follow: true } => state()?.client.follow_tag(tag).await,
+        WriteCall::FollowTopic { tag, follow: false } => state()?.client.unfollow_tag(tag).await,
+        WriteCall::SendMessage { uid, message } => state()?.client.send_private_message(uid, message).await,
         WriteCall::FavoriteFeed { feed_id, favorite: true } => state()?.client.favorite_feed(feed_id).await,
         WriteCall::FavoriteFeed { feed_id, favorite: false } => state()?.client.unfavorite_feed(feed_id).await,
         WriteCall::LikeFeed { feed_id, unlike: false } => state()?.client.like_feed(feed_id).await,
@@ -678,13 +821,10 @@ async fn publish(ctx: &BridgeCtx, args: &PublishArgs) -> Result<Value, ApiError>
     let feed = extract_feed(&wrapped).unwrap_or(wrapped);
     let feed_id = feed.get("id").cloned().unwrap_or(Value::Null);
     Ok(json!({
-        "code": 200,
-        "data": {
-            "feedId": feed_id,
-            "feed": feed,
-            "imageUrls": urls,
-            "messageChars": args.message.chars().count(),
-        }
+        "feedId": feed_id,
+        "feed": feed,
+        "imageUrls": urls,
+        "messageChars": args.message.chars().count(),
     }))
 }
 
@@ -743,6 +883,70 @@ async fn forward(ctx: &BridgeCtx, args: &ForwardArgs) -> Result<Value, ApiError>
         .map_err(ApiError::from_client_error)
 }
 
+/// 编辑自己的动态：未指定图片时沿用原动态配图，只有 clearImages 才清空。
+async fn update_feed(ctx: &BridgeCtx, args: &UpdateFeedArgs) -> Result<Value, ApiError> {
+    let state = ctx.app_state().ok_or_else(ApiError::service_unavailable)?;
+    let client = &state.client;
+    let pic = if args.clear_images {
+        String::new()
+    } else if args.images.is_empty() && args.image_paths.is_empty() {
+        existing_feed_pic(client, &args.feed_id).await?
+    } else {
+        upload_all_images(client, &args.images, &args.image_paths).await?.join(",")
+    };
+    let wrapped = client
+        .update_feed(&args.feed_id, &args.message, &pic, None, Some(&args.options))
+        .await
+        .map_err(ApiError::from_client_error)?;
+    let feed = extract_feed(&wrapped).unwrap_or(wrapped);
+    let image_urls: Vec<String> = if pic.is_empty() { Vec::new() } else { pic.split(',').map(str::to_string).collect() };
+    Ok(json!({
+        "feedId": args.feed_id,
+        "feed": feed,
+        "imageUrls": image_urls,
+        "messageChars": args.message.chars().count(),
+    }))
+}
+
+/// 读取可编辑动态当前的配图（pic 可能是逗号串，也可能是图片对象数组）。
+async fn existing_feed_pic(client: &CoolapkClient, feed_id: &str) -> Result<String, ApiError> {
+    let detail = client.get_editable_feed(feed_id).await.map_err(ApiError::from_client_error)?;
+    let data = detail.get("data").cloned().unwrap_or(detail);
+    if let Some(urls) = detail_pic_urls(&data) {
+        return Ok(urls);
+    }
+    if let Some(object) = data.as_object() {
+        for key in ["message_pic", "messagePic", "picArr", "pic_arr"] {
+            if let Some(urls) = object.get(key).and_then(detail_pic_urls) {
+                return Ok(urls);
+            }
+        }
+    }
+    Ok(String::new())
+}
+
+pub(super) fn detail_pic_urls(value: &Value) -> Option<String> {
+    match value {
+        Value::String(raw) if !raw.trim().is_empty() => Some(raw.trim().to_string()),
+        Value::Array(items) => {
+            let urls: Vec<String> = items
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(url) => Some(url.clone()),
+                    Value::Object(map) => map
+                        .get("url")
+                        .or_else(|| map.get("pic"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    _ => None,
+                })
+                .filter(|url| !url.is_empty())
+                .collect();
+            (!urls.is_empty()).then(|| urls.join(","))
+        }
+        _ => None,
+    }
+}
 /// 逐张上传图片并返回地址列表（发帖 / 评论 / 转发共用）。
 async fn upload_all_images(
     client: &CoolapkClient,

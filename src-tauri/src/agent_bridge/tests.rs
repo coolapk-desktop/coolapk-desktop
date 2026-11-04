@@ -544,6 +544,79 @@ fn extract_feed_finds_entity_in_nested_envelopes() {
     assert_eq!(feed["id"], 74837196);
     assert!(super::write::extract_feed(&serde_json::json!({ "code": 500 })).is_none());
 }
+#[test]
+fn write_parse_update_feed_validates_message_and_images() {
+    let missing = super::write::parse_update_feed_args(&serde_json::json!({ "feedId": "74836959" })).unwrap_err();
+    assert!(missing.message().contains("正文"), "实际错误：{}", missing.message());
+
+    let conflict = super::write::parse_update_feed_args(&serde_json::json!({
+        "feedId": "74836959",
+        "message": "新正文",
+        "clearImages": true,
+        "imagePaths": ["/tmp/x.png"]
+    }))
+    .unwrap_err();
+    assert!(conflict.message().contains("clearImages"), "实际错误：{}", conflict.message());
+
+    let parsed = super::write::parse_update_feed_args(&serde_json::json!({
+        "feedId": "74836959",
+        "message": "  新正文  ",
+        "requestId": "edit-1"
+    }))
+    .unwrap();
+    assert_eq!(parsed.message, "新正文");
+    assert!(!parsed.clear_images);
+    assert_eq!(parsed.request_id.as_deref(), Some("edit-1"));
+
+    let call = super::write::WriteCall::UpdateFeed(parsed);
+    assert_eq!(call.tool(), "coolapk_update_feed");
+    assert_eq!(call.scope(), "write.publish");
+    assert_eq!(call.preview()["feedId"], "74836959");
+    assert!(call.summary().contains("编辑动态"));
+}
+
+#[test]
+fn write_parse_reply_id_topic_and_message_args() {
+    let reply_id = super::write::parse_reply_id(&serde_json::json!({ "replyId": "61535463" })).unwrap();
+    assert_eq!(reply_id, "61535463");
+    assert!(super::write::parse_reply_id(&serde_json::json!({ "replyId": "1&x=2" })).is_err());
+
+    let tag = super::write::parse_topic_tag(&serde_json::json!({ "tag": " #酷安# " })).unwrap();
+    assert_eq!(tag, "酷安");
+    assert!(super::write::parse_topic_tag(&serde_json::json!({ "tag": "##" })).is_err());
+
+    let (uid, message) =
+        super::write::parse_message_args(&serde_json::json!({ "uid": "44272578", "message": "  你好  " }))
+            .unwrap();
+    assert_eq!(uid, "44272578");
+    assert_eq!(message, "你好");
+    assert!(super::write::parse_message_args(&serde_json::json!({ "uid": "44272578", "message": "  " })).is_err());
+
+    let like = super::write::WriteCall::LikeReply { reply_id: "1".to_string(), unlike: false };
+    assert_eq!(like.tool(), "coolapk_like_reply");
+    assert_eq!(like.preview()["action"], "like");
+    let unlike = super::write::WriteCall::LikeReply { reply_id: "1".to_string(), unlike: true };
+    assert_eq!(unlike.tool(), "coolapk_unlike_reply");
+    let topic = super::write::WriteCall::FollowTopic { tag: "酷安".to_string(), follow: false };
+    assert_eq!(topic.tool(), "coolapk_unfollow_topic");
+    let message = super::write::WriteCall::SendMessage { uid: "1".to_string(), message: "你好".to_string() };
+    assert_eq!(message.tool(), "coolapk_send_message");
+    assert_eq!(message.scope(), "write.interact");
+}
+
+#[test]
+fn detail_pic_urls_handles_string_and_object_array() {
+    assert_eq!(
+        super::write::detail_pic_urls(&serde_json::json!("https://a/1.jpg,https://a/2.jpg")).as_deref(),
+        Some("https://a/1.jpg,https://a/2.jpg"),
+    );
+    assert_eq!(
+        super::write::detail_pic_urls(&serde_json::json!([{ "url": "https://a/1.jpg" }, "https://a/2.jpg"])).as_deref(),
+        Some("https://a/1.jpg,https://a/2.jpg"),
+    );
+    assert!(super::write::detail_pic_urls(&serde_json::json!([])).is_none());
+    assert!(super::write::detail_pic_urls(&serde_json::json!("")).is_none());
+}
 fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
     write_ctx_with_scopes(
         name,

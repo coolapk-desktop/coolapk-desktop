@@ -25,7 +25,7 @@
 5. 需要给 Claude Code、Codex 等客户端用时，再打开「MCP 服务」开关，复制上方的 **MCP 接入地址**。
 6. 关闭接口开关会停止服务并取消下次自动恢复；只退出应用时若开关仍开启，下次启动会恢复服务。token 会保留；再次开启时会重新绑定端口，固定端口被占用时可能分配新的随机端口。只有点「重新生成」才会更换 token。
 
-> 写能力现状：发帖（含图片）、评论/楼中楼回复、转发、收藏、删除自己的动态、点赞/取消点赞、关注/取消关注均已接通，受下方写操作闸门约束；编辑已发布内容、私信等工具尚未提供。
+> 写能力现状：发帖（含图片）、编辑自己的动态、评论/楼中楼回复、评论点赞、转发、收藏、删除自己的动态/评论、关注话题、点赞、关注、私信均已接通，受下方写操作闸门约束；图文长文编辑需自行提供官方 ArticleModel 正文，改变动态类型不被支持。
 
 > token 等同于本机的通行证，只保存在本机应用数据目录的 `agent-bridge-token`（Unix 下权限为 `0600`），重启应用后复用。不要把它写进仓库、截图或聊天记录，也不要交给不受信任的程序。
 
@@ -148,6 +148,11 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_forward_feed` | 转发动态，评语与图片可选 | `write.interact` |
 | `coolapk_favorite_feed` / `coolapk_unfavorite_feed` | 收藏 / 取消收藏（`feedId`） | `write.interact` |
 | `coolapk_delete_feed` | 删除自己发布的动态（不可恢复） | `write.publish` |
+| `coolapk_update_feed` | 编辑自己已发布的动态（不传图片则沿用原配图） | `write.publish` |
+| `coolapk_like_reply` / `coolapk_unlike_reply` | 点赞 / 取消点赞评论（`replyId`） | `write.interact` |
+| `coolapk_delete_reply` | 删除自己发表的评论（`replyId`，不可恢复） | `write.interact` |
+| `coolapk_follow_topic` / `coolapk_unfollow_topic` | 关注 / 取消关注话题（`tag`） | `write.interact` |
+| `coolapk_send_message` | 给指定用户发私信（`uid`、`message`，1000 字以内） | `write.interact` |
 | `coolapk_like_feed` / `coolapk_unlike_feed` | 点赞 / 取消点赞（`feedId`） | `write.interact` |
 | `coolapk_follow_user` / `coolapk_unfollow_user` | 关注 / 取消关注（`uid`） | `write.interact` |
 
@@ -220,6 +225,30 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 #### 转发（`coolapk_forward_feed`）
 
 只有 `feedId` 必填，`message`（评语）与图片可选；同样支持 `requestId`。
+
+#### 编辑动态（`coolapk_update_feed`）
+
+| 参数 | 说明 |
+| --- | --- |
+| `feedId` | 必填，要编辑的动态 ID |
+| `message` | 必填，编辑后的正文（图文长文时是官方 ArticleModel JSON） |
+| `images` / `imagePaths` | 可选；**不传则沿用原动态配图**，传了就以本次为准（整组替换） |
+| `clearImages` | `true` 表示清空配图，与 `images`/`imagePaths` 互斥 |
+| `options` | 与发帖相同的 createFeed 表单；图文长文需 `htmlArticle: true` + `messageTitle` |
+
+受官方接口限制：只能编辑普通动态与图文长文，不能改变原动态类型，视频/大封面动态不支持；`enableModify=0`（官网不允许或编辑次数用尽）时会直接报错。
+
+#### 评论管理（`coolapk_like_reply` / `coolapk_unlike_reply` / `coolapk_delete_reply`）
+
+参数只有一个 `replyId`。**评论 ID 取 `coolapk_feed_replies` 结果里的 `id` 字段**（`rid` 是楼中楼的目标评论，顶层评论为 `0`，不要用它）。
+
+#### 话题（`coolapk_follow_topic` / `coolapk_unfollow_topic`）
+
+参数 `tag` 为话题名，可带 `#` 包裹（会去掉），例如 `酷安` 或 `#酷安#`。
+
+#### 私信（`coolapk_send_message`）
+
+参数 `uid`（收件人）+ `message`（1000 字以内）。服务端不允许给自己发私信。私信会直接送到真实用户，务必确认收件人与内容后再调用。
 
 #### 收藏 / 删除
 

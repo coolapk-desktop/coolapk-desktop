@@ -252,6 +252,64 @@ static TOOLS: &[ToolSpec] = &[
         schema: || object_schema(json!({ "feedId": { "type": "string", "description": "要删除的动态 ID" } }), vec!["feedId"]),
     },
     ToolSpec {
+        name: "coolapk_update_feed",
+        description: "编辑自己已发布的动态（需要 write.publish 授权）。不传图片时沿用原配图，clearImages=true 才清空；图文长文需传 options.htmlArticle 与官方 ArticleModel 正文。",
+        scope: Some(AgentBridgeScope::WritePublish),
+        schema: || {
+            media_object_schema(
+                json!({
+                    "feedId": { "type": "string", "description": "要编辑的动态 ID" },
+                    "message": { "type": "string", "description": "编辑后的正文，最多 5000 字" },
+                    "clearImages": { "type": "boolean", "description": "true 表示清空配图；与 images/imagePaths 互斥" },
+                    "options": { "type": "object", "description": "与发帖相同的 createFeed 扩展表单（图文长文用 htmlArticle/messageTitle/messageCover）" },
+                    "requestId": { "type": "string", "description": "幂等请求 id" }
+                }),
+                vec!["feedId", "message"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_delete_reply",
+        description: "删除自己发表的评论/回复（需要 write.interact 授权，不可恢复）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "replyId": { "type": "string", "description": "评论 ID" } }), vec!["replyId"]),
+    },
+    ToolSpec {
+        name: "coolapk_like_reply",
+        description: "点赞一条评论（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "replyId": { "type": "string", "description": "评论 ID" } }), vec!["replyId"]),
+    },
+    ToolSpec {
+        name: "coolapk_unlike_reply",
+        description: "取消点赞一条评论（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "replyId": { "type": "string", "description": "评论 ID" } }), vec!["replyId"]),
+    },
+    ToolSpec {
+        name: "coolapk_follow_topic",
+        description: "关注一个话题（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "tag": { "type": "string", "description": "话题名，可带 # 包裹" } }), vec!["tag"]),
+    },
+    ToolSpec {
+        name: "coolapk_unfollow_topic",
+        description: "取消关注一个话题（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "tag": { "type": "string", "description": "话题名，可带 # 包裹" } }), vec!["tag"]),
+    },
+    ToolSpec {
+        name: "coolapk_send_message",
+        description: "给指定用户发一条私信（需要 write.interact 授权，1000 字以内；请确认收件人与内容，避免打扰他人）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(
+            json!({
+                "uid": { "type": "string", "description": "收件人 uid" },
+                "message": { "type": "string", "description": "私信正文，最多 1000 字" }
+            }),
+            vec!["uid", "message"],
+        ),
+    },    ToolSpec {
         name: "coolapk_like_feed",
         description: "点赞一条动态（需要 write.interact 授权，受写操作闸门约束）。",
         scope: Some(AgentBridgeScope::WriteInteract),
@@ -503,6 +561,28 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
             let feed_id = required_arg(args, "feedId", "动态 ID")?;
             let favorite = name == "coolapk_favorite_feed";
             write::execute(ctx, write::WriteCall::FavoriteFeed { feed_id, favorite }).await
+        }
+        "coolapk_update_feed" => {
+            let update = write::parse_update_feed_args(args)?;
+            write::execute(ctx, write::WriteCall::UpdateFeed(update)).await
+        }
+        "coolapk_delete_reply" => {
+            let reply_id = write::parse_reply_id(args)?;
+            write::execute(ctx, write::WriteCall::DeleteReply { reply_id }).await
+        }
+        "coolapk_like_reply" | "coolapk_unlike_reply" => {
+            let reply_id = write::parse_reply_id(args)?;
+            let unlike = name == "coolapk_unlike_reply";
+            write::execute(ctx, write::WriteCall::LikeReply { reply_id, unlike }).await
+        }
+        "coolapk_follow_topic" | "coolapk_unfollow_topic" => {
+            let tag = write::parse_topic_tag(args)?;
+            let follow = name == "coolapk_follow_topic";
+            write::execute(ctx, write::WriteCall::FollowTopic { tag, follow }).await
+        }
+        "coolapk_send_message" => {
+            let (uid, message) = write::parse_message_args(args)?;
+            write::execute(ctx, write::WriteCall::SendMessage { uid, message }).await
         }
         "coolapk_like_feed" | "coolapk_unlike_feed" => {
             let feed_id = required_arg(args, "feedId", "动态 ID")?;
