@@ -617,6 +617,19 @@ fn detail_pic_urls_handles_string_and_object_array() {
     assert!(super::write::detail_pic_urls(&serde_json::json!([])).is_none());
     assert!(super::write::detail_pic_urls(&serde_json::json!("")).is_none());
 }
+#[test]
+fn write_set_and_unset_feed_top_previews() {
+    let top = super::write::WriteCall::SetFeedTop { feed_id: "74836959".to_string(), top: true };
+    assert_eq!(top.tool(), "coolapk_set_feed_top");
+    assert_eq!(top.scope(), "write.interact");
+    assert_eq!(top.preview()["action"], "top");
+    assert_eq!(top.preview()["feedId"], "74836959");
+    assert!(top.summary().contains("置顶"));
+
+    let untop = super::write::WriteCall::SetFeedTop { feed_id: "74836959".to_string(), top: false };
+    assert_eq!(untop.tool(), "coolapk_unset_feed_top");
+    assert!(untop.summary().contains("取消置顶"));
+}
 fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
     write_ctx_with_scopes(
         name,

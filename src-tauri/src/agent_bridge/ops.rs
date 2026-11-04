@@ -121,6 +121,46 @@ pub(super) async fn topic_detail(ctx: &BridgeCtx, tag: &str) -> Result<Value, Ap
     mapped(state.client.get_topic_detail(tag).await)
 }
 
+/// 通知列表：type 决定接口（list 默认通知、sublist 分组、feedLikeList 点赞、contactsFollowList 关注）。
+pub(super) async fn notifications(
+    ctx: &BridgeCtx,
+    notification_type: &str,
+    page: u32,
+    note_type: &str,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_notifications(notification_type, page, "", "", note_type).await)
+}
+
+/// 我的收藏列表（type 常见值：feed 动态、apk 应用、topic 话题）。
+pub(super) async fn favorites(ctx: &BridgeCtx, fav_type: &str, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_favorite_list(fav_type, page, "", "").await)
+}
+
+/// 关注时间线。
+pub(super) async fn following_feeds(ctx: &BridgeCtx, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_following_feeds(page).await)
+}
+
+/// 某条一级评论下的楼中楼。
+pub(super) async fn reply_thread(
+    ctx: &BridgeCtx,
+    feed_id: &str,
+    reply_id: &str,
+    page: u32,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_sub_replies(feed_id, reply_id, page).await)
+}
+
+/// 私信会话列表。
+pub(super) async fn private_messages(ctx: &BridgeCtx, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.list_messages(page, "", "").await)
+}
+
 pub(super) async fn search(
     ctx: &BridgeCtx,
     keyword: &str,

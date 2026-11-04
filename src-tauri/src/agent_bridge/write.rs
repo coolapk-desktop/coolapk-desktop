@@ -464,6 +464,7 @@ pub(super) enum WriteCall {
     LikeReply { reply_id: String, unlike: bool },
     FollowTopic { tag: String, follow: bool },
     SendMessage { uid: String, message: String },
+    SetFeedTop { feed_id: String, top: bool },
     LikeFeed { feed_id: String, unlike: bool },
     FollowUser { uid: String, unfollow: bool },
 }
@@ -482,6 +483,8 @@ impl WriteCall {
             Self::FollowTopic { follow: true, .. } => "coolapk_follow_topic",
             Self::FollowTopic { follow: false, .. } => "coolapk_unfollow_topic",
             Self::SendMessage { .. } => "coolapk_send_message",
+            Self::SetFeedTop { top: true, .. } => "coolapk_set_feed_top",
+            Self::SetFeedTop { top: false, .. } => "coolapk_unset_feed_top",
             Self::FavoriteFeed { favorite: true, .. } => "coolapk_favorite_feed",
             Self::FavoriteFeed { favorite: false, .. } => "coolapk_unfavorite_feed",
             Self::LikeFeed { unlike: false, .. } => "coolapk_like_feed",
@@ -552,6 +555,11 @@ impl WriteCall {
                 "uid": uid,
                 "messageChars": message.chars().count(),
             }),
+            Self::SetFeedTop { feed_id, top } => json!({
+                "feedId": feed_id,
+                "action": if *top { "top" } else { "untop" },
+            }),
+
             Self::FavoriteFeed { feed_id, favorite } => json!({
                 "feedId": feed_id,
                 "action": if *favorite { "favorite" } else { "unfavorite" },
@@ -610,6 +618,10 @@ impl WriteCall {
             Self::SendMessage { uid, message } => {
                 format!("给用户 {uid} 发私信：{} 字", message.chars().count())
             }
+            Self::SetFeedTop { feed_id, top } => {
+                format!("{}动态 {feed_id}", if *top { "置顶" } else { "取消置顶" })
+            }
+
             Self::FavoriteFeed { feed_id, favorite } => format!(
                 "{}动态 {feed_id}",
                 if *favorite { "收藏" } else { "取消收藏" }
@@ -654,6 +666,8 @@ impl WriteCall {
                 "messageChars": message.chars().count(),
                 "target": uid,
             }),
+            Self::SetFeedTop { feed_id, .. } => json!({ "target": feed_id }),
+
             Self::FavoriteFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::LikeFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::FollowUser { uid, .. } => json!({ "target": uid }),
@@ -794,6 +808,15 @@ async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
         WriteCall::FollowTopic { tag, follow: true } => state()?.client.follow_tag(tag).await,
         WriteCall::FollowTopic { tag, follow: false } => state()?.client.unfollow_tag(tag).await,
         WriteCall::SendMessage { uid, message } => state()?.client.send_private_message(uid, message).await,
+        WriteCall::SetFeedTop { feed_id, top } => {
+            let state = state()?;
+            let uid = state
+                .client
+                .current_uid()
+                .ok_or_else(|| ApiError::unauthorized("当前未登录，无法置顶动态"))?;
+            state.client.set_user_feed_top(&uid, feed_id, *top).await
+        }
+
         WriteCall::FavoriteFeed { feed_id, favorite: true } => state()?.client.favorite_feed(feed_id).await,
         WriteCall::FavoriteFeed { feed_id, favorite: false } => state()?.client.unfavorite_feed(feed_id).await,
         WriteCall::LikeFeed { feed_id, unlike: false } => state()?.client.like_feed(feed_id).await,

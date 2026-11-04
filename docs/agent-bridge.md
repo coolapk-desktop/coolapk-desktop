@@ -25,7 +25,7 @@
 5. 需要给 Claude Code、Codex 等客户端用时，再打开「MCP 服务」开关，复制上方的 **MCP 接入地址**。
 6. 关闭接口开关会停止服务并取消下次自动恢复；只退出应用时若开关仍开启，下次启动会恢复服务。token 会保留；再次开启时会重新绑定端口，固定端口被占用时可能分配新的随机端口。只有点「重新生成」才会更换 token。
 
-> 写能力现状：发帖（含图片）、编辑自己的动态、评论/楼中楼回复、评论点赞、转发、收藏、删除自己的动态/评论、关注话题、点赞、关注、私信均已接通，受下方写操作闸门约束；图文长文编辑需自行提供官方 ArticleModel 正文，改变动态类型不被支持。
+> 写能力现状：发帖（含图片）、编辑自己的动态、评论/楼中楼回复、评论点赞、转发、收藏、删除自己的动态/评论、关注话题、主页置顶、点赞、关注、私信均已接通，受下方写操作闸门约束；图文长文编辑需自行提供官方 ArticleModel 正文，改变动态类型不被支持。收藏应用与应用评价尚未提供（/v6/apk/favorite 的参数契约尚未确定，应用内该按钮当前同样失效）。
 
 > token 等同于本机的通行证，只保存在本机应用数据目录的 `agent-bridge-token`（Unix 下权限为 `0600`），重启应用后复用。不要把它写进仓库、截图或聊天记录，也不要交给不受信任的程序。
 
@@ -143,6 +143,11 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_user_profile` | 用户资料（`uid`） | `read` |
 | `coolapk_user_feeds` | 用户动态（`uid`，可选 `page`、`feedType`） | `read` |
 | `coolapk_topic_detail` | 话题详情（`tag`） | `read` |
+| `coolapk_notifications` | 通知列表（`type`：list/sublist/feedLikeList/contactsFollowList，`page`） | `read` |
+| `coolapk_favorites` | 我的收藏（`favType`：feed/apk/topic 等，`page`） | `read` |
+| `coolapk_following_feeds` | 关注时间线（`page`） | `read` |
+| `coolapk_reply_thread` | 一级评论下的楼中楼（`feedId`、`replyId`、`page`） | `read` |
+| `coolapk_private_messages` | 私信会话列表（`page`） | `read` |
 | `coolapk_publish_feed` | 发布动态：正文 + 最多 9 张图片（base64 或本机路径），可指定板块与可见范围 | `write.publish` |
 | `coolapk_reply_feed` | 评论动态，带 `rid` 时回复某条评论（楼中楼），可带图片 | `write.interact` |
 | `coolapk_forward_feed` | 转发动态，评语与图片可选 | `write.interact` |
@@ -153,6 +158,7 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_delete_reply` | 删除自己发表的评论（`replyId`，不可恢复） | `write.interact` |
 | `coolapk_follow_topic` / `coolapk_unfollow_topic` | 关注 / 取消关注话题（`tag`） | `write.interact` |
 | `coolapk_send_message` | 给指定用户发私信（`uid`、`message`，1000 字以内） | `write.interact` |
+| `coolapk_set_feed_top` / `coolapk_unset_feed_top` | 个人主页置顶 / 取消置顶动态（`feedId`） | `write.interact` |
 | `coolapk_like_feed` / `coolapk_unlike_feed` | 点赞 / 取消点赞（`feedId`） | `write.interact` |
 | `coolapk_follow_user` / `coolapk_unfollow_user` | 关注 / 取消关注（`uid`） | `write.interact` |
 
@@ -249,6 +255,10 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 #### 私信（`coolapk_send_message`）
 
 参数 `uid`（收件人）+ `message`（1000 字以内）。服务端不允许给自己发私信。私信会直接送到真实用户，务必确认收件人与内容后再调用。
+
+#### 主页置顶（coolapk_set_feed_top / coolapk_unset_feed_top）
+
+参数只有一个 feedId，作用对象是当前登录账号的个人主页（nodeType=member）。
 
 #### 收藏 / 删除
 

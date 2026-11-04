@@ -310,6 +310,18 @@ static TOOLS: &[ToolSpec] = &[
             vec!["uid", "message"],
         ),
     },    ToolSpec {
+        name: "coolapk_set_feed_top",
+        description: "把自己主页置顶动态设为指定动态（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "要置顶的动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
+        name: "coolapk_unset_feed_top",
+        description: "取消自己主页的置顶动态（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "要取消置顶的动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
         name: "coolapk_like_feed",
         description: "点赞一条动态（需要 write.interact 授权，受写操作闸门约束）。",
         scope: Some(AgentBridgeScope::WriteInteract),
@@ -334,6 +346,61 @@ static TOOLS: &[ToolSpec] = &[
         schema: || object_schema(json!({ "uid": { "type": "string", "description": "用户 uid" } }), vec!["uid"]),
     },
     ToolSpec {
+        name: "coolapk_notifications",
+        description: "当前账号的通知列表。type 取 list（通知，默认）、sublist（分组，需 noteType）、feedLikeList（点赞）、contactsFollowList（关注）。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || {
+            object_schema(
+                json!({
+                    "type": { "type": "string", "enum": ["list", "sublist", "feedLikeList", "contactsFollowList"], "description": "通知类型，默认 list" },
+                    "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" },
+                    "noteType": { "type": "string", "description": "type=sublist 时必填的分组类型" }
+                }),
+                vec![],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_favorites",
+        description: "当前账号的收藏列表。favType 常见值：feed（动态，默认）、apk（应用）、topic（话题）。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || {
+            object_schema(
+                json!({
+                    "favType": { "type": "string", "description": "收藏类型，默认 feed" },
+                    "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" }
+                }),
+                vec![],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_following_feeds",
+        description: "关注时间线（当前账号关注的人发布的动态）。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || object_schema(json!({ "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" } }), vec![]),
+    },
+    ToolSpec {
+        name: "coolapk_reply_thread",
+        description: "获取某条一级评论下的楼中楼回复。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || {
+            object_schema(
+                json!({
+                    "feedId": { "type": "string", "description": "评论所属动态 ID" },
+                    "replyId": { "type": "string", "description": "一级评论 ID（replies 列表里的 id）" },
+                    "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" }
+                }),
+                vec!["feedId", "replyId"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_private_messages",
+        description: "当前账号的私信会话列表。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || object_schema(json!({ "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" } }), vec![]),
+    },    ToolSpec {
         name: "coolapk_topic_detail",
         description: "获取话题详情（按话题 tag）。",
         scope: Some(AgentBridgeScope::Read),
@@ -537,6 +604,22 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
             let feed_type = string_arg(args, "feedType").unwrap_or_default();
             ops::user_feeds(ctx, &uid, page_arg(args), &feed_type).await
         }
+        "coolapk_notifications" => {
+            let notification_type = string_arg(args, "type").unwrap_or_else(|| "list".to_string());
+            let note_type = string_arg(args, "noteType").unwrap_or_default();
+            ops::notifications(ctx, &notification_type, page_arg(args), &note_type).await
+        }
+        "coolapk_favorites" => {
+            let fav_type = string_arg(args, "favType").filter(|value| !value.is_empty()).unwrap_or_else(|| "feed".to_string());
+            ops::favorites(ctx, &fav_type, page_arg(args)).await
+        }
+        "coolapk_following_feeds" => ops::following_feeds(ctx, page_arg(args)).await,
+        "coolapk_reply_thread" => {
+            let feed_id = required_arg(args, "feedId", "动态 ID")?;
+            let reply_id = required_arg(args, "replyId", "评论 ID")?;
+            ops::reply_thread(ctx, &feed_id, &reply_id, page_arg(args)).await
+        }
+        "coolapk_private_messages" => ops::private_messages(ctx, page_arg(args)).await,
         "coolapk_topic_detail" => {
             let tag = required_arg(args, "tag", "话题 tag")?;
             ops::topic_detail(ctx, &tag).await
@@ -584,6 +667,12 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
             let (uid, message) = write::parse_message_args(args)?;
             write::execute(ctx, write::WriteCall::SendMessage { uid, message }).await
         }
+        "coolapk_set_feed_top" | "coolapk_unset_feed_top" => {
+            let feed_id = required_arg(args, "feedId", "动态 ID")?;
+            let top = name == "coolapk_set_feed_top";
+            write::execute(ctx, write::WriteCall::SetFeedTop { feed_id, top }).await
+        }
+
         "coolapk_like_feed" | "coolapk_unlike_feed" => {
             let feed_id = required_arg(args, "feedId", "动态 ID")?;
             let unlike = name == "coolapk_unlike_feed";
