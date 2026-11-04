@@ -41,7 +41,7 @@ git diff --check
   服务端校验 `Host`，拒绝任何带 `Origin` 的浏览器跨域请求。
 - token 只存应用数据目录 `agent-bridge-token`（0600），仅在本地开关页显示，**不进仓库/截图/对话**。
 - 读工具与写工具分 scope；写操作走 confirm/auto 闸门 + 按 scope 分桶限流 + 按工具/账号/requestId 幂等去重。
-- 写能力现状以 `docs/agent-bridge.md` 顶部「写能力现状」为准（已接通：发帖+图片、编辑动态、评论/楼中楼、评论点赞、转发、收藏、删除动态/评论、关注话题、主页置顶、点赞、关注、私信；读侧另有通知/收藏/关注流/楼中楼/私信列表）。共 32 个 MCP 工具，全部走同一套 scope/闸门/限流/审计；评论类工具要传 `coolapk_feed_replies` 里的 `id`（`rid` 是楼中楼目标，顶层为 0）。收藏应用(`/v6/apk/favorite`) 参数契约未确定、应用内按钮也失效，别照 docs/coolapk-api.md 的 `id` 试。
+- 写能力现状以 `docs/agent-bridge.md` 顶部「写能力现状」为准（已接通：发帖+图片、编辑动态、评论/楼中楼、评论点赞、转发、收藏与收藏单管理、删除动态/评论、关注话题、主页置顶、点赞、关注、私信；读侧另有通知/收藏/关注流/楼中楼/私信列表/商品只读）。共 44 个 MCP 工具，全部走同一套 scope/闸门/限流/审计；评论类工具要传 `coolapk_feed_replies` 里的 `id`（`rid` 是楼中楼目标，顶层为 0）。收藏应用(`/v6/apk/favorite`) 参数契约未定（issue #40），别照 docs/coolapk-api.md 的 `id` 试。商品类只做只读，不做下单/购买/转卖等交易操作。
 - 发帖走官方顺序：`client.upload_image(bytes,name,mime,"feed",None)` 取 `data.url` → 逗号拼 `pic` → `client.create_feed_with_options`；MCP 大图用 `imagePaths`（本机绝对路径，应用自己读盘），比 base64 省事，且 MCP body 上限已放宽到 32 MiB。
 - 单机联调用例：`src-tauri/tests/agent_bridge`（审计写 `agent-bridge-audit.jsonl`）。
 

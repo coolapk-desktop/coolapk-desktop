@@ -31,3 +31,7 @@ agent 写工具第二批实测（2026-11-03，同一账号/真实接口）：编
 §
 agent 工具第三批（2026-11-03）：新增只读工具 coolapk_notifications / favorites / following_feeds / reply_thread / private_messages 与写工具 coolapk_set_feed_top / unset_feed_top，共 32 个工具；真实接口验证通过（置顶返回「个人主页置顶成功」；楼中楼读在 feed 72432021 / reply 596603124 拿到 3 条嵌套回复）。**收藏应用(/v6/apk/favorite) 是坑**：`id`（GET/POST）、`apk`、`packageName`、`targetType=apk` 全被服务端判「apk 不能为空」，应用内 AppDetailPage 的收藏按钮同样失效，已把尝试撤回、不在 PR 里带假实现，建议单独开 issue 排查。另：`coolapk_feed_replies` 返回的 `commentnum` 常缺失，找有评论的动态别依赖它。
 <!-- created=2026-11-03, last=2026-11-03 -->
+
+§
+agent 工具第四批（2026-11-03）：新增收藏单（收藏夹分类）读写 9 个工具 + 商品只读 3 个工具，共 44 个。实测：收藏单新建→加动态(`collect:1`)→`feed_collections` 可见→内容列表含动态→改名生效→移除条目→删除收藏单全部成功；商品 `name=Redmi K70` → id 3438，版本列表带到手价。**坑**：私密收藏单(`isOpen=false`)不出现在 `/v6/collection/list`，只能靠已知 id 操作（测试时留下过一个不可见空私密收藏单，接口无法枚举，已记录）；`itemId` 实测通常等于动态 id。**政策**：商品/数码只做只读工具，不下单/不自动交易（避免金额纠纷），PR 说明里也只声明「不主动做」，不做额外封堵。另外为孤儿私密收藏单问题、应用收藏接口参数契约开过上游 issue #40。
+<!-- created=2026-11-03, last=2026-11-03 -->
