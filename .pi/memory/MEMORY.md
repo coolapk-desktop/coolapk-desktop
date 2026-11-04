@@ -39,3 +39,7 @@ agent 工具第四批（2026-11-03）：新增收藏单（收藏夹分类）读�
 §
 PR #39 已被维护者合并（2026-11-04，merge commit b40a3cf，6 个提交：发帖执行+图片/32MiB body、评论转发收藏删除、编辑+评论点赞+话题+私信、通知/收藏/关注流/楼中楼/私信读+主页置顶、收藏单+商品只读）；剩下那个文档提交另开 **PR #41**（分支 docs/agent-bridge-capabilities，改 README + docs/coolapk-api.md）。推送路径仍是 community 仓库（origin 无写权限）。文档层面纠正两条旧结论：(1) 「V6 写接口全部 GET」只对部分接口成立——createFeed/reply/deleteFeed/deleteReply/置顶/私信/收藏单写接口走 POST；(2) 应用收藏任何参数组合都被拒（issue #40）。
 <!-- created=2026-11-03, last=2026-11-03 -->
+
+§
+issue #30 收尾：设置页「给 AI 的说明」+ 权限预设（2026-11-04，PR #43，分支 feat/agent-usage-guide，基于 origin/main 4a99501）。落地两条维护者诉求：(1) **读取权限固定开放**——`parse_scopes` 强制补 `read`，前端去掉读取开关（「始终开放」徽标）；(2) **写权限分级**——「权限预设」下拉一条同时决定 scopes+writeMode：只读(read/disabled)、敏感写需确认(全 scopes/confirm)、完全放开(全 scopes/auto)、自定义（手动改开关/闸门后自动落回）。新增 Tauri 命令 `agent_bridge_usage_guide` + `agent_bridge/guide.rs`：从运行时 config + `mcp::tool_catalog()` 生成 Markdown（MCP/REST 地址、完整 token、claude mcp add / JSON / mcp-remote 三种注册、授权与闸门含义、限流、按 scope 分组的 44 工具、5 条 AI 使用约定），设置页预览打码 token、复制给完整文本。验证：vitest AgentSettingsPage 9 passed、cargo test agent_bridge 68 passed、typecheck/build 干净。**推送坑（重要）**：只有 `community` remote（xiaquwan1001/coolapk-desktop-community，parent=coolapk-desktop/coolapk-desktop）能开 PR；`fork` remote（xiaquwan1001/coolapk-desktop）的 parent 是 daimiaopeng/coolapk-desktop，跨网推上去 `gh pr create` 会报 "No commits between ..."（compare API 还会给 ahead 0/404），不是分支内容问题。另外上游用 squash/merge 重写历史，本地旧分支的文档/记忆提交与 main 的 f5b4641 同内容不同 SHA，新工作应 `git checkout -b <br> origin/main` + cherry-pick 单特性提交，别直接基于旧分支。
+<!-- created=2026-11-04, last=2026-11-04 -->
