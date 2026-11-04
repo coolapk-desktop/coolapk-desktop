@@ -322,6 +322,65 @@ static TOOLS: &[ToolSpec] = &[
         schema: || object_schema(json!({ "feedId": { "type": "string", "description": "要取消置顶的动态 ID" } }), vec!["feedId"]),
     },
     ToolSpec {
+        name: "coolapk_collection_create",
+        description: "新建收藏单（收藏夹分类）。isOpen 默认 true（公开），false 为私密。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || {
+            object_schema(
+                json!({
+                    "title": { "type": "string", "description": "收藏单标题，最多 60 字" },
+                    "description": { "type": "string", "description": "简介，最多 200 字" },
+                    "cover": { "type": "string", "description": "可选封面图 http(s) 地址" },
+                    "isOpen": { "type": "boolean", "description": "是否公开，默认 true" }
+                }),
+                vec!["title"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_collection_update",
+        description: "编辑收藏单标题/简介/封面/公开状态（需要 write.publish 授权）。",
+        scope: Some(AgentBridgeScope::WritePublish),
+        schema: || {
+            object_schema(
+                json!({
+                    "collectionId": { "type": "string", "description": "收藏单 ID" },
+                    "title": { "type": "string", "description": "收藏单标题，最多 60 字" },
+                    "description": { "type": "string", "description": "简介，最多 200 字" },
+                    "cover": { "type": "string", "description": "封面图 http(s) 地址" },
+                    "isOpen": { "type": "boolean", "description": "是否公开" }
+                }),
+                vec!["collectionId", "title"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_collection_delete",
+        description: "删除收藏单（需要 write.publish 授权，不可恢复，其中内容会一并取消归属）。",
+        scope: Some(AgentBridgeScope::WritePublish),
+        schema: || object_schema(json!({ "collectionId": { "type": "string", "description": "收藏单 ID" } }), vec!["collectionId"]),
+    },
+    ToolSpec {
+        name: "coolapk_collection_add_feed",
+        description: "把动态加入（或移出）收藏单：collectionIds 加入、cancelIds 移出，都支持字符串或数组。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || {
+            object_schema(
+                json!({
+                    "feedId": { "type": "string", "description": "动态 ID" },
+                    "collectionIds": { "type": "array", "items": { "type": "string" }, "description": "要加入的收藏单 ID 列表" },
+                    "cancelIds": { "type": "array", "items": { "type": "string" }, "description": "要移出的收藏单 ID 列表" }
+                }),
+                vec!["feedId"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_collection_remove_item",
+        description: "从收藏单中移除一条内容（itemId 取 coolapk_collection_items 每条返回的 id，实测通常等于动态 id）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "itemId": { "type": "string", "description": "收藏单条目 ID" } }), vec!["itemId"]),
+    },    ToolSpec {
         name: "coolapk_like_feed",
         description: "点赞一条动态（需要 write.interact 授权，受写操作闸门约束）。",
         scope: Some(AgentBridgeScope::WriteInteract),
@@ -400,6 +459,72 @@ static TOOLS: &[ToolSpec] = &[
         description: "当前账号的私信会话列表。",
         scope: Some(AgentBridgeScope::Read),
         schema: || object_schema(json!({ "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" } }), vec![]),
+    },    ToolSpec {
+        name: "coolapk_collections",
+        description: "当前账号的收藏单（收藏夹分类）列表，含系统默认收藏单。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || object_schema(json!({ "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" } }), vec![]),
+    },
+    ToolSpec {
+        name: "coolapk_collection_items",
+        description: "收藏单里的内容列表；移除条目时 itemId 用每条返回的 id（实测通常等于动态 id）。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || {
+            object_schema(
+                json!({
+                    "collectionId": { "type": "string", "description": "收藏单 ID" },
+                    "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" }
+                }),
+                vec!["collectionId"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_collection_detail",
+        description: "收藏单详情。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || object_schema(json!({ "collectionId": { "type": "string", "description": "收藏单 ID" } }), vec!["collectionId"]),
+    },
+    ToolSpec {
+        name: "coolapk_feed_collections",
+        description: "查询某条动态已加入哪些收藏单（加入收藏单前先查）。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
+        name: "coolapk_product_detail",
+        description: "数码产品详情（只读）。可用 productId 或 name（名称更稳），二选一。本接口不提供下单/购买等交易操作。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || {
+            object_schema(
+                json!({
+                    "productId": { "type": "string", "description": "产品 ID" },
+                    "name": { "type": "string", "description": "产品名称，例如 Redmi K70" }
+                }),
+                vec![],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_product_feeds",
+        description: "产品（数码）相关动态列表（只读）。feedType 留空表示全部。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || {
+            object_schema(
+                json!({
+                    "productId": { "type": "string", "description": "产品 ID" },
+                    "feedType": { "type": "string", "description": "动态类型过滤，例如 discuss/qa/picture/video/ershou，留空表示全部" },
+                    "page": { "type": "integer", "minimum": 1, "description": "页码，从 1 开始" }
+                }),
+                vec!["productId"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_product_versions",
+        description: "产品版本与到手价配置（只读，仅展示信息，不做任何交易动作）。",
+        scope: Some(AgentBridgeScope::Read),
+        schema: || object_schema(json!({ "productId": { "type": "string", "description": "产品 ID" } }), vec!["productId"]),
     },    ToolSpec {
         name: "coolapk_topic_detail",
         description: "获取话题详情（按话题 tag）。",
@@ -620,6 +745,33 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
             ops::reply_thread(ctx, &feed_id, &reply_id, page_arg(args)).await
         }
         "coolapk_private_messages" => ops::private_messages(ctx, page_arg(args)).await,
+        "coolapk_collections" => ops::collections(ctx, page_arg(args)).await,
+        "coolapk_collection_items" => {
+            let collection_id = required_arg(args, "collectionId", "收藏单 ID")?;
+            ops::collection_items(ctx, &collection_id, page_arg(args)).await
+        }
+        "coolapk_collection_detail" => {
+            let collection_id = required_arg(args, "collectionId", "收藏单 ID")?;
+            ops::collection_detail(ctx, &collection_id).await
+        }
+        "coolapk_feed_collections" => {
+            let feed_id = required_arg(args, "feedId", "动态 ID")?;
+            ops::feed_collections(ctx, &feed_id).await
+        }
+        "coolapk_product_detail" => {
+            let product_id = string_arg(args, "productId").unwrap_or_default();
+            let name = string_arg(args, "name").unwrap_or_default();
+            ops::product_detail(ctx, &product_id, &name).await
+        }
+        "coolapk_product_feeds" => {
+            let product_id = required_arg(args, "productId", "产品 ID")?;
+            let feed_type = string_arg(args, "feedType").unwrap_or_default();
+            ops::product_feeds(ctx, &product_id, &feed_type, page_arg(args)).await
+        }
+        "coolapk_product_versions" => {
+            let product_id = required_arg(args, "productId", "产品 ID")?;
+            ops::product_versions(ctx, &product_id).await
+        }
         "coolapk_topic_detail" => {
             let tag = required_arg(args, "tag", "话题 tag")?;
             ops::topic_detail(ctx, &tag).await
@@ -673,6 +825,26 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
             write::execute(ctx, write::WriteCall::SetFeedTop { feed_id, top }).await
         }
 
+        "coolapk_collection_create" => {
+            let args_save = write::parse_collection_save_args(args, false)?;
+            write::execute(ctx, write::WriteCall::CollectionCreate(args_save)).await
+        }
+        "coolapk_collection_update" => {
+            let args_save = write::parse_collection_save_args(args, true)?;
+            write::execute(ctx, write::WriteCall::CollectionUpdate(args_save)).await
+        }
+        "coolapk_collection_delete" => {
+            let collection_id = required_arg(args, "collectionId", "收藏单 ID")?;
+            write::execute(ctx, write::WriteCall::CollectionDelete { collection_id }).await
+        }
+        "coolapk_collection_add_feed" => {
+            let move_args = write::parse_collection_move_args(args)?;
+            write::execute(ctx, write::WriteCall::CollectionAddFeed(move_args)).await
+        }
+        "coolapk_collection_remove_item" => {
+            let item_id = write::parse_id_arg(args, "itemId", "收藏单条目 ID")?;
+            write::execute(ctx, write::WriteCall::CollectionRemoveItem { item_id }).await
+        }
         "coolapk_like_feed" | "coolapk_unlike_feed" => {
             let feed_id = required_arg(args, "feedId", "动态 ID")?;
             let unlike = name == "coolapk_unlike_feed";

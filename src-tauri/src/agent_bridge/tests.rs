@@ -630,6 +630,77 @@ fn write_set_and_unset_feed_top_previews() {
     assert_eq!(untop.tool(), "coolapk_unset_feed_top");
     assert!(untop.summary().contains("取消置顶"));
 }
+#[test]
+fn write_parse_collection_save_args_validates_fields() {
+    let missing = super::write::parse_collection_save_args(&serde_json::json!({ "title": "  " }), false).unwrap_err();
+    assert!(missing.message().contains("标题"), "实际错误：{}", missing.message());
+
+    let long = super::write::parse_collection_save_args(
+        &serde_json::json!({ "title": "字".repeat(61) }),
+        false,
+    )
+    .unwrap_err();
+    assert!(long.message().contains("60"), "实际错误：{}", long.message());
+
+    let bad_cover = super::write::parse_collection_save_args(
+        &serde_json::json!({ "title": "测试", "cover": "javascript:alert(1)" }),
+        false,
+    )
+    .unwrap_err();
+    assert!(bad_cover.message().contains("cover"), "实际错误：{}", bad_cover.message());
+
+    let created = super::write::parse_collection_save_args(
+        &serde_json::json!({ "title": " 我的收藏单 ", "description": " 简介 " }),
+        false,
+    )
+    .unwrap();
+    assert_eq!(created.title, "我的收藏单");
+    assert_eq!(created.description, "简介");
+    assert!(created.is_open);
+    assert!(created.collection_id.is_none());
+
+    let updated = super::write::parse_collection_save_args(
+        &serde_json::json!({ "collectionId": "123", "title": "改名", "isOpen": false }),
+        true,
+    )
+    .unwrap();
+    assert_eq!(updated.collection_id.as_deref(), Some("123"));
+    assert!(!updated.is_open);
+    assert!(super::write::parse_collection_save_args(&serde_json::json!({ "title": "改名" }), true).is_err());
+
+    let call = super::write::WriteCall::CollectionUpdate(updated);
+    assert_eq!(call.tool(), "coolapk_collection_update");
+    assert_eq!(call.scope(), "write.publish");
+    assert_eq!(call.preview()["collectionId"], "123");
+    let create_call = super::write::WriteCall::CollectionCreate(created);
+    assert_eq!(create_call.scope(), "write.interact");
+    assert!(create_call.summary().contains("新建收藏单"));
+}
+
+#[test]
+fn write_parse_collection_move_args_normalizes_ids() {
+    let parsed = super::write::parse_collection_move_args(&serde_json::json!({
+        "feedId": "72058782",
+        "collectionIds": ["111", "222"],
+        "cancelIds": "333"
+    }))
+    .unwrap();
+    assert_eq!(parsed.collection_ids, "111,222");
+    assert_eq!(parsed.cancel_ids, "333");
+    assert_eq!(parsed.feed_id, "72058782");
+
+    assert!(super::write::parse_collection_move_args(&serde_json::json!({ "feedId": "72058782" })).is_err());
+    assert!(super::write::parse_collection_move_args(&serde_json::json!({
+        "feedId": "72058782",
+        "collectionIds": ["1&x=2"]
+    }))
+    .is_err());
+
+    let call = super::write::WriteCall::CollectionAddFeed(parsed);
+    assert_eq!(call.tool(), "coolapk_collection_add_feed");
+    assert_eq!(call.scope(), "write.interact");
+    assert_eq!(call.preview()["collectionIds"], "111,222");
+}
 fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
     write_ctx_with_scopes(
         name,

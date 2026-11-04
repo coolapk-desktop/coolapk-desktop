@@ -22,6 +22,8 @@ use super::http::{audit_write, ApiError, BridgeCtx};
 const MAX_MESSAGE_CHARS: usize = 5000;
 const MAX_REPLY_CHARS: usize = 1000;
 const MAX_TAG_CHARS: usize = 64;
+const MAX_COLLECTION_TITLE_CHARS: usize = 60;
+const MAX_COLLECTION_DESCRIPTION_CHARS: usize = 200;
 /// 与官方 App / PublishDialog.vue 的 MAX_IMAGES=9 对齐。
 const MAX_IMAGES: usize = 9;
 const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -311,7 +313,7 @@ fn target_id_arg(args: &Value, key: &str, label: &str) -> Result<String, ApiErro
     if raw.is_empty() {
         return Err(ApiError::bad_request(format!("缺少参数 {key}（{label}）")));
     }
-    if raw.len() > 64 || !raw.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    if !valid_id(raw) {
         return Err(ApiError::bad_request(format!("{key} 不是合法的 ID：{raw}")));
     }
     Ok(raw.to_string())
@@ -419,6 +421,11 @@ pub(super) fn parse_update_feed_args(args: &Value) -> Result<UpdateFeedArgs, Api
     })
 }
 
+/// 通用 ID 参数解析（收藏单条目、评论等）。
+pub(super) fn parse_id_arg(args: &Value, key: &str, label: &str) -> Result<String, ApiError> {
+    target_id_arg(args, key, label)
+}
+
 /// 评论 id（点赞/删除评论用）。
 pub(super) fn parse_reply_id(args: &Value) -> Result<String, ApiError> {
     target_id_arg(args, "replyId", "评论 ID")
@@ -452,6 +459,97 @@ pub(super) fn parse_message_args(args: &Value) -> Result<(String, String), ApiEr
     }
     Ok((uid, message))
 }
+/// 收藏单（收藏夹分类）新建/编辑参数。
+#[derive(Debug, Clone)]
+pub(super) struct CollectionSaveArgs {
+    /// None 表示新建。
+    pub collection_id: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub cover: String,
+    pub is_open: bool,
+}
+
+/// 把动态加入/移出收藏单。
+#[derive(Debug, Clone)]
+pub(super) struct CollectionMoveArgs {
+    pub collection_ids: String,
+    pub cancel_ids: String,
+    pub feed_id: String,
+}
+
+fn valid_id(raw: &str) -> bool {
+    !raw.is_empty() && raw.len() <= 64 && raw.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn ids_arg(args: &Value, key: &str) -> Result<Vec<String>, ApiError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::String(raw)) => Ok(raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect()),
+        Some(Value::Array(items)) => {
+            let mut ids = Vec::with_capacity(items.len());
+            for item in items {
+                let raw = item
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| ApiError::bad_request(format!("{key} 只能是 ID 字符串数组")))?;
+                ids.push(raw.to_string());
+            }
+            Ok(ids)
+        }
+        _ => Err(ApiError::bad_request(format!("{key} 必须是 ID 字符串或字符串数组"))),
+    }
+}
+
+pub(super) fn parse_collection_save_args(args: &Value, updating: bool) -> Result<CollectionSaveArgs, ApiError> {
+    let collection_id = if updating {
+        Some(target_id_arg(args, "collectionId", "收藏单 ID")?)
+    } else {
+        None
+    };
+    let title = trimmed_arg(args, "title").to_string();
+    if title.is_empty() {
+        return Err(ApiError::bad_request("收藏单标题不能为空"));
+    }
+    if title.chars().count() > MAX_COLLECTION_TITLE_CHARS {
+        return Err(ApiError::bad_request(format!("收藏单标题不能超过 {MAX_COLLECTION_TITLE_CHARS} 字")));
+    }
+    let description = trimmed_arg(args, "description").to_string();
+    if description.chars().count() > MAX_COLLECTION_DESCRIPTION_CHARS {
+        return Err(ApiError::bad_request(format!(
+            "收藏单简介不能超过 {MAX_COLLECTION_DESCRIPTION_CHARS} 字"
+        )));
+    }
+    let cover = trimmed_arg(args, "cover").to_string();
+    if !cover.is_empty() && (!(cover.starts_with("http://") || cover.starts_with("https://")) || cover.len() > 512) {
+        return Err(ApiError::bad_request("cover 必须是 http(s) 图片地址"));
+    }
+    let is_open = args.get("isOpen").and_then(Value::as_bool).unwrap_or(true);
+    Ok(CollectionSaveArgs { collection_id, title, description, cover, is_open })
+}
+
+pub(super) fn parse_collection_move_args(args: &Value) -> Result<CollectionMoveArgs, ApiError> {
+    let feed_id = target_id_arg(args, "feedId", "动态 ID")?;
+    let collection_ids = ids_arg(args, "collectionIds")?;
+    let cancel_ids = ids_arg(args, "cancelIds")?;
+    if collection_ids.is_empty() && cancel_ids.is_empty() {
+        return Err(ApiError::bad_request("collectionIds 与 cancelIds 至少要有一项"));
+    }
+    if !collection_ids.iter().chain(cancel_ids.iter()).all(|id| valid_id(id)) {
+        return Err(ApiError::bad_request("collectionIds / cancelIds 里有非法 ID"));
+    }
+    Ok(CollectionMoveArgs {
+        collection_ids: collection_ids.join(","),
+        cancel_ids: cancel_ids.join(","),
+        feed_id,
+    })
+}
 /// 一次写调用的强类型描述。
 pub(super) enum WriteCall {
     Publish(PublishArgs),
@@ -465,6 +563,11 @@ pub(super) enum WriteCall {
     FollowTopic { tag: String, follow: bool },
     SendMessage { uid: String, message: String },
     SetFeedTop { feed_id: String, top: bool },
+    CollectionCreate(CollectionSaveArgs),
+    CollectionUpdate(CollectionSaveArgs),
+    CollectionDelete { collection_id: String },
+    CollectionAddFeed(CollectionMoveArgs),
+    CollectionRemoveItem { item_id: String },
     LikeFeed { feed_id: String, unlike: bool },
     FollowUser { uid: String, unfollow: bool },
 }
@@ -485,6 +588,11 @@ impl WriteCall {
             Self::SendMessage { .. } => "coolapk_send_message",
             Self::SetFeedTop { top: true, .. } => "coolapk_set_feed_top",
             Self::SetFeedTop { top: false, .. } => "coolapk_unset_feed_top",
+            Self::CollectionCreate(_) => "coolapk_collection_create",
+            Self::CollectionUpdate(_) => "coolapk_collection_update",
+            Self::CollectionDelete { .. } => "coolapk_collection_delete",
+            Self::CollectionAddFeed(_) => "coolapk_collection_add_feed",
+            Self::CollectionRemoveItem { .. } => "coolapk_collection_remove_item",
             Self::FavoriteFeed { favorite: true, .. } => "coolapk_favorite_feed",
             Self::FavoriteFeed { favorite: false, .. } => "coolapk_unfavorite_feed",
             Self::LikeFeed { unlike: false, .. } => "coolapk_like_feed",
@@ -497,16 +605,22 @@ impl WriteCall {
     pub(super) fn scope(&self) -> &'static str {
         match self {
             // 发布与删除都算「内容管理」，共用 write.publish 授权与限流桶。
-            Self::Publish(_) | Self::DeleteFeed { .. } | Self::UpdateFeed(_) => {
-                AgentBridgeScope::WritePublish.as_str()
-            }
+            Self::Publish(_)
+            | Self::DeleteFeed { .. }
+            | Self::UpdateFeed(_)
+            | Self::CollectionUpdate(_)
+            | Self::CollectionDelete { .. } => AgentBridgeScope::WritePublish.as_str(),
             _ => AgentBridgeScope::WriteInteract.as_str(),
         }
     }
 
     fn required_scope(&self) -> AgentBridgeScope {
         match self {
-            Self::Publish(_) | Self::DeleteFeed { .. } | Self::UpdateFeed(_) => AgentBridgeScope::WritePublish,
+            Self::Publish(_)
+            | Self::DeleteFeed { .. }
+            | Self::UpdateFeed(_)
+            | Self::CollectionUpdate(_)
+            | Self::CollectionDelete { .. } => AgentBridgeScope::WritePublish,
             _ => AgentBridgeScope::WriteInteract,
         }
     }
@@ -554,6 +668,32 @@ impl WriteCall {
             Self::SendMessage { uid, message } => json!({
                 "uid": uid,
                 "messageChars": message.chars().count(),
+            }),
+            Self::CollectionCreate(args) => json!({
+                "title": args.title,
+                "descriptionChars": args.description.chars().count(),
+                "cover": args.cover,
+                "isOpen": args.is_open,
+            }),
+            Self::CollectionUpdate(args) => json!({
+                "collectionId": args.collection_id,
+                "title": args.title,
+                "descriptionChars": args.description.chars().count(),
+                "cover": args.cover,
+                "isOpen": args.is_open,
+            }),
+            Self::CollectionDelete { collection_id } => json!({
+                "collectionId": collection_id,
+                "action": "delete",
+            }),
+            Self::CollectionAddFeed(args) => json!({
+                "feedId": args.feed_id,
+                "collectionIds": args.collection_ids,
+                "cancelIds": args.cancel_ids,
+            }),
+            Self::CollectionRemoveItem { item_id } => json!({
+                "itemId": item_id,
+                "action": "remove",
             }),
             Self::SetFeedTop { feed_id, top } => json!({
                 "feedId": feed_id,
@@ -618,6 +758,18 @@ impl WriteCall {
             Self::SendMessage { uid, message } => {
                 format!("给用户 {uid} 发私信：{} 字", message.chars().count())
             }
+            Self::CollectionCreate(args) => format!("新建收藏单：{}", args.title),
+            Self::CollectionUpdate(args) => format!(
+                "编辑收藏单 {}：{}",
+                args.collection_id.as_deref().unwrap_or_default(),
+                args.title
+            ),
+            Self::CollectionDelete { collection_id } => format!("删除收藏单 {collection_id}"),
+            Self::CollectionAddFeed(args) => format!(
+                "把动态 {} 加入收藏单 {}（移出 {}）",
+                args.feed_id, args.collection_ids, args.cancel_ids
+            ),
+            Self::CollectionRemoveItem { item_id } => format!("移除收藏单条目 {item_id}"),
             Self::SetFeedTop { feed_id, top } => {
                 format!("{}动态 {feed_id}", if *top { "置顶" } else { "取消置顶" })
             }
@@ -666,6 +818,21 @@ impl WriteCall {
                 "messageChars": message.chars().count(),
                 "target": uid,
             }),
+            Self::CollectionCreate(args) => json!({
+                "target": Value::Null,
+                "titleChars": args.title.chars().count(),
+            }),
+            Self::CollectionUpdate(args) => json!({
+                "target": args.collection_id,
+                "titleChars": args.title.chars().count(),
+            }),
+            Self::CollectionDelete { collection_id } => json!({ "target": collection_id }),
+            Self::CollectionAddFeed(args) => json!({
+                "target": args.feed_id,
+                "collectionIds": args.collection_ids,
+                "cancelIds": args.cancel_ids,
+            }),
+            Self::CollectionRemoveItem { item_id } => json!({ "target": item_id }),
             Self::SetFeedTop { feed_id, .. } => json!({ "target": feed_id }),
 
             Self::FavoriteFeed { feed_id, .. } => json!({ "target": feed_id }),
@@ -808,6 +975,43 @@ async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
         WriteCall::FollowTopic { tag, follow: true } => state()?.client.follow_tag(tag).await,
         WriteCall::FollowTopic { tag, follow: false } => state()?.client.unfollow_tag(tag).await,
         WriteCall::SendMessage { uid, message } => state()?.client.send_private_message(uid, message).await,
+        WriteCall::CollectionCreate(args) => {
+            let state = state()?;
+            state
+                .client
+                .create_collection(
+                    &args.title,
+                    &args.description,
+                    &args.cover,
+                    if args.is_open { 1 } else { 0 },
+                    "",
+                )
+                .await
+        }
+        WriteCall::CollectionUpdate(args) => {
+            let state = state()?;
+            let collection_id = args.collection_id.as_deref().unwrap_or_default();
+            state
+                .client
+                .update_collection(
+                    collection_id,
+                    &args.title,
+                    &args.description,
+                    &args.cover,
+                    if args.is_open { 1 } else { 0 },
+                )
+                .await
+        }
+        WriteCall::CollectionDelete { collection_id } => state()?.client.delete_collection(collection_id).await,
+        WriteCall::CollectionAddFeed(args) => {
+            state()?
+                .client
+                .update_collection_item(&args.collection_ids, &args.cancel_ids, &args.feed_id, "feed", "")
+                .await
+        }
+        WriteCall::CollectionRemoveItem { item_id } => {
+            state()?.client.remove_collection_item(item_id).await
+        }
         WriteCall::SetFeedTop { feed_id, top } => {
             let state = state()?;
             let uid = state
