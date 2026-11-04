@@ -20,6 +20,7 @@ use super::config::{AgentBridgeScope, AgentBridgeWriteMode};
 use super::http::{audit_write, ApiError, BridgeCtx};
 
 const MAX_MESSAGE_CHARS: usize = 5000;
+const MAX_REPLY_CHARS: usize = 1000;
 /// 与官方 App / PublishDialog.vue 的 MAX_IMAGES=9 对齐。
 const MAX_IMAGES: usize = 9;
 const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
@@ -75,19 +76,11 @@ pub(super) fn parse_publish_args(args: &Value) -> Result<PublishArgs, ApiError> 
     // 顶层 visibleStatus 与 options.visibleStatus 合并成一份，交给 create_feed_with_options。
     options.visible_status = visible_status;
 
-    let images = parse_images(args.get("images"))?;
-    let image_paths = parse_image_paths(args.get("imagePaths"))?;
+    let (images, image_paths) = parse_image_set(args)?;
     // 官方 App 允许纯图片动态（PublishDialog 的 canPublish），这里保持一致。
     if message.is_empty() && images.is_empty() && image_paths.is_empty() {
         return Err(ApiError::bad_request("动态正文或图片至少要有一项"));
     }
-    let base64_bytes = || images.iter().map(|image| image.bytes.len());
-    enforce_image_limits(
-        images.len() + image_paths.len(),
-        base64_bytes().chain(image_paths.iter().map(|image| image.size as usize)).max().unwrap_or(0),
-        base64_bytes().sum::<usize>() + image_paths.iter().map(|image| image.size as usize).sum::<usize>(),
-    )?;
-
     Ok(PublishArgs {
         message,
         images,
@@ -285,9 +278,114 @@ fn sanitize_name(raw: &str, mime: &str) -> String {
     cleaned.to_string()
 }
 
+/// 评论 / 楼中楼回复的参数（图片走同一套上传与限制）。
+#[derive(Debug, Clone)]
+pub(super) struct ReplyArgs {
+    pub feed_id: String,
+    pub message: String,
+    /// 楼中楼时为目标评论 id；此时 feed_id 仍是该评论所属动态 id。
+    pub rid: Option<String>,
+    pub images: Vec<ImageArg>,
+    pub image_paths: Vec<ImagePath>,
+    pub request_id: Option<String>,
+}
+
+/// 转发动态的参数：评语与图片都可选。
+#[derive(Debug, Clone)]
+pub(super) struct ForwardArgs {
+    pub feed_id: String,
+    pub message: String,
+    pub images: Vec<ImageArg>,
+    pub image_paths: Vec<ImagePath>,
+    pub request_id: Option<String>,
+}
+
+fn trimmed_arg<'a>(args: &'a Value, key: &str) -> &'a str {
+    args.get(key).and_then(Value::as_str).map(str::trim).unwrap_or_default()
+}
+
+/// 动态/评论 ID 会直接拼进 URL query，只接受字母数字，避免参数被注入。
+fn target_id_arg(args: &Value, key: &str, label: &str) -> Result<String, ApiError> {
+    let raw = trimmed_arg(args, key);
+    if raw.is_empty() {
+        return Err(ApiError::bad_request(format!("缺少参数 {key}（{label}）")));
+    }
+    if raw.len() > 64 || !raw.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(ApiError::bad_request(format!("{key} 不是合法的 ID：{raw}")));
+    }
+    Ok(raw.to_string())
+}
+
+fn optional_id_arg(args: &Value, key: &str) -> Result<Option<String>, ApiError> {
+    if args.get(key).is_none_or(Value::is_null) {
+        return Ok(None);
+    }
+    Ok(Some(target_id_arg(args, key, key)?))
+}
+
+/// 解析并统一校验一组图片（base64 与本地路径），数量/体积限制与发帖一致。
+fn parse_image_set(args: &Value) -> Result<(Vec<ImageArg>, Vec<ImagePath>), ApiError> {
+    let images = parse_images(args.get("images"))?;
+    let image_paths = parse_image_paths(args.get("imagePaths"))?;
+    let base64_bytes = || images.iter().map(|image| image.bytes.len());
+    enforce_image_limits(
+        images.len() + image_paths.len(),
+        base64_bytes().chain(image_paths.iter().map(|image| image.size as usize)).max().unwrap_or(0),
+        base64_bytes().sum::<usize>() + image_paths.iter().map(|image| image.size as usize).sum::<usize>(),
+    )?;
+    Ok((images, image_paths))
+}
+
+fn image_total(images: &[ImageArg], image_paths: &[ImagePath]) -> usize {
+    images.len() + image_paths.len()
+}
+
+/// 评论参数：正文或图片至少一项；带 rid 表示楼中楼回复。
+pub(super) fn parse_reply_args(args: &Value) -> Result<ReplyArgs, ApiError> {
+    let feed_id = target_id_arg(args, "feedId", "动态 ID")?;
+    let message = trimmed_arg(args, "message").to_string();
+    if message.chars().count() > MAX_REPLY_CHARS {
+        return Err(ApiError::bad_request(format!("评论正文不能超过 {MAX_REPLY_CHARS} 字")));
+    }
+    let rid = optional_id_arg(args, "rid")?;
+    let (images, image_paths) = parse_image_set(args)?;
+    if message.is_empty() && images.is_empty() && image_paths.is_empty() {
+        return Err(ApiError::bad_request("评论正文或图片至少要有一项"));
+    }
+    Ok(ReplyArgs {
+        feed_id,
+        message,
+        rid,
+        images,
+        image_paths,
+        request_id: normalize_request_id(args.get("requestId"))?,
+    })
+}
+
+/// 转发参数：评语与图片都可选（只转发原动态也合法）。
+pub(super) fn parse_forward_args(args: &Value) -> Result<ForwardArgs, ApiError> {
+    let feed_id = target_id_arg(args, "feedId", "动态 ID")?;
+    let message = trimmed_arg(args, "message").to_string();
+    if message.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(ApiError::bad_request(format!("转发评语不能超过 {MAX_MESSAGE_CHARS} 字")));
+    }
+    let (images, image_paths) = parse_image_set(args)?;
+    Ok(ForwardArgs {
+        feed_id,
+        message,
+        images,
+        image_paths,
+        request_id: normalize_request_id(args.get("requestId"))?,
+    })
+}
+
 /// 一次写调用的强类型描述。
 pub(super) enum WriteCall {
     Publish(PublishArgs),
+    Reply(ReplyArgs),
+    Forward(ForwardArgs),
+    DeleteFeed { feed_id: String },
+    FavoriteFeed { feed_id: String, favorite: bool },
     LikeFeed { feed_id: String, unlike: bool },
     FollowUser { uid: String, unfollow: bool },
 }
@@ -296,6 +394,11 @@ impl WriteCall {
     pub(super) fn tool(&self) -> &'static str {
         match self {
             Self::Publish(_) => "coolapk_publish_feed",
+            Self::Reply(_) => "coolapk_reply_feed",
+            Self::Forward(_) => "coolapk_forward_feed",
+            Self::DeleteFeed { .. } => "coolapk_delete_feed",
+            Self::FavoriteFeed { favorite: true, .. } => "coolapk_favorite_feed",
+            Self::FavoriteFeed { favorite: false, .. } => "coolapk_unfavorite_feed",
             Self::LikeFeed { unlike: false, .. } => "coolapk_like_feed",
             Self::LikeFeed { unlike: true, .. } => "coolapk_unlike_feed",
             Self::FollowUser { unfollow: false, .. } => "coolapk_follow_user",
@@ -305,28 +408,47 @@ impl WriteCall {
 
     pub(super) fn scope(&self) -> &'static str {
         match self {
-            Self::Publish(_) => AgentBridgeScope::WritePublish.as_str(),
-            Self::LikeFeed { .. } | Self::FollowUser { .. } => AgentBridgeScope::WriteInteract.as_str(),
+            // 发布与删除都算「内容管理」，共用 write.publish 授权与限流桶。
+            Self::Publish(_) | Self::DeleteFeed { .. } => AgentBridgeScope::WritePublish.as_str(),
+            _ => AgentBridgeScope::WriteInteract.as_str(),
         }
     }
 
     fn required_scope(&self) -> AgentBridgeScope {
         match self {
-            Self::Publish(_) => AgentBridgeScope::WritePublish,
-            Self::LikeFeed { .. } | Self::FollowUser { .. } => AgentBridgeScope::WriteInteract,
+            Self::Publish(_) | Self::DeleteFeed { .. } => AgentBridgeScope::WritePublish,
+            _ => AgentBridgeScope::WriteInteract,
         }
     }
 
     fn request_id(&self) -> Option<&str> {
         match self {
             Self::Publish(args) => args.request_id.as_deref(),
+            Self::Reply(args) => args.request_id.as_deref(),
+            Self::Forward(args) => args.request_id.as_deref(),
             _ => None,
         }
     }
 
-    fn preview(&self) -> Value {
+    pub(super) fn preview(&self) -> Value {
         match self {
             Self::Publish(args) => preview_publish(args),
+            Self::Reply(args) => json!({
+                "feedId": args.feed_id,
+                "rid": args.rid,
+                "messageChars": args.message.chars().count(),
+                "imageCount": image_total(&args.images, &args.image_paths),
+            }),
+            Self::Forward(args) => json!({
+                "feedId": args.feed_id,
+                "messageChars": args.message.chars().count(),
+                "imageCount": image_total(&args.images, &args.image_paths),
+            }),
+            Self::DeleteFeed { feed_id } => json!({ "feedId": feed_id, "action": "delete" }),
+            Self::FavoriteFeed { feed_id, favorite } => json!({
+                "feedId": feed_id,
+                "action": if *favorite { "favorite" } else { "unfavorite" },
+            }),
             Self::LikeFeed { feed_id, unlike } => {
                 json!({ "feedId": feed_id, "action": if *unlike { "unlike" } else { "like" } })
             }
@@ -336,7 +458,7 @@ impl WriteCall {
         }
     }
 
-    fn summary(&self) -> String {
+    pub(super) fn summary(&self) -> String {
         match self {
             Self::Publish(args) => {
                 let mut summary =
@@ -350,6 +472,24 @@ impl WriteCall {
                 }
                 summary
             }
+            Self::Reply(args) => format!(
+                "{}动态 {}：{} 字、{} 张图片",
+                if args.rid.is_some() { "回复评论" } else { "评论" },
+                args.feed_id,
+                args.message.chars().count(),
+                image_total(&args.images, &args.image_paths)
+            ),
+            Self::Forward(args) => format!(
+                "转发动态 {}：{} 字、{} 张图片",
+                args.feed_id,
+                args.message.chars().count(),
+                image_total(&args.images, &args.image_paths)
+            ),
+            Self::DeleteFeed { feed_id } => format!("删除动态 {feed_id}"),
+            Self::FavoriteFeed { feed_id, favorite } => format!(
+                "{}动态 {feed_id}",
+                if *favorite { "收藏" } else { "取消收藏" }
+            ),
             Self::LikeFeed { feed_id, unlike } => {
                 format!("{}动态 {feed_id}", if *unlike { "取消点赞" } else { "点赞" })
             }
@@ -367,6 +507,18 @@ impl WriteCall {
                 "imageCount": args.image_count(),
                 "target": args.options.target_id,
             }),
+            Self::Reply(args) => json!({
+                "messageChars": args.message.chars().count(),
+                "imageCount": image_total(&args.images, &args.image_paths),
+                "target": args.feed_id,
+            }),
+            Self::Forward(args) => json!({
+                "messageChars": args.message.chars().count(),
+                "imageCount": image_total(&args.images, &args.image_paths),
+                "target": args.feed_id,
+            }),
+            Self::DeleteFeed { feed_id } => json!({ "target": feed_id }),
+            Self::FavoriteFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::LikeFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::FollowUser { uid, .. } => json!({ "target": uid }),
         }
@@ -496,6 +648,11 @@ async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
     let state = || ctx.app_state().ok_or_else(ApiError::service_unavailable);
     let result = match call {
         WriteCall::Publish(args) => return publish(ctx, args).await,
+        WriteCall::Reply(args) => return reply(ctx, args).await,
+        WriteCall::Forward(args) => return forward(ctx, args).await,
+        WriteCall::DeleteFeed { feed_id } => state()?.client.delete_feed(feed_id).await,
+        WriteCall::FavoriteFeed { feed_id, favorite: true } => state()?.client.favorite_feed(feed_id).await,
+        WriteCall::FavoriteFeed { feed_id, favorite: false } => state()?.client.unfavorite_feed(feed_id).await,
         WriteCall::LikeFeed { feed_id, unlike: false } => state()?.client.like_feed(feed_id).await,
         WriteCall::LikeFeed { feed_id, unlike: true } => state()?.client.unlike_feed(feed_id).await,
         WriteCall::FollowUser { uid, unfollow: false } => state()?.client.follow_user(uid).await,
@@ -511,27 +668,104 @@ async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
 async fn publish(ctx: &BridgeCtx, args: &PublishArgs) -> Result<Value, ApiError> {
     let state = ctx.app_state().ok_or_else(ApiError::service_unavailable)?;
     let client = &state.client;
+    let urls = upload_all_images(client, &args.images, &args.image_paths).await?;
+    let pic = (!urls.is_empty()).then(|| urls.join(","));
+    let wrapped = client
+        .create_feed_with_options(&args.message, pic.as_deref(), None, Some(&args.options))
+        .await
+        .map_err(ApiError::from_client_error)?;
+    // createFeed 的返回会套多层 {code,data} 信封，这里直接给调用方一份扁平结果。
+    let feed = extract_feed(&wrapped).unwrap_or(wrapped);
+    let feed_id = feed.get("id").cloned().unwrap_or(Value::Null);
+    Ok(json!({
+        "code": 200,
+        "data": {
+            "feedId": feed_id,
+            "feed": feed,
+            "imageUrls": urls,
+            "messageChars": args.message.chars().count(),
+        }
+    }))
+}
 
-    let mut urls: Vec<String> = Vec::with_capacity(args.image_count());
-    for image in &args.images {
+/// 官方 createFeed 的响应可能被包裹多层 data/code 信封，按内容定位真正的动态实体。
+pub(super) fn extract_feed(value: &Value) -> Option<Value> {
+    if let Some(object) = value.as_object() {
+        let is_feed = object.contains_key("entityTemplate")
+            || (object.contains_key("id") && object.contains_key("feedType"));
+        if is_feed {
+            return Some(value.clone());
+        }
+        for key in ["data", "feed", "entity", "entities"] {
+            if let Some(inner) = object.get(key) {
+                if let Some(found) = extract_feed(inner) {
+                    return Some(found);
+                }
+            }
+        }
+        for inner in object.values() {
+            if let Some(found) = extract_feed(inner) {
+                return Some(found);
+            }
+        }
+        return None;
+    }
+    value.as_array().into_iter().flatten().find_map(extract_feed)
+}
+
+/// 评论：图片按发帖的方式上传后拼 pic，再走官方 /v6/feed/reply。
+async fn reply(ctx: &BridgeCtx, args: &ReplyArgs) -> Result<Value, ApiError> {
+    let state = ctx.app_state().ok_or_else(ApiError::service_unavailable)?;
+    let client = &state.client;
+    let urls = upload_all_images(client, &args.images, &args.image_paths).await?;
+    let pic = urls.join(",");
+    client
+        .reply_feed(
+            &args.feed_id,
+            &args.message,
+            args.rid.as_deref(),
+            (!pic.is_empty()).then_some(pic.as_str()),
+            None,
+        )
+        .await
+        .map_err(ApiError::from_client_error)
+}
+
+/// 转发：评语与图片都可选，官方用 createFeed 的 forwardid 表单字段。
+async fn forward(ctx: &BridgeCtx, args: &ForwardArgs) -> Result<Value, ApiError> {
+    let state = ctx.app_state().ok_or_else(ApiError::service_unavailable)?;
+    let client = &state.client;
+    let urls = upload_all_images(client, &args.images, &args.image_paths).await?;
+    let pic = urls.join(",");
+    client
+        .create_forward(&args.feed_id, &args.message, (!pic.is_empty()).then_some(pic.as_str()))
+        .await
+        .map_err(ApiError::from_client_error)
+}
+
+/// 逐张上传图片并返回地址列表（发帖 / 评论 / 转发共用）。
+async fn upload_all_images(
+    client: &CoolapkClient,
+    images: &[ImageArg],
+    image_paths: &[ImagePath],
+) -> Result<Vec<String>, ApiError> {
+    let mut urls: Vec<String> = Vec::with_capacity(image_total(images, image_paths));
+    for image in images {
         urls.push(upload_publish_image(client, &image.name, &image.mime, &image.bytes).await?);
     }
-    for image in &args.image_paths {
+    for image in image_paths {
         let bytes = tokio::fs::read(&image.path).await.map_err(|error| {
             ApiError::bad_request(format!("无法读取图片 {}：{error}", image.path.display()))
         })?;
         if bytes.len() > MAX_IMAGE_BYTES {
-            return Err(ApiError::bad_request("单张图片不能超过 8 MB"));
+            return Err(ApiError::bad_request(format!(
+                "单张图片不能超过 8 MB（{}）",
+                image.path.display()
+            )));
         }
         urls.push(upload_publish_image(client, &image.name, &image.mime, &bytes).await?);
     }
-
-    let pic = (!urls.is_empty()).then(|| urls.join(","));
-    let data = client
-        .create_feed_with_options(&args.message, pic.as_deref(), None, Some(&args.options))
-        .await
-        .map_err(ApiError::from_client_error)?;
-    Ok(json!({ "data": data, "imageUrls": urls, "messageChars": args.message.chars().count() }))
+    Ok(urls)
 }
 
 /// 单张图片上传，返回可提交给 createFeed 的图片地址（与官方 App / PublishDialog 一致）。
@@ -550,13 +784,24 @@ async fn upload_publish_image(
     resolve_uploaded_url(data).ok_or_else(|| ApiError::internal("图片上传成功但未返回图片地址"))
 }
 
-/// ossUploadPrepare 的返回在不同接口版本里字段名不一致，按官方 App 的取法兜底。
+/// upload_image 会包装成 { code, data }，其中 data 可能是地址字符串（当前实现），
+/// 也可能是带 url/pic/path 字段的对象；两种都按官方 App 的取法归一化。
 pub(super) fn resolve_uploaded_url(data: &Value) -> Option<String> {
+    if let Some(raw) = data.as_str() {
+        return normalize_image_url(raw.trim());
+    }
     let raw = ["url", "pic", "path", "filename"]
         .iter()
         .filter_map(|key| data.get(*key).and_then(Value::as_str))
         .map(str::trim)
         .find(|value| !value.is_empty())?;
+    normalize_image_url(raw)
+}
+
+fn normalize_image_url(raw: &str) -> Option<String> {
+    if raw.is_empty() {
+        return None;
+    }
     if let Some(rest) = raw.strip_prefix("//") {
         return Some(format!("https://{rest}"));
     }

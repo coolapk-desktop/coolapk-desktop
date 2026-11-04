@@ -25,7 +25,7 @@
 5. 需要给 Claude Code、Codex 等客户端用时，再打开「MCP 服务」开关，复制上方的 **MCP 接入地址**。
 6. 关闭接口开关会停止服务并取消下次自动恢复；只退出应用时若开关仍开启，下次启动会恢复服务。token 会保留；再次开启时会重新绑定端口，固定端口被占用时可能分配新的随机端口。只有点「重新生成」才会更换 token。
 
-> 写能力现状：发帖（含图片）、点赞/取消点赞、关注/取消关注均已接通，受下方写操作闸门约束；评论、转发、删除、编辑等工具尚未提供。
+> 写能力现状：发帖（含图片）、评论/楼中楼回复、转发、收藏、删除自己的动态、点赞/取消点赞、关注/取消关注均已接通，受下方写操作闸门约束；编辑已发布内容、私信等工具尚未提供。
 
 > token 等同于本机的通行证，只保存在本机应用数据目录的 `agent-bridge-token`（Unix 下权限为 `0600`），重启应用后复用。不要把它写进仓库、截图或聊天记录，也不要交给不受信任的程序。
 
@@ -144,6 +144,10 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_user_feeds` | 用户动态（`uid`，可选 `page`、`feedType`） | `read` |
 | `coolapk_topic_detail` | 话题详情（`tag`） | `read` |
 | `coolapk_publish_feed` | 发布动态：正文 + 最多 9 张图片（base64 或本机路径），可指定板块与可见范围 | `write.publish` |
+| `coolapk_reply_feed` | 评论动态，带 `rid` 时回复某条评论（楼中楼），可带图片 | `write.interact` |
+| `coolapk_forward_feed` | 转发动态，评语与图片可选 | `write.interact` |
+| `coolapk_favorite_feed` / `coolapk_unfavorite_feed` | 收藏 / 取消收藏（`feedId`） | `write.interact` |
+| `coolapk_delete_feed` | 删除自己发布的动态（不可恢复） | `write.publish` |
 | `coolapk_like_feed` / `coolapk_unlike_feed` | 点赞 / 取消点赞（`feedId`） | `write.interact` |
 | `coolapk_follow_user` / `coolapk_unfollow_user` | 关注 / 取消关注（`uid`） | `write.interact` |
 
@@ -185,7 +189,9 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 
 ## 写操作与闸门
 
-### 发帖参数（`coolapk_publish_feed`）
+### 写工具参数
+
+#### 发帖（`coolapk_publish_feed`）
 
 | 参数 | 说明 |
 | --- | --- |
@@ -197,7 +203,28 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 | `requestId` | 幂等 id，5 分钟内同工具同账号重复调用直接返回上次结果 |
 
 执行顺序与官方 App 一致：逐张上传图片（`image/feed` 目录）取图片地址 → 逗号拼 `pic` → 提交 `createFeed`。
-成功返回 `{ "dryRun": false, "deduplicated": false, "data": { "data": …, "imageUrls": [...], "messageChars": n } }`。
+成功返回 `{ "dryRun": false, "deduplicated": false, "data": { "feedId": …, "feed": {…}, "imageUrls": [...], "messageChars": n } }`。
+
+#### 评论（`coolapk_reply_feed`）
+
+| 参数 | 说明 |
+| --- | --- |
+| `feedId` | 必填，被评论的动态 ID；楼中楼时仍是该评论所属动态的 ID |
+| `message` | 评论正文，最多 1000 字；与图片至少给一项 |
+| `rid` | 可选，回复某条评论时填该评论 id |
+| `images` / `imagePaths` | 可选，规则与发帖一致 |
+| `requestId` | 幂等 id，规则与发帖一致 |
+
+仅自己可见的动态无法被评论（服务端拒绝），需要先在应用内改为公开。
+
+#### 转发（`coolapk_forward_feed`）
+
+只有 `feedId` 必填，`message`（评语）与图片可选；同样支持 `requestId`。
+
+#### 收藏 / 删除
+
+`coolapk_favorite_feed`、`coolapk_unfavorite_feed`、`coolapk_delete_feed` 只接受 `feedId`。
+删除与发帖共用 `write.publish` 授权和「1 次/分钟、10 次/小时」桶，且不可恢复；批量清理时请自行控制节奏（两次删除之间约需间隔 1 分钟）。
 酷安要求人工验证时会返回 `428 captcha_required`：接口不会自动重试；请在应用内完成一次拼图验证，客户端会把验证凭证复用到后续请求，验证后重试即可。网易易盾 `_v2_post_token` 不携带（服务端并不强制）。
 
 ### MCP 请求体上限

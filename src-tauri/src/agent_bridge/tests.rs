@@ -354,6 +354,10 @@ fn resolve_uploaded_url_normalizes_variants() {
         (serde_json::json!({ "url": "   " }), None),
         (serde_json::json!({ "filename": "d.jpg" }), None),
         (serde_json::json!({}), None),
+        // upload_image 实际返回 { code, data } 且 data 就是地址字符串
+        (serde_json::json!("https://image.coolapk.com/f.jpg"), Some("https://image.coolapk.com/f.jpg")),
+        (serde_json::json!(""), None),
+        (serde_json::json!("g.jpg"), None),
     ];
     for (data, expected) in cases {
         assert_eq!(super::write::resolve_uploaded_url(&data).as_deref(), expected, "{data}");
@@ -446,6 +450,99 @@ fn write_parse_publish_merges_options_and_rejects_unknown() {
     }))
     .unwrap_err();
     assert!(unknown.message().contains("options"), "实际错误：{}", unknown.message());
+}
+#[test]
+fn write_parse_reply_requires_content_and_valid_target() {
+    // 正文或图片至少一项
+    let empty = super::write::parse_reply_args(&serde_json::json!({ "feedId": "74836959" })).unwrap_err();
+    assert!(empty.message().contains("评论正文或图片"), "实际错误：{}", empty.message());
+
+    // ID 必须存在且只含字母数字
+    let missing = super::write::parse_reply_args(&serde_json::json!({ "message": "你好" })).unwrap_err();
+    assert!(missing.message().contains("feedId"), "实际错误：{}", missing.message());
+    let injected = super::write::parse_reply_args(&serde_json::json!({
+        "feedId": "1&type=feed",
+        "message": "你好"
+    }))
+    .unwrap_err();
+    assert!(injected.message().contains("不是合法的 ID"), "实际错误：{}", injected.message());
+
+    // 超长正文
+    let long = super::write::parse_reply_args(&serde_json::json!({
+        "feedId": "74836959",
+        "message": "字".repeat(1001)
+    }))
+    .unwrap_err();
+    assert!(long.message().contains("1000"), "实际错误：{}", long.message());
+}
+
+#[test]
+fn write_parse_reply_accepts_louzhonglou_and_image_only() {
+    let dir = test_dir("reply-args");
+    let file = dir.join("reply.png");
+    std::fs::write(&file, tiny_png_bytes()).unwrap();
+    let parsed = super::write::parse_reply_args(&serde_json::json!({
+        "feedId": "74836959",
+        "rid": "9001",
+        "imagePaths": [file.display().to_string()],
+        "requestId": "reply-1"
+    }))
+    .unwrap();
+    assert!(parsed.message.is_empty());
+    assert_eq!(parsed.rid.as_deref(), Some("9001"));
+    assert_eq!(parsed.request_id.as_deref(), Some("reply-1"));
+    assert_eq!(parsed.image_paths.len(), 1);
+
+    let call = super::write::WriteCall::Reply(parsed);
+    assert_eq!(call.tool(), "coolapk_reply_feed");
+    assert_eq!(call.scope(), "write.interact");
+    let preview = call.preview();
+    assert_eq!(preview["feedId"], "74836959");
+    assert_eq!(preview["rid"], "9001");
+    assert_eq!(preview["imageCount"], 1);
+    assert!(call.summary().contains("回复评论"));
+}
+
+#[test]
+fn write_parse_forward_allows_empty_message() {
+    let parsed =
+        super::write::parse_forward_args(&serde_json::json!({ "feedId": "74836959" })).unwrap();
+    assert!(parsed.message.is_empty());
+    let call = super::write::WriteCall::Forward(parsed);
+    assert_eq!(call.tool(), "coolapk_forward_feed");
+    assert_eq!(call.preview()["imageCount"], 0);
+    assert!(call.summary().contains("转发动态"));
+}
+
+#[test]
+fn write_delete_and_favorite_use_expected_scopes() {
+    let delete = super::write::WriteCall::DeleteFeed { feed_id: "74836959".to_string() };
+    assert_eq!(delete.tool(), "coolapk_delete_feed");
+    assert_eq!(delete.scope(), "write.publish");
+    assert_eq!(delete.preview()["action"], "delete");
+
+    let favorite = super::write::WriteCall::FavoriteFeed { feed_id: "1".to_string(), favorite: true };
+    assert_eq!(favorite.tool(), "coolapk_favorite_feed");
+    assert_eq!(favorite.scope(), "write.interact");
+    assert_eq!(favorite.preview()["action"], "favorite");
+    let unfavorite = super::write::WriteCall::FavoriteFeed { feed_id: "1".to_string(), favorite: false };
+    assert_eq!(unfavorite.tool(), "coolapk_unfavorite_feed");
+    assert_eq!(unfavorite.preview()["action"], "unfavorite");
+}
+#[test]
+fn extract_feed_finds_entity_in_nested_envelopes() {
+    let nested = serde_json::json!({
+        "code": 200,
+        "data": {
+            "code": 200,
+            "data": {
+                "feed": { "id": 74837196, "feedType": "feed", "message": "正文" }
+            }
+        }
+    });
+    let feed = super::write::extract_feed(&nested).expect("应能定位动态实体");
+    assert_eq!(feed["id"], 74837196);
+    assert!(super::write::extract_feed(&serde_json::json!({ "code": 500 })).is_none());
 }
 fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
     write_ctx_with_scopes(
@@ -751,6 +848,53 @@ async fn mcp_notification_is_accepted() {
     assert!(bytes.is_empty());
 }
 
+#[tokio::test]
+async fn mcp_reply_and_forward_dry_run_preview() {
+    let ctx = write_ctx("mcp-reply-dry-run", AgentBridgeWriteMode::DryRun);
+    for (id, name, arguments, needle) in [
+        (60, "coolapk_reply_feed", serde_json::json!({ "feedId": "74836959", "message": "预览评论", "rid": "9001" }), r#""rid":"9001""#),
+        (61, "coolapk_forward_feed", serde_json::json!({ "feedId": "74836959", "message": "预览转发" }), r#""feedId":"74836959""#),
+        (62, "coolapk_favorite_feed", serde_json::json!({ "feedId": "74836959" }), r#""action":"favorite""#),
+        (63, "coolapk_delete_feed", serde_json::json!({ "feedId": "74836959" }), r#""action":"delete""#),
+    ] {
+        let (_, value) = mcp_send(
+            &ctx,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            }),
+        )
+        .await;
+        assert_eq!(value["result"]["isError"], false, "{name}: {value}");
+        let text = value["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(r#""dryRun":true"#), "{name}：{text}");
+        assert!(text.contains(needle), "{name}：{text}");
+    }
+}
+
+#[tokio::test]
+async fn mcp_delete_feed_requires_publish_scope() {
+    let ctx = write_ctx_with_scopes(
+        "mcp-delete-scope",
+        AgentBridgeWriteMode::DryRun,
+        vec![AgentBridgeScope::Read, AgentBridgeScope::WriteInteract],
+    );
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 64,
+            "method": "tools/call",
+            "params": { "name": "coolapk_delete_feed", "arguments": { "feedId": "74836959" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], true);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("缺少授权范围"), "{text}");
+}
 /// axum 默认 body 上限 2 MB，发帖图片必须证明放宽后的上限真的生效。
 #[tokio::test]
 async fn mcp_accepts_body_larger_than_default_axum_limit() {

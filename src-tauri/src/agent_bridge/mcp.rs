@@ -46,6 +46,44 @@ fn object_schema(properties: Value, required: Vec<&str>) -> Value {
     })
 }
 
+/// 发帖 / 评论 / 转发共用的图片入参（base64 与本机路径二选一，合计最多 9 张）。
+fn image_properties() -> Value {
+    json!({
+        "images": {
+            "type": "array",
+            "maxItems": 9,
+            "description": "可选图片（base64），与 imagePaths 合计最多 9 张、单张 8 MB、总计 20 MB",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "上传文件名" },
+                    "mimeType": { "type": "string", "enum": ["image/jpeg", "image/png", "image/webp"] },
+                    "dataBase64": { "type": "string", "description": "base64 或 data URL" }
+                },
+                "required": ["dataBase64"],
+                "additionalProperties": false
+            }
+        },
+        "imagePaths": {
+            "type": "array",
+            "maxItems": 9,
+            "description": "本机绝对路径列表（JPEG/PNG/WebP），由应用自己读盘上传，适合平板/大图",
+            "items": { "type": "string" }
+        }
+    })
+}
+
+/// 在给定属性上合并图片入参，避免三个写工具各自复制一份 schema。
+fn media_object_schema(properties: Value, required: Vec<&str>) -> Value {
+    let mut merged = properties;
+    if let (Some(target), Some(extra)) = (merged.as_object_mut(), image_properties().as_object()) {
+        for (key, value) in extra {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+    object_schema(merged, required)
+}
+
 static TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "coolapk_health",
@@ -131,30 +169,10 @@ static TOOLS: &[ToolSpec] = &[
         description: "发布一条酷安动态（需要 write.publish 授权）。正文与图片至少给一项；图片可用 base64 或 imagePaths（本机绝对路径）。受写操作闸门约束：dry-run 只返回预览，confirm 需要在应用内确认，auto 直接提交。",
         scope: Some(AgentBridgeScope::WritePublish),
         schema: || {
-            object_schema(
+            media_object_schema(
                 json!({
                     "message": { "type": "string", "description": "动态正文，最多 5000 字；可含 #话题# 文本" },
-                    "images": {
-                        "type": "array",
-                        "maxItems": 9,
-                        "description": "可选图片（base64），与 imagePaths 合计最多 9 张、单张 8 MB、总计 20 MB",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": { "type": "string", "description": "上传文件名" },
-                                "mimeType": { "type": "string", "enum": ["image/jpeg", "image/png", "image/webp"] },
-                                "dataBase64": { "type": "string", "description": "base64 或 data URL" }
-                            },
-                            "required": ["dataBase64"],
-                            "additionalProperties": false
-                        }
-                    },
-                    "imagePaths": {
-                        "type": "array",
-                        "maxItems": 9,
-                        "description": "本机绝对路径列表（JPEG/PNG/WebP），由应用自己读盘上传，适合平板/大图",
-                        "items": { "type": "string" }
-                    },
+
                     "visibleStatus": { "type": "integer", "enum": [1, -1], "description": "1 公开、-1 仅自己" },
                     "options": {
                         "type": "object",
@@ -183,6 +201,55 @@ static TOOLS: &[ToolSpec] = &[
                 vec![],
             )
         },
+    },
+    ToolSpec {
+        name: "coolapk_reply_feed",
+        description: "评论一条动态，或带 rid 时回复某条评论（需要 write.interact 授权，受写操作闸门约束）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || {
+            media_object_schema(
+                json!({
+                    "feedId": { "type": "string", "description": "动态 ID" },
+                    "message": { "type": "string", "description": "评论正文，最多 1000 字；可含 #话题# 与表情" },
+                    "rid": { "type": "string", "description": "回复某条评论时填该评论 id（楼中楼）" },
+                    "requestId": { "type": "string", "description": "幂等请求 id；客户端重试时带上可避免重复评论" }
+                }),
+                vec!["feedId"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_forward_feed",
+        description: "转发一条动态（需要 write.interact 授权）。评语与图片都可选。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || {
+            media_object_schema(
+                json!({
+                    "feedId": { "type": "string", "description": "被转发的动态 ID" },
+                    "message": { "type": "string", "description": "转发评语，可选，最多 5000 字" },
+                    "requestId": { "type": "string", "description": "幂等请求 id" }
+                }),
+                vec!["feedId"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_favorite_feed",
+        description: "收藏一条动态（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
+        name: "coolapk_unfavorite_feed",
+        description: "取消收藏一条动态（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "动态 ID" } }), vec!["feedId"]),
+    },
+    ToolSpec {
+        name: "coolapk_delete_feed",
+        description: "删除自己发布的动态（需要 write.publish 授权；不可恢复，建议配合 confirm 闸门）。",
+        scope: Some(AgentBridgeScope::WritePublish),
+        schema: || object_schema(json!({ "feedId": { "type": "string", "description": "要删除的动态 ID" } }), vec!["feedId"]),
     },
     ToolSpec {
         name: "coolapk_like_feed",
@@ -419,6 +486,23 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
         "coolapk_publish_feed" => {
             let publish = write::parse_publish_args(args)?;
             write::execute(ctx, write::WriteCall::Publish(publish)).await
+        }
+        "coolapk_reply_feed" => {
+            let reply = write::parse_reply_args(args)?;
+            write::execute(ctx, write::WriteCall::Reply(reply)).await
+        }
+        "coolapk_forward_feed" => {
+            let forward = write::parse_forward_args(args)?;
+            write::execute(ctx, write::WriteCall::Forward(forward)).await
+        }
+        "coolapk_delete_feed" => {
+            let feed_id = required_arg(args, "feedId", "动态 ID")?;
+            write::execute(ctx, write::WriteCall::DeleteFeed { feed_id }).await
+        }
+        "coolapk_favorite_feed" | "coolapk_unfavorite_feed" => {
+            let feed_id = required_arg(args, "feedId", "动态 ID")?;
+            let favorite = name == "coolapk_favorite_feed";
+            write::execute(ctx, write::WriteCall::FavoriteFeed { feed_id, favorite }).await
         }
         "coolapk_like_feed" | "coolapk_unlike_feed" => {
             let feed_id = required_arg(args, "feedId", "动态 ID")?;
