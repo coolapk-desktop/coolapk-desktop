@@ -68,13 +68,33 @@
     </div>
 
     <div class="setting-group">
+      <h4 class="group-title">权限预设</h4>
+      <div class="setting-row">
+        <div class="row-info">
+          <span class="row-label">授权预设</span>
+          <span class="row-sub">{{ presetHint }}</span>
+        </div>
+        <select v-model="preset" class="select-control" :disabled="busy" aria-label="Agent 授权预设" @change="applyPreset">
+          <option value="read-only">只读（默认）</option>
+          <option value="confirm-writes">敏感写操作需确认</option>
+          <option value="auto-writes">完全放开（自动执行）</option>
+          <option value="custom">自定义</option>
+        </select>
+      </div>
+      <p class="tray-tip">
+        <i class="fas fa-shield-halved"></i>
+        读取权限始终开放，不需要授权；只有写操作需要你决定：默认只读，选「敏感写操作需确认」后每次写入都在应用内弹窗，选「完全放开」则直接执行（只建议在本机可信环境使用）。下方「授权范围」与「写操作闸门」用于自定义组合。
+      </p>
+    </div>
+
+    <div class="setting-group">
       <h4 class="group-title">授权范围</h4>
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">读取内容</span>
-          <span class="row-sub">动态、评论、用户、话题、搜索的只读访问</span>
+          <span class="row-sub">动态、评论、用户、话题、搜索的只读访问；固定开放，不能关闭</span>
         </div>
-        <AppSwitch :model-value="readEnabled" :disabled="busy" @update:model-value="value => updateScope('read', value)" />
+        <span class="badge-on">始终开放</span>
       </div>
       <div class="setting-row">
         <div class="row-info">
@@ -92,7 +112,7 @@
       </div>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        写授权覆盖发帖/编辑/删除/置顶动态、评论与评论点赞、转发/收藏与收藏单、话题与用户关注、私信。商品类只有只读查询，不涉及下单等交易操作。修改授权范围后需要关闭再重新开启服务。
+        写授权覆盖发帖/编辑/删除/置顶动态、评论与评论点赞、转发/收藏与收藏单、话题与用户关注、私信。商品类只有只读查询，不涉及下单等交易操作。修改授权范围或写操作闸门后立即生效（只重建监听，token 与客户端配置不变）。
       </p>
     </div>
 
@@ -137,6 +157,19 @@
         <i class="fas fa-gauge-high"></i>
         限流：读 60 次/分钟；写 1 次/分钟、10 次/小时。调用记录写入应用数据目录的审计文件，只保存接口、授权范围与账号，不保存正文。
       </p>
+    </div>
+
+    <div class="setting-group">
+      <h4 class="group-title">给 AI 的说明</h4>
+      <p class="row-sub">
+        把下面整段文字复制给本机 AI（Claude Code、Codex、Cursor 等）：里面包含接入地址、token、当前授权范围与可用工具清单，AI 可以据此自己完成 MCP 注册，并按约定调用。
+      </p>
+      <pre v-if="status.enabled" class="code-block guide-block">{{ guidePreview || '正在生成说明…' }}</pre>
+      <p v-else class="row-sub">开启服务后在这里生成说明。</p>
+      <div class="row-actions guide-actions">
+        <button type="button" class="btn-text" :disabled="!guide" @click="copyText(guide)">复制说明</button>
+        <button type="button" class="btn-text" :disabled="!status.enabled" @click="loadGuide">重新生成</button>
+      </div>
     </div>
   </div>
 </template>
@@ -194,6 +227,8 @@ const publishEnabled = ref(false);
 const interactEnabled = ref(false);
 const transport = ref(emptyStatus.transport);
 const writeMode = ref('disabled');
+const preset = ref('read-only');
+const guide = ref('');
 
 const transportLabel = computed(() => (status.transport === 'uds' ? 'Unix Socket' : 'TCP 回环'));
 const transportHint = computed(() => (transport.value === 'uds'
@@ -206,6 +241,18 @@ const writeModeHint = computed(() => {
     case 'confirm': return '每次写入都会在应用内弹窗，需要你手动批准';
     case 'auto': return '写入直接执行，只记录审计日志，风控风险由你承担';
     default: return '拒绝所有写操作，只允许读取';
+  }
+});
+
+// 预览里把 token 打码，与上方 token 行的默认行为一致；「复制说明」复制完整文本。
+const guidePreview = computed(() => (status.token ? guide.value.split(status.token).join('••••••••') : guide.value));
+
+const presetHint = computed(() => {
+  switch (preset.value) {
+    case 'read-only': return '只能读取，所有写操作都会被拒绝';
+    case 'confirm-writes': return '允许发布与互动写入，每次写入在应用内弹窗确认';
+    case 'auto-writes': return '允许发布与互动写入并直接执行，只记录审计';
+    default: return '按下方「授权范围」与「写操作闸门」手动组合';
   }
 });
 
@@ -233,25 +280,37 @@ function applyStatus(data: Partial<BridgeStatus> | null | undefined) {
 function applyPreferences(next: BridgePreferences) {
   Object.assign(preferences, { ...next, scopes: [...next.scopes], allowedAccounts: [...next.allowedAccounts] });
   savedPreferences.value = { ...preferences, scopes: [...preferences.scopes], allowedAccounts: [...preferences.allowedAccounts] };
-  readEnabled.value = preferences.scopes.includes('read');
+  // 读取权限始终开放，不再由前端控制。
+  readEnabled.value = true;
   publishEnabled.value = preferences.scopes.includes('write.publish');
   interactEnabled.value = preferences.scopes.includes('write.interact');
   transport.value = preferences.transport || transport.value;
   writeMode.value = preferences.writeMode || writeMode.value;
+  preset.value = detectPreset(preferences.scopes, writeMode.value);
+}
+
+function detectPreset(scopes: string[], mode: string): string {
+  const hasPublish = scopes.includes('write.publish');
+  const hasInteract = scopes.includes('write.interact');
+  if (!hasPublish && !hasInteract && mode === 'disabled') return 'read-only';
+  if (hasPublish && hasInteract && mode === 'confirm') return 'confirm-writes';
+  if (hasPublish && hasInteract && mode === 'auto') return 'auto-writes';
+  return 'custom';
 }
 
 function selectedScopes(): string[] {
-  const scopes: string[] = [];
-  if (readEnabled.value) scopes.push('read');
+  // 读取权限始终提交，写权限按授权范围勾选。
+  const scopes: string[] = ['read'];
   if (publishEnabled.value) scopes.push('write.publish');
   if (interactEnabled.value) scopes.push('write.interact');
-  return scopes.length ? scopes : ['read'];
+  return scopes;
 }
 
 async function refresh() {
   try {
     const response = await CoolapkTauriAPI.agentBridgeStatus();
     applyStatus(response?.data);
+    await loadGuide();
   } catch (error) {
     showToast('读取 Agent 接口状态失败', 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_status_failed', summarizeDiagnosticError(error));
@@ -265,6 +324,7 @@ async function persistPreferences() {
   try {
     const response = await CoolapkTauriAPI.agentBridgeSavePreferences({ scopes: selectedScopes(), transport: transport.value, writeMode: writeMode.value, allowedAccounts: preferences.allowedAccounts });
     applyStatus(response?.data);
+    await loadGuide();
   } catch (error) {
     applyPreferences(previous);
     showToast('保存 Agent 接口设置失败', 'error');
@@ -275,11 +335,42 @@ async function persistPreferences() {
 }
 
 async function updateScope(scope: string, enabled: boolean) {
-  if (busy.value) return;
-  if (scope === 'read') readEnabled.value = enabled;
-  else if (scope === 'write.publish') publishEnabled.value = enabled;
+  if (busy.value || scope === 'read') return;
+  if (scope === 'write.publish') publishEnabled.value = enabled;
   else interactEnabled.value = enabled;
+  preset.value = 'custom';
   await persistPreferences();
+}
+
+async function applyPreset() {
+  if (busy.value) return;
+  const value = preset.value;
+  if (value === 'read-only') {
+    publishEnabled.value = false;
+    interactEnabled.value = false;
+    writeMode.value = 'disabled';
+  } else if (value === 'confirm-writes' || value === 'auto-writes') {
+    publishEnabled.value = true;
+    interactEnabled.value = true;
+    writeMode.value = value === 'confirm-writes' ? 'confirm' : 'auto';
+  } else {
+    return;
+  }
+  await persistPreferences();
+}
+
+async function loadGuide() {
+  if (!status.enabled) {
+    guide.value = '';
+    return;
+  }
+  try {
+    const response = await CoolapkTauriAPI.agentBridgeUsageGuide();
+    guide.value = typeof response?.data === 'string' ? response.data : '';
+  } catch (error) {
+    guide.value = '';
+    logDiagnostic('warn', 'settings', 'agent_bridge_guide_failed', summarizeDiagnosticError(error));
+  }
 }
 
 async function toggleService(enabled: boolean) {
@@ -294,6 +385,7 @@ async function toggleService(enabled: boolean) {
         })
       : await CoolapkTauriAPI.agentBridgeStop();
     applyStatus(response?.data);
+    await loadGuide();
     showToast(enabled ? 'Agent 接口已开启' : 'Agent 接口已关闭');
   } catch (error) {
     showToast(enabled ? '开启失败，请查看诊断日志' : '关闭失败，请查看诊断日志', 'error');
@@ -309,6 +401,7 @@ async function toggleMcp(enabled: boolean) {
   try {
     const response = await CoolapkTauriAPI.agentBridgeSetMcp(enabled);
     applyStatus(response?.data);
+    await loadGuide();
     showToast(enabled ? 'MCP 服务已开启' : 'MCP 服务已关闭');
   } catch (error) {
     showToast('切换 MCP 服务失败，请查看诊断日志', 'error');
@@ -324,6 +417,7 @@ async function rotateToken() {
   try {
     const response = await CoolapkTauriAPI.agentBridgeRotateToken();
     applyStatus(response?.data);
+    await loadGuide();
     showToast('token 已重新生成，旧 token 立即失效');
   } catch (error) {
     showToast('重新生成失败', 'error');
@@ -413,6 +507,25 @@ onMounted(refresh);
   align-items: center;
   gap: var(--space-2);
   flex: 0 0 auto;
+}
+
+.guide-actions {
+  justify-content: flex-end;
+}
+
+.badge-on {
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-control);
+  background-color: var(--background);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.guide-block {
+  max-height: 260px;
+  overflow-y: auto;
+  text-align: left;
 }
 
 .code-block {

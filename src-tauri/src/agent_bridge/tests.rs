@@ -1291,3 +1291,37 @@ async fn real_socket_serves_mcp() {
     let value: serde_json::Value = tools.json().await.unwrap();
     assert!(tool_names(&value).contains(&"coolapk_topic_detail".to_string()));
 }
+
+
+#[test]
+fn parse_scopes_always_includes_read() {
+    // 读取权限由服务端强制加入，前端无法关闭。
+    let scopes = super::parse_scopes(&["write.interact".to_string()]).unwrap();
+    assert_eq!(scopes, vec![AgentBridgeScope::Read, AgentBridgeScope::WriteInteract]);
+    assert_eq!(super::parse_scopes(&[]).unwrap(), vec![AgentBridgeScope::Read]);
+}
+
+#[test]
+fn usage_guide_reflects_current_config() {
+    let ctx = test_ctx(
+        "usage-guide",
+        vec![AgentBridgeScope::Read, AgentBridgeScope::WriteInteract],
+        AgentBridgeTransport::Tcp,
+    );
+    let config = ctx.config.read().unwrap().clone();
+    let text = super::guide::usage_guide(&config);
+    assert!(text.contains("test-token"));
+    assert!(text.contains("coolapk_health"));
+    assert!(text.contains("coolapk_like_feed"));
+    // 未授权的 write.publish 工具不应出现在说明里。
+    assert!(!text.contains("coolapk_publish_feed"));
+    assert!(text.contains("互动操作"));
+    assert!(text.contains("MCP 地址：当前未开启"));
+
+    let mut with_mcp = config.clone();
+    with_mcp.mcp_enabled = true;
+    with_mcp.mcp_port = Some(47654);
+    let mcp_text = super::guide::usage_guide(&with_mcp);
+    assert!(mcp_text.contains("http://127.0.0.1:47654/mcp"));
+    assert!(mcp_text.contains("claude mcp add --transport http coolapk"));
+}

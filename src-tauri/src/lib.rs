@@ -1699,6 +1699,7 @@ pub fn run() {
             agent_bridge::agent_bridge_rotate_token,
             agent_bridge::agent_bridge_set_mcp,
             agent_bridge::agent_bridge_confirm_result,
+            agent_bridge::agent_bridge_usage_guide,
         ])
         .build(context)
         .expect("error while building tauri application")

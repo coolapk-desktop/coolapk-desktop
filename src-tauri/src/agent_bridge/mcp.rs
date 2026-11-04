@@ -538,6 +538,11 @@ static TOOLS: &[ToolSpec] = &[
     },
 ];
 
+/// 工具清单（名称、描述、所需授权范围），供设置页生成「给 AI 的说明」时与工具表保持一致。
+pub(super) fn tool_catalog() -> impl Iterator<Item = (&'static str, &'static str, Option<AgentBridgeScope>)> {
+    TOOLS.iter().map(|tool| (tool.name, tool.description, tool.scope))
+}
+
 pub fn build_router(ctx: Arc<BridgeCtx>) -> Router {
     Router::new()
         .route("/mcp", post(handle_post).get(handle_get).delete(handle_delete))
