@@ -641,10 +641,10 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 | `GET /v6/favorite/list` | GET | 🔒 需登录 · ✅ 可用 | ✅ `getFavoriteList` / MCP `coolapk_favorites` | type（feed/apk/album）, page |
 | `/v6/feed/favorite` | GET | 🔒 需登录 · ✅ 可用 | ✅ `favoriteFeed` / MCP `coolapk_favorite_feed` | id |
 | `/v6/feed/unFavorite` | GET | 🔒 需登录 · ✅ 可用 | ✅ `unfavoriteFeed` / MCP `coolapk_unfavorite_feed` | id |
-| `/v6/apk/favorite` | GET / POST | 🔒 需登录 · ❌ 失败 | ⚠️ 已接入但不可用（issue #40） | `id`、`apk`、`packageName`、`targetType=apk` 均被判「apk 不能为空」 |
-| `/v6/apk/unFavorite` | GET / POST | 🔒 需登录 · ❌ 失败 | ⚠️ 同上 | 返回「收藏不存在」 |
+| `GET /v6/collection/list` | GET | 🔒 需登录 · ✅ 可用 | ✅ `getCollectionList` / `getApkCollectionStatus` | uid、id、type、showDefault、page、firstItem、lastItem |
+| `POST /v6/collection/addItem` | POST | 🔒 需登录 · ✅ 可用 | ✅ `updateCollectionItem` / `favoriteApk` / `unfavoriteApk` | collectionIds、cancelIds、targetId、type、trace |
 
-> 动态收藏用 GET + `id`；**应用收藏**目前任何已知参数组合都被服务端拒绝（应用内按钮同样失效），已在仓库 issue #40 记录，别按本表旧写法（POST + id）重试。
+> 动态收藏使用 GET + `id`；应用收藏沿用官方应用页的收藏单流程。`favorite_apk` / `unfavorite_apk` 对外仍接受包名，由后端解析应用数字 ID 并更新收藏单；收藏加入默认收藏单，取消收藏移出全部已选收藏单。旧 `/v6/apk/favorite`、`/v6/apk/unFavorite` 不再用于客户端应用收藏；应用详情的旧 `userAction.follow` 实测不会随收藏单同步，页面通过 `get_apk_collection_status(apkId)` 查询实际收藏状态。
 
 ## 黑名单 / 忽略 / 限制
 
@@ -752,7 +752,7 @@ cargo test --lib coolapk::client::api_tests:: -- --ignored --nocapture
 | - | - |
 | **V8 页面访问** | 必须通过 `/v6/page/dataList`；`/v6/page` 直连已废弃 |
 | **api2.coolapk.com** | 作为专用路由主机可用，但 `user/profile` 在 api2 上会重定向到 HTML |
-| **写接口方法** | 所有写接口**只能用 GET**，POST 全部返回 404「请求方式错误」 |
+| **写接口方法** | 按接口分别使用 GET 或 POST，具体方法以「写接口」表格中的实测记录为准 |
 | **用户子端点** | `pictureList`/`ershouList`/`favList` 已废弃，`replyList` 被安全策略拦截 |
 | **通知端点** | `atme`/`comment`/`like`/`feedlike` 全部已废弃，仅 `checkCount` 仍可用 |
 | **登录接口** | `account/login`/`sendVcode`/`loginByMobile` 全部 403 废弃，仅 Webview OAuth 可用 |

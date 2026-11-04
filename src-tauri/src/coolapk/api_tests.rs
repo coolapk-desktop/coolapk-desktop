@@ -1,5 +1,61 @@
 use super::*;
 
+/// 手动复现 #40，只调用现有应用收藏入口；不输出登录凭据或完整个人数据。
+#[tokio::test]
+#[ignore]
+async fn probe_issue40_apk_favorite() {
+    assert_eq!(std::env::var("COOLAPK_FAVORITE_PROBE").as_deref(), Ok("1"), "需显式开启应用收藏复现");
+    let client = CoolapkClient::new();
+    // 仅使用当前测试进程提供的会话，避免读取或覆盖用户已有账号配置。
+    let cookie = std::env::var("COOLAPK_PROBE_COOKIE").expect("缺少本次测试的临时登录会话");
+    *client.user_cookie.write().unwrap() = Some(cookie);
+    let detail = client.get_app_detail("com.coolapk.market").await.expect("读取应用详情失败");
+    println!("[应用收藏复现] apk_id={} follow={}", detail["data"]["id"], detail["data"]["userAction"]["follow"]);
+    // 保留原错误请求作为对照，不调用已经修复的入口。
+    let result = client.favorite_action("/v6/apk/favorite", "com.coolapk.market").await;
+    match result {
+        Err(error) => { println!("[应用收藏复现] 收藏失败：{error}"); assert!(error.contains("apk") && error.contains("不能为空"), "失败原因与报告不同"); }
+        Ok(_) => panic!("旧接口未复现失败，需先检查当前收藏状态"),
+    }
+}
+
+/// 手动验证修复后的真实收藏往返，并在返回测试结果之前恢复原有收藏单归属。
+#[tokio::test]
+#[ignore]
+async fn probe_issue40_apk_favorite_round_trip() {
+    assert_eq!(std::env::var("COOLAPK_FAVORITE_PROBE").as_deref(), Ok("1"));
+    let client = CoolapkClient::new();
+    *client.user_cookie.write().unwrap() = Some(std::env::var("COOLAPK_PROBE_COOKIE").expect("缺少临时登录会话"));
+    let package = "com.coolapk.market";
+    let detail = client.get_app_detail(package).await.expect("应用详情失败");
+    let id = detail["data"].as_object().and_then(|o| get_str_by_keys(o, &["id"])).expect("缺少应用 ID");
+    let selected = |rows: &[Value]| -> Result<String, String> { Ok(apk_collection_update_plan(rows, false)?.map(|(_, ids)| ids).unwrap_or_default()) };
+    let before = selected(&client.get_apk_collections(&id).await.expect("初始收藏单读取失败")).unwrap();
+    let validation: Result<(), String> = async {
+        client.favorite_apk(package).await?;
+        let after_favorite = selected(&client.get_apk_collections(&id).await?)?;
+        if after_favorite.is_empty() { return Err("收藏成功响应后，服务端仍未标记应用已收藏".into()); }
+        let favorite_status = client.get_apk_collection_status(&id).await?;
+        if selected(favorite_status["data"].as_array().ok_or("页面收藏状态格式不正确")?)?.is_empty() { return Err("重新进入应用页后未恢复已收藏状态".into()); }
+        client.unfavorite_apk(package).await?;
+        if !selected(&client.get_apk_collections(&id).await?)?.is_empty() { return Err("取消后服务端仍保留收藏".into()); }
+        let unfavorite_status = client.get_apk_collection_status(&id).await?;
+        if !selected(unfavorite_status["data"].as_array().ok_or("页面收藏状态格式不正确")?)?.is_empty() { return Err("取消收藏后页面状态未恢复".into()); }
+        println!("[应用收藏往返] 数字应用 ID={id} 收藏=true 取消后=false");
+        Ok(())
+    }.await;
+    // 即使验证失败，也先恢复测试前所属收藏单，不依赖页面显示状态。
+    let current = selected(&client.get_apk_collections(&id).await.expect("恢复前收藏单读取失败")).unwrap();
+    let extra = current.split(',').filter(|item| !item.is_empty() && !before.split(',').any(|original| original == *item)).collect::<Vec<_>>().join(",");
+    if before != current { client.update_collection_item(&before, &extra, &id, "apk", "").await.expect("恢复原收藏状态失败"); }
+    let restored = selected(&client.get_apk_collections(&id).await.expect("恢复结果读取失败")).unwrap();
+    let mut expected: Vec<_> = before.split(',').filter(|id| !id.is_empty()).collect(); expected.sort_unstable();
+    let mut actual: Vec<_> = restored.split(',').filter(|id| !id.is_empty()).collect(); actual.sort_unstable();
+    assert_eq!(actual, expected, "测试前后收藏单归属必须一致");
+    println!("[应用收藏往返] 原收藏状态已恢复");
+    validation.expect("真实服务收藏往返验证失败");
+}
+
 /// 只读核对官方精确搜索参数；仅手动运行，避免普通测试依赖在线接口。
 #[tokio::test]
 #[ignore]

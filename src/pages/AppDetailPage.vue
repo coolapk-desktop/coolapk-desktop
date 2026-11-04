@@ -115,6 +115,7 @@
               :icon="isFavorited ? 'fas fa-star text-gold' : 'far fa-star'"
               class="action-half-btn"
               :loading="favoriteLoading"
+              :disabled="loading"
               @click="toggleFavorite"
             >
               {{ isFavorited ? '已收藏' : '收藏应用' }}
@@ -696,6 +697,12 @@ async function fetchAppDetail() {
     const data = res?.data || res;
     if (data) {
       appInfo.value = data;
+      // 实测旧 follow 字段不会随收藏单同步，重新进入页面必须查询真实归属。
+      isFavorited.value = false;
+      if (authStore.isLoggedIn && data.id) {
+        const status = await CoolapkTauriAPI.getApkCollectionStatus(String(data.id));
+        isFavorited.value = Array.isArray(status?.data) && status.data.some((collection: any) => [true, 1, '1'].includes(collection.isBeCollected ?? collection.is_be_collected));
+      }
       if (recommendList.value.length === 0 && !recommendLoading.value) {
         loadRecommendations();
       }
@@ -1099,7 +1106,6 @@ async function toggleFavorite() {
   if (favoriteLoading.value || !packageName.value) return;
 
   const prev = isFavorited.value;
-  isFavorited.value = !prev;
   favoriteLoading.value = true;
 
   try {
@@ -1108,10 +1114,12 @@ async function toggleFavorite() {
     } else {
       await CoolapkTauriAPI.favoriteApk(packageName.value);
     }
+    // 接口明确成功后再更新，失败时不展示虚假的已收藏状态。
+    isFavorited.value = !prev;
   } catch (err: any) {
     isFavorited.value = prev;
     console.error('Toggle favorite failed', err);
-    alert(`收藏操作失败：${err?.message || '请检查网络或登录状态'}`);
+    alert(`收藏操作失败：${err?.message || (typeof err === 'string' ? err : '请检查网络或登录状态')}`);
   } finally {
     favoriteLoading.value = false;
   }

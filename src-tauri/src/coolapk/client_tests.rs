@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn apk_collection_plan_preserves_existing_memberships_and_only_uses_default() {
+    // 不能因列表顺序把应用误加入用户自己创建的第一个收藏单。
+    let rows = vec![json!({"id":"10","entityType":"collection"}), json!({"id":"20","defaultCollected":1})];
+    assert_eq!(apk_collection_update_plan(&rows, true).unwrap(), Some(("20".into(), String::new())));
+    assert!(apk_collection_update_plan(&rows[..1], true).is_err());
+    let selected = vec![json!({"id":"10","isBeCollected":"1"}), json!({"id":"20","isBeCollected":true}), json!({"id":"10","isBeCollected":1})];
+    assert_eq!(apk_collection_update_plan(&selected, true).unwrap(), None);
+    assert_eq!(apk_collection_update_plan(&selected, false).unwrap(), Some((String::new(), "10,20".into())));
+    assert_eq!(apk_collection_update_plan(&rows, false).unwrap(), None);
+    assert!(apk_collection_update_plan(&[json!({"isBeCollected":1})], false).is_err());
+}
+
+#[test]
 fn default_request_version_matches_token_signing_version() {
     // 检查实际下载请求与 UA，避免升级请求头时遗漏签名版本。
     let client = CoolapkClient::new();
