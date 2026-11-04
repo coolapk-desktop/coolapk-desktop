@@ -35,3 +35,7 @@ agent 工具第三批（2026-11-03）：新增只读工具 coolapk_notifications
 §
 agent 工具第四批（2026-11-03）：新增收藏单（收藏夹分类）读写 9 个工具 + 商品只读 3 个工具，共 44 个。实测：收藏单新建→加动态(`collect:1`)→`feed_collections` 可见→内容列表含动态→改名生效→移除条目→删除收藏单全部成功；商品 `name=Redmi K70` → id 3438，版本列表带到手价。**坑**：私密收藏单(`isOpen=false`)不出现在 `/v6/collection/list`，只能靠已知 id 操作（测试时留下过一个不可见空私密收藏单，接口无法枚举，已记录）；`itemId` 实测通常等于动态 id。**政策**：商品/数码只做只读工具，不下单/不自动交易（避免金额纠纷），PR 说明里也只声明「不主动做」，不做额外封堵。另外为孤儿私密收藏单问题、应用收藏接口参数契约开过上游 issue #40。
 <!-- created=2026-11-03, last=2026-11-03 -->
+
+§
+PR #39 已被维护者合并（2026-11-04，merge commit b40a3cf，6 个提交：发帖执行+图片/32MiB body、评论转发收藏删除、编辑+评论点赞+话题+私信、通知/收藏/关注流/楼中楼/私信读+主页置顶、收藏单+商品只读）；剩下那个文档提交另开 **PR #41**（分支 docs/agent-bridge-capabilities，改 README + docs/coolapk-api.md）。推送路径仍是 community 仓库（origin 无写权限）。文档层面纠正两条旧结论：(1) 「V6 写接口全部 GET」只对部分接口成立——createFeed/reply/deleteFeed/deleteReply/置顶/私信/收藏单写接口走 POST；(2) 应用收藏任何参数组合都被拒（issue #40）。
+<!-- created=2026-11-03, last=2026-11-03 -->
