@@ -474,13 +474,20 @@ TS 方法：`getVoteComments(fid, page)`
 | `GET /v6/page/dataList?url=/page?url=/product/feedList` | ✅ 可用 | 🆕 `getProductFeeds` | id, type, listType, page |
 
 `getProductFeeds` 参数：type 取 `feed`（讨论）/ `answer`（问答）/ `article`（图文）/ `video`（视频）/ `trade`（交易）；`listType` 可传 `dateline_desc`（最新）或 `rank_score`（热度），默认留空。
+
+> **产品/交易范围约定**：本地 Agent 接口只提供产品详情、产品动态、版本/到手价这类**只读**工具（`coolapk_product_*`）；下单、购买、转卖、自动抢购等交易类操作一律不封装成工具，避免涉及金额与自动交易纠纷，也不额外封堵接口本身。
 测试用真实产品 ID：`5573`（三星 Galaxy Z Fold8）。
 
 ---
 
 ## 收藏单 / 合集
 
-> 以下接口均用登录 Cookie 实测：读接口全部返回数据（`collection/list` 我的账号实测返回 2 个收藏单），写接口需登录、GET 方式调用返回业务提示（如"不能重复关注"）。
+> 以下接口均用登录 Cookie 实测：读接口全部返回数据（`collection/list` 我的账号实测返回 2 个收藏单），写接口需登录。
+>
+> 补充（2026-11-03 实测）：
+> - 收藏单 `create`（multipart）、`update`、`delete`、`addItem`、`removeItem` 走 **POST**，实测均成功（已封装为 MCP `coolapk_collection_*` 工具）。
+> - **私密收藏单（`isOpen=0`）不会出现在 `/v6/collection/list` 里**，只能靠已知 id 调 `detail` / `delete`；想在列表里看到就必须建公开收藏单。
+> - `itemList` 返回条目的 `id` 实测通常等于动态 id，移除条目直接用它。
 
 ### GET `/v6/collection/list` — 收藏单列表 ✅ 可用 · 🔌 已接入
 
@@ -567,7 +574,10 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 
 ## 写接口（点赞/关注/评论/发帖/发私信）
 
-> **重要**：酷安 V6 写接口全部使用 **GET** 方法（POST 返回 404「请求方式错误」）。
+> **方法不统一，按接口实测**：动态点赞/取消点赞、关注/取关、动态收藏、话题关注、评论点赞等是 **GET**；
+> `createFeed`（发帖/转发）、`reply`（评论）、`deleteFeed` / `deleteReply`（删除）、`addTopToNode` / `cancelTopFromNode`（置顶）、
+> `message/send`（私信）、收藏单 `create` / `update` / `delete` / `addItem` / `removeItem` 是 **POST**（表单或 multipart）。
+> 照表里的方法调用，不要统一改成 GET——早期「V6 写接口全部 GET」的结论只对部分接口成立。
 
 | 接口 | 方法 | 实测状态 | 集成 | 参数 |
 | - | - | - | - | - |
@@ -581,6 +591,14 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 | `GET /v6/collection/follow\|unFollow\|like\|unLike` | GET | 🔒 需登录 | 🆕 `followCollection`/`unfollowCollection`/`likeCollection`/`unlikeCollection` | id |
 | `GET /v6/feed/followTag\|unFollowTag` | GET | 🔒 需登录 | 🆕 `followTag`/`unfollowTag` | tag |
 | `GET /v6/dyh/follow\|unFollow` | GET | 🔒 需登录 | 🆕 `followDyh`/`unfollowDyh` | dyhId |
+| `POST /v6/feed/updateFeed` | POST | 🔒 需登录 · ✅ 可用 | ✅ `updateFeed` / MCP `coolapk_update_feed` | id, message, pic；仅普通动态/图文，不能改类型 |
+| `POST /v6/feed/deleteFeed` | POST + query | 🔒 需登录 · ✅ 可用 | ✅ `deleteFeed` / MCP `coolapk_delete_feed` | id（需 `X-Requested-With`） |
+| `POST /v6/feed/deleteReply` | POST + query | 🔒 需登录 · ✅ 可用 | ✅ `deleteReply` / MCP `coolapk_delete_reply` | id（需 `X-Requested-With`） |
+| `GET /v6/feed/likeReply\|unLikeReply` | GET | 🔒 需登录 · ✅ 可用 | ✅ `likeReply`/`unlikeReply` / MCP `coolapk_like_reply`/`coolapk_unlike_reply` | id（评论 ID，取 replies 里的 `id`） |
+| `POST /v6/feed/addTopToNode\|cancelTopFromNode` | POST | 🔒 需登录 · ✅ 可用 | ✅ `setUserFeedTop` / MCP `coolapk_set_feed_top`/`coolapk_unset_feed_top` | nodeType=member, nodeId=uid, feedId |
+| `POST /v6/collection/create\|update\|delete\|addItem\|removeItem\|removeUnUseItem` | POST | 🔒 需登录 · ✅ 可用 | ✅ `createCollection` 等 / MCP `coolapk_collection_*` | 见「收藏单」与 `docs/agent-bridge.md` |
+
+> Agent 侧（MCP）的完整工具表、参数与闸门说明见 [`docs/agent-bridge.md`](agent-bridge.md)；上表只记录接口层结论。
 
 ---
 
@@ -618,13 +636,15 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 
 ## 收藏管理
 
-| 接口 | 实测状态 | 集成 | 参数 |
-| - | - | - | - |
-| `GET /v6/favorite/list` | 🔒 需登录 | 未接入 | type（feed/apk/album）, page |
-| `POST /v6/feed/favorite` | 🔒 需登录 | 未接入 | id |
-| `POST /v6/feed/unFavorite` | 🔒 需登录 | 未接入 | id, targetType |
-| `POST /v6/apk/favorite` | 🔒 需登录 | 未接入 | id |
-| `POST /v6/apk/unFavorite` | 🔒 需登录 | 未接入 | id, targetType |
+| 接口 | 方法 | 实测状态 | 集成 | 参数 |
+| - | - | - | - | - |
+| `GET /v6/favorite/list` | GET | 🔒 需登录 · ✅ 可用 | ✅ `getFavoriteList` / MCP `coolapk_favorites` | type（feed/apk/album）, page |
+| `/v6/feed/favorite` | GET | 🔒 需登录 · ✅ 可用 | ✅ `favoriteFeed` / MCP `coolapk_favorite_feed` | id |
+| `/v6/feed/unFavorite` | GET | 🔒 需登录 · ✅ 可用 | ✅ `unfavoriteFeed` / MCP `coolapk_unfavorite_feed` | id |
+| `/v6/apk/favorite` | GET / POST | 🔒 需登录 · ❌ 失败 | ⚠️ 已接入但不可用（issue #40） | `id`、`apk`、`packageName`、`targetType=apk` 均被判「apk 不能为空」 |
+| `/v6/apk/unFavorite` | GET / POST | 🔒 需登录 · ❌ 失败 | ⚠️ 同上 | 返回「收藏不存在」 |
+
+> 动态收藏用 GET + `id`；**应用收藏**目前任何已知参数组合都被服务端拒绝（应用内按钮同样失效），已在仓库 issue #40 记录，别按本表旧写法（POST + id）重试。
 
 ## 黑名单 / 忽略 / 限制
 
