@@ -23,3 +23,7 @@ agent 发帖能力落地（2026-11-03）：`write::run` 的 `WriteCall::Publish`
 §
 agent 写工具实测（2026-11-03，本机已登录账号 徐千惠/44272578，dev 构建 + 真实酷安接口）：发帖（imagePaths 图片）→ feed 74836959，pic 落地为 http://image.coolapk.com/feed/2026/1104/09/44272578_e77de49a_5822_8348_43@640x360.png；评论 → replies 能看到，favorite/unfavorite 返回 data 1/0；转发 → 新 feed 74837240（forwardid /feed/74837196），delete_feed 删除成功（data:"删除成功"，再查详情报内容不存在）。新增 5 个工具后共 18 个。踩坑：client.upload_image 返回 {code,data} 且 data 是地址字符串（不是对象）；create_feed 返回套了多层 {code,data} 信封，取 feed 实体要递归找含 entityTemplate/feedType 的那层（write::extract_feed）；仅自己可见的动态无法被评论（服务端拒绝），测评论/转发要先用公开动态。测试残留：仅自己可见的 74836959 图片帖保留给用户查看。
 <!-- created=2026-11-03, last=2026-11-03 -->
+
+§
+agent 写工具第二批实测（2026-11-03，同一账号/真实接口）：编辑动态成功（74836959 正文更新、change_count=1，且**未传图片时原配图自动保留**，靠 /v6/feed/changeDetail 的 pic 复用）；话题关注/取消关注返回「关注成功」「取消关注成功」；评论点赞 1 → 取消 0 → 删除评论「删除成功」且评论列表清空；私信服务端拒绝「不能给自己发私信」（链路已验证，未向他人发送）。关键坑：`coolapk_feed_replies` 的 `rid` 顶层恒为 0，真正的评论 id 是 `id`（如 615363605），点赞/删除评论必须用它；publish bucket 1 次/分钟含删除，批量清理要排队。当前分支 feat/agent-write-tools 已 rebase 到 origin/main(30ab6a1)+3 个上游提交，PR #39 从 fork xiaquwan1001/coolapk-desktop-community 提交（origin 无推送权限，且旧 fork xiaquwan1001/coolapk-desktop 的 parent 是 daimiaopeng，PR 必须走 community 仓库）。
+<!-- created=2026-11-03, last=2026-11-03 -->
