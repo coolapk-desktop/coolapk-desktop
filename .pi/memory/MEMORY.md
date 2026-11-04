@@ -27,3 +27,7 @@ agent 写工具实测（2026-11-03，本机已登录账号 徐千惠/44272578，
 §
 agent 写工具第二批实测（2026-11-03，同一账号/真实接口）：编辑动态成功（74836959 正文更新、change_count=1，且**未传图片时原配图自动保留**，靠 /v6/feed/changeDetail 的 pic 复用）；话题关注/取消关注返回「关注成功」「取消关注成功」；评论点赞 1 → 取消 0 → 删除评论「删除成功」且评论列表清空；私信服务端拒绝「不能给自己发私信」（链路已验证，未向他人发送）。关键坑：`coolapk_feed_replies` 的 `rid` 顶层恒为 0，真正的评论 id 是 `id`（如 615363605），点赞/删除评论必须用它；publish bucket 1 次/分钟含删除，批量清理要排队。当前分支 feat/agent-write-tools 已 rebase 到 origin/main(30ab6a1)+3 个上游提交，PR #39 从 fork xiaquwan1001/coolapk-desktop-community 提交（origin 无推送权限，且旧 fork xiaquwan1001/coolapk-desktop 的 parent 是 daimiaopeng，PR 必须走 community 仓库）。
 <!-- created=2026-11-03, last=2026-11-03 -->
+
+§
+agent 工具第三批（2026-11-03）：新增只读工具 coolapk_notifications / favorites / following_feeds / reply_thread / private_messages 与写工具 coolapk_set_feed_top / unset_feed_top，共 32 个工具；真实接口验证通过（置顶返回「个人主页置顶成功」；楼中楼读在 feed 72432021 / reply 596603124 拿到 3 条嵌套回复）。**收藏应用(/v6/apk/favorite) 是坑**：`id`（GET/POST）、`apk`、`packageName`、`targetType=apk` 全被服务端判「apk 不能为空」，应用内 AppDetailPage 的收藏按钮同样失效，已把尝试撤回、不在 PR 里带假实现，建议单独开 issue 排查。另：`coolapk_feed_replies` 返回的 `commentnum` 常缺失，找有评论的动态别依赖它。
+<!-- created=2026-11-03, last=2026-11-03 -->
