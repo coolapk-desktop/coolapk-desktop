@@ -869,7 +869,7 @@ dependencies = [
 
 [[package]]
 name = "coolapk_desktop"
-version = "1.39.3"
+version = "1.40.0"
 dependencies = [
  "anyhow",
  "axum",
