@@ -474,13 +474,20 @@ TS 方法：`getVoteComments(fid, page)`
 | `GET /v6/page/dataList?url=/page?url=/product/feedList` | ✅ 可用 | 🆕 `getProductFeeds` | id, type, listType, page |
 
 `getProductFeeds` 参数：type 取 `feed`（讨论）/ `answer`（问答）/ `article`（图文）/ `video`（视频）/ `trade`（交易）；`listType` 可传 `dateline_desc`（最新）或 `rank_score`（热度），默认留空。
+
+> **产品/交易范围约定**：本地 Agent 接口只提供产品详情、产品动态、版本/到手价这类**只读**工具（`coolapk_product_*`）；下单、购买、转卖、自动抢购等交易类操作一律不封装成工具，避免涉及金额与自动交易纠纷，也不额外封堵接口本身。
 测试用真实产品 ID：`5573`（三星 Galaxy Z Fold8）。
 
 ---
 
 ## 收藏单 / 合集
 
-> 以下接口均用登录 Cookie 实测：读接口全部返回数据（`collection/list` 我的账号实测返回 2 个收藏单），写接口需登录、GET 方式调用返回业务提示（如"不能重复关注"）。
+> 以下接口均用登录 Cookie 实测：读接口全部返回数据（`collection/list` 我的账号实测返回 2 个收藏单），写接口需登录。
+>
+> 补充（2026-11-03 实测）：
+> - 收藏单 `create`（multipart）、`update`、`delete`、`addItem`、`removeItem` 走 **POST**，实测均成功（已封装为 MCP `coolapk_collection_*` 工具）。
+> - **私密收藏单（`isOpen=0`）不会出现在 `/v6/collection/list` 里**，只能靠已知 id 调 `detail` / `delete`；想在列表里看到就必须建公开收藏单。
+> - `itemList` 返回条目的 `id` 实测通常等于动态 id，移除条目直接用它。
 
 ### GET `/v6/collection/list` — 收藏单列表 ✅ 可用 · 🔌 已接入
 
@@ -567,7 +574,10 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 
 ## 写接口（点赞/关注/评论/发帖/发私信）
 
-> **重要**：酷安 V6 写接口全部使用 **GET** 方法（POST 返回 404「请求方式错误」）。
+> **方法不统一，按接口实测**：动态点赞/取消点赞、关注/取关、动态收藏、话题关注、评论点赞等是 **GET**；
+> `createFeed`（发帖/转发）、`reply`（评论）、`deleteFeed` / `deleteReply`（删除）、`addTopToNode` / `cancelTopFromNode`（置顶）、
+> `message/send`（私信）、收藏单 `create` / `update` / `delete` / `addItem` / `removeItem` 是 **POST**（表单或 multipart）。
+> 照表里的方法调用，不要统一改成 GET——早期「V6 写接口全部 GET」的结论只对部分接口成立。
 
 | 接口 | 方法 | 实测状态 | 集成 | 参数 |
 | - | - | - | - | - |
@@ -581,6 +591,14 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 | `GET /v6/collection/follow\|unFollow\|like\|unLike` | GET | 🔒 需登录 | 🆕 `followCollection`/`unfollowCollection`/`likeCollection`/`unlikeCollection` | id |
 | `GET /v6/feed/followTag\|unFollowTag` | GET | 🔒 需登录 | 🆕 `followTag`/`unfollowTag` | tag |
 | `GET /v6/dyh/follow\|unFollow` | GET | 🔒 需登录 | 🆕 `followDyh`/`unfollowDyh` | dyhId |
+| `POST /v6/feed/updateFeed` | POST | 🔒 需登录 · ✅ 可用 | ✅ `updateFeed` / MCP `coolapk_update_feed` | id, message, pic；仅普通动态/图文，不能改类型 |
+| `POST /v6/feed/deleteFeed` | POST + query | 🔒 需登录 · ✅ 可用 | ✅ `deleteFeed` / MCP `coolapk_delete_feed` | id（需 `X-Requested-With`） |
+| `POST /v6/feed/deleteReply` | POST + query | 🔒 需登录 · ✅ 可用 | ✅ `deleteReply` / MCP `coolapk_delete_reply` | id（需 `X-Requested-With`） |
+| `GET /v6/feed/likeReply\|unLikeReply` | GET | 🔒 需登录 · ✅ 可用 | ✅ `likeReply`/`unlikeReply` / MCP `coolapk_like_reply`/`coolapk_unlike_reply` | id（评论 ID，取 replies 里的 `id`） |
+| `POST /v6/feed/addTopToNode\|cancelTopFromNode` | POST | 🔒 需登录 · ✅ 可用 | ✅ `setUserFeedTop` / MCP `coolapk_set_feed_top`/`coolapk_unset_feed_top` | nodeType=member, nodeId=uid, feedId |
+| `POST /v6/collection/create\|update\|delete\|addItem\|removeItem\|removeUnUseItem` | POST | 🔒 需登录 · ✅ 可用 | ✅ `createCollection` 等 / MCP `coolapk_collection_*` | 见「收藏单」与 `docs/agent-bridge.md` |
+
+> Agent 侧（MCP）的完整工具表、参数与闸门说明见 [`docs/agent-bridge.md`](agent-bridge.md)；上表只记录接口层结论。
 
 ---
 
@@ -618,15 +636,15 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 
 ## 收藏管理
 
-| 接口 | 实测状态 | 集成 | 参数 |
-| - | - | - | - |
-| `GET /v6/favorite/list` | 🔒 需登录 | 未接入 | type（feed/apk/album）, page |
-| `POST /v6/feed/favorite` | 🔒 需登录 | 未接入 | id |
-| `POST /v6/feed/unFavorite` | 🔒 需登录 | 未接入 | id, targetType |
-| `GET /v6/collection/list` | 🔒 需登录 | 已接入应用收藏状态 | uid 传空、id 为应用数字 ID、type=apk、showDefault=1，支持分页游标 |
-| `POST /v6/collection/addItem` | 🔒 需登录 | 已接入应用收藏/取消收藏 | targetId 为应用数字 ID、type=apk；id 为加入的收藏单 ID，cancelId 为移出的收藏单 ID，trace 可为空 |
+| 接口 | 方法 | 实测状态 | 集成 | 参数 |
+| - | - | - | - | - |
+| `GET /v6/favorite/list` | GET | 🔒 需登录 · ✅ 可用 | ✅ `getFavoriteList` / MCP `coolapk_favorites` | type（feed/apk/album）, page |
+| `/v6/feed/favorite` | GET | 🔒 需登录 · ✅ 可用 | ✅ `favoriteFeed` / MCP `coolapk_favorite_feed` | id |
+| `/v6/feed/unFavorite` | GET | 🔒 需登录 · ✅ 可用 | ✅ `unfavoriteFeed` / MCP `coolapk_unfavorite_feed` | id |
+| `GET /v6/collection/list` | GET | 🔒 需登录 · ✅ 可用 | ✅ `getCollectionList` / `getApkCollectionStatus` | uid、id、type、showDefault、page、firstItem、lastItem |
+| `POST /v6/collection/addItem` | POST | 🔒 需登录 · ✅ 可用 | ✅ `updateCollectionItem` / `favoriteApk` / `unfavoriteApk` | collectionIds、cancelIds、targetId、type、trace |
 
-应用收藏与官方应用页保持一致，走收藏单接口。`favorite_apk` / `unfavorite_apk` 对外仍接受包名，由后端通过应用详情解析数字 ID；收藏加入默认收藏单，取消收藏移出全部已选收藏单。旧 `/v6/apk/favorite`、`/v6/apk/unFavorite` 不再用于客户端应用收藏；应用详情的旧 `userAction.follow` 实测不会随收藏单同步，页面通过 `get_apk_collection_status(apkId)` 查询 `isBeCollected` 恢复实际状态。
+> 动态收藏使用 GET + `id`；应用收藏沿用官方应用页的收藏单流程。`favorite_apk` / `unfavorite_apk` 对外仍接受包名，由后端解析应用数字 ID 并更新收藏单；收藏加入默认收藏单，取消收藏移出全部已选收藏单。旧 `/v6/apk/favorite`、`/v6/apk/unFavorite` 不再用于客户端应用收藏；应用详情的旧 `userAction.follow` 实测不会随收藏单同步，页面通过 `get_apk_collection_status(apkId)` 查询实际收藏状态。
 
 ## 黑名单 / 忽略 / 限制
 
@@ -734,7 +752,7 @@ cargo test --lib coolapk::client::api_tests:: -- --ignored --nocapture
 | - | - |
 | **V8 页面访问** | 必须通过 `/v6/page/dataList`；`/v6/page` 直连已废弃 |
 | **api2.coolapk.com** | 作为专用路由主机可用，但 `user/profile` 在 api2 上会重定向到 HTML |
-| **写接口方法** | 所有写接口**只能用 GET**，POST 全部返回 404「请求方式错误」 |
+| **写接口方法** | 按接口分别使用 GET 或 POST，具体方法以「写接口」表格中的实测记录为准 |
 | **用户子端点** | `pictureList`/`ershouList`/`favList` 已废弃，`replyList` 被安全策略拦截 |
 | **通知端点** | `atme`/`comment`/`like`/`feedlike` 全部已废弃，仅 `checkCount` 仍可用 |
 | **登录接口** | `account/login`/`sendVcode`/`loginByMobile` 全部 403 废弃，仅 Webview OAuth 可用 |
