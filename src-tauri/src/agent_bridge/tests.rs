@@ -530,6 +530,27 @@ fn write_delete_and_favorite_use_expected_scopes() {
     assert_eq!(unfavorite.preview()["action"], "unfavorite");
 }
 #[test]
+fn write_parse_package_name_maps_apk_favorite() {
+    let parsed = super::write::parse_package_name(&serde_json::json!({ "packageName": " com.coolapk.market " })).unwrap();
+    assert_eq!(parsed, "com.coolapk.market");
+    assert!(super::write::parse_package_name(&serde_json::json!({})).is_err());
+    assert!(super::write::parse_package_name(&serde_json::json!({ "packageName": "   " })).is_err());
+    assert!(super::write::parse_package_name(&serde_json::json!({ "packageName": "com/evil" })).is_err());
+    assert!(super::write::parse_package_name(&serde_json::json!({ "packageName": "a b" })).is_err());
+
+    let favorite = super::write::WriteCall::FavoriteApk { package_name: parsed.clone(), favorite: true };
+    assert_eq!(favorite.tool(), "coolapk_favorite_apk");
+    assert_eq!(favorite.scope(), "write.interact");
+    assert_eq!(favorite.preview()["packageName"], "com.coolapk.market");
+    assert_eq!(favorite.preview()["action"], "favorite");
+    assert!(favorite.summary().contains("收藏应用"));
+
+    let unfavorite = super::write::WriteCall::FavoriteApk { package_name: parsed, favorite: false };
+    assert_eq!(unfavorite.tool(), "coolapk_unfavorite_apk");
+    assert_eq!(unfavorite.scope(), "write.interact");
+    assert_eq!(unfavorite.preview()["action"], "unfavorite");
+}
+#[test]
 fn extract_feed_finds_entity_in_nested_envelopes() {
     let nested = serde_json::json!({
         "code": 200,
@@ -875,6 +896,20 @@ async fn write_interact_dry_run_previews_target() {
 }
 
 #[tokio::test]
+async fn write_apk_favorite_dry_run_previews_package() {
+    let ctx = write_ctx("write-apk-favorite-dry-run", AgentBridgeWriteMode::DryRun);
+    let value = super::write::execute(
+        &ctx,
+        super::write::WriteCall::FavoriteApk { package_name: "com.coolapk.market".to_string(), favorite: true },
+    )
+    .await
+    .unwrap();
+    assert_eq!(value["dryRun"], true);
+    assert_eq!(value["preview"]["packageName"], "com.coolapk.market");
+    assert_eq!(value["preview"]["action"], "favorite");
+}
+
+#[tokio::test]
 async fn write_requires_matching_scope() {
     let ctx = write_ctx_with_scopes(
         "write-scope-denied",
@@ -1159,6 +1194,25 @@ async fn mcp_publish_dry_run_returns_preview() {
     assert!(text.contains(r#""dryRun":true"#), "{text}");
     assert!(text.contains("预览正文"), "{text}");
 }
+#[tokio::test]
+async fn mcp_favorite_apk_dry_run_previews_package() {
+    let ctx = write_ctx("mcp-favorite-apk-dry-run", AgentBridgeWriteMode::DryRun);
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "tools/call",
+            "params": { "name": "coolapk_favorite_apk", "arguments": { "packageName": "com.coolapk.market" } }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], false, "{value}");
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(r#""dryRun":true"#), "{text}");
+    assert!(text.contains("com.coolapk.market"), "{text}");
+}
+
 #[tokio::test]
 async fn mcp_publish_dry_run_accepts_image_paths() {
     let dir = test_dir("mcp-publish-image-paths");

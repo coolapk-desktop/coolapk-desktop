@@ -246,6 +246,28 @@ static TOOLS: &[ToolSpec] = &[
         schema: || object_schema(json!({ "feedId": { "type": "string", "description": "动态 ID" } }), vec!["feedId"]),
     },
     ToolSpec {
+        name: "coolapk_favorite_apk",
+        description: "收藏一个应用，加入酷安默认收藏单（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || {
+            object_schema(
+                json!({ "packageName": { "type": "string", "description": "应用包名，例如 com.coolapk.market" } }),
+                vec!["packageName"],
+            )
+        },
+    },
+    ToolSpec {
+        name: "coolapk_unfavorite_apk",
+        description: "取消收藏一个应用，会移出所有已选收藏单（需要 write.interact 授权）。",
+        scope: Some(AgentBridgeScope::WriteInteract),
+        schema: || {
+            object_schema(
+                json!({ "packageName": { "type": "string", "description": "应用包名，例如 com.coolapk.market" } }),
+                vec!["packageName"],
+            )
+        },
+    },
+    ToolSpec {
         name: "coolapk_delete_feed",
         description: "删除自己发布的动态（需要 write.publish 授权；不可恢复，建议配合 confirm 闸门）。",
         scope: Some(AgentBridgeScope::WritePublish),
@@ -801,6 +823,11 @@ async fn dispatch(ctx: &BridgeCtx, name: &str, args: &Value) -> Result<Value, Ap
             let feed_id = required_arg(args, "feedId", "动态 ID")?;
             let favorite = name == "coolapk_favorite_feed";
             write::execute(ctx, write::WriteCall::FavoriteFeed { feed_id, favorite }).await
+        }
+        "coolapk_favorite_apk" | "coolapk_unfavorite_apk" => {
+            let package_name = write::parse_package_name(args)?;
+            let favorite = name == "coolapk_favorite_apk";
+            write::execute(ctx, write::WriteCall::FavoriteApk { package_name, favorite }).await
         }
         "coolapk_update_feed" => {
             let update = write::parse_update_feed_args(args)?;

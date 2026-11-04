@@ -22,6 +22,7 @@ use super::http::{audit_write, ApiError, BridgeCtx};
 const MAX_MESSAGE_CHARS: usize = 5000;
 const MAX_REPLY_CHARS: usize = 1000;
 const MAX_TAG_CHARS: usize = 64;
+const MAX_PACKAGE_NAME_CHARS: usize = 128;
 const MAX_COLLECTION_TITLE_CHARS: usize = 60;
 const MAX_COLLECTION_DESCRIPTION_CHARS: usize = 200;
 /// 与官方 App / PublishDialog.vue 的 MAX_IMAGES=9 对齐。
@@ -459,6 +460,22 @@ pub(super) fn parse_message_args(args: &Value) -> Result<(String, String), ApiEr
     }
     Ok((uid, message))
 }
+
+/// 应用包名：只接受 ASCII 字母/数字/下划线/点，避免任意字符串被拼进收藏接口。
+pub(super) fn parse_package_name(args: &Value) -> Result<String, ApiError> {
+    let raw = trimmed_arg(args, "packageName");
+    if raw.is_empty() {
+        return Err(ApiError::bad_request("缺少参数 packageName（应用包名）"));
+    }
+    if raw.chars().count() > MAX_PACKAGE_NAME_CHARS {
+        return Err(ApiError::bad_request("应用包名过长"));
+    }
+    if !raw.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_') {
+        return Err(ApiError::bad_request(format!("packageName 不是合法包名：{raw}")));
+    }
+    Ok(raw.to_string())
+}
+
 /// 收藏单（收藏夹分类）新建/编辑参数。
 #[derive(Debug, Clone)]
 pub(super) struct CollectionSaveArgs {
@@ -557,6 +574,7 @@ pub(super) enum WriteCall {
     Forward(ForwardArgs),
     DeleteFeed { feed_id: String },
     FavoriteFeed { feed_id: String, favorite: bool },
+    FavoriteApk { package_name: String, favorite: bool },
     UpdateFeed(UpdateFeedArgs),
     DeleteReply { reply_id: String },
     LikeReply { reply_id: String, unlike: bool },
@@ -595,6 +613,8 @@ impl WriteCall {
             Self::CollectionRemoveItem { .. } => "coolapk_collection_remove_item",
             Self::FavoriteFeed { favorite: true, .. } => "coolapk_favorite_feed",
             Self::FavoriteFeed { favorite: false, .. } => "coolapk_unfavorite_feed",
+            Self::FavoriteApk { favorite: true, .. } => "coolapk_favorite_apk",
+            Self::FavoriteApk { favorite: false, .. } => "coolapk_unfavorite_apk",
             Self::LikeFeed { unlike: false, .. } => "coolapk_like_feed",
             Self::LikeFeed { unlike: true, .. } => "coolapk_unlike_feed",
             Self::FollowUser { unfollow: false, .. } => "coolapk_follow_user",
@@ -704,6 +724,10 @@ impl WriteCall {
                 "feedId": feed_id,
                 "action": if *favorite { "favorite" } else { "unfavorite" },
             }),
+            Self::FavoriteApk { package_name, favorite } => json!({
+                "packageName": package_name,
+                "action": if *favorite { "favorite" } else { "unfavorite" },
+            }),
             Self::LikeFeed { feed_id, unlike } => {
                 json!({ "feedId": feed_id, "action": if *unlike { "unlike" } else { "like" } })
             }
@@ -778,6 +802,10 @@ impl WriteCall {
                 "{}动态 {feed_id}",
                 if *favorite { "收藏" } else { "取消收藏" }
             ),
+            Self::FavoriteApk { package_name, favorite } => format!(
+                "{}应用 {package_name}",
+                if *favorite { "收藏" } else { "取消收藏" }
+            ),
             Self::LikeFeed { feed_id, unlike } => {
                 format!("{}动态 {feed_id}", if *unlike { "取消点赞" } else { "点赞" })
             }
@@ -836,6 +864,7 @@ impl WriteCall {
             Self::SetFeedTop { feed_id, .. } => json!({ "target": feed_id }),
 
             Self::FavoriteFeed { feed_id, .. } => json!({ "target": feed_id }),
+            Self::FavoriteApk { package_name, .. } => json!({ "target": package_name }),
             Self::LikeFeed { feed_id, .. } => json!({ "target": feed_id }),
             Self::FollowUser { uid, .. } => json!({ "target": uid }),
         }
@@ -1023,6 +1052,12 @@ async fn run(ctx: &BridgeCtx, call: &WriteCall) -> Result<Value, ApiError> {
 
         WriteCall::FavoriteFeed { feed_id, favorite: true } => state()?.client.favorite_feed(feed_id).await,
         WriteCall::FavoriteFeed { feed_id, favorite: false } => state()?.client.unfavorite_feed(feed_id).await,
+        WriteCall::FavoriteApk { package_name, favorite: true } => {
+            state()?.client.favorite_apk(package_name).await
+        }
+        WriteCall::FavoriteApk { package_name, favorite: false } => {
+            state()?.client.unfavorite_apk(package_name).await
+        }
         WriteCall::LikeFeed { feed_id, unlike: false } => state()?.client.like_feed(feed_id).await,
         WriteCall::LikeFeed { feed_id, unlike: true } => state()?.client.unlike_feed(feed_id).await,
         WriteCall::FollowUser { uid, unfollow: false } => state()?.client.follow_user(uid).await,
