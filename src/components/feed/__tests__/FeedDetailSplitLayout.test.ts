@@ -13,6 +13,17 @@ vi.mock('../../../router', () => ({
 import FeedDetailSplitLayout from '../FeedDetailSplitLayout.vue';
 
 describe('分栏详情页容器', () => {
+  it('通知目标传入右栏，并从缓存的点赞页切回回复页', async () => {
+    const wrapper = mount(FeedDetailSplitLayout, { props: { feed: { id: '42' } }, global: { stubs: { FeedCard: true, FeedDetailAside: true } } });
+    try {
+      await wrapper.findComponent({ name: 'FeedCard' }).vm.$emit('open-like-list');
+      expect(wrapper.findComponent({ name: 'FeedDetailAside' }).props('activeTab')).toBe('likes');
+      await wrapper.setProps({ targetReplyId: '222' });
+      const aside = wrapper.findComponent({ name: 'FeedDetailAside' });
+      expect(aside.props('activeTab')).toBe('replies');
+      expect(aside.props('targetReplyId')).toBe('222');
+    } finally { wrapper.unmount(); }
+  });
   it('左栏是动态卡片，右栏是评论区', () => {
     setActivePinia(createPinia());
     const wrapper = mount(FeedDetailSplitLayout, {

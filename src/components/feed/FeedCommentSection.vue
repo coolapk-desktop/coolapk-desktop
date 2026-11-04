@@ -527,6 +527,8 @@
 <script setup lang="ts">
 import { createEditorTextNodes } from "../../utils/editorTextNodes";
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue';
+import { trackInitialScrollAnchor } from '../../utils/initialScrollAnchor';
+import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { useRouter } from 'vue-router';
 import { normalizeUserUid } from '../../utils/userRoute';
 import { useDeviceModelNames } from '../../utils/deviceModelNames';
@@ -1742,6 +1744,7 @@ function isPinnedComment(comment: any): boolean {
 }
 let targetRequest = 0;
 let scrolledTarget = '';
+let stopTargetAnchor: (() => void) | undefined;
 
 /**
  * 自动树形构建算法 (Tree Aggregation)：
@@ -1828,6 +1831,8 @@ const hasInlineTargetReply = computed(() => Boolean(props.targetReplyId) && sort
 ));
 
 async function loadTargetReply() {
+  stopTargetAnchor?.();
+  stopTargetAnchor = undefined;
   const request = ++targetRequest;
   const replyId = props.targetReplyId;
   const feedId = String(props.feedId || '');
@@ -1861,15 +1866,19 @@ async function loadTargetReply() {
 }
 
 watch([() => props.feedId, () => props.targetReplyId], () => { void loadTargetReply(); }, { immediate: true });
-onUnmounted(() => { targetRequest++; });
+onUnmounted(() => { targetRequest++; stopTargetAnchor?.(); });
+onDeactivated(() => { stopTargetAnchor?.(); stopTargetAnchor = undefined; });
 
 async function scrollToTargetReply() {
   const key = `${props.feedId}:${props.targetReplyId}`;
-  if (!props.targetReplyId || props.loading || scrolledTarget === key) return;
+  if (routeNavigationIsHistory.value || !props.targetReplyId || props.loading || scrolledTarget === key) return;
   await nextTick();
   const target = sectionRef.value?.querySelector<HTMLElement>('.notification-comment-target');
   if (!target) return;
   target.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+  // 正文、图片和楼层高度随后变化时保持目标可见，用户开始操作后不再拉回。
+  stopTargetAnchor?.();
+  stopTargetAnchor = trackInitialScrollAnchor(target, () => target.scrollIntoView?.({ block: 'center', behavior: 'auto' }));
   scrolledTarget = key;
 }
 watch([sortedComments, () => props.loading, () => props.error], () => { void scrollToTargetReply(); }, { flush: 'post' });

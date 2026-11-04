@@ -102,6 +102,7 @@
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
 import { htmlToPlainText } from '../utils/htmlText';
+import { routeNavigationIsHistory } from '../utils/routeScroll';
 import { computed, nextTick, onActivated, onDeactivated, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
@@ -538,6 +539,8 @@ async function handleNotifyClick(e: Event, item: any) {
 }
 
 onActivated(() => {
+  // 主动打开通知应看到最新消息；浏览器后退仍保留先前阅读的位置。
+  if (!routeNavigationIsHistory.value && pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
   window.addEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
   const requestedTab = normalizeNotificationTab(route.query.tab);
   subNoteType.value = typeof route.query.noteType === 'string' ? route.query.noteType : '';

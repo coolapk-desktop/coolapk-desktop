@@ -19,25 +19,28 @@
     <!-- 分隔条支持拖动、方向键微调和双击复位，位置在所有动态详情间共用。 -->
     <div class="feed-detail-split-handle" role="separator" tabindex="0" aria-label="调节动态与评论分栏宽度" aria-orientation="vertical" :aria-valuemin="Math.round(limits.min / availableWidth * 100)" :aria-valuemax="Math.round(limits.max / availableWidth * 100)" :aria-valuenow="Math.round(leftWidth / availableWidth * 100)" title="拖动调节宽度，双击恢复默认" @pointerdown="startResize" @keydown="resizeWithKeyboard" @dblclick="resetWidth"></div>
     <div class="feed-detail-split-right">
-      <FeedDetailAside :key="feed.id" v-model:active-tab="activeTab" :feed="feed" />
+      <FeedDetailAside :key="feed.id" v-model:active-tab="activeTab" :feed="feed" :target-reply-id="targetReplyId" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { observeResizeOnFrame } from '../../utils/observeResizeOnFrame';
 import { usePersistedColumnResize } from '../../composables/usePersistedColumnResize';
 import FeedCard from './FeedCard.vue';
 import FeedDetailAside from './FeedDetailAside.vue';
 
-defineProps<{
+const props = defineProps<{
   feed: any;
+  targetReplyId?: string;
 }>();
 
 // 右栏当前 tab：左栏卡片点评论/点赞/转发入口时切换过来，
 // 右栏自己点 tab 也会经 update:activeTab 同步回来。
 const activeTab = ref<'replies' | 'likes' | 'forwards'>('replies');
+// 缓存详情曾停在点赞或转发时，通知指定回复仍必须切回评论栏。
+watch(() => props.targetReplyId, id => { if (id) activeTab.value = 'replies'; }, { immediate: true });
 
 const container = ref<HTMLElement | null>(null);
 const containerWidth = ref(1000);

@@ -26,6 +26,7 @@
         v-else-if="showSplit"
         :key="feedId"
         :feed="feedDetail"
+        :target-reply-id="targetReplyId"
       />
       <FeedCard
         ref="refreshFeedCard"
@@ -63,6 +64,7 @@ import { mobileDetailActionsHiddenKey, useMobileReadingNavigation } from '../com
 import { feedPageVisibleKey } from '../utils/feedPageVisibility';
 import { routeNavigationIsHistory } from '../utils/routeScroll';
 import { observeResizeOnFrame } from '../utils/observeResizeOnFrame';
+import { trackInitialScrollAnchor } from '../utils/initialScrollAnchor';
 
 defineOptions({ name: 'FeedDetailPage' });
 const detailImagesEnabled = provideDetailImageScope();
@@ -87,6 +89,7 @@ const detailShellRef = ref<HTMLElement | null>(null);
 const refreshFeedCard = ref<InstanceType<typeof FeedCard> | null>(null);
 const refreshAnswerCard = ref<InstanceType<typeof QuestionAnswerCard> | null>(null);
 let entryPositionApplied = false;
+let stopEntryAnchor: (() => void) | undefined;
 let stopHeaderResize: (() => void) | undefined;
 
 /** 顶栏高度包含状态栏安全区及字体适配，评论吸顶与入口定位共用实际测量值。 */
@@ -115,7 +118,7 @@ async function observeCommentHeader() {
   if (header) stopHeaderResize = observeResizeOnFrame(header, updateCommentHeaderHeight);
 }
 watch([detailShellRef, officialMobileDetail, detailActive], () => { void observeCommentHeader(); }, { flush: 'post' });
-onUnmounted(() => stopHeaderResize?.());
+onUnmounted(() => { stopHeaderResize?.(); stopEntryAnchor?.(); });
 
 const detailVisible = inject(feedPageVisibleKey, ref(true));
 // Teleport 内容不随缓存页面一起隐藏，必须同时校验该详情实例所属的完整路由。
@@ -126,7 +129,7 @@ const detailReading = useMobileReadingNavigation(computed(() => officialMobileDe
   && settingsStore.settings.autoHideMobileNavigation && !appStore.isSearchOpen && !appStore.isPublishOpen && !appStore.activeImageViewer), '.feed-detail-page.is-official-mobile');
 provide(mobileDetailActionsHiddenKey, detailReading.hidden);
 onActivated(() => { detailActive.value = true; entryPositionApplied = false; void applyEntryPosition(); });
-onDeactivated(() => { detailActive.value = false; stopHeaderResize?.(); });
+onDeactivated(() => { detailActive.value = false; stopHeaderResize?.(); stopEntryAnchor?.(); stopEntryAnchor = undefined; });
 // 注意：判据用 `mobileLayout`（纯布局）而不是 `officialMobileDetail`。
 // 后者是「布局 × officialMobileFeedDetail 开关」的合取 —— 用户关掉那个开关后，
 // 触摸设备上它也是 false，于是平板会误入分栏。与点击侧（FeedCard 的
@@ -194,14 +197,16 @@ const entryPosition = computed(() => {
   return ['top', 'comments'].includes(String(route.query.scrollTo || '')) ? String(route.query.scrollTo) : '';
 });
 
-async function applyEntryPosition() {
+async function applyEntryPosition(followLayout = false) {
   const position = entryPosition.value;
-  if (routeNavigationIsHistory.value || !position || entryPositionApplied || !detailActive.value || !feedDetail.value) return;
+  if (routeNavigationIsHistory.value || !position || (entryPositionApplied && !followLayout) || !detailActive.value || !feedDetail.value) return;
   await nextTick();
-  if (routeNavigationIsHistory.value || position !== entryPosition.value || !detailActive.value || entryPositionApplied) return;
+  if (routeNavigationIsHistory.value || position !== entryPosition.value || !detailActive.value || (entryPositionApplied && !followLayout)) return;
   const page = detailShellRef.value?.parentElement;
   if (!page) return;
   if (position === 'comments') {
+    // 完整正文或图片后到时补偿评论入口位置，用户主动阅读后停止跟随。
+    if (!stopEntryAnchor && detailShellRef.value) stopEntryAnchor = trackInitialScrollAnchor(detailShellRef.value, () => { void applyEntryPosition(true); });
     const comments = detailShellRef.value?.querySelector<HTMLElement>('.comment-toolbar');
     if (!comments) return;
     // 留出仍在吸顶的作者栏，避免评论标题滚入状态栏或被顶栏覆盖。
@@ -214,7 +219,7 @@ async function applyEntryPosition() {
   detailReading.reset();
 }
 
-watch(entryPosition, () => { entryPositionApplied = false; });
+watch(entryPosition, () => { entryPositionApplied = false; stopEntryAnchor?.(); stopEntryAnchor = undefined; });
 watch([entryPosition, feedDetail, loading], () => { void observeCommentHeader(); void applyEntryPosition(); }, { flush: 'post' });
 
 async function fetchDetail() {

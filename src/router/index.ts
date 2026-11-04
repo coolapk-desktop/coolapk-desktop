@@ -196,7 +196,7 @@ router.afterEach((to, from, failure) => {
   }
   setDiagnosticPage(page);
   logDiagnostic('info', 'navigation', 'route_changed', `from=${previousPage} to=${page}`);
-  // 卡片正文与回复图标明确指定落点，由详情页在内容挂载后定位，不能再用缓存覆盖。
-  if (!routeNavigationIsHistory.value && to.name === 'FeedDetail' && ['top', 'comments'].includes(String(to.query.scrollTo || ''))) return;
+  // 主动打开通知显示最新消息；评论入口和目标回复自行定位，不能被旧阅读位置覆盖。
+  if (!routeNavigationIsHistory.value && (to.name === 'Notifications' || (to.name === 'FeedDetail' && (['top', 'comments'].includes(String(to.query.scrollTo || '')) || /^[1-9]\d*$/.test(String(to.query.replyId || '')))))) return;
   void restoreRouteScrollPosition(to.fullPath);
 });

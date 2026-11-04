@@ -25,6 +25,7 @@
     <FeedCommentSection
       v-if="activeTab === 'replies'"
       :feed-id="feed.id"
+      :target-reply-id="targetReplyId"
       :feed-uid="authorUid"
       :feed-username="feed.username || feed.userInfo?.username"
       :comments="comments"
@@ -83,6 +84,7 @@ import {
 const props = withDefaults(
   defineProps<{
     feed: any;
+    targetReplyId?: string;
     activeTab: 'replies' | 'likes' | 'forwards';
   }>(),
   { activeTab: 'replies' },

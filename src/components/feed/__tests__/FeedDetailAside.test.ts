@@ -51,6 +51,14 @@ describe('分栏详情页右栏', () => {
     wrapper.unmount();
   });
 
+  it('将通知指定的目标回复交给真实评论组件定位', async () => {
+    const wrapper = mountAside();
+    try {
+      await wrapper.setProps({ targetReplyId: '222' });
+      expect(wrapper.get('.comment-section-stub').attributes('target-reply-id')).toBe('222');
+    } finally { wrapper.unmount(); }
+  });
+
   it('点击 tab 抛出 update:activeTab', async () => {
     const wrapper = mountAside('replies');
     await flushPromises();

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
-import { defineComponent, KeepAlive } from 'vue';
+import { defineComponent, KeepAlive, ref } from 'vue';
+import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../../stores/notifications';
 
@@ -17,6 +18,22 @@ vi.mock('../../utils/anchorClick', () => ({ handleAnchorClick: mocks.anchor }));
 import NotificationsPage from '../NotificationsPage.vue';
 
 describe('通知评论点击入口', () => {
+  it.each([false, true])('缓存通知页重新进入时，历史导航=%s 决定是否保留旧阅读位置', async historyNavigation => {
+    mocks.notifications.mockResolvedValue({ data: [] });
+    const shown = ref(true);
+    const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, setup: () => ({ shown }), template: '<KeepAlive><NotificationsPage v-if="shown" /></KeepAlive>' }), {
+      global: { stubs: { AppAvatar: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
+    });
+    try {
+      await flushPromises();
+      const page = wrapper.get('.page-container').element as HTMLElement;
+      page.scrollTop = 900;
+      shown.value = false; await flushPromises();
+      routeNavigationIsHistory.value = historyNavigation;
+      shown.value = true; await flushPromises();
+      expect(page.scrollTop).toBe(historyNavigation ? 900 : 0);
+    } finally { wrapper.unmount(); routeNavigationIsHistory.value = false; }
+  });
   beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); setActivePinia(createPinia()); mocks.clear.mockResolvedValue({}); mocks.report.mockResolvedValue({}); mocks.confirm.mockResolvedValue(false); mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 0, dateline: 101 } } }); });
   async function mountPage(item: any) {
     mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? (Array.isArray(item) ? item : [item]) : [] }));

@@ -228,6 +228,7 @@ describe('详情页在桌面布局下按开关切换分栏', () => {
     const wrapper = await mountPage(true);
     expect(wrapper.find('.split-stub').exists()).toBe(true);
     expect(wrapper.classes()).toContain('is-split');
+    expect(wrapper.get('.split-stub').attributes('target-reply-id')).toBe('123');
     wrapper.unmount();
   });
 
