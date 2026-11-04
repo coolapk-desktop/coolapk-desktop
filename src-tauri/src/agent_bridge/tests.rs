@@ -751,6 +751,27 @@ async fn mcp_notification_is_accepted() {
     assert!(bytes.is_empty());
 }
 
+/// axum 默认 body 上限 2 MB，发帖图片必须证明放宽后的上限真的生效。
+#[tokio::test]
+async fn mcp_accepts_body_larger_than_default_axum_limit() {
+    let ctx = test_ctx("mcp-large-body", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
+    let padding = "A".repeat(3 * 1024 * 1024);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 40,
+        "method": "ping",
+        "params": { "padding": padding }
+    })
+    .to_string();
+    let response = build_mcp_router(ctx)
+        .oneshot(mcp_post(&body, Some("test-token")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["result"].as_object().map(|object| object.is_empty()), Some(true), "{value}");
+}
 #[tokio::test]
 async fn mcp_tools_list_follows_scope() {
     let read_ctx = test_ctx("mcp-list-read", vec![AgentBridgeScope::Read], AgentBridgeTransport::Tcp);
