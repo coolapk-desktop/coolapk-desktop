@@ -41,7 +41,8 @@ git diff --check
   服务端校验 `Host`，拒绝任何带 `Origin` 的浏览器跨域请求。
 - token 只存应用数据目录 `agent-bridge-token`（0600），仅在本地开关页显示，**不进仓库/截图/对话**。
 - 读工具与写工具分 scope；写操作走 confirm/auto 闸门 + 按 scope 分桶限流 + 按工具/账号/requestId 幂等去重。
-- 写能力现状以 `docs/agent-bridge.md` 顶部「写能力现状」为准（点赞/关注已接通，发帖仅 dry-run，评论未提供）。
+- 写能力现状以 `docs/agent-bridge.md` 顶部「写能力现状」为准（发帖+图片、点赞/关注已接通；评论/转发/删除未提供）。
+- 发帖走官方顺序：`client.upload_image(bytes,name,mime,"feed",None)` 取 `data.url` → 逗号拼 `pic` → `client.create_feed_with_options`；MCP 大图用 `imagePaths`（本机绝对路径，应用自己读盘），比 base64 省事，且 MCP body 上限已放宽到 32 MiB。
 - 单机联调用例：`src-tauri/tests/agent_bridge`（审计写 `agent-bridge-audit.jsonl`）。
 
 ## 已知边界（别重复踩）
