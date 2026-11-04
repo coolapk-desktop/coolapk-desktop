@@ -25,7 +25,7 @@
 5. 需要给 Claude Code、Codex 等客户端用时，再打开「MCP 服务」开关，复制上方的 **MCP 接入地址**。
 6. 关闭接口开关会停止服务并取消下次自动恢复；只退出应用时若开关仍开启，下次启动会恢复服务。token 会保留；再次开启时会重新绑定端口，固定端口被占用时可能分配新的随机端口。只有点「重新生成」才会更换 token。
 
-> 写能力现状：点赞/取消点赞、关注/取消关注已接通，受下方写操作闸门约束；`coolapk_publish_feed` 目前只支持 dry-run 预览，confirm / auto 的真正提交尚未接入，评论工具也尚未提供。
+> 写能力现状：发帖（含图片）、编辑自己的动态、评论/楼中楼回复、评论点赞、转发、收藏与收藏单管理、删除自己的动态/评论、关注话题、主页置顶、点赞、关注、私信均已接通，受下方写操作闸门约束；图文长文编辑需自行提供官方 ArticleModel 正文，改变动态类型不被支持。收藏应用与应用评价尚未提供（/v6/apk/favorite 的参数契约未确定，见 issue #40）。商品/数码类只有只读工具，不提供任何交易类写操作。
 
 > token 等同于本机的通行证，只保存在本机应用数据目录的 `agent-bridge-token`（Unix 下权限为 `0600`），重启应用后复用。不要把它写进仓库、截图或聊天记录，也不要交给不受信任的程序。
 
@@ -143,7 +143,34 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_user_profile` | 用户资料（`uid`） | `read` |
 | `coolapk_user_feeds` | 用户动态（`uid`，可选 `page`、`feedType`） | `read` |
 | `coolapk_topic_detail` | 话题详情（`tag`） | `read` |
-| `coolapk_publish_feed` | 发布动态（当前仅 dry-run 预览，不真正提交） | `write.publish` |
+| `coolapk_notifications` | 通知列表（`type`：list/sublist/feedLikeList/contactsFollowList，`page`） | `read` |
+| `coolapk_favorites` | 我的收藏（`favType`：feed/apk/topic 等，`page`） | `read` |
+| `coolapk_following_feeds` | 关注时间线（`page`） | `read` |
+| `coolapk_reply_thread` | 一级评论下的楼中楼（`feedId`、`replyId`、`page`） | `read` |
+| `coolapk_private_messages` | 私信会话列表（`page`） | `read` |
+| `coolapk_collections` | 我的收藏单（收藏夹分类）列表（`page`） | `read` |
+| `coolapk_collection_items` | 收藏单内容列表（`collectionId`、`page`） | `read` |
+| `coolapk_collection_detail` | 收藏单详情（`collectionId`） | `read` |
+| `coolapk_feed_collections` | 某条动态已加入哪些收藏单（`feedId`） | `read` |
+| `coolapk_product_detail` | 数码产品详情（`productId` 或 `name`） | `read` |
+| `coolapk_product_feeds` | 产品相关动态（`productId`，可选 `feedType`、`page`） | `read` |
+| `coolapk_product_versions` | 产品版本/到手价配置（`productId`） | `read` |
+| `coolapk_publish_feed` | 发布动态：正文 + 最多 9 张图片（base64 或本机路径），可指定板块与可见范围 | `write.publish` |
+| `coolapk_reply_feed` | 评论动态，带 `rid` 时回复某条评论（楼中楼），可带图片 | `write.interact` |
+| `coolapk_forward_feed` | 转发动态，评语与图片可选 | `write.interact` |
+| `coolapk_favorite_feed` / `coolapk_unfavorite_feed` | 收藏 / 取消收藏（`feedId`） | `write.interact` |
+| `coolapk_delete_feed` | 删除自己发布的动态（不可恢复） | `write.publish` |
+| `coolapk_update_feed` | 编辑自己已发布的动态（不传图片则沿用原配图） | `write.publish` |
+| `coolapk_like_reply` / `coolapk_unlike_reply` | 点赞 / 取消点赞评论（`replyId`） | `write.interact` |
+| `coolapk_delete_reply` | 删除自己发表的评论（`replyId`，不可恢复） | `write.interact` |
+| `coolapk_follow_topic` / `coolapk_unfollow_topic` | 关注 / 取消关注话题（`tag`） | `write.interact` |
+| `coolapk_send_message` | 给指定用户发私信（`uid`、`message`，1000 字以内） | `write.interact` |
+| `coolapk_set_feed_top` / `coolapk_unset_feed_top` | 个人主页置顶 / 取消置顶动态（`feedId`） | `write.interact` |
+| `coolapk_collection_create` | 新建收藏单（`title`，可选 `description`/`cover`/`isOpen`） | `write.interact` |
+| `coolapk_collection_add_feed` | 把动态加入/移出收藏单（`feedId`、`collectionIds`、`cancelIds`） | `write.interact` |
+| `coolapk_collection_remove_item` | 从收藏单移除一条内容（`itemId`） | `write.interact` |
+| `coolapk_collection_update` | 编辑收藏单（`collectionId`、`title` 等） | `write.publish` |
+| `coolapk_collection_delete` | 删除收藏单（不可恢复） | `write.publish` |
 | `coolapk_like_feed` / `coolapk_unlike_feed` | 点赞 / 取消点赞（`feedId`） | `write.interact` |
 | `coolapk_follow_user` / `coolapk_unfollow_user` | 关注 / 取消关注（`uid`） | `write.interact` |
 
@@ -184,6 +211,90 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 ---
 
 ## 写操作与闸门
+
+### 写工具参数
+
+#### 发帖（`coolapk_publish_feed`）
+
+| 参数 | 说明 |
+| --- | --- |
+| `message` | 动态正文，最多 5000 字；话题直接写在正文里（`#话题#`）。与图片至少给一项 |
+| `images` | 可选，`[{ name, mimeType, dataBase64 }]`，单张 8 MB、最多 9 张、合计 20 MB |
+| `imagePaths` | 可选，本机绝对路径列表（JPEG/PNG/WebP）；应用自己读盘上传，**推荐平板/大图场景**，与 `images` 合计最多 9 张 |
+| `visibleStatus` | `1` 公开（默认）、`-1` 仅自己 |
+| `options` | 官方 createFeed 扩展表单，未知字段会被拒绝：`targetType`+`targetId`（发布板块 tag/apk/product_phone）、`largeCover`、`subTypeId`/`subData`、`originalType`、`extraUrl`、`dyhId`、`mediaUrl`/`mediaInfo`、`includeDeviceModel`、`htmlArticle`+`messageTitle`+`messageCover`（图文长文，正文需为官方 ArticleModel JSON） |
+| `requestId` | 幂等 id，5 分钟内同工具同账号重复调用直接返回上次结果 |
+
+执行顺序与官方 App 一致：逐张上传图片（`image/feed` 目录）取图片地址 → 逗号拼 `pic` → 提交 `createFeed`。
+成功返回 `{ "dryRun": false, "deduplicated": false, "data": { "feedId": …, "feed": {…}, "imageUrls": [...], "messageChars": n } }`。
+
+#### 评论（`coolapk_reply_feed`）
+
+| 参数 | 说明 |
+| --- | --- |
+| `feedId` | 必填，被评论的动态 ID；楼中楼时仍是该评论所属动态的 ID |
+| `message` | 评论正文，最多 1000 字；与图片至少给一项 |
+| `rid` | 可选，回复某条评论时填该评论 id |
+| `images` / `imagePaths` | 可选，规则与发帖一致 |
+| `requestId` | 幂等 id，规则与发帖一致 |
+
+仅自己可见的动态无法被评论（服务端拒绝），需要先在应用内改为公开。
+
+#### 转发（`coolapk_forward_feed`）
+
+只有 `feedId` 必填，`message`（评语）与图片可选；同样支持 `requestId`。
+
+#### 编辑动态（`coolapk_update_feed`）
+
+| 参数 | 说明 |
+| --- | --- |
+| `feedId` | 必填，要编辑的动态 ID |
+| `message` | 必填，编辑后的正文（图文长文时是官方 ArticleModel JSON） |
+| `images` / `imagePaths` | 可选；**不传则沿用原动态配图**，传了就以本次为准（整组替换） |
+| `clearImages` | `true` 表示清空配图，与 `images`/`imagePaths` 互斥 |
+| `options` | 与发帖相同的 createFeed 表单；图文长文需 `htmlArticle: true` + `messageTitle` |
+
+受官方接口限制：只能编辑普通动态与图文长文，不能改变原动态类型，视频/大封面动态不支持；`enableModify=0`（官网不允许或编辑次数用尽）时会直接报错。
+
+#### 评论管理（`coolapk_like_reply` / `coolapk_unlike_reply` / `coolapk_delete_reply`）
+
+参数只有一个 `replyId`。**评论 ID 取 `coolapk_feed_replies` 结果里的 `id` 字段**（`rid` 是楼中楼的目标评论，顶层评论为 `0`，不要用它）。
+
+#### 话题（`coolapk_follow_topic` / `coolapk_unfollow_topic`）
+
+参数 `tag` 为话题名，可带 `#` 包裹（会去掉），例如 `酷安` 或 `#酷安#`。
+
+#### 私信（`coolapk_send_message`）
+
+参数 `uid`（收件人）+ `message`（1000 字以内）。服务端不允许给自己发私信。私信会直接送到真实用户，务必确认收件人与内容后再调用。
+
+#### 主页置顶（coolapk_set_feed_top / coolapk_unset_feed_top）
+
+参数只有一个 feedId，作用对象是当前登录账号的个人主页（nodeType=member）。
+
+#### 收藏单（收藏夹分类）
+
+收藏单就是酷安的「收藏夹分类」：`coolapk_collections` 列出现有收藏单，`coolapk_collection_create` 新建，
+`coolapk_collection_add_feed` 把动态放进或移出收藏单（`collectionIds` 加入、`cancelIds` 移出，字符串或数组都接受），
+`coolapk_collection_items` 读取内容（移除时 `itemId` 用每条返回的 `id`，实测通常等于动态 id）。
+
+- 只有公开（`isOpen=true`）的收藏单会出现在 `coolapk_collections` 里；私密收藏单只能靠已知 id 用 `coolapk_collection_detail` / `coolapk_collection_delete` 操作。
+- 新建默认公开；标题最多 60 字、简介最多 200 字，`cover` 必须是 http(s) 图片地址。
+
+#### 商品 / 数码（只读）
+
+`coolapk_product_detail`、`coolapk_product_feeds`、`coolapk_product_versions` 只做信息查询。
+本接口不提供任何商品交易类操作（下单、购买、转卖、自动抢购等），也不会把这类动作包装成工具；商品相关一律只读，避免涉及金额与自动交易纠纷。
+
+#### 收藏 / 删除
+
+`coolapk_favorite_feed`、`coolapk_unfavorite_feed`、`coolapk_delete_feed` 只接受 `feedId`。
+删除与发帖共用 `write.publish` 授权和「1 次/分钟、10 次/小时」桶，且不可恢复；批量清理时请自行控制节奏（两次删除之间约需间隔 1 分钟）。
+酷安要求人工验证时会返回 `428 captcha_required`：接口不会自动重试；请在应用内完成一次拼图验证，客户端会把验证凭证复用到后续请求，验证后重试即可。网易易盾 `_v2_post_token` 不携带（服务端并不强制）。
+
+### MCP 请求体上限
+
+MCP 端点允许最大 32 MiB 请求体（发帖图片 base64 膨胀后的上限），远超 REST 的常规请求；但平板端仍建议用 `imagePaths`，避免大头像/原图在 base64 编解码上浪费内存与时间。
 
 写工具与读工具共用同一个客户端、限流桶和审计文件，但多一层「写操作闸门」（设置页「写操作闸门」）：
 

@@ -121,6 +121,111 @@ pub(super) async fn topic_detail(ctx: &BridgeCtx, tag: &str) -> Result<Value, Ap
     mapped(state.client.get_topic_detail(tag).await)
 }
 
+/// 我的收藏单（收藏夹分类）列表。
+pub(super) async fn collections(ctx: &BridgeCtx, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    let uid = state
+        .client
+        .current_uid()
+        .ok_or_else(|| ApiError::unauthorized("当前未登录，无法读取收藏单"))?;
+    mapped(state.client.get_collection_list(&uid, page, "", "").await)
+}
+
+/// 收藏单里的内容列表（条目 id 用返回里的 id 字段）。
+pub(super) async fn collection_items(
+    ctx: &BridgeCtx,
+    collection_id: &str,
+    page: u32,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_collection_item_list(collection_id, page, "", "").await)
+}
+
+pub(super) async fn collection_detail(ctx: &BridgeCtx, collection_id: &str) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_collection_detail(collection_id).await)
+}
+
+/// 某条动态已被收进哪些收藏单，供「加入收藏单」前查询。
+pub(super) async fn feed_collections(ctx: &BridgeCtx, feed_id: &str) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_feed_collection_status(feed_id).await)
+}
+
+/// 数码产品详情（只读）：优先按名称查询，其次按 productId。
+pub(super) async fn product_detail(
+    ctx: &BridgeCtx,
+    product_id: &str,
+    name: &str,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    let name = name.trim();
+    if !name.is_empty() {
+        return mapped(state.client.get_product_detail_by_name(name).await);
+    }
+    let product_id = product_id.trim();
+    if product_id.is_empty() {
+        return Err(ApiError::bad_request("需要 productId 或 name"));
+    }
+    mapped(state.client.get_product_detail(product_id).await)
+}
+
+/// 产品（数码）相关动态（只读）。
+pub(super) async fn product_feeds(
+    ctx: &BridgeCtx,
+    product_id: &str,
+    feed_type: &str,
+    page: u32,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_product_feeds(product_id, feed_type, "", page).await)
+}
+
+/// 产品版本/到手价配置（只读）。
+pub(super) async fn product_versions(ctx: &BridgeCtx, product_id: &str) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_product_versions(product_id).await)
+}
+/// 通知列表：type 决定接口（list 默认通知、sublist 分组、feedLikeList 点赞、contactsFollowList 关注）。
+pub(super) async fn notifications(
+    ctx: &BridgeCtx,
+    notification_type: &str,
+    page: u32,
+    note_type: &str,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_notifications(notification_type, page, "", "", note_type).await)
+}
+
+/// 我的收藏列表（type 常见值：feed 动态、apk 应用、topic 话题）。
+pub(super) async fn favorites(ctx: &BridgeCtx, fav_type: &str, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_favorite_list(fav_type, page, "", "").await)
+}
+
+/// 关注时间线。
+pub(super) async fn following_feeds(ctx: &BridgeCtx, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_following_feeds(page).await)
+}
+
+/// 某条一级评论下的楼中楼。
+pub(super) async fn reply_thread(
+    ctx: &BridgeCtx,
+    feed_id: &str,
+    reply_id: &str,
+    page: u32,
+) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.get_sub_replies(feed_id, reply_id, page).await)
+}
+
+/// 私信会话列表。
+pub(super) async fn private_messages(ctx: &BridgeCtx, page: u32) -> Result<Value, ApiError> {
+    let state = state(ctx)?;
+    mapped(state.client.list_messages(page, "", "").await)
+}
+
 pub(super) async fn search(
     ctx: &BridgeCtx,
     keyword: &str,
