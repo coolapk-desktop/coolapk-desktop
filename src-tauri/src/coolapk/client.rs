@@ -9,7 +9,7 @@ use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // 可选字段与界面保持一致，未设置时保留普通动态默认值。
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PublishOptions {
     pub include_device_model: Option<bool>,

@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -25,7 +25,9 @@ use super::write;
 /// 支持协商的 MCP 协议版本，新的在前。
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
-const MAX_BODY_BYTES: usize = 256 * 1024;
+/// 发帖支持最多 9 张、单张 8 MB、合计 20 MB 的 base64 图片，膨胀后约 27 MB，
+/// 因此请求体上限放宽到 32 MiB；平板端更推荐用 imagePaths 传本机路径。
+const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 /// 工具描述：scope 为 None 表示只需 token、不需要额外授权。
 struct ToolSpec {
@@ -126,16 +128,16 @@ static TOOLS: &[ToolSpec] = &[
     },
     ToolSpec {
         name: "coolapk_publish_feed",
-        description: "发布一条酷安动态（需要 write.publish 授权）。受写操作闸门约束：dry-run 只返回预览，confirm 需要在应用内确认，auto 直接提交。",
+        description: "发布一条酷安动态（需要 write.publish 授权）。正文与图片至少给一项；图片可用 base64 或 imagePaths（本机绝对路径）。受写操作闸门约束：dry-run 只返回预览，confirm 需要在应用内确认，auto 直接提交。",
         scope: Some(AgentBridgeScope::WritePublish),
         schema: || {
             object_schema(
                 json!({
-                    "message": { "type": "string", "description": "动态正文，最多 5000 字" },
+                    "message": { "type": "string", "description": "动态正文，最多 5000 字；可含 #话题# 文本" },
                     "images": {
                         "type": "array",
-                        "maxItems": 4,
-                        "description": "可选图片（base64），最多 4 张、单张 8 MB、总计 20 MB",
+                        "maxItems": 9,
+                        "description": "可选图片（base64），与 imagePaths 合计最多 9 张、单张 8 MB、总计 20 MB",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -147,10 +149,38 @@ static TOOLS: &[ToolSpec] = &[
                             "additionalProperties": false
                         }
                     },
+                    "imagePaths": {
+                        "type": "array",
+                        "maxItems": 9,
+                        "description": "本机绝对路径列表（JPEG/PNG/WebP），由应用自己读盘上传，适合平板/大图",
+                        "items": { "type": "string" }
+                    },
                     "visibleStatus": { "type": "integer", "enum": [1, -1], "description": "1 公开、-1 仅自己" },
+                    "options": {
+                        "type": "object",
+                        "description": "官方 createFeed 扩展表单：targetType(target/apk/product_phone)+targetId 发布板块、largeCover、subTypeId/subData、originalType、extraUrl、dyhId、mediaUrl/mediaInfo；未知字段会被拒绝",
+                        "properties": {
+                            "includeDeviceModel": { "type": "boolean", "description": "是否附带设备型号" },
+                            "targetType": { "type": "string", "enum": ["tag", "apk", "product_phone"] },
+                            "targetId": { "type": "string" },
+                            "visibleStatus": { "type": "integer", "enum": [1, -1] },
+                            "largeCover": { "type": "boolean" },
+                            "subTypeId": { "type": "string" },
+                            "subData": { "type": "string" },
+                            "originalType": { "type": "integer", "minimum": 0, "maximum": 3 },
+                            "extraUrl": { "type": "string" },
+                            "dyhId": { "type": "string" },
+                            "mediaUrl": { "type": "string" },
+                            "mediaInfo": { "type": "string" },
+                            "htmlArticle": { "type": "boolean", "description": "图文长文；正文 message 需为官方 ArticleModel JSON" },
+                            "messageTitle": { "type": "string" },
+                            "messageCover": { "type": "string" }
+                        },
+                        "additionalProperties": false
+                    },
                     "requestId": { "type": "string", "description": "幂等请求 id；客户端重试时带上可避免重复发布" }
                 }),
-                vec!["message"],
+                vec![],
             )
         },
     },
@@ -194,6 +224,8 @@ static TOOLS: &[ToolSpec] = &[
 pub fn build_router(ctx: Arc<BridgeCtx>) -> Router {
     Router::new()
         .route("/mcp", post(handle_post).get(handle_get).delete(handle_delete))
+        // axum 默认 body 上限 2 MB，发帖图片必须显式放宽，否则大图在进入 handler 前就被 413。
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .with_state(ctx)
 }
 

@@ -25,7 +25,7 @@
 5. 需要给 Claude Code、Codex 等客户端用时，再打开「MCP 服务」开关，复制上方的 **MCP 接入地址**。
 6. 关闭接口开关会停止服务并取消下次自动恢复；只退出应用时若开关仍开启，下次启动会恢复服务。token 会保留；再次开启时会重新绑定端口，固定端口被占用时可能分配新的随机端口。只有点「重新生成」才会更换 token。
 
-> 写能力现状：点赞/取消点赞、关注/取消关注已接通，受下方写操作闸门约束；`coolapk_publish_feed` 目前只支持 dry-run 预览，confirm / auto 的真正提交尚未接入，评论工具也尚未提供。
+> 写能力现状：发帖（含图片）、点赞/取消点赞、关注/取消关注均已接通，受下方写操作闸门约束；评论、转发、删除、编辑等工具尚未提供。
 
 > token 等同于本机的通行证，只保存在本机应用数据目录的 `agent-bridge-token`（Unix 下权限为 `0600`），重启应用后复用。不要把它写进仓库、截图或聊天记录，也不要交给不受信任的程序。
 
@@ -143,7 +143,7 @@ print(json.load(urllib.request.urlopen(request)))
 | `coolapk_user_profile` | 用户资料（`uid`） | `read` |
 | `coolapk_user_feeds` | 用户动态（`uid`，可选 `page`、`feedType`） | `read` |
 | `coolapk_topic_detail` | 话题详情（`tag`） | `read` |
-| `coolapk_publish_feed` | 发布动态（当前仅 dry-run 预览，不真正提交） | `write.publish` |
+| `coolapk_publish_feed` | 发布动态：正文 + 最多 9 张图片（base64 或本机路径），可指定板块与可见范围 | `write.publish` |
 | `coolapk_like_feed` / `coolapk_unlike_feed` | 点赞 / 取消点赞（`feedId`） | `write.interact` |
 | `coolapk_follow_user` / `coolapk_unfollow_user` | 关注 / 取消关注（`uid`） | `write.interact` |
 
@@ -184,6 +184,25 @@ npx -y mcp-remote http://127.0.0.1:47654/mcp \
 ---
 
 ## 写操作与闸门
+
+### 发帖参数（`coolapk_publish_feed`）
+
+| 参数 | 说明 |
+| --- | --- |
+| `message` | 动态正文，最多 5000 字；话题直接写在正文里（`#话题#`）。与图片至少给一项 |
+| `images` | 可选，`[{ name, mimeType, dataBase64 }]`，单张 8 MB、最多 9 张、合计 20 MB |
+| `imagePaths` | 可选，本机绝对路径列表（JPEG/PNG/WebP）；应用自己读盘上传，**推荐平板/大图场景**，与 `images` 合计最多 9 张 |
+| `visibleStatus` | `1` 公开（默认）、`-1` 仅自己 |
+| `options` | 官方 createFeed 扩展表单，未知字段会被拒绝：`targetType`+`targetId`（发布板块 tag/apk/product_phone）、`largeCover`、`subTypeId`/`subData`、`originalType`、`extraUrl`、`dyhId`、`mediaUrl`/`mediaInfo`、`includeDeviceModel`、`htmlArticle`+`messageTitle`+`messageCover`（图文长文，正文需为官方 ArticleModel JSON） |
+| `requestId` | 幂等 id，5 分钟内同工具同账号重复调用直接返回上次结果 |
+
+执行顺序与官方 App 一致：逐张上传图片（`image/feed` 目录）取图片地址 → 逗号拼 `pic` → 提交 `createFeed`。
+成功返回 `{ "dryRun": false, "deduplicated": false, "data": { "data": …, "imageUrls": [...], "messageChars": n } }`。
+酷安要求人工验证时会返回 `428 captcha_required`：接口不会自动重试；请在应用内完成一次拼图验证，客户端会把验证凭证复用到后续请求，验证后重试即可。网易易盾 `_v2_post_token` 不携带（服务端并不强制）。
+
+### MCP 请求体上限
+
+MCP 端点允许最大 32 MiB 请求体（发帖图片 base64 膨胀后的上限），远超 REST 的常规请求；但平板端仍建议用 `imagePaths`，避免大头像/原图在 base64 编解码上浪费内存与时间。
 
 写工具与读工具共用同一个客户端、限流桶和审计文件，但多一层「写操作闸门」（设置页「写操作闸门」）：
 

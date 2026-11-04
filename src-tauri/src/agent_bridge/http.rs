@@ -182,7 +182,7 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
 
-    /// 写闸门的 confirm / auto 执行通道尚未接入（Task 3 之后替换）。
+    /// confirm 闸门缺少应用实例（无头/测试环境）时无法弹窗确认。
     pub(super) fn write_not_implemented() -> Self {
         Self {
             error_code: Some("write_not_implemented"),

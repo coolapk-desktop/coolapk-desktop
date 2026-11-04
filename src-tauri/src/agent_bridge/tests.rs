@@ -282,10 +282,10 @@ fn write_parse_publish_rejects_empty_message() {
 
 #[test]
 fn write_parse_publish_rejects_too_many_images() {
-    let images: Vec<_> = (0..5).map(|i| image_arg(&format!("{i}.png"), "image/png")).collect();
+    let images: Vec<_> = (0..10).map(|i| image_arg(&format!("{i}.png"), "image/png")).collect();
     let args = serde_json::json!({ "message": "动态正文", "images": images });
     let error = super::write::parse_publish_args(&args).unwrap_err();
-    assert!(error.message().contains("4 张"), "实际错误：{}", error.message());
+    assert!(error.message().contains("9 张"), "实际错误：{}", error.message());
 }
 
 #[test]
@@ -337,6 +337,116 @@ fn write_parse_publish_accepts_data_url_and_sanitizes_name() {
     assert!(preview["images"][0].get("dataBase64").is_none(), "预览不能包含图片内容");
 }
 
+fn tiny_png_bytes() -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(tiny_png_base64()).unwrap()
+}
+
+#[test]
+fn resolve_uploaded_url_normalizes_variants() {
+    let cases: Vec<(serde_json::Value, Option<&str>)> = vec![
+        (
+            serde_json::json!({ "url": "https://image.coolapk.com/a.jpg" }),
+            Some("https://image.coolapk.com/a.jpg"),
+        ),
+        (serde_json::json!({ "url": "//image.coolapk.com/b.jpg" }), Some("https://image.coolapk.com/b.jpg")),
+        (serde_json::json!({ "pic": "/c.jpg" }), Some("https://image.coolapk.com/c.jpg")),
+        (serde_json::json!({ "url": "   " }), None),
+        (serde_json::json!({ "filename": "d.jpg" }), None),
+        (serde_json::json!({}), None),
+    ];
+    for (data, expected) in cases {
+        assert_eq!(super::write::resolve_uploaded_url(&data).as_deref(), expected, "{data}");
+    }
+}
+
+#[test]
+fn write_parse_publish_accepts_image_only_with_paths() {
+    let dir = test_dir("publish-image-paths");
+    let file = dir.join("shot.PNG");
+    std::fs::write(&file, tiny_png_bytes()).unwrap();
+
+    let parsed = super::write::parse_publish_args(&serde_json::json!({
+        "imagePaths": [file.display().to_string()]
+    }))
+    .unwrap();
+    assert!(parsed.message.is_empty());
+    assert_eq!(parsed.image_paths.len(), 1);
+    assert_eq!(parsed.image_paths[0].mime, "image/png");
+    assert_eq!(parsed.image_paths[0].name, "shot.PNG");
+    assert_eq!(parsed.image_paths[0].path, file);
+
+    let preview = super::write::preview_publish(&parsed);
+    assert_eq!(preview["imageCount"], 1);
+    assert_eq!(preview["images"][0]["source"], "path");
+    assert!(preview["images"][0].get("dataBase64").is_none(), "预览不能包含图片内容");
+}
+
+#[test]
+fn write_parse_publish_rejects_bad_image_paths() {
+    let dir = test_dir("publish-bad-image-paths");
+    let relative = super::write::parse_publish_args(&serde_json::json!({
+        "message": "正文",
+        "imagePaths": ["shot.png"]
+    }))
+    .unwrap_err();
+    assert!(relative.message().contains("绝对路径"), "实际错误：{}", relative.message());
+
+    let gif = dir.join("a.gif");
+    std::fs::write(&gif, b"gif").unwrap();
+    let unsupported = super::write::parse_publish_args(&serde_json::json!({
+        "message": "正文",
+        "imagePaths": [gif.display().to_string()]
+    }))
+    .unwrap_err();
+    assert!(unsupported.message().contains("格式"), "实际错误：{}", unsupported.message());
+
+    let missing = super::write::parse_publish_args(&serde_json::json!({
+        "message": "正文",
+        "imagePaths": [dir.join("missing.png").display().to_string()]
+    }))
+    .unwrap_err();
+    assert!(missing.message().contains("无法读取"), "实际错误：{}", missing.message());
+}
+
+#[test]
+fn write_parse_publish_counts_base64_and_paths_together() {
+    let dir = test_dir("publish-image-count");
+    let file = dir.join("extra.png");
+    std::fs::write(&file, tiny_png_bytes()).unwrap();
+    let images: Vec<_> = (0..9).map(|i| image_arg(&format!("{i}.png"), "image/png")).collect();
+    let error = super::write::parse_publish_args(&serde_json::json!({
+        "message": "正文",
+        "images": images,
+        "imagePaths": [file.display().to_string()]
+    }))
+    .unwrap_err();
+    assert!(error.message().contains("9 张"), "实际错误：{}", error.message());
+}
+
+#[test]
+fn write_parse_publish_merges_options_and_rejects_unknown() {
+    let parsed = super::write::parse_publish_args(&serde_json::json!({
+        "message": "正文",
+        "options": { "targetType": "tag", "targetId": "123", "largeCover": true },
+        "visibleStatus": -1
+    }))
+    .unwrap();
+    assert_eq!(parsed.options.target_type.as_deref(), Some("tag"));
+    assert_eq!(parsed.options.target_id.as_deref(), Some("123"));
+    assert_eq!(parsed.options.visible_status, Some(-1));
+    assert_eq!(parsed.options.large_cover, Some(true));
+    let preview = super::write::preview_publish(&parsed);
+    assert_eq!(preview["options"]["targetId"], "123");
+    assert_eq!(preview["visibleStatus"], -1);
+
+    let unknown = super::write::parse_publish_args(&serde_json::json!({
+        "message": "正文",
+        "options": { "take": "nope" }
+    }))
+    .unwrap_err();
+    assert!(unknown.message().contains("options"), "实际错误：{}", unknown.message());
+}
 fn write_ctx(name: &str, mode: AgentBridgeWriteMode) -> Arc<BridgeCtx> {
     write_ctx_with_scopes(
         name,
@@ -408,17 +518,21 @@ async fn write_gate_dry_run_previews_without_network() {
 }
 
 #[tokio::test]
-async fn write_gate_confirm_and_auto_are_not_wired_yet() {
-    for (name, mode) in [
-        ("write-gate-confirm", AgentBridgeWriteMode::Confirm),
-        ("write-gate-auto", AgentBridgeWriteMode::Auto),
-    ] {
-        let ctx = write_ctx(name, mode);
-        let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
-            .await
-            .unwrap_err();
-        assert_eq!(error.error_code(), Some("write_not_implemented"));
-    }
+async fn write_gate_confirm_needs_app_and_auto_reaches_execution() {
+    // confirm 没有应用实例时无法弹窗，明确返回 501。
+    let ctx = write_ctx("write-gate-confirm", AgentBridgeWriteMode::Confirm);
+    let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
+        .await
+        .unwrap_err();
+    assert_eq!(error.error_code(), Some("write_not_implemented"));
+
+    // auto 已接通真实执行通道：缺少应用状态时是 503（应用状态不可用），不再是 501。
+    let ctx = write_ctx("write-gate-auto", AgentBridgeWriteMode::Auto);
+    let error = super::write::execute(&ctx, super::write::WriteCall::Publish(parse_publish("正文")))
+        .await
+        .unwrap_err();
+    assert_eq!(error.status_code(), 503);
+    assert!(!error.message().is_empty());
 }
 
 #[tokio::test]
@@ -722,6 +836,32 @@ async fn mcp_publish_dry_run_returns_preview() {
     let text = value["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains(r#""dryRun":true"#), "{text}");
     assert!(text.contains("预览正文"), "{text}");
+}
+#[tokio::test]
+async fn mcp_publish_dry_run_accepts_image_paths() {
+    let dir = test_dir("mcp-publish-image-paths");
+    let file = dir.join("shot.png");
+    std::fs::write(&file, tiny_png_bytes()).unwrap();
+    let ctx = write_ctx("mcp-publish-image-paths-run", AgentBridgeWriteMode::DryRun);
+    let (_, value) = mcp_send(
+        &ctx,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 24,
+            "method": "tools/call",
+            "params": {
+                "name": "coolapk_publish_feed",
+                "arguments": { "imagePaths": [file.display().to_string()], "options": { "targetType": "tag", "targetId": "1" } }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(value["result"]["isError"], false);
+    let text = value["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains(r#""dryRun":true"#), "{text}");
+    assert!(text.contains(r#""source":"path""#), "{text}");
+    assert!(text.contains(r#""imageCount":1"#), "{text}");
+    assert!(text.contains(r#""targetId":"1""#), "{text}");
 }
 
 #[tokio::test]
