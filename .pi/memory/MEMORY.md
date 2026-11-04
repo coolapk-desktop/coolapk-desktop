@@ -19,3 +19,7 @@ agent 写工具审计（2026-11-03，为 Y700 平板发帖做准备）：`cargo 
 §
 agent 发帖能力落地（2026-11-03）：`write::run` 的 `WriteCall::Publish` 已接通真实执行——逐张 `client.upload_image(bytes,name,mime,"feed",None)` → `resolve_uploaded_url`（url/pic/path 支持 http(s)、//、/ 三种，残缺文件名直接报错）→ 逗号拼 pic → `client.create_feed_with_options(message, pic, None, &options)`；`PublishOptions` 补了 `Clone`+`Serialize` 供预览/透传。参数面：`message` 可与图片二选一（对齐 PublishDialog 的 canPublish，纯图片可发）、`images` base64 上限放到 9 张（对齐前端 MAX_IMAGES=9）、新增 `imagePaths`（本机绝对路径，JPEG/PNG/WebP，解析期只查 metadata、执行期读盘，单张 8 MB/合计 20 MB）、新增 `options`（官方 createFeed 扩展表单，deny_unknown_fields 拒绝拼错）、顶层 `visibleStatus` 合并进 options。`mcp.rs` body 上限 256 KiB → 32 MiB 并加 `DefaultBodyLimit`（axum 默认 2 MB 会先 413）。验证：`cargo test --lib agent_bridge` 52 passed（+6），全量 `cargo test --lib` 258 passed，`npm run typecheck` 干净，`npm test` 1623 passed。未做真实联网发帖冒烟（需运行中应用+登录+captcha，属用户侧）。
 <!-- created=2026-11-03, last=2026-11-03 -->
+
+§
+agent 写工具实测（2026-11-03，本机已登录账号 徐千惠/44272578，dev 构建 + 真实酷安接口）：发帖（imagePaths 图片）→ feed 74836959，pic 落地为 http://image.coolapk.com/feed/2026/1104/09/44272578_e77de49a_5822_8348_43@640x360.png；评论 → replies 能看到，favorite/unfavorite 返回 data 1/0；转发 → 新 feed 74837240（forwardid /feed/74837196），delete_feed 删除成功（data:"删除成功"，再查详情报内容不存在）。新增 5 个工具后共 18 个。踩坑：client.upload_image 返回 {code,data} 且 data 是地址字符串（不是对象）；create_feed 返回套了多层 {code,data} 信封，取 feed 实体要递归找含 entityTemplate/feedType 的那层（write::extract_feed）；仅自己可见的动态无法被评论（服务端拒绝），测评论/转发要先用公开动态。测试残留：仅自己可见的 74836959 图片帖保留给用户查看。
+<!-- created=2026-11-03, last=2026-11-03 -->
