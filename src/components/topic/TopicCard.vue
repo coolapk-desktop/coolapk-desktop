@@ -20,8 +20,9 @@
       <div class="topic-title" :title="topicName">
         {{ topicName }}
       </div>
-      <div class="topic-stats" v-if="subStatsText">
-        <span>{{ subStatsText }}</span>
+      <div class="topic-stats" v-if="subStatsText || (layoutMode === 'mobile' && mobileHeatText)">
+        <template v-if="layoutMode === 'mobile' && mobileHeatText"><i class="fas fa-fire-flame-curved" aria-hidden="true"></i><span>{{ mobileHeatText }}</span></template>
+        <span v-else>{{ subStatsText }}</span>
       </div>
     </div>
 
@@ -37,7 +38,7 @@ import AppImage from '../common/AppImage.vue';
 const props = withDefaults(
   defineProps<{
     topic: any;
-    layoutMode?: 'card' | 'list';
+    layoutMode?: 'card' | 'list' | 'mobile';
     active?: boolean;
   }>(),
   {
@@ -86,6 +87,12 @@ const subStatsText = computed(() => {
   const hot = item.hot_num_txt || formatNumber(item.hot_num);
   if (hot && hot !== '0') return `${hot} 热度`;
   return '';
+});
+
+// 官方目录优先展示接口热度；缺少热度时保留已有统计，不用关注或讨论数冒充热度。
+const mobileHeatText = computed(() => {
+  const text = props.topic?.hot_num_txt || formatNumber(props.topic?.hot_num);
+  return text && text !== '0' ? text : '';
 });
 
 function formatNumber(num: number | string) {
@@ -148,6 +155,15 @@ function handleClick(event: MouseEvent) {
   border-radius: 16px;
   margin-bottom: 12px;
 }
+
+/* 官方话题目录采用图标在上、两行标题与热度在下，单元格不再套独立大卡片。 */
+.topic-card.mode-mobile { display: flex; flex-direction: column; align-items: center; min-width: 0; padding: 0; border: 0; border-radius: 0; text-align: center; }
+.topic-card.mode-mobile .topic-icon-wrapper { width: min(60px, 100%); height: auto; aspect-ratio: 1; margin: 0 0 8px; border: 0; border-radius: 10px; box-shadow: none; }
+.topic-card.mode-mobile .topic-content { width: 100%; gap: 6px; }
+.topic-card.mode-mobile .topic-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; min-height: 2.8em; white-space: normal; overflow-wrap: anywhere; font-size: clamp(12px, 3.6vw, 15px); font-weight: 400; line-height: 1.4; }
+.topic-card.mode-mobile .topic-stats { justify-content: center; color: var(--text-secondary); font-size: 11px; line-height: 16px; gap: 2px; }
+.topic-card.mode-mobile .topic-stats span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic-card.mode-mobile:active { background-color: var(--surface-hover); }
 
 /* 侧栏紧凑列表模式 */
 .topic-card.mode-list {

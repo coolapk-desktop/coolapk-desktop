@@ -52,7 +52,7 @@
             v-for="(topic, idx) in rawTopicItems"
             :key="topic.id || topic.tag || topic.title || idx"
             :topic="topic"
-            layout-mode="card"
+            :layout-mode="isOneColumnMode ? 'mobile' : 'card'"
             @select="(item, event) => handleOpenTopic(item, event)"
           />
         </div>
@@ -1395,6 +1395,16 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
 }
 
 @media (max-width: 767px) {
+  /* 官方话题目录：左侧分类独立滚动，右侧固定三列，不能沿用桌面卡片的最小宽度。 */
+  .grid-mode-layout { display: grid; grid-template-columns: clamp(72px, 22.5%, 96px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .topics-toolbar-bar { min-height: 0; overflow: hidden; border: 0; }
+  .topics-scroll-container { padding: 8px 8px calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--background-secondary); border-radius: 16px 0 0 0; }
+  .topics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 8px; padding: 12px 8px; border-radius: 12px; background: var(--surface); }
+  .topics-tabs-wrapper { flex-direction: column; align-items: stretch; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0; scrollbar-width: none; }
+  .topics-tabs-wrapper::-webkit-scrollbar { display: none; }
+  .cat-tab { flex: 0 0 auto; width: 100%; min-height: 48px; height: auto; padding: 14px 4px; font-size: 14px; white-space: normal; }
+  .cat-tab.active { color: var(--brand-primary); background: var(--brand-soft); font-size: 14px; font-weight: 500; }
+  .cat-tab.active::after { top: 0; bottom: 0; left: 0; width: 3px; height: auto; border-radius: 0; transform: none; background: var(--brand-primary); box-shadow: none; }
   .topics-split-layout.columns-1 > .split-center-main {
     min-width: 0;
   }

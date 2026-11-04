@@ -18,6 +18,20 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
 
 describe('TopicsHubPage 三栏/双栏/单栏响应式与过渡', () => {
+  it.each([[400, 'mobile'], [767, 'mobile'], [768, 'card'], [1200, 'card']])('目录在 %s 像素使用 %s 布局，桌面保留网格卡片', async (width, mode) => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    mocks.getTopicHubData.mockResolvedValue({ data: [{ id: '1', entityType: 'topic', title: '今日热点', follower_num: 57000, commentnum: 132000, hot_num: 1897000 }] });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/topics', component: TopicsHubPage }] });
+    await router.push('/topics');
+    const wrapper = mount(TopicsHubPage, { global: { plugins: [router], stubs: { AppImage: true, TopicPage: true, TopicFeedCommentAside: true } } });
+    try {
+      await flushPromises();
+      expect(wrapper.get('.topics-grid .topic-card').classes()).toContain(`mode-${mode}`);
+      expect(wrapper.find('.topic-stats .fa-fire-flame-curved').exists()).toBe(mode === 'mobile');
+      expect(wrapper.text()).toContain('今日热点');
+    } finally { wrapper.unmount(); Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth }); }
+  });
   it.each([390, 1280])('宽度 %s 下标题条与吸顶导航合并玻璃，回到话题头部后恢复', async (width) => {
     const previousWidth = window.innerWidth;
     const previousCollapsed = localStorage.getItem('coolapk_topic_hub_left_collapsed');
