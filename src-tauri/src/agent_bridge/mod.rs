@@ -6,6 +6,7 @@
 
 mod audit;
 mod config;
+mod guide;
 mod http;
 mod mcp;
 mod ops;
@@ -79,7 +80,8 @@ fn parse_scopes(raw: &[String]) -> Result<Vec<AgentBridgeScope>, String> {
             scopes.push(scope);
         }
     }
-    if scopes.is_empty() {
+    // 读取权限始终开放：读接口没有副作用，设置页只让用户决定写权限。
+    if !scopes.contains(&AgentBridgeScope::Read) {
         scopes.push(AgentBridgeScope::Read);
     }
     scopes.sort();
@@ -517,4 +519,12 @@ pub async fn agent_bridge_set_mcp(
             }
         }
     }
+}
+
+/// 生成「给 AI 的说明」：整段复制给本机 AI 客户端即可完成注册并了解当前权限。
+#[tauri::command]
+pub async fn agent_bridge_usage_guide(runtime: State<'_, AgentBridgeRuntime>) -> Result<Value, String> {
+    let guard = runtime.running.lock().map_err(|_| "Agent 接口状态锁异常".to_string())?;
+    let bridge = guard.as_ref().ok_or_else(|| "Agent 接口尚未开启，开启后才能生成说明".to_string())?;
+    Ok(json!({ "code": 200, "message": "", "data": guide::usage_guide(&bridge.config) }))
 }
