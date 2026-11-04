@@ -4,6 +4,7 @@ import { defineComponent, KeepAlive, ref } from 'vue';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../../stores/notifications';
+import { useAppStore } from '../../stores/app';
 
 const mocks = vi.hoisted(() => ({ notifications: vi.fn(), reply: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn() }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }));
@@ -22,7 +23,7 @@ describe('通知评论点击入口', () => {
     mocks.notifications.mockResolvedValue({ data: [] });
     const shown = ref(true);
     const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, setup: () => ({ shown }), template: '<KeepAlive><NotificationsPage v-if="shown" /></KeepAlive>' }), {
-      global: { stubs: { AppAvatar: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
+      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
     });
     try {
       await flushPromises();
@@ -38,7 +39,7 @@ describe('通知评论点击入口', () => {
   async function mountPage(item: any) {
     mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? (Array.isArray(item) ? item : [item]) : [] }));
     const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
-      global: { stubs: { AppAvatar: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
+      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
     });
     await flushPromises();
     return wrapper;
@@ -224,9 +225,33 @@ describe('通知评论点击入口', () => {
     } finally { wrapper.unmount(); }
   });
 
+  it.each(['addition_info', 'additionInfo'])('官方 %s 图片附件显示缩略图并可预览，不把地址放进正文', async field => {
+    const url = 'http://image.coolapk.com/feed/2026/10/14/example.png.xs.jpg';
+    const wrapper = await mountPage({ id: '99', note: '这是回复内容', message: url, [field]: url });
+    try {
+      expect(wrapper.get('.notify-action').text()).toBe('这是回复内容');
+      expect(wrapper.find('.notify-message').exists()).toBe(false);
+      expect(wrapper.text()).not.toContain(url);
+      await wrapper.get('.notify-image').trigger('click');
+      expect(useAppStore().activeImageViewer).toMatchObject({ urls: [url], currentIndex: 0 });
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
   it('官方附加正文为空时仍展示已有通知内容', async () => {
     const wrapper = await mountPage({ id: '99', addition_info: ' ', message: '原有评论内容' });
     try { expect(wrapper.get('.notify-message').text()).toBe('原有评论内容'); } finally { wrapper.unmount(); }
+  });
+
+  it('通知附加正文中的实体编码链接显示动态标题并沿用链接点击处理', async () => {
+    const wrapper = await mountPage({ id: '99', note: '回复了你', message: 'https://www.coolapk.com/feed/72357393', addition_info: '&lt;a href=&quot;/feed/72357393&quot;&gt;【动态】#微信# 稳了俩月&lt;/a&gt;' });
+    try {
+      expect(wrapper.get('.notify-message a').text()).toBe('【动态】#微信# 稳了俩月');
+      expect(wrapper.get('.notify-message a').attributes('href')).toBe('/feed/72357393');
+      await wrapper.get('.notify-message a').trigger('click'); await flushPromises();
+      expect(mocks.anchor).toHaveBeenCalledOnce();
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
   });
 
   it('没有动态 ID 的评论通知先查询评论所属动态', async () => {

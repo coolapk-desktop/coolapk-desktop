@@ -59,9 +59,15 @@
               </span>
             </div>
             
-            <div v-if="getNote(item)" class="notify-action" v-html="renderNotificationRichText(getNote(item))" @click="handleNotifyClick($event, item)"></div>
-
-            <div v-if="getMessage(item)" class="notify-message" v-html="renderNotificationRichText(getMessage(item))" @click="handleNotifyClick($event, item)"></div>
+            <div class="notify-body">
+              <div class="notify-body-text">
+                <div v-if="getNote(item)" class="notify-action" v-html="renderNotificationRichText(getNote(item))" @click="handleNotifyClick($event, item)"></div>
+                <div v-if="getMessage(item)" class="notify-message" v-html="renderNotificationRichText(getMessage(item))" @click="handleNotifyClick($event, item)"></div>
+              </div>
+              <button v-if="getNotificationImage(item)" type="button" class="notify-image" aria-label="查看通知图片" @click.stop="appStore.openImageViewer([getNotificationImage(item)], 0)">
+                <AppImage :src="getNotificationImage(item)" alt="通知图片" />
+              </button>
+            </div>
 
             <div v-if="getTarget(item)" class="notify-target">
               <span class="target-title" v-html="renderCoolapkRichText(getTarget(item))" @click="handleNotifyClick($event, item)"></span>
@@ -107,9 +113,10 @@ import { computed, nextTick, onActivated, onDeactivated, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
+import { useAppStore } from '../stores/app';
 import { useNotificationStore } from '../stores/notifications';
 import type { NotificationCategory } from '../utils/notificationCount';
-import { getNotificationActor } from '../utils/notificationItem';
+import { getNotificationActor, getNotificationImage } from '../utils/notificationItem';
 import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
@@ -119,6 +126,7 @@ import { requestConfirmation } from '../utils/confirm';
 import { showToast } from '../utils/toast';
 import AppButton from '../components/common/AppButton.vue';
 import AppAvatar from '../components/common/AppAvatar.vue';
+import AppImage from '../components/common/AppImage.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
@@ -126,6 +134,7 @@ import ErrorState from '../components/common/ErrorState.vue';
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const notificationStore = useNotificationStore();
 
 // 分类 Tabs（接口路径与官方 UWP 客户端一致）
@@ -314,6 +323,8 @@ function getNote(item: any): string {
 }
 
 function getMessage(item: any): string {
+  // 图片地址属于官方右侧附件，不作为附加正文重复显示，也不回退到旧 message。
+  if (getNotificationImage(item)) return '';
   // 官方 NotificationSubTitleAndDesc 优先展示 addition_info，其中可包含服务端生成的动态摘要链接。
   const additionInfo = item.addition_info || item.additionInfo;
   if (typeof additionInfo === 'string' && additionInfo.trim()) return additionInfo;
@@ -753,6 +764,12 @@ async function refreshMobilePage() { await refreshNotifications(); }
   flex: 1;
   min-width: 0;
 }
+
+/* 官方右侧附件为 44dp，正文在窄屏中独立收缩，原动态入口保持整行。 */
+.notify-body { display: flex; align-items: flex-start; gap: var(--space-3); }
+.notify-body-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.notify-image { flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--background-secondary); }
+.notify-image :deep(.app-image-container) { width: 100%; height: 100%; }
 
 .notify-header {
   display: flex;

@@ -12,7 +12,10 @@ export function renderCoolapkRichText(text: string, keyword?: string): string {
 
 /** 通知中的纯文本网址也显示为独立链接，只处理文本节点，保留已有链接和安全化结果。 */
 export function renderNotificationRichText(text: string): string {
-  const doc = new DOMParser().parseFromString(renderCoolapkRichText(text), 'text/html');
+  if (!text) return '';
+  // 官方 LinkTextParser 先还原实体再解析标题链接；还原后仍须经过安全过滤。
+  const decoded = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+  const doc = new DOMParser().parseFromString(renderCoolapkRichText(decoded), 'text/html');
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   while (walker.nextNode()) {
