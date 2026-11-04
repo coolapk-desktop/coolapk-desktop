@@ -1234,6 +1234,11 @@ export class CoolapkTauriAPI {
     return await invokeNative('favorite_apk', { packageName });
   }
 
+  /** 应用收藏按数字 ID 查询实际收藏单归属，不依赖旧版 follow 字段。 */
+  static async getApkCollectionStatus(apkId: string) {
+    return await invokeNative('get_apk_collection_status', { apkId });
+  }
+
   static async unfavoriteApk(packageName: string) {
     return await invokeNative('unfavorite_apk', { packageName });
   }

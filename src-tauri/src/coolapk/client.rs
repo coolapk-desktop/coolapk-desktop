@@ -761,6 +761,29 @@ fn build_collection_list_query(uid: &str, page: u32, first_item: &str, last_item
     ]
 }
 
+/// 应用收藏只选择系统默认收藏单；取消收藏移除全部已选收藏单，重复操作保持幂等。
+fn apk_collection_update_plan(collections: &[Value], favorited: bool) -> Result<Option<(String, String)>, String> {
+    let flag = |value: Option<&Value>| value.is_some_and(|v| v.as_bool() == Some(true) || v.as_u64() == Some(1) || matches!(v.as_str(), Some("1" | "true")));
+    let id = |row: &Value| row.as_object().and_then(|o| get_str_by_keys(o, &["id", "collectionId"]));
+    let mut selected = Vec::new();
+    for row in collections {
+        if flag(row.get("isBeCollected").or_else(|| row.get("is_be_collected"))) {
+            let value = id(row).ok_or("应用所在收藏单缺少有效 ID")?;
+            if !selected.contains(&value) { selected.push(value); }
+        }
+    }
+    if favorited {
+        if !selected.is_empty() { return Ok(None); }
+        let default = collections.iter().find(|row| flag(row.get("defaultCollected").or_else(|| row.get("default_collected")).or_else(|| row.get("isDefault"))));
+        let collection_id = default.and_then(id).ok_or("未找到酷安默认收藏单，收藏失败")?;
+        Ok(Some((collection_id, String::new())))
+    } else if selected.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some((String::new(), selected.join(","))))
+    }
+}
+
 fn build_product_feeds_query(
     product_id: &str,
     feed_type: &str,
@@ -6475,15 +6498,56 @@ impl CoolapkClient {
         self.favorite_action("/v6/feed/unFavorite", feed_id).await
     }
 
-    /// 收藏/取消收藏应用（需登录，GET 写接口）
-    /// 数据来源: GET /v6/apk/favorite?id={packageName} / /v6/apk/unFavorite?id={packageName}
+    /// 应用收藏沿用官方 AppViewV8Activity → CollectionSelectActivity：数字应用 ID、type=apk。
+    /// 对外保留包名参数，供现有页面和调用方兼容使用。
     pub async fn favorite_apk(&self, package_name: &str) -> Result<Value, String> {
-        self.favorite_action("/v6/apk/favorite", package_name).await
+        self.set_apk_favorite(package_name, true).await
     }
 
     pub async fn unfavorite_apk(&self, package_name: &str) -> Result<Value, String> {
-        self.favorite_action("/v6/apk/unFavorite", package_name)
-            .await
+        self.set_apk_favorite(package_name, false).await
+    }
+
+    /// 读取全部收藏单及所属状态，保留分页游标，避免遗漏后续分页中的已收藏项目。
+    async fn get_apk_collections(&self, apk_id: &str) -> Result<Vec<Value>, String> {
+        let mut collections = Vec::new();
+        let mut first_item = String::new();
+        let mut last_item = String::new();
+        for page in 1..=100 {
+            let mut query = build_collection_list_query("", page, &first_item, &last_item);
+            query.extend([("id", apk_id.to_string()), ("type", "apk".to_string())]);
+            let response = wrap_api_data(self.api_get("/v6/collection/list", &query).await?)?;
+            let rows = response["data"].as_array().ok_or("应用收藏单返回格式不正确")?;
+            if rows.is_empty() { return Ok(collections); }
+            let cursor = |row: &Value| row.as_object().and_then(|o| get_str_by_keys(o, &["entityId", "id"])).unwrap_or_default();
+            if first_item.is_empty() { first_item = cursor(&rows[0]); }
+            last_item = cursor(rows.last().unwrap());
+            let previous_len = collections.len();
+            for row in rows {
+                if row["entityType"].as_str() != Some("collection") { continue; }
+                if !collections.iter().any(|existing: &Value| existing["id"] == row["id"]) { collections.push(row.clone()); }
+            }
+            // 默认收藏单可能在各页重复出现；没有新项目时终止，避免无效循环。
+            if collections.len() == previous_len { return Ok(collections); }
+        }
+        Err("应用收藏单分页过多，请稍后重试".to_string())
+    }
+
+    /// 收藏单归属才是应用收藏的真实状态；旧 userAction.follow 字段可能仍为零。
+    pub async fn get_apk_collection_status(&self, apk_id: &str) -> Result<Value, String> {
+        if apk_id.is_empty() || !apk_id.bytes().all(|ch| ch.is_ascii_digit()) || apk_id == "0" { return Err("应用收藏状态需要有效数字 ID".to_string()); }
+        Ok(json!({ "code": 200, "data": self.get_apk_collections(apk_id).await? }))
+    }
+
+    async fn set_apk_favorite(&self, package_name: &str, favorited: bool) -> Result<Value, String> {
+        if package_name.trim().is_empty() { return Err("应用包名不能为空".to_string()); }
+        let detail = self.get_app_detail(package_name.trim()).await?;
+        let apk_id = detail["data"].as_object().and_then(|o| get_str_by_keys(o, &["id", "apkId", "aid"])).filter(|id| id.bytes().all(|ch| ch.is_ascii_digit()) && id != "0").ok_or("应用详情缺少有效数字 ID，无法操作收藏")?;
+        let collections = self.get_apk_collections(&apk_id).await?;
+        match apk_collection_update_plan(&collections, favorited)? {
+            Some((ids, cancel_ids)) => self.update_collection_item(&ids, &cancel_ids, &apk_id, "apk", "").await,
+            None => Ok(json!({ "code": 200, "data": { "collect": if favorited { 1 } else { 0 } } })),
+        }
     }
 
     /// APK 个人主页置顶：member 节点，不使用编辑推荐置顶接口。

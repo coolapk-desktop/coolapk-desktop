@@ -623,8 +623,10 @@ TS 方法：`followCollection(id)` / `unfollowCollection(id)` / `likeCollection(
 | `GET /v6/favorite/list` | 🔒 需登录 | 未接入 | type（feed/apk/album）, page |
 | `POST /v6/feed/favorite` | 🔒 需登录 | 未接入 | id |
 | `POST /v6/feed/unFavorite` | 🔒 需登录 | 未接入 | id, targetType |
-| `POST /v6/apk/favorite` | 🔒 需登录 | 未接入 | id |
-| `POST /v6/apk/unFavorite` | 🔒 需登录 | 未接入 | id, targetType |
+| `GET /v6/collection/list` | 🔒 需登录 | 已接入应用收藏状态 | uid 传空、id 为应用数字 ID、type=apk、showDefault=1，支持分页游标 |
+| `POST /v6/collection/addItem` | 🔒 需登录 | 已接入应用收藏/取消收藏 | targetId 为应用数字 ID、type=apk；id 为加入的收藏单 ID，cancelId 为移出的收藏单 ID，trace 可为空 |
+
+应用收藏与官方应用页保持一致，走收藏单接口。`favorite_apk` / `unfavorite_apk` 对外仍接受包名，由后端通过应用详情解析数字 ID；收藏加入默认收藏单，取消收藏移出全部已选收藏单。旧 `/v6/apk/favorite`、`/v6/apk/unFavorite` 不再用于客户端应用收藏；应用详情的旧 `userAction.follow` 实测不会随收藏单同步，页面通过 `get_apk_collection_status(apkId)` 查询 `isBeCollected` 恢复实际状态。
 
 ## 黑名单 / 忽略 / 限制
 

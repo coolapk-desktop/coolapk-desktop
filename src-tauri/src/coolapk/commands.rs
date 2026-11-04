@@ -1579,6 +1579,11 @@ pub async fn favorite_apk(
 }
 
 #[tauri::command]
+pub async fn get_apk_collection_status(state: State<'_, AppState>, apk_id: String) -> Result<Value, String> {
+    state.client.get_apk_collection_status(&apk_id).await
+}
+
+#[tauri::command]
 pub async fn unfavorite_apk(
     state: State<'_, AppState>,
     package_name: String,
