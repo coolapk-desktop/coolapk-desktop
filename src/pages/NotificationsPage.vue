@@ -313,6 +313,9 @@ function getNote(item: any): string {
 }
 
 function getMessage(item: any): string {
+  // 官方 NotificationSubTitleAndDesc 优先展示 addition_info，其中可包含服务端生成的动态摘要链接。
+  const additionInfo = item.addition_info || item.additionInfo;
+  if (typeof additionInfo === 'string' && additionInfo.trim()) return additionInfo;
   // 提取具体评论或动态内容
   if (item.message) return item.message;
   if (item.replyRows && Array.isArray(item.replyRows) && item.replyRows[0]) {

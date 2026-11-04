@@ -190,6 +190,28 @@ describe('通知评论点击入口', () => {
     wrapper.unmount();
   });
 
+  it.each(['addition_info', 'additionInfo'])('优先展示官方 %s 富文本摘要，不使用 message 中的裸分享地址', async field => {
+    const url = 'https://www.coolapk.com/feed/72357393?s=share';
+    const wrapper = await mountPage({ id: '99', feedId: '333', replyId: '222', note: '回复了你', message: `6 月没躲过 ${url}`,
+      [field]: `6 月没躲过[doge] <a href="${url}">【动态】#微信# 稳了俩月，终究还是寄了</a>` });
+    try {
+      expect(wrapper.get('.notify-action').text()).toBe('回复了你');
+      expect(wrapper.get('.notify-message a').text()).toBe('【动态】#微信# 稳了俩月，终究还是寄了');
+      expect(wrapper.get('.notify-message').text()).not.toContain(url);
+      expect(wrapper.find('.notify-message img.coolapk-emoji').exists()).toBe(true);
+      expect(wrapper.get('.notify-message a').attributes('href')).toBe(url);
+      await wrapper.get('.notify-message a').trigger('click'); await flushPromises();
+      expect(mocks.anchor).toHaveBeenCalledOnce();
+      expect(mocks.reply).not.toHaveBeenCalled();
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('官方附加正文为空时仍展示已有通知内容', async () => {
+    const wrapper = await mountPage({ id: '99', addition_info: ' ', message: '原有评论内容' });
+    try { expect(wrapper.get('.notify-message').text()).toBe('原有评论内容'); } finally { wrapper.unmount(); }
+  });
+
   it('没有动态 ID 的评论通知先查询评论所属动态', async () => {
     const item = { id: '99', target_type: 'feed_reply', target_id: '222', message: '回复内容' };
     mocks.reply.mockResolvedValue({ data: { id: '222', feedId: '333' } });
