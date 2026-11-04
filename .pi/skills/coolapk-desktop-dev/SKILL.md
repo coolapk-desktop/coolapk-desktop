@@ -11,6 +11,14 @@ Tauri（Rust 后端 + Vue 前端）复刻官方酷安桌面客户端的独立实
 会话/记忆/资料/技能都在 `.pi/` 下（见仓库 `AGENTS.md`「工作目录」一节）。
 当前工作分支与上游差异状态先查 `.pi/memory/MEMORY.md`，动手前 `git fetch` 看 main 是否已有同类改动。
 
+## 远端与 PR 路径
+
+- `origin` = coolapk-desktop/coolapk-desktop（上游，无写权限，只 fetch）。
+- `fork` = xiaquwan1001/coolapk-desktop（个人 fork，也是唯一 PR 出口）。
+- 开 PR：`git push fork HEAD:<branch>` → `gh pr create --repo coolapk-desktop/coolapk-desktop --base main --head xiaquwan1001:<branch>`。
+- 旧上游 daimiaopeng/coolapk-desktop 已归档；曾有一个 parent 指向它的错 fork，现改名归档为 `xiaquwan1001/coolapk-desktop-legacy-archived`（只读）。连错 fork 推送会得到 "No commits between ..." 的假象，别再连它。
+- 主工作区停在 `local/workspace`（= main + 记忆提交，`.pi/` 被跟踪）。**切到其他分支会删掉工作区的 `.pi/memory`**；要做代码/PR 请用 `git worktree add ../coolapk-pr-<topic> -b <branch> origin/main`，主工作区留在 `local/workspace`。
+
 ## 命令
 
 ```bash
