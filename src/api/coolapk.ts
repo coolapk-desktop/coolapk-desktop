@@ -6,12 +6,17 @@ import { getCoolapkUserLinkName, isCoolapkWebUrl, normalizeCoolapkRoute } from '
 import { normalizeUserUid } from '../utils/userRoute';
 import { requestWithPolicy, type RequestKind } from '../utils/requestCenter';
 import { logDiagnostic, logDiagnosticLimited, classifyDiagnosticRequestError, summarizeDiagnosticError } from '../utils/diagnosticLogger';
+import { apiEnvelopeError } from '../utils/apiErrorMessage';
 import { extractCaptchaParamsFromError, verifyWithCaptcha } from '../utils/neteaseCaptcha';
 import type { UpdatePackageType } from '../utils/updateChecker';
 import { showToast } from '../utils/toast';
 import { getOriginalImageUrl } from '../utils/image';
 import { getMemoryCachedResourceSync, retainResourceUrl } from '../utils/resourceCache';
 import { useSettingsStore } from '../stores/settings';
+
+function tauriInvokeAvailable(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
+}
 
 async function safeFetchOnce(pythonEndpoint: string, tauriCmd: string, tauriArgs: any = {}) {
   let rustError: unknown;
@@ -22,7 +27,8 @@ async function safeFetchOnce(pythonEndpoint: string, tauriCmd: string, tauriArgs
     if (rustRes && (rustRes as any).code === 200) {
       return rustRes;
     }
-    throw new Error(`Rust API returned an invalid response for ${tauriCmd}`);
+    throw apiEnvelopeError(rustRes)
+      || new Error(`Rust API returned an invalid response for ${tauriCmd}`);
   } catch (err) {
     rustError = err;
     console.warn(`[Tauri Invoke fallback to Python] cmd: ${tauriCmd}`, err);
@@ -49,8 +55,14 @@ async function safeFetchOnce(pythonEndpoint: string, tauriCmd: string, tauriArgs
     }
     throw new Error(json?.message || 'Python API returned an invalid response');
   } catch (pythonError) {
+    // 桌面端没有 Python 兜底服务，它的连接错误只是噪音：
+    // 有 Tauri 环境时直接抛出原生错误，让界面按统一规则翻译成中文提示。
+    console.warn('[Tauri Invoke fallback to Python]', pythonError);
     const rustMessage = rustError instanceof Error ? rustError.message : String(rustError);
     const pythonMessage = pythonError instanceof Error ? pythonError.message : String(pythonError);
+    if (rustError && tauriInvokeAvailable()) {
+      throw rustError instanceof Error ? rustError : new Error(rustMessage);
+    }
     throw new Error(`接口请求失败。Rust: ${rustMessage}; Python: ${pythonMessage}`);
   }
 }
@@ -83,7 +95,7 @@ async function invokeNative(tauriCmd: string, tauriArgs: any = {}, options: Nati
     const result = await requestWithPolicy(tauriCmd, async () => {
       const response = await invoke(tauriCmd, tauriArgs);
       if (response && (response as any).code === 200) return response as any;
-      throw new Error((response as any)?.message || `${tauriCmd} 返回格式不正确`);
+      throw apiEnvelopeError(response) || new Error((response as any)?.message || `${tauriCmd} 返回格式不正确`);
     }, options);
     logDiagnostic('debug', 'api', 'request_ok', `${tauriCmd}${context ? ` ${context}` : ''} elapsed_ms=${Date.now() - started}`);
     return result;
