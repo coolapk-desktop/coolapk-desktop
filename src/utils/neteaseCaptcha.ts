@@ -68,7 +68,13 @@ export function extractCaptchaParamsFromResponse(data: any): { captchaId?: strin
 
 /** 从原生接口抛出的验证码响应中提取配置，兼容服务端只返回 code=403 的情况。 */
 export function extractCaptchaParamsFromError(error: unknown): { captchaId: string; captchaField: string } | null {
-  let response: any = error instanceof Error ? error.message : error;
+  // 业务错误信封可能已被上层还原成对象挂在错误上，优先使用结构化字段。
+  const attached = error && typeof error === 'object'
+    ? (error as { coolapkEnvelope?: unknown }).coolapkEnvelope
+    : null;
+  let response: any = attached && typeof attached === 'object'
+    ? attached
+    : error instanceof Error ? error.message : error;
   if (typeof response === 'string') {
     try { response = JSON.parse(response); } catch { return null; }
   }

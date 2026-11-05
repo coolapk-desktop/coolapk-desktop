@@ -27,6 +27,13 @@ describe('neteaseCaptcha', () => {
     expect(extractCaptchaParamsFromError(JSON.stringify({ code: 403, message: '无权访问' }))).toBeNull();
   });
 
+  it('优先使用上层挂在错误对象上的业务信封', () => {
+    const error = Object.assign(new Error('接口返回错误'), {
+      coolapkEnvelope: { code: 403, messageStatus: 'err_request_captcha_v2', messageExtra: { captchaId: 'attached', captchaField: '_v2_post_token' } },
+    });
+    expect(extractCaptchaParamsFromError(error)).toEqual({ captchaId: 'attached', captchaField: '_v2_post_token' });
+  });
+
   it.each(['', '_v2_post_token'])('保留服务端验证码字段，包括空字段 Cookie 模式：%s', (captchaField) => {
     for (const messageExtra of [{ captchaId: 'test', captchaField }, JSON.stringify({ captchaId: 'test', captchaField })]) {
       expect(extractCaptchaParamsFromError({ code: 403, messageStatus: 'err_request_captcha_v2', messageExtra }))

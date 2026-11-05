@@ -56,6 +56,10 @@ defineEmits<{
   color: var(--text-tertiary);
   margin-bottom: var(--space-4);
   max-width: 400px;
+  /* 错误文案第一段是结论，第二行附原始错误；保留换行便于用户复制反馈。 */
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .retry-btn {

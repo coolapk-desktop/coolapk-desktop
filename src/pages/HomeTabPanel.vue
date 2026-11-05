@@ -189,7 +189,7 @@
         </div>
 
         <div v-else-if="isPageEntityTab && error && pageEntities.length === 0" class="error-padding">
-          <ErrorState title="加载页面内容失败" :message="error" @retry="loadFeeds(true)" />
+          <ErrorState :title="errorTitle || '加载页面内容失败'" :message="error" @retry="loadFeeds(true)" />
         </div>
 
         <div v-else-if="isPageEntityTab && pageEntities.length === 0" class="empty-padding">
@@ -215,7 +215,7 @@
         </div>
 
         <div v-else-if="!isDyhTab && error && feeds.length === 0" class="error-padding">
-          <ErrorState title="加载动态失败" :message="error" @retry="loadFeeds(true)" />
+          <ErrorState :title="errorTitle || '加载动态失败'" :message="error" @retry="loadFeeds(true)" />
         </div>
 
         <div
@@ -377,6 +377,7 @@ import ProductSelectorPage from './ProductSelectorPage.vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useSettingsStore } from '../stores/settings';
 import { hasFeedRenderableContent, shouldHideFeed } from '../utils/feedFilter';
+import { describeApiError } from '../utils/apiErrorMessage';
 import { decodeDiscoveryRouteSegment, getEntityImage, getEntityKey, parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
 import { normalizeCoolapkRoute } from '../utils/coolapkRoute';
 import type { FeedLayout, ConfigPageTab } from '../types/settings';
@@ -528,6 +529,7 @@ function resetHomeTabSwipeState() {
 const loadingMore = ref(false);
 const noMore = ref(false);
 const error = ref('');
+const errorTitle = ref('');
 const headlineCursor = reactive({ firstItem: '', lastItem: '' });
 const headlinePageContext = ref('');
 const headlineResolvedUrl = ref('');
@@ -1235,6 +1237,7 @@ async function loadFeeds(isRefresh: boolean = false) {
     loadingMore.value = true;
   }
   error.value = '';
+  errorTitle.value = '';
 
   try {
     let validItems: any[] = [];
@@ -1340,7 +1343,12 @@ async function loadFeeds(isRefresh: boolean = false) {
     }
 
   } catch (err: any) {
-    if (sequence === feedRequestSequence) error.value = err?.message || '加载失败，请检查网络';
+    if (sequence === feedRequestSequence) {
+      // 403 风控、限流、验证码等失败形态都翻译成用户能看懂并照做的提示。
+      const described = describeApiError(err, '加载动态失败');
+      errorTitle.value = described.title;
+      error.value = described.message;
+    }
   } finally {
     if (sequence === feedRequestSequence) { loading.value = false; loadingMore.value = false; }
   }
