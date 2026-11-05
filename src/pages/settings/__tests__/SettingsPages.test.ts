@@ -367,16 +367,16 @@ describe('设置页面交互', () => {
     expect(settings.settings.deviceFingerprint.deviceId).toBe('DU-MOCK-SAMPLE-DEVICE-ID-12345');
   });
 
-  it('设备页展示原生默认机型和默认 UA', async () => {
+  it('设备页展示非 Android 平台的默认兼容机型和 UA', async () => {
     vi.mocked(invoke).mockImplementation(async (command) => command === 'get_device_info' ? {
       code: 200, data: { loggedIn: true, deviceCode: 'encoded-device', defaultProfile: {
-        source: 'native', brand: 'Apple', model: 'iPhone17,3', userAgent: 'native-ios-user-agent',
+        source: 'compatibility', platform: 'ios', brand: 'Redmi', model: '23113RKC6C', userAgent: 'default-compatibility-user-agent',
       } },
     } : undefined);
     const { wrapper } = mountPage(DeviceSettingsPage);
     await flushPromises();
-    expect(wrapper.text()).toContain('Apple iPhone17,3（本机真实设备）');
-    expect(wrapper.get('.native-ua').text()).toBe('native-ios-user-agent');
+    expect(wrapper.text()).toContain('Redmi 23113RKC6C（默认兼容机型）');
+    expect(wrapper.get('.native-ua').text()).toBe('default-compatibility-user-agent');
     await wrapper.find('.switch-input').setValue(true);
     expect(wrapper.find('.native-ua').exists()).toBe(false);
     wrapper.unmount();

@@ -23,7 +23,7 @@
         </div>
         <div v-if="deviceInfo?.defaultProfile" class="status-row">
           <span class="status-key">默认请求机型</span>
-          <span class="status-value">{{ deviceInfo.defaultProfile.brand }} {{ deviceInfo.defaultProfile.model }}（{{ deviceInfo.defaultProfile.source === 'native' ? '本机真实设备' : '兼容模板' }}）</span>
+          <span class="status-value">{{ deviceInfo.defaultProfile.brand }} {{ deviceInfo.defaultProfile.model }}（{{ deviceInfo.defaultProfile.source === 'native' ? '本机真实设备' : '默认兼容机型' }}）</span>
         </div>
         <details v-if="deviceInfo?.defaultProfile && !settingsStore.settings.deviceFingerprint.customFingerprint">
           <summary class="row-sub">查看默认 User-Agent</summary>
@@ -163,7 +163,7 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">启用自定义设备信息</span>
-          <span class="row-sub">自定义请求头中的机型、版本与系统信息；关闭后 Android、iOS 和 macOS 使用本机信息，Windows/Linux 使用兼容模板</span>
+          <span class="row-sub">自定义请求头中的机型、版本与系统信息；关闭后仅 Android 使用本机真实机型，其他平台使用默认兼容机型</span>
         </div>
         <AppSwitch v-model="settingsStore.settings.deviceFingerprint.customFingerprint" />
       </div>

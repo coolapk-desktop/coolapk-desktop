@@ -2121,10 +2121,10 @@ fn test_device_profile_model_applies_without_custom_device_id() {
 #[test]
 fn test_native_device_profile_survives_settings_sync_and_custom_reset() {
     let mut client = CoolapkClient::new();
-    let native_ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) (#Build; Apple; iPhone17,3; 22A3354; 18.0) +CoolMarket/16.6.5-2610162-universal";
+    let native_ua = "Dalvik/2.1.0 (Linux; U; Android 15; 24117RK2CC Build/actual-build) (#Build; Redmi; 24117RK2CC; actual-build; 15) +CoolMarket/16.6.5-2610162-universal";
     client.native_device_profile = DeviceProfile {
-        manufacturer: Some("Apple".into()), brand: Some("Apple".into()),
-        model: Some("iPhone17,3".into()), build: Some("22A3354".into()),
+        manufacturer: Some("Xiaomi".into()), brand: Some("Redmi".into()),
+        model: Some("24117RK2CC".into()), build: Some("actual-build".into()),
         user_agent: Some(native_ua.into()), ..Default::default()
     };
     let verify = |expected_ua: &str, expected_model_fields: &str| {
@@ -2140,7 +2140,7 @@ fn test_native_device_profile_survives_settings_sync_and_custom_reset() {
     };
     // 前端关闭自定义时仍发送保存的设备 ID，不能抹掉本机信息。
     client.update_device_profile(DeviceProfile { device_id: Some("saved-device-id".into()), ..Default::default() });
-    verify(native_ua, "; Apple; Apple; iPhone17,3; 22A3354;");
+    verify(native_ua, "; Xiaomi; Redmi; 24117RK2CC; actual-build;");
     assert_eq!(client.get_device_info().unwrap()["data"]["defaultProfile"]["source"], "native");
     client.update_device_profile(DeviceProfile {
         device_id: Some("saved-device-id".into()), manufacturer: Some("Xiaomi".into()), brand: Some("Redmi".into()),
@@ -2149,7 +2149,7 @@ fn test_native_device_profile_survives_settings_sync_and_custom_reset() {
     });
     verify("custom-user-agent", "; Xiaomi; Redmi; 24117RK2CC; custom-build;");
     client.update_device_profile(DeviceProfile { device_id: Some("saved-device-id".into()), ..Default::default() });
-    verify(native_ua, "; Apple; Apple; iPhone17,3; 22A3354;");
+    verify(native_ua, "; Xiaomi; Redmi; 24117RK2CC; actual-build;");
 }
 
 // 关注流需要保留官方卡片，不能把内部酷友实体清洗成动态。
