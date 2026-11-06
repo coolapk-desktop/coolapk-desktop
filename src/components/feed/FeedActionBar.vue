@@ -35,7 +35,12 @@
       </button>
     </div>
 
-    <button :class="['action-btn', 'fav-btn', { 'is-fav': isFav }]" @click.stop="toggleFav" title="收藏">
+    <button
+      :class="['action-btn', 'fav-btn', { 'is-fav': isFav, 'is-disabled': !canFav }]"
+      :disabled="!canFav"
+      @click.stop="toggleFav"
+      :title="canFav ? '收藏' : '评论记录不支持收藏'"
+    >
       <OfficialDetailIcon v-if="officialDetail" name="favorite" :active="isFav" class="action-icon" />
       <i v-else :class="[officialDetail ? (isFav ? 'fas fa-star' : 'far fa-star') : (isFav ? 'fas fa-bookmark' : 'far fa-bookmark'), 'action-icon']"></i>
       <span>{{ formatCount(favnum, officialDetail ? (isFav ? '已收藏' : '收藏') : '') }}</span>
@@ -44,7 +49,7 @@
 </template>
 
 <script setup lang="ts">
-import { inject, ref, watch } from 'vue';
+import { computed, inject, ref, watch } from 'vue';
 import { mobileDetailActionsHiddenKey } from '../../composables/useMobileReadingNavigation';
 import OfficialDetailIcon from './OfficialDetailIcon.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
@@ -57,6 +62,11 @@ const detailActionsHidden = inject(mobileDetailActionsHiddenKey, ref(false));
 
 const props = defineProps<{
   feedId: string | number;
+  /** 我的评论等回复列表：feed.id 实际是评论 id，点赞必须走评论接口。 */
+  replyMode?: boolean;
+  replyId?: string | number;
+  /** 评论记录没有独立收藏语义，replyMode 下禁用收藏入口。 */
+  allowFav?: boolean;
   officialDetail?: boolean;
   likenum?: number;
   replynum?: number;
@@ -77,10 +87,13 @@ const emit = defineEmits<{
   (e: 'forward'): void;
   (e: 'open-like-list'): void;
   (e: 'open-forward-list'): void;
+  (e: 'like-changed', payload: { feedId: string | number; liked: boolean; count: number }): void;
 }>();
 
 const isLiked = ref(props.userAction?.like === 1);
 const likeCount = ref(props.likenum || 0);
+const likePending = ref(false);
+const canFav = computed(() => props.allowFav !== false);
 
 const isFav = ref(props.favorited ?? (props.userAction?.collect === 1 || props.userAction?.favorite === 1));
 
@@ -123,17 +136,31 @@ async function toggleLike() {
     authStore.openLoginModal();
     return;
   }
+  // 连点保护：请求未返回前忽略重复点击，避免多个响应乱序落地后 UI 与服务端相反。
+  if (likePending.value) return;
+  // 回复列表里的记录 id 属于评论，点赞目标是评论而不是所属动态。
+  const targetId = String(props.replyMode ? props.replyId : props.feedId);
+  if (!targetId) {
+    showToast(props.replyMode ? '缺少评论标识，无法点赞' : '缺少动态标识，无法点赞', 'error');
+    return;
+  }
   const prevLiked = isLiked.value;
   const prevCount = likeCount.value;
   const nextLiked = !prevLiked;
   isLiked.value = nextLiked;
   likeCount.value = Math.max(0, prevCount + (nextLiked ? 1 : -1));
+  likePending.value = true;
   try {
-    if (nextLiked) {
-      await CoolapkTauriAPI.likeFeed(String(props.feedId));
+    if (props.replyMode) {
+      if (nextLiked) await CoolapkTauriAPI.likeReply(targetId);
+      else await CoolapkTauriAPI.unlikeReply(targetId);
+    } else if (nextLiked) {
+      await CoolapkTauriAPI.likeFeed(targetId);
     } else {
-      await CoolapkTauriAPI.unlikeFeed(String(props.feedId));
+      await CoolapkTauriAPI.unlikeFeed(targetId);
     }
+    // 成功即以本次结果为准，交由卡片回写实体字段，让列表与详情共享同一份数据。
+    emit('like-changed', { feedId: targetId, liked: nextLiked, count: likeCount.value });
   } catch (err: any) {
     isLiked.value = prevLiked;
     likeCount.value = prevCount;
@@ -141,10 +168,13 @@ async function toggleLike() {
     // Preserve the API's error text. A network-related server message does not
     // prove that the request requires an official phone environment.
     showToast(msg, 'error');
+  } finally {
+    likePending.value = false;
   }
 }
 
 function toggleFav() {
+  if (!canFav.value) return;
   emit('toggle-fav');
 }
 
@@ -263,6 +293,11 @@ function shareFeed() {
 .fav-btn.is-fav {
   color: #f59e0b;
   font-weight: 600;
+}
+
+.fav-btn.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 @keyframes heartPulse {

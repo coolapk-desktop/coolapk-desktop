@@ -65,7 +65,7 @@
         <div class="official-share-handle" aria-hidden="true"></div>
         <div class="official-share-tools">
           <button @click="copyFeed(false)"><span><i class="far fa-clone"></i></span>复制</button>
-          <button @click="moreMenuOpen = false; toggleFav()"><span><i class="far fa-star"></i></span>{{ isFav ? '取消收藏' : '收藏' }}</button>
+          <button v-if="!replyMode" @click="moreMenuOpen = false; toggleFav()"><span><i class="far fa-star"></i></span>{{ isFav ? '取消收藏' : '收藏' }}</button>
           <button @click="reportOfficialFeed"><span><i class="far fa-bell"></i></span>举报</button>
         </div>
         <div class="official-share-destinations">
@@ -78,7 +78,7 @@
       </template>
       <div v-else class="desktop-share-tools">
         <button @click="copyFeed(false)"><i class="far fa-copy"></i>复制</button>
-        <button @click="moreMenuOpen = false; toggleFav()"><i class="far fa-star"></i>{{ isFav ? '取消收藏' : '收藏' }}</button>
+        <button v-if="!replyMode" @click="moreMenuOpen = false; toggleFav()"><i class="far fa-star"></i>{{ isFav ? '取消收藏' : '收藏' }}</button>
         <button @click="reportOfficialFeed"><i class="fas fa-flag"></i>举报</button>
         <button @click="moreMenuOpen = false; openForwardDialog()"><i class="fas fa-retweet"></i>动态</button>
         <button @click="openSharePrivate"><i class="far fa-envelope"></i>私信</button>
@@ -213,14 +213,18 @@
       <FeedActionBar
         v-show="!officialMobileDetail || (componentActive && pageVisible && !hasBlockingOverlay)"
         :official-detail="officialMobileDetail"
+        :reply-mode="replyMode"
+        :reply-id="actionReplyId"
+        :allow-fav="!replyMode"
         @write-comment="writeMobileComment"
-        :feed-id="feed.id"
+        :feed-id="actionFeedId"
         :likenum="feed.likenum"
         :replynum="feed.replynum"
-        :favnum="favnum"
+        :favnum="replyMode ? 0 : favnum"
         :sharenum="feed.sharenum"
         :favorited="isFav"
         :user-action="feed.userAction"
+        @like-changed="handleLikeChanged"
         @open-comment="officialMobileDetail ? scrollToMobileComments() : toggleComments()"
         @toggle-fav="toggleFav"
         @forward="openForwardDialog"
@@ -249,10 +253,12 @@
         :format-rich-text="formatRichText"
         @collapse="handleCollapseComments"
         @delete-comment="removeComment"
+        @comment-created="handleCommentCreated"
         @retry-comments="openComments(true)"
         @load-more-comments="loadMoreComments"
         @retry-more-comments="loadMoreComments"
         @comment-sort-change="handleCommentSortChange"
+        @send-comment="handleSendComment"
       />
       <!-- 评论区右下角固定悬浮收起按钮（评论滑动时按钮固定在视口右下角纹丝不动） -->
       <Teleport to="body">
@@ -390,6 +396,7 @@ import {
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
+import { useUserRelationsStore } from '../../stores/userRelations';
 import { registerOpenComments, touchActiveComments, isCommentHostVisible } from '../../utils/activeCommentTracker';
 import { showToast } from '../../utils/toast';
 import { requestConfirmation } from '../../utils/confirm';
@@ -413,6 +420,7 @@ import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from 
 
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
+const userRelations = useUserRelationsStore();
 const router = useRouter();
 const mobileOfficialEnabled = useOfficialMobileFeedDetail();
 const mobileLayout = useMobileLayout();
@@ -455,19 +463,34 @@ const props = defineProps<{
   replyMode?: boolean;
 }>();
 
-const authorFollowing = ref(Number((props.feed.userAction as any)?.followAuthor) === 1);
-const authorFollowPending = ref(false);
-watch(() => (props.feed.userAction as any)?.followAuthor, value => { authorFollowing.value = Number(value) === 1; });
+/**
+ * 操作栏的目标 id：我的回复/评论列表里 feed.id 是评论 id，
+ * 真实动态 id 在 feedId/feed_id 上，不能混用（否则点赞会打到评论 id 的动态）。
+ */
+const actionFeedId = computed(() => {
+  if (!props.replyMode) return String(props.feed.id ?? '');
+  return String((props.feed as any).feedId ?? (props.feed as any).feed_id ?? '');
+});
+/** 回复列表里的评论 id；回复点赞只能用它。 */
+const actionReplyId = computed(() => (props.replyMode ? String(props.feed.id ?? '') : ''));
+
+// 接口返回值只在 store 无缓存时兜底，保证列表/详情/个人页的关注状态一致。
+const authorFollowFallback = ref(Number((props.feed.userAction as any)?.followAuthor) === 1);
+watch(() => (props.feed.userAction as any)?.followAuthor, value => { authorFollowFallback.value = Number(value) === 1; });
+const authorFollowing = computed(() => {
+  const uid = authorUid.value;
+  const cached = uid ? userRelations.getRelation(uid) : undefined;
+  return cached ? cached.isFollow : authorFollowFallback.value;
+});
+const authorFollowPending = computed(() => (authorUid.value ? userRelations.isPending(authorUid.value) : false));
 const officialHotReply = computed(() => { const rows = (props.feed as any).hotReplyRows; if (!Array.isArray(rows)) return null; return rows.flatMap(row => row?.entities || [row]).find(row => row && row.message && (row.username || row.userInfo?.username)) || null; });
 const publishedLocation = computed(() => String((props.feed as any).ip_location || (props.feed as any).ipLocation || (props.feed as any).location || '').replace(/^发布于/, '').trim());
 function isProductTarget(target: any) { return /product|device/.test(String(target.targetType || target.target_type || target.entityType)) || /^\/product\//.test(String(target.url || '')); }
 async function toggleAuthorFollow() {
   if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; }
   if (authorFollowPending.value || !authorUid.value) return;
-  authorFollowPending.value = true;
-  try { if (authorFollowing.value) await CoolapkTauriAPI.unfollowUser(String(authorUid.value)); else await CoolapkTauriAPI.followUser(String(authorUid.value)); authorFollowing.value = !authorFollowing.value; }
-  catch (error) { showToast(getErrorMessage(error, '关注作者失败'), 'error'); }
-  finally { authorFollowPending.value = false; }
+  // 关注关系写入 store（乐观更新 + 并发去重 + 失败回滚 toast），卡片只读 store 值。
+  await userRelations.toggle(String(authorUid.value), authorFollowing.value);
 }
 function navigateToOfficialDetail(scrollTo: 'top' | 'comments') {
   appStore.setFeedDetailContext(String(props.feed.id), props.feed);
@@ -1047,6 +1070,37 @@ function removeComment(id: string | number) {
   comments.value = comments.value.filter((c: any) => String(c.id) !== String(id));
 }
 
+/**
+ * 操作栏点赞成功后回写实体字段：
+ * 列表页与详情页共享同一个 feed 对象，返回列表时不必重新拉取也能显示已赞和一致计数。
+ */
+function handleLikeChanged(payload: { feedId: string | number; liked: boolean; count: number }) {
+  props.feed.userAction = { ...(props.feed.userAction || {}), like: payload.liked ? 1 : 0 };
+  props.feed.likenum = Math.max(0, Number(payload.count) || 0);
+}
+
+/** 评论发表成功后本地累加计数，标题与底栏立即一致，不做整页重拉。 */
+function handleSendComment() {
+  props.feed.replynum = Math.max(0, Number(props.feed.replynum) || 0) + 1;
+}
+
+/**
+ * 就地插入接口返回的新评论，保留已加载的分页、置顶区和滚动位置。
+ * 楼中楼回复（payload.replyId 有值）只更新计数，其楼层由 FeedCommentSection 自行补齐；
+ * 排序由 FeedCommentSection 计算（置顶恒在最前，最新/热门各自重排），这里只放到原始列表最前面。
+ */
+function handleCommentCreated(payload: { comment?: any; replyId?: string } = {}) {
+  if (payload?.replyId) return;
+  const raw = payload?.comment;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  const id = row && typeof row === 'object' ? String(row.id ?? '').trim() : '';
+  if (!row || typeof row !== 'object' || !id) return;
+  if (comments.value.some((item: any) => String(item?.id) === id)) return;
+  comments.value = [row, ...comments.value];
+  // 已经有本地数据后，再次打开评论区不必重新拉第 1 页。
+  if (commentsPage.value < 1) commentsPage.value = 1;
+}
+
 const isFav = ref(
   props.cloudFavorite === true ||
   props.feed.userAction?.collect === 1 ||
@@ -1076,9 +1130,20 @@ let commentsLastItem = '';
 let commentsRequestVersion = 0;
 const hasBlockingOverlay = computed(() => Boolean(dyhShareOpen.value || privateShareOpen.value || appStore.activeImageViewer || appStore.isSearchOpen || appStore.isPublishOpen || authStore.isLoginModalOpen || forwardOpen.value || interactionMode.value || historyDialogOpen.value || collectionPickerOpen.value || moreMenuOpen.value));
 
+/** 收藏状态同样回写实体字段，列表与详情不再各自保存一份副本。 */
+function syncFavoriteToFeed() {
+  props.feed.userAction = { ...(props.feed.userAction || {}), collect: isFav.value ? 1 : 0 };
+  props.feed.favnum = Math.max(0, Number(favnum.value) || 0);
+}
+
 async function toggleFav() {
   if (!authStore.isLoggedIn) {
     authStore.openLoginModal();
+    return;
+  }
+  // 评论记录没有独立收藏语义，不能拿评论 id 去查收藏夹或收藏动态。
+  if (props.replyMode) {
+    showToast('评论暂不支持收藏');
     return;
   }
   if (favoritePending.value) return;
@@ -1101,6 +1166,7 @@ async function toggleFav() {
     if (target) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(target ? '已收藏到云端' : '已取消云端收藏', 'success');
+    syncFavoriteToFeed();
     emit('favorite-changed', { id: props.feed.id, favorited: target });
   } catch (err) {
     showToast(getErrorMessage(err, target ? '收藏失败' : '取消收藏失败'), 'error');
@@ -1180,6 +1246,7 @@ async function confirmCollectionSelection(selectedIds: string[]) {
     if (remainsFavorited) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed.id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(remainsFavorited ? '收藏夹已更新' : '已取消全部云端收藏', 'success');
+    syncFavoriteToFeed();
     collectionPickerOpen.value = false;
     emit('favorite-changed', { id: props.feed.id, favorited: remainsFavorited });
   } catch (err) {
