@@ -2,27 +2,32 @@
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" ref="pageContainerRef" class="page-container custom-scrollbar" @scroll.passive="handlePageScroll">
     <div class="page-header">
       <div class="notification-title-row">
-        <div class="notification-heading">
+        <div class="notification-heading" :class="{ 'notification-tab-heading': !subNoteType }">
           <button type="button" class="header-action-btn" :aria-label="isNotificationRoot ? '返回' : '返回通知中心'" @click="goBack"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
           <h2 class="page-title">{{ currentTabTitle }}</h2>
         </div>
+        <nav v-if="!subNoteType" class="notification-quick-nav" :class="{ 'notification-nav-desktop-only': !isNotificationRoot }" aria-label="通知分类">
+          <button type="button" class="quick-nav-btn notification-list-tab" :aria-current="currentTab === 'list' ? 'page' : undefined" @click="switchTab('list')">通知</button>
+          <button v-for="entry in quickEntries" :key="entry.value" type="button" :class="['quick-nav-btn', entry.countKey]" :aria-current="currentTab === entry.value ? 'page' : undefined" @click="entry.value === 'messages' ? router.push('/messages') : switchTab(entry.value)">
+            <span class="quick-nav-icon">
+              <i v-if="entry.countKey === 'like'" class="fas fa-thumbs-up" aria-hidden="true"></i>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>
+              </span>
+            {{ entry.label }}
+          <span v-if="notificationStore.categoryCounts[entry.countKey] > 0" class="quick-nav-badge">{{ notificationStore.categoryCounts[entry.countKey] > 99 ? '99+' : notificationStore.categoryCounts[entry.countKey] }}</span>
+          </button>
+        </nav>
         <div v-if="isNotificationRoot" class="notification-actions">
           <button type="button" class="header-action-btn" aria-label="全部已读" title="全部已读" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="markAllViewed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19,4C19,4.17 18.96,4.34 18.87,4.49L9.87,20.49C9.6,20.97 8.99,21.14 8.51,20.87C8.39,20.8 8.28,20.71 8.2,20.6L2.2,12.6C2.07,12.43 2,12.22 2,12C2,11.45 2.45,11 3,11C3.31,11 3.61,11.15 3.8,11.4L8.88,18.17L17.13,3.51C17.31,3.2 17.64,3 18,3C18.55,3 19,3.45 19,4ZM18,11C17.45,11 17,11.45 17,12C17,12.55 17.45,13 18,13L21,13C21.55,13 22,12.55 22,12C22,11.45 21.55,11 21,11L18,11ZM16,15C15.45,15 15,15.45 15,16C15,16.55 15.45,17 16,17L21,17C21.55,17 22,16.55 22,16C22,15.45 21.55,15 21,15L16,15ZM14,19C13.45,19 13,19.45 13,20C13,20.55 13.45,21 14,21L21,21C21.55,21 22,20.55 22,20C22,19.45 21.55,19 21,19L14,19Z" /></svg></button>
-          <button type="button" class="header-action-btn" aria-label="全部删除" title="全部删除" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="deleteAllNotifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,3V4H4V6H5V19A2,2 0,0 0,7 21H17A2,2 0,0 0,19 19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z" /></svg></button>
+          <button type="button" class="header-action-btn notification-mobile-delete" aria-label="全部删除" title="全部删除" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="deleteAllNotifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,3V4H4V6H5V19A2,2 0,0 0,7 21H17A2,2 0,0 0,19 19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z" /></svg></button>
+          <details ref="desktopActions" class="notification-desktop-actions" @focusout="closeDesktopActionsOnBlur" @keydown.esc.stop="closeDesktopActions">
+            <summary class="header-action-btn" aria-label="更多操作" title="更多操作"><i class="fas fa-ellipsis" aria-hidden="true"></i></summary>
+            <button type="button" class="notification-menu-delete" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="closeDesktopActions(); deleteAllNotifications()">全部删除</button>
+          </details>
         </div>
       </div>
     </div>
 
-    <nav v-if="isNotificationRoot" class="notification-quick-nav" aria-label="通知分类">
-      <button v-for="entry in quickEntries" :key="entry.value" type="button" :class="['quick-nav-btn', entry.countKey]" @click="entry.value === 'messages' ? router.push('/messages') : switchTab(entry.value)">
-        <span class="quick-nav-icon">
-          <i v-if="entry.countKey === 'like'" class="fas fa-thumbs-up" aria-hidden="true"></i>
-          <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>
-          <span v-if="notificationStore.categoryCounts[entry.countKey] > 0" class="quick-nav-badge">{{ notificationStore.categoryCounts[entry.countKey] > 99 ? '99+' : notificationStore.categoryCounts[entry.countKey] }}</span>
-        </span>
-        {{ entry.label }}
-      </button>
-    </nav>
 
     <div class="content-wrapper">
       <div v-if="!authStore.isLoggedIn" class="empty-wrapper">
@@ -94,6 +99,7 @@
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
 import { formatCommentTime } from '../utils/commentList';
+import { normalizeCoolapkRoute } from '../utils/coolapkRoute';
 import { navigateBack } from '../utils/navigation';
 import { loadFeedFullText } from '../utils/feedFullTextCache';
 import { htmlToPlainText } from '../utils/htmlText';
@@ -152,6 +158,20 @@ const feedSummaries = ref(new Map<string, string>());
 const page = ref(1);
 const hasMore = ref(true);
 const notificationError = ref('');
+const desktopActions = ref<HTMLDetailsElement | null>(null);
+
+function closeDesktopActions() {
+  const details = desktopActions.value;
+  if (!details?.open) return;
+  details.open = false;
+  details.querySelector('summary')?.focus();
+}
+
+function closeDesktopActionsOnBlur(event: FocusEvent) {
+  const details = desktopActions.value;
+  if (details && !(event.relatedTarget instanceof Node && details.contains(event.relatedTarget))) details.open = false;
+}
+
 const pageContainerRef = ref<HTMLElement | null>(null);
 
 /** 兼容旧入口，回复和两种 @ 均归入官方统一通知列表。 */
@@ -535,14 +555,15 @@ async function handleNotifyClick(e: Event, item: any) {
     await openNotificationTarget(item);
     return;
   }
-  if (href && /(?:\/feed\/\d+|\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
-    handleAnchorClick(e);
+  // 使用链接自身的动态 ID，避免把所属通知的评论定位带到分享链接上。
+  const feedRoute = normalizeCoolapkRoute(href);
+  const linkedFeedId = feedRoute?.match(/^\/feed\/(\d+)(?:\?|$)/)?.[1];
+  if (linkedFeedId) {
+    openFeedDetail(router, linkedFeedId);
     return;
   }
-  const feedMatch = href.match(/^\/feed\/(\d+)/);
-  if (feedMatch?.[1]) {
-    e.preventDefault();
-    openFeedDetail(router, feedMatch[1], item);
+  if (/(?:\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
+    handleAnchorClick(e);
     return;
   }
   const notification = {
@@ -650,29 +671,31 @@ async function refreshMobilePage() { await refreshNotifications(); }
 }
 
 .notification-title-row {
-  min-height: 56px;
-  padding: 0 max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  padding-inline: max(4px, env(safe-area-inset-left)) max(4px, env(safe-area-inset-right));
 }
 .notification-heading, .notification-actions { display: flex; align-items: center; gap: 8px; }
+.notification-heading { min-height: 56px; }
+.notification-actions { grid-column: 2; grid-row: 1; }
+.notification-desktop-actions { display: none; }
 .page-title { margin: 0; color: var(--text-primary); font-size: calc(var(--font-size-body) + 4px); font-weight: 500; }
 .header-action-btn { display: grid; place-items: center; width: 48px; height: 48px; padding: 0; color: var(--text-primary); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
 .header-action-btn svg { width: 24px; height: 24px; fill: currentColor; }
 .header-action-btn:hover:not(:disabled) { background: var(--background); }
 .header-action-btn:disabled { color: var(--text-disabled); cursor: default; }
 
-.notification-quick-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 16px 24px; background: var(--surface); }
-.quick-nav-btn { display: grid; justify-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.45; cursor: pointer; }
+.notification-quick-nav { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 16px 24px; background: var(--surface); }
+.quick-nav-btn { position: relative; display: grid; justify-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.45; cursor: pointer; }
+.notification-list-tab, .notification-nav-desktop-only { display: none; }
 .quick-nav-btn.like { --quick-tint: #f44336; }
 .quick-nav-btn.follow { --quick-tint: #2196f3; }
 .quick-nav-btn.message { --quick-tint: #ff9800; }
 .quick-nav-icon { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: color-mix(in srgb, var(--quick-tint) 10%, transparent); color: var(--quick-tint); font-size: 26px; }
 .quick-nav-icon svg { width: 28px; height: 28px; fill: currentColor; }
 .quick-nav-badge, .notify-unread-badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; box-sizing: border-box; padding: 0 4px; border-radius: 999px; background: #f44336; color: #fff; font-size: 11px; line-height: 1; }
-.quick-nav-badge { position: absolute; top: -8px; right: -8px; min-width: 17px; height: 17px; font-size: 12px; }
+.quick-nav-badge { position: absolute; top: -8px; left: calc(50% + 19px); min-width: 17px; height: 17px; font-size: 12px; }
 
 .content-wrapper { min-height: 200px; padding-bottom: var(--space-5); }
 
@@ -723,7 +746,7 @@ async function refreshMobilePage() { await refreshNotifications(); }
 .notify-profile:disabled { cursor: default; }
 .notify-meta { display: flex; align-items: center; min-height: 32px; }
 .notify-time { font-size: var(--notification-font-caption); color: var(--text-tertiary); }
-.page-container button:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+.page-container :is(button, summary):focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 
 .load-more-wrapper {
   display: flex;
@@ -760,40 +783,94 @@ async function refreshMobilePage() { await refreshNotifications(); }
   font-size: var(--notification-font-caption);
 }
 
-/* 桌面按通知内容区的宽度适配，侧栏挤窄时回到紧凑布局。 */
-@media (hover: hover) and (pointer: fine) {
-  @container notification-page (min-width: 720px) {
-    .notification-title-row,
-    .notification-quick-nav,
-    .content-wrapper {
-      box-sizing: border-box;
-      max-width: 760px;
-      margin-inline: auto;
-    }
+/* 桌面卡片铺满内容区，工具栏按可用宽度切换布局。 */
+@media (min-width: 721px) and (hover: hover) and (pointer: fine) {
+  .content-wrapper { padding: 12px 16px var(--space-5); }
+  .notification-list { display: grid; gap: 12px; }
+  .notify-card {
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+  }
+  .notify-card:hover, .notify-card:focus-within { border-color: var(--text-secondary); }
+  .notify-card + .notify-card::before { content: none; }
+  /* 桌面沿用旧版卡片的昵称、时间与正文排列。 */
+  .notify-content { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .notify-body { display: contents; }
+  .notify-body-text { display: contents; }
+  .notify-header { grid-area: 1 / 1; }
+  .notify-user { font-weight: var(--font-weight-semibold); }
+  .notify-meta { grid-area: 1 / 2; min-height: 0; justify-self: end; white-space: nowrap; }
+  .notify-action, .notify-message, .notify-target { grid-column: 1; }
+  .notify-target { order: 1; }
+  .notify-image { grid-area: 2 / 2; justify-self: end; }
+  .notify-right-text {
+    grid-column: 1 / -1;
+    order: 2;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--background);
+    font-size: var(--notification-font-secondary);
+    line-height: 1.45;
+  }
 
-    .notification-title-row { padding-inline: 8px; }
-    .notification-quick-nav {
-      display: flex;
-      gap: 12px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border-light, var(--border));
-    }
-    .quick-nav-btn {
+  @container notification-page (min-width: 720px) {
+    .notification-title-row {
       display: flex;
       align-items: center;
-      min-height: 44px;
-      padding: 4px 12px 4px 4px;
-      border-radius: 8px;
+      gap: 16px;
+      padding-inline: 16px;
+      border-bottom: 1px solid var(--border-light, var(--border));
     }
-    .quick-nav-btn:hover { background: var(--background); }
-    .quick-nav-icon { width: 32px; height: 32px; border-radius: 8px; font-size: 16px; }
-    .quick-nav-icon svg { width: 20px; height: 20px; }
-    .quick-nav-badge { top: -4px; right: -6px; }
-    .content-wrapper { background: var(--surface); }
-    .notify-card { padding-bottom: 12px; }
-    .notify-meta { min-height: 0; margin-top: 6px; }
-    .notify-image { flex-basis: 56px; width: 56px; height: 56px; }
-    .notify-right-text { flex-basis: 112px; font-size: var(--notification-font-caption); line-height: 1.4; }
+    .notification-tab-heading, .notification-mobile-delete, .quick-nav-icon { display: none; }
+    .notification-actions { margin-inline-start: auto; gap: 2px; }
+    .notification-heading { min-height: 52px; flex-shrink: 0; }
+    .notification-quick-nav { display: flex; gap: 16px; padding: 0; }
+    .quick-nav-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      min-height: 48px;
+      padding: 8px 6px;
+      font-weight: 500;
+      white-space: nowrap;
+      font-size: var(--notification-font-secondary);
+      color: var(--text-secondary);
+    }
+    .quick-nav-btn:hover, .quick-nav-btn[aria-current="page"] { color: var(--text-primary); }
+    .quick-nav-btn[aria-current="page"] { font-weight: 700; }
+    .quick-nav-btn[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      bottom: 6px;
+      left: 50%;
+      translate: -50% 0;
+      width: 22px;
+      height: 3px;
+      border-radius: var(--radius-full);
+      background: var(--brand-primary);
+    }
+    .notification-menu-delete:hover:not(:disabled) { background: var(--background); }
+    .quick-nav-badge { position: static; order: 1; }
+    .header-action-btn { width: 36px; height: 36px; }
+    .header-action-btn svg { width: 20px; height: 20px; }
+    .notification-desktop-actions { display: block; position: relative; }
+    .notification-desktop-actions summary { list-style: none; }
+    .notification-desktop-actions summary::-webkit-details-marker { display: none; }
+    .notification-menu-delete {
+      position: absolute;
+      inset-inline-end: 0;
+      top: calc(100% + 4px);
+      min-width: 112px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--danger);
+      font-size: var(--notification-font-secondary);
+      cursor: pointer;
+    }
+    .notification-menu-delete:disabled { color: var(--text-disabled); cursor: default; }
   }
 }
 

@@ -244,9 +244,8 @@ describe('通知评论点击入口', () => {
       expect(wrapper.find('.notify-message img.coolapk-emoji').exists()).toBe(true);
       expect(wrapper.get('.notify-message a').attributes('href')).toBe(url);
       await wrapper.get('.notify-message a').trigger('click'); await flushPromises();
-      expect(mocks.anchor).toHaveBeenCalledOnce();
+      expect(mocks.openFeed).toHaveBeenCalledExactlyOnceWith(expect.anything(), '72357393');
       expect(mocks.reply).not.toHaveBeenCalled();
-      expect(mocks.openFeed).not.toHaveBeenCalled();
     } finally { wrapper.unmount(); }
   });
 
@@ -274,8 +273,7 @@ describe('通知评论点击入口', () => {
       expect(wrapper.get('.notify-message a').text()).toBe('【动态】#微信# 稳了俩月');
       expect(wrapper.get('.notify-message a').attributes('href')).toBe('/feed/72357393');
       await wrapper.get('.notify-message a').trigger('click'); await flushPromises();
-      expect(mocks.anchor).toHaveBeenCalledOnce();
-      expect(mocks.openFeed).not.toHaveBeenCalled();
+      expect(mocks.openFeed).toHaveBeenCalledExactlyOnceWith(expect.anything(), '72357393');
     } finally { wrapper.unmount(); }
   });
 
@@ -312,8 +310,7 @@ describe('通知评论点击入口', () => {
     expect(mocks.openFeed).toHaveBeenLastCalledWith(expect.anything(), '333', item, '222');
     mocks.openFeed.mockClear();
     await wrapper.get('.notify-message a').trigger('click'); await flushPromises();
-    expect(mocks.anchor).toHaveBeenCalledOnce();
-    expect(mocks.openFeed).not.toHaveBeenCalled();
+    expect(mocks.openFeed).toHaveBeenCalledExactlyOnceWith(expect.anything(), '72357393');
     await wrapper.get('.notify-avatar-wrap').trigger('click');
     await wrapper.get('.notify-user').trigger('click');
     expect(mocks.push).toHaveBeenCalledTimes(2);
