@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   sendPrivateMessage: vi.fn(),
   sendPrivateImage: vi.fn(),
   followUser: vi.fn(),
+  unfollowUser: vi.fn(),
   uploadImage: vi.fn(),
   readMessage: vi.fn(),
   getPublicUserProfile: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock('../../api/coolapk', () => ({
     sendPrivateMessage: mocks.sendPrivateMessage,
     sendPrivateImage: mocks.sendPrivateImage,
     followUser: mocks.followUser,
+    unfollowUser: mocks.unfollowUser,
     uploadImage: mocks.uploadImage,
     readMessage: mocks.readMessage,
     getPublicUserProfile: mocks.getPublicUserProfile,
@@ -61,6 +63,7 @@ window.URL.revokeObjectURL = mocks.revokeObjectURL;
 import MessagesPage from '../MessagesPage.vue';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
+import { useUserRelationsStore } from '../../stores/userRelations';
 import { clearMessageDraft, loadMessageDraft, saveMessageDraft } from '../../utils/messageDrafts';
 
 describe('MessagesPage 粘贴图片发送功能', () => {
@@ -124,6 +127,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     mocks.sendPrivateImage.mockResolvedValue({ data: [{ id: 999, message_pic: '/message/2026/09/test_image.jpg' }] });
     mocks.sendPrivateMessage.mockResolvedValue({ data: [{ id: 1000, message: '测试文本' }] });
     mocks.followUser.mockResolvedValue({ code: 200 });
+    mocks.unfollowUser.mockResolvedValue({ code: 200 });
     mocks.getPublicUserProfile.mockResolvedValue({ data: { isFollow: 0 } });
     mocks.requestConfirmation.mockResolvedValue(true);
     mocks.readMessage.mockResolvedValue({ code: 200 });
@@ -278,6 +282,68 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     expect(mocks.followUser).toHaveBeenCalledWith('20002');
     expect(mocks.showToast).toHaveBeenCalledWith('关注成功', 'success');
     expect(w.find('.follow-action-btn').exists()).toBe(false);
+  });
+
+  it('私信关注提示走 userRelations store：成功后写入关注关系并移除提示', async () => {
+    const relations = useUserRelationsStore();
+    expect(relations.getRelation('20002')).toBeUndefined();
+    const historySession = {
+      ukey: '10001_20002',
+      id: '10001_20002',
+      uid: 20002,
+      fromuid: 20002,
+      entityId: 20002,
+      messageUid: 20002,
+      messageUsername: '好友酷友',
+      username: '好友酷友',
+      message: '你好',
+      dateline: 1700000000,
+      isNewConversation: false,
+    };
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([historySession]));
+    mocks.listMessages.mockResolvedValue({ data: [historySession] });
+    mocks.listChatHistory.mockResolvedValue({
+      data: [{ id: 'follow-tip-1', entityId: 'follow-tip-1', entityType: 'messageExtra', entityTemplate: 'float', title: '关注对方即可让TA与你无限制聊天' }],
+    });
+
+    const w = await mountMessagesPage();
+    await w.find('.follow-action-btn').trigger('click');
+    await flushPromises();
+
+    // 关注接口仍由 store 统一发起，页面不再直连 CoolapkTauriAPI.followUser。
+    expect(mocks.followUser).toHaveBeenCalledWith('20002');
+    expect(relations.getRelation('20002')?.isFollow).toBe(true);
+    expect(w.find('.follow-action-btn').exists()).toBe(false);
+  });
+
+  it('关注失败时由 store 回滚关注关系', async () => {
+    const relations = useUserRelationsStore();
+    mocks.followUser.mockRejectedValueOnce(new Error('关注失败'));
+    const historySession = {
+      ukey: '10001_20002',
+      id: '10001_20002',
+      uid: 20002,
+      fromuid: 20002,
+      entityId: 20002,
+      messageUid: 20002,
+      messageUsername: '好友酷友',
+      username: '好友酷友',
+      message: '你好',
+      dateline: 1700000000,
+      isNewConversation: false,
+    };
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([historySession]));
+    mocks.listMessages.mockResolvedValue({ data: [historySession] });
+    mocks.listChatHistory.mockResolvedValue({
+      data: [{ id: 'follow-tip-1', entityId: 'follow-tip-1', entityType: 'messageExtra', entityTemplate: 'float', title: '关注对方即可让TA与你无限制聊天' }],
+    });
+
+    const w = await mountMessagesPage();
+    await w.find('.follow-action-btn').trigger('click');
+    await flushPromises();
+
+    expect(relations.getRelation('20002')).toBeUndefined();
+    expect(w.find('.follow-action-btn').exists()).toBe(true);
   });
 
   it('普通 messageExtra 即使文本包含关注也不显示关注按钮', async () => {

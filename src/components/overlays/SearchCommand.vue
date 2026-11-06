@@ -142,6 +142,7 @@ import EmptyState from '../common/EmptyState.vue';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, searchHistory } from '../../utils/searchHistory';
 import type { SearchEntity } from '../../types/search';
 import {
+  deduplicateSearchEntities,
   extractHotSearchKeywords,
   extractSearchEntities,
   getSearchEntityKind,
@@ -223,12 +224,13 @@ async function runSearch(keyword: string, requestVersion: number) {
   try {
     // 结果区与联想区互不牵连：任一失败都不能把另一块伪装成“没有结果”。
     const [searchOutcome, suggestionOutcome] = await Promise.allSettled([
-      CoolapkTauriAPI.searchAll(keyword, 1),
+      // 与搜索页保持一致：走同一个 searchByType(all) 接口，保证面板里看到的结果点击后落地页结果相同。
+      CoolapkTauriAPI.searchByType({ searchType: 'all', query: keyword, page: 1 }),
       fetchSearchSuggestions(keyword),
     ]);
     if (requestVersion !== searchRequestVersion) return;
     if (searchOutcome.status === 'fulfilled') {
-      results.value = deduplicateSearchResults(searchOutcome.value).slice(0, 8);
+      results.value = deduplicateSearchEntities(extractSearchEntities(searchOutcome.value).filter(isNavigableSearchEntity)).slice(0, 8);
       // 联想项与即时结果同屏展示，先去掉标题重复的条目，避免同一个目标出现两次。
       const resultTitles = new Set(results.value.map(getSearchEntityTitle));
       const suggestions = suggestionOutcome.status === 'fulfilled' ? suggestionOutcome.value : [];
@@ -276,7 +278,7 @@ watch(query, (val) => {
   }, SEARCH_DEBOUNCE_MS);
 });
 
-// 将搜索结果链接归一为桌面路由后去重，同一话题优先保留明确的话题实体。
+// 将搜索结果链接归一为桌面路由，用于跳转与话题判定；去重仍统一按「类型:id」，与搜索页共用同一实现。
 function getSearchResultRoute(item: SearchEntity): string | null {
   const url = getSearchEntityUrl(item);
   const route = getSearchEntityRoute(item) || normalizeCoolapkDeepLink(url) || normalizeCoolapkRoute(url);
@@ -285,26 +287,6 @@ function getSearchResultRoute(item: SearchEntity): string | null {
 
 function isTopicSearchResult(item: SearchEntity): boolean {
   return getSearchEntityKind(item) === 'topic' || /^\/topic\//i.test(getSearchResultRoute(item) || '');
-}
-
-function deduplicateSearchResults(response: unknown): SearchEntity[] {
-  const unique: SearchEntity[] = [];
-  const routeIndexes = new Map<string, number>();
-  for (const item of extractSearchEntities(response).filter(isNavigableSearchEntity)) {
-    const route = getSearchResultRoute(item);
-    if (!route) {
-      unique.push(item);
-      continue;
-    }
-    const existingIndex = routeIndexes.get(route);
-    if (existingIndex === undefined) {
-      routeIndexes.set(route, unique.length);
-      unique.push(item);
-    } else if (getSearchEntityKind(item) === 'topic' && getSearchEntityKind(unique[existingIndex]) !== 'topic') {
-      unique[existingIndex] = item;
-    }
-  }
-  return unique;
 }
 
 // 与搜索页一致：点击历史/热门词直接发起搜索，不再要求用户再按一次回车。

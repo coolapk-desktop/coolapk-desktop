@@ -309,6 +309,7 @@ import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
 import { useNotificationStore } from '../stores/notifications';
 import { useSettingsStore } from '../stores/settings';
+import { useUserRelationsStore } from '../stores/userRelations';
 import { useShortcutHints } from '../composables/useShortcutHints';
 import AppAvatar from '../components/common/AppAvatar.vue';
 import AppImage from '../components/common/AppImage.vue';
@@ -345,6 +346,7 @@ const router = useRouter();
 const authStore = useAuthStore();
 const notificationStore = useNotificationStore();
 const settingsStore = useSettingsStore();
+const userRelations = useUserRelationsStore();
 const showShortcutHints = useShortcutHints();
 const currentUserUid = computed(() => authStore.user?.uid || '');
 
@@ -1851,12 +1853,13 @@ const handleFollowPartner = async () => {
 
   followingPartner.value = true;
   try {
-    await CoolapkTauriAPI.followUser(partnerUid);
+    // 关注关系统一走 userRelations store：并发去重、乐观更新与失败回滚提示都由 store 负责。
+    // 该提示只在未关注时出现，点击语义恒为「关注」，因此当前状态按 false 传入 toggle。
+    const followed = await userRelations.toggle(partnerUid, false);
+    if (!followed) return;
     // APK 关注成功后只移除当前会话的顶部提示，不改写历史消息，也不查询用户资料。
     removeFollowTipFromSession(sessionKey);
     showToast('关注成功', 'success');
-  } catch (err: any) {
-    showToast(err?.message || '关注操作失败，请稍后重试', 'error');
   } finally {
     followingPartner.value = false;
   }

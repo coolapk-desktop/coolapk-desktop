@@ -114,7 +114,7 @@ import { orderSearchTabs } from '../utils/searchTabOrder';
 import type { SearchEntity, SearchTabDefinition, SearchTabState } from '../types/search';
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, removeSearchHistory, searchHistory } from '../utils/searchHistory';
-import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntityRoute, getSearchEntitySearchTarget, getSearchEntityTitle, getSearchEntityUid, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
+import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityIdentity, getSearchEntityKind, getSearchEntityRoute, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
 import { fetchSearchSuggestions } from '../utils/searchSuggestions';
 import { readSearchUsersCollapsed, writeSearchUsersCollapsed } from '../utils/searchUserGroup';
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
@@ -248,14 +248,6 @@ function entityKey(entity: SearchEntity, index: number): string {
   return `${getSearchEntityId(entity) || getSearchEntityTitle(entity) || 'entity'}-${index}`;
 }
 
-// 不同类型可能复用同一 ID，用户结果也可能只提供 UID。
-function entityIdentity(entity: SearchEntity): string {
-  const kind = getSearchEntityKind(entity);
-  const id = (kind === 'user' ? getSearchEntityUid(entity) : '') || getSearchEntityId(entity);
-  const title = getSearchEntityTitle(entity);
-  return id ? JSON.stringify([kind, 'id', id]) : title ? JSON.stringify([kind, 'title', title]) : '';
-}
-
 const usersCollapsed = ref(readSearchUsersCollapsed());
 
 // 综合页才把用户名命中的用户单独成组；其他页签和范围搜索保持服务端顺序。
@@ -380,9 +372,9 @@ async function fetchTab(tabKey: string, loadMore = false) {
       rows = extractRows(response);
     }
     // 翻页追加时才与旧列表去重，刷新首页时应以新结果替换旧列表。
-    const existing = new Set(loadMore ? state.items.map(entityIdentity) : []);
+    const existing = new Set(loadMore ? state.items.map(getSearchEntityIdentity) : []);
     const uniqueRows = rows.filter((item) => {
-      const key = entityIdentity(item);
+      const key = getSearchEntityIdentity(item);
       if (key && existing.has(key)) return false;
       if (key) existing.add(key);
       return true;
