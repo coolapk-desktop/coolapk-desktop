@@ -9,6 +9,8 @@ import { clearRecentEmojis } from '../../../utils/recentEmojis';
 const mocks = vi.hoisted(() => ({
   getReplyDetail: vi.fn(),
   getSubReplies: vi.fn(),
+  deleteReply: vi.fn(),
+  confirm: vi.fn(),
   replyFeed: vi.fn(),
   getDeviceInfo: vi.fn(),
   uploadImage: vi.fn(),
@@ -28,10 +30,13 @@ vi.mock('../../../utils/devicePresets', async (original) => ({
   loadDevicePresets: async () => [{ id: '1', brand: 'Redmi', label: 'Redmi Note 13 Pro+', model: '23090RA98C', device: 'zircon' }],
 }));
 
+vi.mock('../../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
+
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
     getReplyDetail: mocks.getReplyDetail,
     getSubReplies: mocks.getSubReplies,
+    deleteReply: mocks.deleteReply,
     replyFeed: mocks.replyFeed,
     getDeviceInfo: mocks.getDeviceInfo,
     uploadImage: mocks.uploadImage,
@@ -589,6 +594,31 @@ describe('评论完整信息展示', () => {
     try {
       expect(wrapper.findAll('.badge-author')).toHaveLength(2);
       expect(wrapper.find('.badge-identity').exists()).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('自己的分页回复可通过菜单删除，其他人的回复保留', async () => {
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    auth.user = { uid: '999', username: '本人' } as any;
+    mocks.confirm.mockResolvedValue(true);
+    mocks.deleteReply.mockResolvedValue({ code: 200 });
+    mocks.getSubReplies.mockResolvedValue({ data: [
+      { id: 'mine', fromuid: '999', message: '本人回复' },
+      { id: 'other', uid: '998', message: '他人回复' },
+    ] });
+    const wrapper = mountSection({ replyRowsMore: 1, replynum: 2 });
+    try {
+      await wrapper.get('.sub-more-btn').trigger('click');
+      await flushPromises();
+      const mine = wrapper.get('[data-context-comment-id="mine"]');
+      expect(mine.attributes('data-can-delete-reply')).toBe('true');
+      expect(wrapper.get('[data-context-comment-id="other"]').attributes('data-can-delete-reply')).toBe('false');
+      mine.element.dispatchEvent(new Event('coolapk-delete-reply'));
+      await flushPromises();
+      expect(mocks.deleteReply).toHaveBeenCalledExactlyOnceWith('mine');
+      expect(wrapper.find('[data-context-comment-id="mine"]').exists()).toBe(false);
+      expect(wrapper.find('[data-context-comment-id="other"]').exists()).toBe(true);
     } finally { wrapper.unmount(); }
   });
 

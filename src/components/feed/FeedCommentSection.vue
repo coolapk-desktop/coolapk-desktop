@@ -339,6 +339,8 @@
               data-context-kind="comment"
               :data-context-feed-id="feedId"
               :data-context-comment-id="sub.id"
+              :data-can-delete-reply="isOwn(sub) && !!sub.id"
+              @coolapk-delete-reply.stop="handleDeleteSubReply(sub)"
               :data-comment-username="sub.username || sub.fromUserName || '酷友'"
               :data-comment-text="getCommentText(sub)"
               @click="handleSubReplyClick($event, sub, c)"
@@ -429,11 +431,12 @@
                     <span>{{ getLikeCount(sub) > 0 ? formatLikeCount(getLikeCount(sub)) : '赞' }}</span>
                   </button>
                   <button
-                    v-if="isOwn(sub)"
+                    v-if="isOwn(sub) && sub.id"
                     type="button"
+                    :disabled="deletingSubReplyIds.has(String(sub.id))"
                     class="comment-delete-btn sub-delete-btn"
                     aria-label="删除回复"
-                    @click.stop="handleDeleteSubReply(c, sub)"
+                    @click.stop="handleDeleteSubReply(sub)"
                   >
                     <i class="fa-solid fa-trash-can"></i>
                     删除
@@ -932,7 +935,7 @@ function hasCommentDetails(item: any): boolean {
 const myUid = computed(() => (authStore.isLoggedIn ? String(authStore.user?.uid ?? '').trim() : ''));
 
 function getCommentUid(item: any): string {
-  return String(item?.uid || item?.fromUid || item?.userId || item?.userInfo?.uid || item?.user_info?.uid || '').trim();
+  return String(item?.uid || item?.fromUid || item?.fromuid || item?.userId || item?.userInfo?.uid || item?.user_info?.uid || item?.user?.uid || '').trim();
 }
 
 function isOwn(item: any): boolean {
@@ -962,27 +965,33 @@ async function handleDeleteComment(comment: any) {
   }
 }
 
-async function handleDeleteSubReply(floor: any, sub: any) {
-  const confirmed = await requestConfirmation({
-    title: '删除回复',
-    message: '确定要删除这条回复吗？',
-    confirmText: '删除',
-    danger: true
-  });
-  if (!confirmed) return;
+const deletingSubReplyIds = ref(new Set<string>());
+
+async function handleDeleteSubReply(sub: any) {
+  const replyId = String(sub?.id ?? '').trim();
+  if (!replyId || !isOwn(sub) || deletingSubReplyIds.value.has(replyId) || deletedCommentIds.value.has(replyId)) return;
+  const feedId = props.feedId;
+  deletingSubReplyIds.value.add(replyId);
   try {
-    const res = await CoolapkTauriAPI.deleteReply(String(sub.id));
-    if (res && res.code === 200) {
+    const confirmed = await requestConfirmation({
+      title: '删除回复',
+      message: '确定要删除这条回复吗？',
+      confirmText: '删除',
+      danger: true
+    });
+    if (!confirmed || !isOwn(sub) || props.feedId !== feedId) return;
+    const res = await CoolapkTauriAPI.deleteReply(replyId);
+    if (res?.code === 200) {
+      // 预览、置顶和分页回复共享同一个删除标记，后到的列表也不会重新显示该回复。
+      if (props.feedId === feedId) deletedCommentIds.value.add(replyId);
       showToast('回复已删除');
-      const source = props.comments.find((c: any) => String(c.id) === String(floor.id));
-      if (source && Array.isArray(source.replyRows)) {
-        source.replyRows = source.replyRows.filter((r: any) => String(r.id) !== String(sub.id));
-      }
     } else {
       showToast(res?.message || '删除回复失败', 'error');
     }
-  } catch (err: any) {
-    showToast(getErrorMessage(err, '删除回复失败'), 'error');
+  } catch (error) {
+    showToast(getErrorMessage(error, '删除回复失败'), 'error');
+  } finally {
+    deletingSubReplyIds.value.delete(replyId);
   }
 }
 
@@ -1194,7 +1203,8 @@ function getSubReplyRows(floor: any): any[] {
   const rows = state?.loaded
     ? state.items.map(mergeReplyDetail)
     : mergeSubReplyRows(getEmbeddedSubReplies(floor), state?.items || []);
-  return authorOnly.value && !props.preserveApiOrder ? collectAuthorReplies(rows) : rows;
+  const visibleRows = rows.filter(item => !deletedCommentIds.value.has(String(item.id)));
+  return authorOnly.value && !props.preserveApiOrder ? collectAuthorReplies(visibleRows) : visibleRows;
 }
 
 function ensureSubReplyState(floor: any): SubReplyState | null {

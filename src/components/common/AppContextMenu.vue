@@ -70,6 +70,7 @@ type ContextState = {
   commentId: string;
   commentUsername: string;
   commentText: string;
+  commentElement?: HTMLElement;
   messageUkey?: string;
   messageId?: string;
   messageIsNew?: boolean;
@@ -193,6 +194,7 @@ function buildContext(event: ContextPoint): ContextState | null {
       feedText: '',
       feedUrl: '',
       commentId: comment.dataset.contextCommentId || '',
+      commentElement: comment,
       commentUsername: comment.dataset.commentUsername || '',
       commentText: comment.dataset.commentText || element.textContent?.trim() || '',
     };
@@ -376,10 +378,17 @@ function createItems(state: ContextState): MenuItem[] {
   }
 
   if (state.kind === 'comment') {
-    return [
+    const items = [
       item('reply-comment', '回复评论', 'fas fa-reply', () => replyComment(state)),
       item('copy-comment', '复制评论', 'far fa-copy', () => copyText(state.commentText)),
     ];
+    const comment = state.commentElement;
+    if (comment?.dataset.canDeleteReply === 'true') {
+      items.push(item('delete-reply', '删除回复', 'far fa-trash-alt', () => {
+        comment.dispatchEvent(new Event('coolapk-delete-reply'));
+      }, { danger: true }));
+    }
+    return items;
   }
 
   if (state.kind === 'image') {
