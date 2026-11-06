@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { RouteLocationNormalizedLoaded } from 'vue-router';
-import { describePageTab, getPageTabId, getSearchPageComponentKey, getSearchPageScopeKey, getSearchScopeFromComponentKey, refreshPageTabGeneration } from '../pageTabs';
+import { describePageTab, getKeepAliveMax, getPageComponentKey, getPageInstanceKey, getPageTabId, getSearchPageComponentKey, getSearchPageScopeKey, getSearchScopeFromComponentKey, refreshPageTabGeneration } from '../pageTabs';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 import { usePageTabsStore } from '../../stores/pageTabs';
 
@@ -93,6 +93,60 @@ describe('搜索页实例 key', () => {
 
     expect(getPageTabId(global)).toBe(getPageTabId(globalOtherTab));
     expect(getPageTabId(global)).not.toBe(getPageTabId(scoped));
+  });
+});
+
+describe('页面实例 key（keep-alive 槽位）', () => {
+  it('同一实体的临时 query 不额外占槽位', () => {
+    const base = route('/topic/摄影', 'Topic', { tag: '摄影' });
+    const sorted = route('/topic/摄影', 'Topic', { tag: '摄影' }, { type: 'latest' });
+    const titled = route('/topic/摄影', 'Topic', { tag: '摄影' }, { title: '摄影圈' });
+    const rated = route('/topic/摄影', 'Topic', { tag: '摄影' }, { ratingDetail: '1' });
+
+    expect(getPageComponentKey(sorted, 0)).toBe(getPageComponentKey(base, 0));
+    expect(getPageComponentKey(titled, 0)).toBe(getPageComponentKey(base, 0));
+    expect(getPageComponentKey(rated, 0)).toBe(getPageComponentKey(base, 0));
+    expect(getPageComponentKey(rated, 0)).toBe(getPageInstanceKey(base) + ':0');
+  });
+
+  it('结构化 query 与不同实体照旧分开占槽位', () => {
+    const likes = route('/my', 'My', {}, { section: 'my_likes' });
+    const comments = route('/my', 'My', {}, { section: 'my_comments' });
+    const topicA = route('/topic/摄影', 'Topic', { tag: '摄影' });
+    const topicB = route('/topic/数码', 'Topic', { tag: '数码' });
+
+    expect(getPageComponentKey(likes, 0)).not.toBe(getPageComponentKey(comments, 0));
+    expect(getPageComponentKey(topicA, 0)).not.toBe(getPageComponentKey(topicB, 0));
+  });
+
+  it('Ctrl+R 刷新的代数仍改变 key，/topics 与 /search 保持既有实例范围', () => {
+    const topic = route('/topic/摄影', 'Topic', { tag: '摄影' });
+    expect(getPageComponentKey(topic, 1)).not.toBe(getPageComponentKey(topic, 0));
+    expect(getPageComponentKey(route('/topics', 'Topics'), 4)).toBe('/topics:4');
+    const search = route('/search', 'Search', {}, { q: '小米', tab: 'all' });
+    expect(getPageComponentKey(search, 2)).toBe(getSearchPageComponentKey(search, 2));
+  });
+
+  it('实例绑定参数继续区分实例，避免复用陈旧页面', () => {
+    const detail = route('/feed/100', 'FeedDetail', { feedId: '100' });
+    const replyEntry = route('/feed/100', 'FeedDetail', { feedId: '100' }, { replyId: '5' });
+    const commentsEntry = route('/feed/100', 'FeedDetail', { feedId: '100' }, { scrollTo: 'comments' });
+    const selector = route('/product-selector', 'ProductSelector', {}, { callFunction: 'indexSearch' });
+    const otherSelector = route('/product-selector', 'ProductSelector', {}, { callFunction: 'brandList' });
+
+    expect(getPageComponentKey(replyEntry, 0)).not.toBe(getPageComponentKey(detail, 0));
+    expect(getPageComponentKey(commentsEntry, 0)).not.toBe(getPageComponentKey(detail, 0));
+    expect(getPageComponentKey(replyEntry, 0)).not.toBe(getPageComponentKey(commentsEntry, 0));
+    expect(getPageComponentKey(selector, 0)).not.toBe(getPageComponentKey(otherSelector, 0));
+  });
+
+  it('keep-alive 上限跟随已开页签数量', () => {
+    expect(getKeepAliveMax(0)).toBe(15);
+    expect(getKeepAliveMax(3)).toBe(15);
+    expect(getKeepAliveMax(10)).toBe(15);
+    expect(getKeepAliveMax(11)).toBe(16);
+    expect(getKeepAliveMax(30)).toBe(35);
+    expect(getKeepAliveMax(Number.NaN)).toBe(15);
   });
 });
 

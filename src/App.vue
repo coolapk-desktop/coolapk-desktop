@@ -1,10 +1,11 @@
 <template>
   <AppShell>
     <router-view v-slot="{ Component, route }">
-      <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面以 route.fullPath 独立入栈 -->
+      <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面按「页面实例身份」入栈（见 getPageComponentKey） -->
       <div class="route-transition-stage" :style="{ '--feed-detail-native-easing': feedDetailEasing }">
       <Transition :name="feedDetailTransition">
-      <keep-alive :max="15">
+      <!-- 缓存槽位随已开页签增长：长浏览不会把仍在使用的列表挤出缓存，返回时位置与分页都还在 -->
+      <keep-alive :max="keepAliveMax">
         <component
           :is="Component"
           :key="getRouteKey(route)"
@@ -204,7 +205,7 @@ import { useOfficialMobileFeedDetail } from './composables/useOfficialMobileFeed
 import { registerGlobalSelectionClear } from './utils/selection';
 import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
-import { getSearchPageComponentKey } from './utils/pageTabs';
+import { getKeepAliveMax, getPageComponentKey } from './utils/pageTabs';
 import { logDiagnostic } from './utils/diagnosticLogger';
 import { setupKeyboardScrollAssist, setupViewportHeight } from './utils/viewport';
 import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
@@ -212,16 +213,10 @@ import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
 const { isSidebarTransitionActive, resetSidebarTransition } = useSidebarTransition();
 
 function getRouteKey(route: any): string {
-  // /topics 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁
-  if (route.path === '/topics') {
-    return `/topics:${pageTabsStore.getGeneration(route)}`;
-  }
-  // 搜索页实例只由「搜索词 + 搜索范围」决定：页签、排序、问答筛选在同一实例内更新，
-  // 否则每次切页签都会整页重建，页签缓存与滚动位置全部失效。
-  if (route.path === '/search') {
-    return getSearchPageComponentKey(route, pageTabsStore.getGeneration(route));
-  }
-  return `${route.fullPath}:${pageTabsStore.getGeneration(route)}`;
+  // 组件 key 与「页面身份」对齐：同一实体的临时 query（排序、筛选、定位、标题）不再各自占用
+  // keep-alive 槽位，否则长浏览后缓存被挤出，返回时滚动位置与已加载分页一起丢失。
+  // /topics 仍单实例常驻，/search 仍按「搜索词 + 搜索范围」复用实例，Ctrl+R 代数仍生效。
+  return getPageComponentKey(route, pageTabsStore.getGeneration(route));
 }
 
 const PENDING_UPDATE_KEY = 'coolapk_pending_update';
@@ -254,6 +249,8 @@ watch(() => route.fullPath, (_next, _previous) => {
   routeHistoryPosition = nextPosition;
 }, { flush: 'sync' });
 const pageTabsStore = usePageTabsStore();
+// 至少保留 15 个缓存页，并随已开页签数增长（页签数 + 5），页面重建导致的列表分页丢失随之消除。
+const keepAliveMax = computed(() => getKeepAliveMax(pageTabsStore.tabs.length));
 const updateInfo = ref<UpdateInfo | null>(null);
 const downloadNotice = ref<DownloadNotice | null>(null);
 const readyInfo = ref<ReadyInfo | null>(null);

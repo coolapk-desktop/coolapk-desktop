@@ -2,7 +2,7 @@ import type { RouteLocationNormalizedLoaded, RouteLocationNormalized } from 'vue
 import { isFeedReportUrl } from './feedReport';
 import { HOME_TAB_REFRESH_EVENT } from './homeTab';
 
-type TabRoute = Pick<RouteLocationNormalizedLoaded, 'fullPath' | 'name' | 'path' | 'params' | 'query'> | Pick<RouteLocationNormalized, 'fullPath' | 'name' | 'path' | 'params' | 'query'>;
+export type TabRoute = Pick<RouteLocationNormalizedLoaded, 'fullPath' | 'name' | 'path' | 'params' | 'query'> | Pick<RouteLocationNormalized, 'fullPath' | 'name' | 'path' | 'params' | 'query'>;
 
 export interface PageTabDescriptor {
   id: string;
@@ -68,6 +68,57 @@ export function getSearchPageScopeKey(route: TabRoute): string {
 export function getSearchPageComponentKey(route: TabRoute, generation: number): string {
   const scope = getSearchPageScopeKey(route).replace(/^\/search:/, '');
   return `/search:${generation}:${scope}`;
+}
+
+/**
+ * 实例绑定查询参数：这些页面在 setup 阶段就把路由状态钉在实例上，只有换实例才能读到新值，
+ * 因此仍按参数区分缓存槽位。
+ */
+const instanceBoundQueryKeys: Partial<Record<string, string[]>> = {
+  // 详情页在 setup 时钉住 ownerRoute（含 replyId/scrollTo），复用旧实例会被判为失活页而停止渲染。
+  FeedDetail: ['replyId', 'scrollTo'],
+  // 机型对比只在挂载时按 ids 读一次对比项。
+  ProductCompare: ['ids', 'productIds'],
+  // 关注页在挂载时按 tab 切换侧栏。
+  Following: ['tab'],
+  // 私信会话的预填文本只在实例创建时读取。
+  Messages: ['initialText', 'text'],
+};
+
+/** 地址自身即页面语义、无法安全归一化的页面（选机页按外部链接 query 直接请求）继续按完整地址区分实例。 */
+const fullPathInstanceRoutes = new Set(['ProductSelector']);
+
+/**
+ * 页面实例身份：同一实体（含结构性查询）只占一个 keep-alive 槽位。
+ * 排序、筛选、页签、定位等临时 query 在同一实例内更新，不再额外吃缓存槽位。
+ */
+export function getPageInstanceKey(route: TabRoute): string {
+  const keys = instanceBoundQueryKeys[String(route.name || '')] || [];
+  const suffix = keys
+    .map((key) => [key, decodeRouteText(route.query[key])] as const)
+    .filter(([, value]) => Boolean(value))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&');
+  return suffix ? `${getPageTabId(route)}?${suffix}` : getPageTabId(route);
+}
+
+/**
+ * keep-alive 组件 key：`<页面实例身份>:<刷新代数>`。
+ * /topics 仍保持单实例常驻；/search 仍按「搜索词 + 范围」复用实例；
+ * 代数只由 Ctrl+R 刷新与关标签递增，因此刷新语义不变。
+ */
+export function getPageComponentKey(route: TabRoute, generation: number): string {
+  // 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁。
+  if (route.path === '/topics') return `/topics:${generation}`;
+  if (route.path === '/search') return getSearchPageComponentKey(route, generation);
+  if (fullPathInstanceRoutes.has(String(route.name || ''))) return `${route.fullPath}:${generation}`;
+  return `${getPageInstanceKey(route)}:${generation}`;
+}
+
+/** keep-alive 槽位上限：至少 15 个，并随已开页签数量增长，长浏览不会把仍在使用的列表挤出缓存。 */
+export function getKeepAliveMax(tabCount: number): number {
+  const count = Number.isFinite(tabCount) ? Math.max(0, Math.floor(tabCount)) : 0;
+  return Math.max(15, count + 5);
 }
 
 /** 从搜索页组件 key 还原实例所属的搜索范围（去掉 Ctrl+R 刷新的代数）；非搜索页 key 返回空串。 */
