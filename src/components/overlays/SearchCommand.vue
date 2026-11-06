@@ -63,7 +63,7 @@
             >
               <i :class="[getSuggestionIcon(item), 'suggestion-icon']"></i>
               <span class="suggestion-text">{{ getSearchEntityTitle(item) }}</span>
-              <span class="suggestion-kind">{{ getSuggestionKindLabel(item) }}</span>
+              <span v-if="getSuggestionKindLabel(item)" class="suggestion-kind">{{ getSuggestionKindLabel(item) }}</span>
             </div>
           </div>
 
@@ -351,13 +351,13 @@ function selectResult(item: SearchEntity) {
 }
 
 function getSuggestionKindLabel(item: SearchEntity): string {
-  // 通用联想词没有实体类型，明确标成“搜索词”，与话题/用户等实体区分。
+  // 通用联想词用搜索图标表示，只有具体实体显示类型标签。
   if (isTopicSearchResult(item)) return '话题';
-  return ({ user: '用户', app: '应用', question: '问答', answer: '回答', feed: '动态', product: '数码', hot: '热词', generic: '搜索词' } as Record<string, string>)[getSearchEntityKind(item)] || '搜索词';
+  return { user: '用户', topic: '话题', app: '应用', question: '问答', answer: '回答', feed: '动态', product: '数码', hot: '热词', generic: '' }[getSearchEntityKind(item)];
 }
 
 function getSuggestionIcon(item: SearchEntity): string {
-  return getSuggestionKindLabel(item) === '搜索词' ? 'fas fa-search' : getIcon(item);
+  return getSuggestionKindLabel(item) ? getIcon(item) : 'fas fa-search';
 }
 
 function getIcon(item: SearchEntity) {

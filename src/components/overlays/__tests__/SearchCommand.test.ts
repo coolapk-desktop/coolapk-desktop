@@ -55,7 +55,8 @@ describe('Ctrl+K 搜索面板', () => {
       await flushPromises();
       const suggestions = wrapper.findAll('.suggestion-item');
       expect(suggestions.map((item) => item.get('.suggestion-text').text())).toEqual(['miui', '阿杰']);
-      expect(suggestions.map((item) => item.get('.suggestion-kind').text())).toEqual(['搜索词', '用户']);
+      expect(suggestions[0].find('.suggestion-kind').exists()).toBe(false);
+      expect(suggestions[1].get('.suggestion-kind').text()).toBe('用户');
       expect(wrapper.find('.suggestion-group-title').exists()).toBe(true);
     } finally { wrapper.unmount(); }
   });
