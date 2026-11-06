@@ -38,7 +38,8 @@ describe('好物榜详情', () => {
     w.unmount();
   });
   it('保留服务器排名，收藏失败不更新状态，成功后更新', async () => {
-    api.getFeedDetail.mockResolvedValue({ data: { id: 123, uid: 8, goodsListInfo: { title: '鼠标榜' }, goodsListItem: [{ id: 1, vote_num: 1 }, { id: 2, vote_num: 100 }] } });
+    const detail = { id: 123, uid: 8, favnum: 2, goodsListInfo: { title: '鼠标榜' }, goodsListItem: [{ id: 1, vote_num: 1 }, { id: 2, vote_num: 100 }] } as Record<string, any>;
+    api.getFeedDetail.mockResolvedValue({ data: detail });
     api.setFeedCloudFavorite.mockRejectedValueOnce(new Error('断网')).mockResolvedValueOnce({ code: 200 });
     const openComposer = vi.fn();
     const w = shallowMount(GoodsListDetailBody, { props: { feedId: '123', kind: 'ranking' }, global: { stubs: { FeedCommentSection: { name: 'FeedCommentSection', props: ['officialDetail'], setup(_props: unknown, { expose }: any) { expose({ openComposer }); }, template: '<div />' } } } });
@@ -51,6 +52,18 @@ describe('好物榜详情', () => {
     actions.vm.$emit('toggle-fav'); await flushPromises();
     expect(api.setFeedCloudFavorite).toHaveBeenLastCalledWith('123', true, 'goodsList');
     expect(actions.props('favorited')).toBe(true);
+    // 收藏成功后回写详情实体：动作栏的 userAction/favnum 与 feed 保持一致。
+    expect(detail.userAction.collect).toBe(1);
+    expect(detail.favnum).toBe(3);
+    expect(actions.props('favnum')).toBe(3);
+
+    // 发表评论只本地累加回复数，不再整页重拉详情（否则条目分页与滚动位置会被打断）。
+    const detailCalls = api.getFeedDetail.mock.calls.length;
+    w.findComponent(FeedCommentSection).vm.$emit('send-comment');
+    await flushPromises();
+    expect(api.getFeedDetail.mock.calls.length).toBe(detailCalls);
+    expect(detail.replynum).toBe(1);
+
     actions.vm.$emit('write-comment'); await flushPromises();
     expect(openComposer).toHaveBeenCalledOnce();
     w.unmount();

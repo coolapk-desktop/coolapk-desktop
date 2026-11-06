@@ -419,6 +419,7 @@ import { getUserUid } from '../../utils/userRoute';
 import { getFeedInteractionType } from '../../utils/feedInteractions';
 import { hasActiveTextSelection } from '../../utils/selection';
 import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from '../../utils/favoriteContentIndex';
+import { syncFavoriteToFeed as writeFavoriteToFeed } from '../../utils/feedFavorite';
 
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
@@ -1192,8 +1193,7 @@ const hasBlockingOverlay = computed(() => Boolean(dyhShareOpen.value || privateS
 
 /** 收藏状态同样回写实体字段，列表与详情不再各自保存一份副本。 */
 function syncFavoriteToFeed() {
-  props.feed.userAction = { ...(props.feed.userAction || {}), collect: isFav.value ? 1 : 0 };
-  props.feed.favnum = Math.max(0, Number(favnum.value) || 0);
+  writeFavoriteToFeed(props.feed, { favorited: isFav.value, favnum: favnum.value });
 }
 
 async function toggleFav() {

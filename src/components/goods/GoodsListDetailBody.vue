@@ -198,6 +198,7 @@ import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
 import { showToast } from '../../utils/toast';
 import { getErrorMessage } from '../../utils/errors';
+import { syncFavoriteToFeed } from '../../utils/feedFavorite';
 
 const props = withDefaults(
   defineProps<{
@@ -278,7 +279,13 @@ async function openComments() {
   await loadComments();
   repliesElement.value?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
-/** 发表评论成功后本地累加回复数：只更新计数，评论列表由 comment-created 就地插入。 */
+/**
+ * 发表评论成功后只在本地累加回复数，不再整页 loadFeed()：
+ * 评论列表由 comment-created 就地插入，条目（goodsListItem）与 goodsListInfo 的
+ * item_num / vote_num / follow_num 都是好物相关统计，与发表评论无关，重拉只会浪费一次
+ * 请求并打断已加载的分页与滚动位置。reply_num 走 replyNum 计算属性（本处已更新 feed.replynum），
+ * 清单页列表卡片持有的是另一份对象，这里重拉也刷不到它。
+ */
 async function commentPosted() {
   if (!feed.value) return;
   feed.value.replynum = Math.max(0, replyNum.value) + 1;
@@ -321,10 +328,20 @@ function handleCommentCreated(payload: { comment?: any; replyId?: string } = {})
 async function toggleFavorite() {
   if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; }
   if (favoriteBusy.value) return;
+  const target = !favorite.value;
   favoriteBusy.value = true;
   try {
-    await CoolapkTauriAPI.setFeedCloudFavorite(props.feedId, !favorite.value, 'goodsList');
-    favorite.value = !favorite.value;
+    await CoolapkTauriAPI.setFeedCloudFavorite(props.feedId, target, 'goodsList');
+    favorite.value = target;
+    // 回写详情实体：动作栏的收藏态与 favnum 都从 feed 读，收藏后必须同步计数。
+    // 注意：本页只拿到 feedId，feed 详情是自己拉的一份副本（清单页列表持有另一份对象），
+    // 因此这里只能保证本页一致，跨页面同步需列表页自身刷新。
+    if (feed.value) {
+      syncFavoriteToFeed(feed.value, {
+        favorited: target,
+        favnum: Math.max(0, Number(feed.value.favnum || 0) + (target ? 1 : -1)),
+      });
+    }
   } catch (err) { showToast(getErrorMessage(err, '收藏失败'), 'error'); }
   finally { favoriteBusy.value = false; }
 }

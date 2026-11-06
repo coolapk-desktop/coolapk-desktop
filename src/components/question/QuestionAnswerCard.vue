@@ -239,6 +239,7 @@ import {
   getFeedRelationType,
 } from '../../utils/feedRelations';
 import { getUserUid } from '../../utils/userRoute';
+import { syncFavoriteToFeed } from '../../utils/feedFavorite';
 import { showToast } from '../../utils/toast';
 
 const props = withDefaults(defineProps<{
@@ -602,6 +603,8 @@ async function toggleFav() {
     await CoolapkTauriAPI.setFeedCloudFavorite(id, false, String((props.answer as any).feedType || 'answer'), String((props.answer as any).trace || (props.answer as any).extra_key || ''));
     isFav.value = false;
     favnum.value = Math.max(0, favnum.value - 1);
+    // 回写回答实体：问题页/首页列表持有同一个 answer 对象，收藏态随之同步。
+    syncFavoriteToFeed(props.answer, { favorited: isFav.value, favnum: favnum.value });
     emit('favorite-changed', { id: props.answer.id, favorited: false });
     showToast('已取消收藏', 'success');
   } catch (error) {
@@ -665,6 +668,7 @@ async function confirmCollectionSelection(selectedIds: string[]) {
     );
     isFav.value = true;
     if (!previousIds.size) favnum.value += 1;
+    syncFavoriteToFeed(props.answer, { favorited: isFav.value, favnum: favnum.value });
     collectionPickerOpen.value = false;
     emit('favorite-changed', { id: props.answer.id, favorited: true });
     showToast('已收藏到云端', 'success');

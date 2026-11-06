@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   getFeedCollectionOptions: vi.fn(),
   getFeedLikeList: vi.fn(),
   getFeedForwardList: vi.fn(),
+  setFeedCloudFavorite: vi.fn(),
+  updateFeedCloudCollections: vi.fn(),
 }));
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
@@ -14,6 +16,8 @@ vi.mock('../../../api/coolapk', () => ({
     getFeedCollectionOptions: mocks.getFeedCollectionOptions,
     getFeedLikeList: mocks.getFeedLikeList,
     getFeedForwardList: mocks.getFeedForwardList,
+    setFeedCloudFavorite: mocks.setFeedCloudFavorite,
+    updateFeedCloudCollections: mocks.updateFeedCloudCollections,
   },
 }));
 // 导入链会经 FeedCommentSection → anchorClick 拉到真实的 src/router/index.ts。
@@ -22,6 +26,7 @@ vi.mock('../../../router', () => ({
 }));
 
 import RatingCard from '../RatingCard.vue';
+import { useAuthStore } from '../../../stores/auth';
 
 describe('点评卡片评论区', () => {
   beforeEach(() => {
@@ -81,6 +86,45 @@ describe('点评卡片评论区', () => {
       await flushPromises();
       expect(section().props('comments').map((c: any) => c.id)).toEqual(['new-1', 'old-1']);
       expect(mocks.getFeedReplies).toHaveBeenCalledTimes(requestCount);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('取消收藏后把收藏态与计数回写到同一份 feed 实体', async () => {
+    mocks.setFeedCloudFavorite.mockResolvedValue({ code: 200 });
+    useAuthStore().isLoggedIn = true;
+    // 父级列表传下来的就是这份对象，回写后列表上的收藏态随之更新。
+    const data: Record<string, any> = { id: '42', uid: '456', username: '作者', message: '点评正文', favnum: 5, userAction: { collect: 1 } };
+    const wrapper = mountCard(data);
+    try {
+      wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('toggle-fav');
+      await flushPromises();
+
+      expect(mocks.setFeedCloudFavorite).toHaveBeenCalledWith('42', false, 'feed', '');
+      expect(data.userAction.collect).toBe(0);
+      expect(data.favnum).toBe(4);
+      expect(wrapper.emitted('favorite-changed')?.[0]).toEqual([{ id: '42', favorited: false }]);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('通过收藏夹面板收藏后同样回写实体', async () => {
+    mocks.getFeedCollectionOptions.mockResolvedValue([
+      { id: 'c1', title: '默认收藏夹', isBeCollected: 0 },
+    ]);
+    mocks.updateFeedCloudCollections.mockResolvedValue({ code: 200 });
+    useAuthStore().isLoggedIn = true;
+    const data: Record<string, any> = { id: '42', uid: '456', username: '作者', message: '点评正文', favnum: 0, userAction: { collect: 0 } };
+    const wrapper = mountCard(data);
+    try {
+      wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('toggle-fav');
+      await flushPromises();
+      // 收藏走收藏夹面板，确认选择后才真正提交。
+      expect(mocks.getFeedCollectionOptions).toHaveBeenCalledWith('42');
+      wrapper.findComponent({ name: 'FeedCollectionPickerDialog' }).vm.$emit('confirm', ['c1']);
+      await flushPromises();
+
+      expect(mocks.updateFeedCloudCollections).toHaveBeenCalled();
+      expect(data.userAction.collect).toBe(1);
+      expect(data.favnum).toBe(1);
     } finally { wrapper.unmount(); }
   });
 

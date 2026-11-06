@@ -199,6 +199,7 @@ import { getErrorMessage } from '../../utils/errors';
 import { extractFeedImageInputs } from '../../utils/livePhoto';
 import { registerOpenComments, touchActiveComments } from '../../utils/activeCommentTracker';
 import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from '../../utils/favoriteContentIndex';
+import { syncFavoriteToFeed } from '../../utils/feedFavorite';
 
 const settingsStore = useSettingsStore();
 const showDeviceInfo = computed(() => settingsStore.settings.showDeviceInfo);
@@ -307,6 +308,8 @@ async function toggleFav() {
     if (target) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(target ? '已收藏到云端' : '已取消云端收藏', 'success');
+    // 回写实体：父级列表持有的是同一个 feed 对象，收藏态与计数随之同步。
+    syncFavoriteToFeed(props.feed, { favorited: isFav.value, favnum: favnum.value });
     emit('favorite-changed', { id: props.feed.id, favorited: target });
   } catch (err) {
     showToast(getErrorMessage(err, target ? '收藏失败' : '取消收藏失败'), 'error');
@@ -394,6 +397,7 @@ async function confirmCollectionSelection(selectedIds: string[]) {
     if (remainsFavorited) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed.id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(remainsFavorited ? '收藏夹已更新' : '已取消全部云端收藏', 'success');
+    syncFavoriteToFeed(props.feed, { favorited: isFav.value, favnum: favnum.value });
     collectionPickerOpen.value = false;
     emit('favorite-changed', { id: props.feed.id, favorited: remainsFavorited });
   } catch (err) {
