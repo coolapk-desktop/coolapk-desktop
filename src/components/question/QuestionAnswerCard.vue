@@ -160,6 +160,8 @@
         :normalize-img="normalizeImg"
         :format-rich-text="formatRichText"
         @delete-comment="removeComment"
+        @send-comment="handleSendComment"
+        @comment-created="handleCommentCreated"
         @retry-comments="openComments(true)"
         @load-more-comments="loadMoreComments"
         @retry-more-comments="loadMoreComments"
@@ -724,6 +726,48 @@ async function loadCommentPage(requestedId: string, page: number, cursor?: { fir
   return getReplyData(response);
 }
 
+/** 发表回复成功后本地累加计数，标题/底栏立即一致，不再整页重拉回复列表。 */
+function handleSendComment() {
+  const answer = props.answer as any;
+  const current = Number(answer?.replynum ?? answer?.replyNum ?? answer?.replyCount) || 0;
+  answer.replynum = Math.max(0, current) + 1;
+}
+
+/** 回复实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
+function commentRowId(row: any): string {
+  return String(row?.id ?? row?.entityId ?? '').trim();
+}
+
+/** 合并后续页时按 id 去重：本地插入的回复可能又出现在服务端回包里。 */
+function dedupeCommentsById(list: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of list) {
+    const id = commentRowId(item);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
+ * 就地插入接口返回的新回复，保留已加载的分页和滚动位置。
+ * 楼中楼回复（payload.replyId 有值）的楼层由 FeedCommentSection 自己补齐，这里不再插入主列表。
+ */
+function handleCommentCreated(payload: { comment?: any; replyId?: string } = {}) {
+  if (payload?.replyId) return;
+  const raw = payload?.comment;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  const id = row && typeof row === 'object' ? commentRowId(row) : '';
+  if (!row || typeof row !== 'object' || !id) return;
+  if (comments.value.some((c: any) => commentRowId(c) === id)) return;
+  comments.value = [row, ...comments.value];
+  // 分页游标仍由服务端已加载页的首尾 ID 维护，本地插入不参与。
+}
+
 function updateCommentCursor(rows: any[], resetFirst = false) {
   const cursor = getReplyPageCursor(rows);
   if (resetFirst || !commentsFirstItem) commentsFirstItem = cursor.firstItem;
@@ -743,7 +787,8 @@ async function loadMoreComments() {
     if (!isCurrentCommentRequest(requestedId, request)) return;
     updateCommentCursor(rows);
     const previous = comments.value;
-    const merged = mergeReplies(previous, rows);
+    // 后续页回包可能带上刚就地插入的新回复，按 id 去重避免重复显示。
+    const merged = dedupeCommentsById(mergeReplies(previous, rows));
     if (merged.length > previous.length) {
       comments.value = merged;
       commentsPage.value = nextPage;

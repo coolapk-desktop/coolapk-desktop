@@ -118,6 +118,7 @@
           :load-more-error="commentsLoadMoreError"
           :normalize-img="(u) => u"
           :format-rich-text="formatRichText"
+          @comment-created="handleCommentCreated"
           @retry-comments="loadComments(true)"
           @load-more-comments="loadMoreComments"
           @retry-more-comments="loadMoreComments"
@@ -277,9 +278,45 @@ async function openComments() {
   await loadComments();
   repliesElement.value?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
+/** 发表评论成功后本地累加回复数：只更新计数，评论列表由 comment-created 就地插入。 */
 async function commentPosted() {
-  await loadFeed();
-  await loadComments(true);
+  if (!feed.value) return;
+  feed.value.replynum = Math.max(0, replyNum.value) + 1;
+}
+
+/** 回复实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
+function commentRowId(row: any): string {
+  return String(row?.id ?? row?.entityId ?? '').trim();
+}
+
+/** 合并后续页时按 id 去重：本地插入的评论可能又出现在服务端回包里。 */
+function dedupeCommentsById(list: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of list) {
+    const id = commentRowId(item);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
+ * 就地插入接口返回的新评论，保留已加载的分页和滚动位置。
+ * 楼中楼回复（payload.replyId 有值）的楼层由 FeedCommentSection 自己补齐，这里不再插入主列表。
+ */
+function handleCommentCreated(payload: { comment?: any; replyId?: string } = {}) {
+  if (payload?.replyId) return;
+  const raw = payload?.comment;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  const id = row && typeof row === 'object' ? commentRowId(row) : '';
+  if (!row || typeof row !== 'object' || !id) return;
+  if (comments.value.some((c: any) => commentRowId(c) === id)) return;
+  comments.value = [row, ...comments.value];
+  // 分页游标仍由服务端已加载页的首尾 ID 维护，本地插入不参与。
 }
 async function toggleFavorite() {
   if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; }
@@ -366,7 +403,8 @@ async function loadMoreComments() {
     if (!isCurrentCommentRequest(currentRequest)) return;
     updateCommentCursor(pageReplies);
     const previousReplies = comments.value;
-    const mergedReplies = mergeReplies(previousReplies, pageReplies);
+    // 后续页回包可能带上刚就地插入的新评论，按 id 去重避免重复显示。
+    const mergedReplies = dedupeCommentsById(mergeReplies(previousReplies, pageReplies));
     if (mergedReplies.length > previousReplies.length) {
       comments.value = mergedReplies;
       commentsPage.value = page;

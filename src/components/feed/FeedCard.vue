@@ -88,7 +88,7 @@
       <button v-if="!officialMobileDetail" class="more-menu-item" @click="handleShareImage">
         <i class="fas fa-image"></i> 生成长图
       </button>
-      <button v-if="isMyFeed" class="more-menu-item" :disabled="!canEditFeed" :title="canEditFeed ? '重新编辑动态' : '此动态当前不能编辑'" @click="handleEditFeed">
+      <button v-if="isMyFeed && !replyMode" class="more-menu-item" :disabled="!canEditFeed" :title="canEditFeed ? '重新编辑动态' : '此动态当前不能编辑'" @click="handleEditFeed">
         <i class="fas fa-pen"></i> 重新编辑
       </button>
       <button v-if="canPinFeed" class="more-menu-item" :disabled="pinPending" @click="handlePinFeed">
@@ -99,10 +99,10 @@
       </button>
       <div v-if="!officialMobileDetail" class="more-menu-divider"></div>
       <!-- 点赞和转发列表入口放在省略号菜单末尾。 -->
-      <button v-if="!officialMobileDetail" class="more-menu-item" @click="openInteractionListFromMoreMenu('likes')">
+      <button v-if="!officialMobileDetail && !replyMode" class="more-menu-item" @click="openInteractionListFromMoreMenu('likes')">
         <i class="far fa-heart"></i> 查看点赞用户
       </button>
-      <button v-if="!officialMobileDetail" class="more-menu-item" @click="openInteractionListFromMoreMenu('forwards')">
+      <button v-if="!officialMobileDetail && !replyMode" class="more-menu-item" @click="openInteractionListFromMoreMenu('forwards')">
         <i class="fas fa-retweet"></i> 查看转发列表
       </button>
       <button v-if="officialMobileDetail" class="official-share-cancel" @click="moreMenuOpen = false">取消</button>
@@ -211,6 +211,7 @@
     <!-- 移动详情底栏脱离路由动画的 transform 和滚动裁剪，首屏即可固定在视口底部。 -->
     <Teleport to="body" :disabled="!officialMobileDetail">
       <FeedActionBar
+        ref="actionBarRef"
         v-show="!officialMobileDetail || (componentActive && pageVisible && !hasBlockingOverlay)"
         :official-detail="officialMobileDetail"
         :reply-mode="replyMode"
@@ -225,6 +226,7 @@
         :favorited="isFav"
         :user-action="feed.userAction"
         @like-changed="handleLikeChanged"
+        @share-changed="handleShareChanged"
         @open-comment="officialMobileDetail ? scrollToMobileComments() : toggleComments()"
         @toggle-fav="toggleFav"
         @forward="openForwardDialog"
@@ -440,6 +442,8 @@ const opensDetailOnClick = computed(() =>
   || (!mobileLayout.value && !props.disableInlineComments && settingsStore.settings.desktopFeedDetailOnClick)
 );
 const commentSectionRef = ref<InstanceType<typeof FeedCommentSection> | null>(null);
+// 转发成功后由操作栏统一更新它自己的计数（与 feed.sharenum 保持同一份数据）。
+const actionBarRef = ref<InstanceType<typeof FeedActionBar> | null>(null);
 const showDeviceInfo = computed(() => settingsStore.settings.showDeviceInfo);
 
 const props = defineProps<{
@@ -904,6 +908,15 @@ function openForwardDialog() {
 
 function handleForwardSuccess() {
   props.feed.sharenum = (Number(props.feed.sharenum) || 0) + 1;
+  // 底栏共享同一份计数：让操作栏按实体值更新，避免两处各 +1。
+  actionBarRef.value?.notifyShareSuccess();
+}
+
+// 操作栏自己先本地 +1 再回抛，宿主以「最大计数」收敛，防止重复累加。
+function handleShareChanged(payload: { feedId: string | number; count: number }) {
+  if (String(payload.feedId) !== String(props.feed.id)) return;
+  const next = Math.max(Number(props.feed.sharenum) || 0, Number(payload.count) || 0);
+  props.feed.sharenum = next;
 }
 
 function openLikeList() {
@@ -1087,6 +1100,40 @@ function handleSendComment() {
   props.feed.replynum = Math.max(0, Number(props.feed.replynum) || 0) + 1;
 }
 
+/** 评论实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
+function commentRowId(row: any): string {
+  return String(row?.id ?? row?.entityId ?? '').trim();
+}
+
+/** 后续页回包可能带上刚就地插入的评论，合并时按 id 去重，避免同一评论在下一页重复出现。 */
+function dedupeCommentsById(list: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of list) {
+    const id = commentRowId(item);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/** 本地就地插入过的评论 id：首次拉第 1 页时服务端可能还没带上它，合并时保留在最前。 */
+const locallyInsertedCommentIds = new Set<string>();
+
+/** 把本地就地插入、但服务端第 1 页还没返回的评论并回列表最前面。 */
+function mergeLocalComments(pageReplies: any[]): any[] {
+  const rows = dedupeCommentsById(pageReplies);
+  const pageIds = new Set(rows.map(commentRowId));
+  const localRows = comments.value.filter((item: any) => {
+    const id = commentRowId(item);
+    return Boolean(id) && locallyInsertedCommentIds.has(id) && !pageIds.has(id);
+  });
+  return [...localRows, ...rows];
+}
+
 /**
  * 就地插入接口返回的新评论，保留已加载的分页、置顶区和滚动位置。
  * 楼中楼回复（payload.replyId 有值）只更新计数，其楼层由 FeedCommentSection 自行补齐；
@@ -1096,12 +1143,13 @@ function handleCommentCreated(payload: { comment?: any; replyId?: string } = {})
   if (payload?.replyId) return;
   const raw = payload?.comment;
   const row = Array.isArray(raw) ? raw[0] : raw;
-  const id = row && typeof row === 'object' ? String(row.id ?? '').trim() : '';
+  const id = row && typeof row === 'object' ? commentRowId(row) : '';
   if (!row || typeof row !== 'object' || !id) return;
-  if (comments.value.some((item: any) => String(item?.id) === id)) return;
+  if (comments.value.some((item: any) => commentRowId(item) === id)) return;
+  locallyInsertedCommentIds.add(id);
   comments.value = [row, ...comments.value];
-  // 已经有本地数据后，再次打开评论区不必重新拉第 1 页。
-  if (commentsPage.value < 1) commentsPage.value = 1;
+  // 分页游标只由服务端已加载页的首尾 ID 维护，本地插入不参与：
+  // 第 1 页还没取过时保持 commentsPage 为 0，展开评论区照常取第 1 页再合并本地评论。
 }
 
 const isFav = ref(
@@ -1111,6 +1159,15 @@ const isFav = ref(
 );
 const favnum = ref(props.feed.favnum || 0);
 watch(() => props.feed.favnum, value => { if (value !== undefined) favnum.value = Number(value) || 0; });
+// 收藏态回写到 feed 实体后，同一个 feed 对象在收藏页/详情页/列表里的其它卡片
+// 也要跟着变（避免一处已收藏、另一处显示未收藏）。
+watch(
+  () => props.feed.userAction?.collect ?? props.feed.userAction?.favorite,
+  (value) => {
+    if (value === undefined || value === null) return;
+    isFav.value = Number(value) === 1;
+  },
+);
 const favoritePending = ref(false);
 const collectionPickerOpen = ref(false);
 const collectionPickerLoading = ref(false);
@@ -1309,7 +1366,8 @@ async function loadMoreComments() {
 
     updateCommentCursor(pageReplies);
     const previousReplies = comments.value;
-    const mergedReplies = mergeReplies(previousReplies, pageReplies);
+    // 服务端可能把刚发表的新评论又塞进后续页，按 id 去重后再判断是否有增长。
+    const mergedReplies = dedupeCommentsById(mergeReplies(previousReplies, pageReplies));
     if (mergedReplies.length > previousReplies.length) {
       comments.value = mergedReplies;
       commentsPage.value = page;
@@ -1345,7 +1403,11 @@ async function openComments(force = false) {
   if (!requestedFeedId) return;
 
   const currentRequest = ++commentsRequestVersion;
-  if (force) comments.value = [];
+  if (force) {
+    comments.value = [];
+    // 整页重拉后以服务端结果为准，不再保留本地插入标记。
+    locallyInsertedCommentIds.clear();
+  }
   commentsPage.value = 0;
   hasMoreComments.value = false;
   commentsFirstItem = '';
@@ -1361,8 +1423,8 @@ async function openComments(force = false) {
     if (!isCurrentCommentRequest(requestedFeedId, currentRequest)) return;
 
     updateCommentCursor(pageReplies, true);
-    comments.value = pageReplies;
-    commentsPage.value = pageReplies.length > 0 ? 1 : 0;
+    comments.value = mergeLocalComments(pageReplies);
+    commentsPage.value = comments.value.length > 0 ? 1 : 0;
     hasMoreComments.value = hasMoreReplyPages(
       pageReplies,
       [],

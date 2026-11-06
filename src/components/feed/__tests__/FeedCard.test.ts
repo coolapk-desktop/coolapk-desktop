@@ -633,6 +633,72 @@ describe('动态卡片编辑记录', () => {
     expect(wrapper.find('.stub-comments span').text()).toBe('25');
   });
 
+  it('后续页回包带上刚发表的新评论时按 id 去重，且分页游标仍取已加载页首尾', async () => {
+    let resolvePage2: any = null;
+    mocks.getFeedReplies.mockImplementation(async (_feedId: string, page: number) => {
+      if (page === 1) {
+        return { data: Array.from({ length: 10 }, (_, index) => ({ id: `reply-${index + 1}`, message: `第1页` })) };
+      }
+      return await new Promise((resolve) => { resolvePage2 = resolve; });
+    });
+
+    const wrapper = mount(FeedCard, {
+      props: {
+        feed: { id: 'dedupe-feed', uid: '456', username: '测试用户', message: '动态正文', replynum: 21 },
+        detailMode: true,
+        autoOpenComments: true,
+      },
+      global: {
+        stubs: {
+          FeedHeader: true,
+          FeedContent: true,
+          FeedImageGrid: true,
+          FeedActionBar: true,
+          FeedCommentSection: {
+            props: ['comments', 'hasMoreComments', 'loadingMoreComments'],
+            emits: ['load-more-comments'],
+            template: '<div class="stub-comments"><span>{{ comments.length }}</span></div>',
+          },
+          ForwardDialog: true,
+          LoadingState: true,
+          AppDialog: true,
+        },
+      },
+    });
+    await flushPromises();
+
+    // 对象 stub 会渲染成自身模板根节点，这里按 class 取组件实例。
+    const section = () => wrapper.findComponent('.stub-comments') as any;
+    expect(section().props('comments')).toHaveLength(10);
+    // 第 2 页请求已经在飞：先就地插入新评论，再让服务端回包把它带回来。
+    section().vm.$emit('comment-created', { comment: { id: 'new-1', message: '新评论' } });
+    await flushPromises();
+    expect(section().props('comments').map((item: any) => item.id)[0]).toBe('new-1');
+
+    // 分页游标仍来自服务端已加载页的首尾 ID，本地插入的评论不参与。
+    expect(mocks.getFeedReplies).toHaveBeenCalledWith('dedupe-feed', 2, {
+      listType: 'lastupdate_desc',
+      fromFeedAuthor: 0,
+      firstItem: 'reply-1',
+      lastItem: 'reply-10',
+    });
+
+    resolvePage2?.({
+      data: [
+        { id: 'new-1', message: '新评论' },
+        ...Array.from({ length: 10 }, (_, index) => ({ id: `reply-${index + 11}`, message: '第2页' })),
+      ],
+    });
+    await flushPromises();
+
+    const ids = section().props('comments').map((item: any) => item.id);
+    // 新评论只出现一次，其余页数据正常并入。
+    expect(ids.filter((id: string) => id === 'new-1')).toHaveLength(1);
+    expect(ids).toHaveLength(21);
+    expect(new Set(ids).size).toBe(21);
+    wrapper.unmount();
+  });
+
   it('少量评论只请求第一页，不为确认末页额外等待', async () => {
     mocks.getFeedReplies.mockResolvedValue({
       data: [
@@ -1343,6 +1409,29 @@ describe('卡片与操作栏的状态同步', () => {
       const again = mount(FeedCard, { props: { feed }, global: { stubs } });
       expect(again.findComponent({ name: 'FeedActionBar' }).props('likenum')).toBe(13);
       expect(again.findComponent({ name: 'FeedActionBar' }).props('favorited')).toBe(false);
+      again.unmount();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('取消收藏后把状态回写到实体，列表与其它卡片共享同一份收藏态', async () => {
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    auth.user = { uid: '456', username: '作者' } as any;
+    const feed = { id: '42', uid: '456', username: '作者', message: '正文', favnum: 5, userAction: { collect: 1 } } as any;
+    const wrapper = mount(FeedCard, { props: { feed }, global: { stubs } });
+    try {
+      expect(wrapper.findComponent({ name: 'FeedActionBar' }).props('favorited')).toBe(true);
+      await wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('toggle-fav');
+      await flushPromises();
+
+      // 实体字段被就地改写：同一 feed 对象在收藏页/详情页/其它列表里自动同步。
+      expect(feed.userAction.collect).toBe(0);
+      expect(feed.favnum).toBe(4);
+      expect(wrapper.emitted('favorite-changed')?.[0]).toEqual([{ id: '42', favorited: false }]);
+
+      const again = mount(FeedCard, { props: { feed }, global: { stubs } });
+      expect(again.findComponent({ name: 'FeedActionBar' }).props('favorited')).toBe(false);
+      expect(again.findComponent({ name: 'FeedActionBar' }).props('favnum')).toBe(4);
       again.unmount();
     } finally { wrapper.unmount(); }
   });
