@@ -77,22 +77,68 @@
           :class="{ 'article-block-image': block.type === 'image' }"
         >
           <template v-if="block.type === 'text'">
-            <textarea
-              :ref="(element) => setTextAreaRef(block.id, element)"
-              class="article-text-block"
-              :value="block.text"
-              :aria-label="`正文文字段落 ${textBlockNumber(index)}`"
-              :placeholder="index === 0 ? '从这里开始输入正文，支持图文混排…' : '继续输入正文…'"
-              rows="1"
-              :style="{ minHeight: index === 0 && !block.text ? '180px' : '44px' }"
-              :disabled="controlsDisabled"
-              @focus="rememberSelection(block.id, $event)"
-              @click="rememberSelection(block.id, $event)"
-              @keyup="rememberSelection(block.id, $event)"
-              @mouseup="rememberSelection(block.id, $event)"
-              @select="rememberSelection(block.id, $event)"
-              @input="updateText(block.id, $event)"
-            ></textarea>
+            <div class="article-text-row">
+              <textarea
+                :ref="(element) => setTextAreaRef(block.id, element)"
+                class="article-text-block"
+                :value="block.text"
+                :aria-label="`正文文字段落 ${textBlockNumber(index)}`"
+                :placeholder="index === 0 ? '从这里开始输入正文，支持图文混排…' : '继续输入正文…'"
+                rows="1"
+                :style="{ minHeight: index === 0 && !block.text ? '180px' : '44px' }"
+                :disabled="controlsDisabled"
+                @focus="rememberSelection(block.id, $event)"
+                @click="rememberSelection(block.id, $event)"
+                @keyup="rememberSelection(block.id, $event)"
+                @mouseup="rememberSelection(block.id, $event)"
+                @select="rememberSelection(block.id, $event)"
+                @input="updateText(block.id, $event)"
+              ></textarea>
+              <div class="block-actions article-text-actions">
+              <!-- mousedown.prevent 避免点击工具按钮时抢走段落焦点，蓝本光标位置保持不变 -->
+              <button
+                type="button"
+                :disabled="controlsDisabled || index === 0"
+                :aria-label="`文字段落 ${textBlockNumber(index)} 上移`"
+                title="上移"
+                @mousedown.prevent
+                @click="moveBlock(index, -1)"
+              ><i class="fas fa-arrow-up" aria-hidden="true"></i></button>
+              <button
+                type="button"
+                :disabled="controlsDisabled || index === modelValue.blocks.length - 1"
+                :aria-label="`文字段落 ${textBlockNumber(index)} 下移`"
+                title="下移"
+                @mousedown.prevent
+                @click="moveBlock(index, 1)"
+              ><i class="fas fa-arrow-down" aria-hidden="true"></i></button>
+              <button
+                type="button"
+                :disabled="!canMergeText(index, -1)"
+                :aria-label="`文字段落 ${textBlockNumber(index)} 与上段合并`"
+                title="与上段合并"
+                @mousedown.prevent
+                @click="mergeTextBlock(index, -1)"
+              ><i class="fas fa-object-group fa-rotate-180" aria-hidden="true"></i></button>
+              <button
+                type="button"
+                :disabled="!canMergeText(index, 1)"
+                :aria-label="`文字段落 ${textBlockNumber(index)} 与下段合并`"
+                title="与下段合并"
+                @mousedown.prevent
+                @click="mergeTextBlock(index, 1)"
+              ><i class="fas fa-object-group" aria-hidden="true"></i></button>
+              <button
+                type="button"
+                class="remove-block-button"
+                :disabled="controlsDisabled"
+                :aria-label="`删除文字段落 ${textBlockNumber(index)}`"
+                title="删除段落（至少保留一个文字段落）"
+                @mousedown.prevent
+                @click="removeBlock(index)"
+              ><i class="fas fa-trash-alt" aria-hidden="true"></i></button>
+              </div>
+            </div>
           </template>
 
           <figure v-else-if="block.type === 'image'" class="article-image-block">
@@ -124,6 +170,7 @@
                   :disabled="controlsDisabled || index === 0"
                   :aria-label="`正文图片 ${imageBlockNumber(index)} 上移`"
                   title="上移"
+                  @mousedown.prevent
                   @click="moveBlock(index, -1)"
                 ><i class="fas fa-arrow-up" aria-hidden="true"></i></button>
                 <button
@@ -131,6 +178,7 @@
                   :disabled="controlsDisabled || index === modelValue.blocks.length - 1"
                   :aria-label="`正文图片 ${imageBlockNumber(index)} 下移`"
                   title="下移"
+                  @mousedown.prevent
                   @click="moveBlock(index, 1)"
                 ><i class="fas fa-arrow-down" aria-hidden="true"></i></button>
                 <button
@@ -139,6 +187,7 @@
                   :disabled="controlsDisabled"
                   :aria-label="`移除正文图片 ${imageBlockNumber(index)}`"
                   title="移除图片"
+                  @mousedown.prevent
                   @click="removeBlock(index)"
                 ><i class="fas fa-trash-alt" aria-hidden="true"></i></button>
               </div>
@@ -149,8 +198,8 @@
             <span><i class="fas fa-link" aria-hidden="true"></i> 官方内容块（{{ block.model.type }}）</span>
             <small>当前编辑器保留此内容；保存后仍会保留在正文中</small>
             <div class="block-actions">
-              <button type="button" :disabled="controlsDisabled || index === 0" :aria-label="`官方内容块 ${block.model.type} 上移`" title="上移" @click="moveBlock(index, -1)"><i class="fas fa-arrow-up" aria-hidden="true"></i></button>
-              <button type="button" :disabled="controlsDisabled || index === modelValue.blocks.length - 1" :aria-label="`官方内容块 ${block.model.type} 下移`" title="下移" @click="moveBlock(index, 1)"><i class="fas fa-arrow-down" aria-hidden="true"></i></button>
+              <button type="button" :disabled="controlsDisabled || index === 0" :aria-label="`官方内容块 ${block.model.type} 上移`" title="上移" @mousedown.prevent @click="moveBlock(index, -1)"><i class="fas fa-arrow-up" aria-hidden="true"></i></button>
+              <button type="button" :disabled="controlsDisabled || index === modelValue.blocks.length - 1" :aria-label="`官方内容块 ${block.model.type} 下移`" title="下移" @mousedown.prevent @click="moveBlock(index, 1)"><i class="fas fa-arrow-down" aria-hidden="true"></i></button>
             </div>
           </div>
 
@@ -165,8 +214,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import AppImage from '../common/AppImage.vue';
+import { normalizePublishArticleBlocks } from '../../utils/publishArticle';
 import type { PublishArticleBlock, PublishArticleState, PublishImage } from '../../utils/publishArticle';
 import { preparePublishImage } from '../../utils/publishMedia';
 
@@ -211,6 +261,13 @@ function makeImageBlock(image: PublishImage): PublishArticleBlock {
 function emitState(patch: Partial<PublishArticleState>): void {
   emit('update:modelValue', { ...props.modelValue, ...patch });
 }
+
+// 老草稿可能在同一位置积累多个连续空段落，加载后合并一次，避免越编辑越脏。
+watch(() => props.modelValue.blocks, (blocks) => {
+  const normalized = normalizePublishArticleBlocks(blocks);
+  if (normalized.length === blocks.length) return;
+  emitState({ blocks: normalized });
+}, { immediate: true });
 
 function imageSource(image: PublishImage): string {
   return image.preview || image.url || '';
@@ -307,15 +364,35 @@ function insertPreparedImages(images: PublishImage[], insertion: { blockId: stri
     const end = clamp(insertion?.end ?? start, start, current.text.length);
     const before = current.text.slice(0, start);
     const after = current.text.slice(end);
-    const followingText = makeTextBlock(after);
     const replacement: PublishArticleBlock[] = [];
-    if (before) replacement.push({ ...current, text: before });
-    replacement.push(...imageBlocks, followingText);
+    let caretBlockId: string | null = null;
+    let caretPosition = 0;
+    if (before.trim()) replacement.push({ ...current, text: before });
+    replacement.push(...imageBlocks);
+    if (after.trim()) {
+      // 仅当光标后方仍有正文时才新建段落；段落末尾插图不再生成空段落。
+      const followingText: PublishArticleBlock = makeTextBlock(after);
+      replacement.push(followingText);
+      caretBlockId = followingText.id;
+      caretPosition = 0;
+    } else if (!before.trim()) {
+      // 空段落中插图：保留该段落作为图片下方可继续输入的段落。
+      const trailingText: PublishArticleBlock = { ...current, text: '' };
+      replacement.push(trailingText);
+      caretBlockId = trailingText.id;
+      caretPosition = 0;
+    } else {
+      // 段落末尾插图：光标回到原段落末尾，不额外产生空段落。
+      caretBlockId = current.id;
+      caretPosition = before.length;
+    }
     blocks.splice(insertionIndex, 1, ...replacement);
     emitState({ blocks });
-    activeTextBlockId.value = followingText.id;
-    savedSelections.set(followingText.id, { start: 0, end: 0 });
-    void focusTextBlock(followingText.id, 0);
+    if (caretBlockId) {
+      activeTextBlockId.value = caretBlockId;
+      savedSelections.set(caretBlockId, { start: caretPosition, end: caretPosition });
+      void focusTextBlock(caretBlockId, caretPosition);
+    }
     return;
   }
 
@@ -429,16 +506,77 @@ function updateImageDescription(id: string, event: Event): void {
   emitState({ blocks });
 }
 
+function nearestTextBlockId(blocks: PublishArticleBlock[], preferredIndex: number): string | null {
+  for (let index = Math.min(preferredIndex, blocks.length - 1); index >= 0; index -= 1) {
+    if (blocks[index].type === 'text') return blocks[index].id;
+  }
+  for (let index = preferredIndex + 1; index < blocks.length; index += 1) {
+    if (blocks[index].type === 'text') return blocks[index].id;
+  }
+  return null;
+}
+
 function removeBlock(index: number): void {
   if (controlsDisabled.value || index < 0 || index >= props.modelValue.blocks.length) return;
   const blocks = [...props.modelValue.blocks];
-  const [removed] = blocks.splice(index, 1);
-  if (removed?.type === 'text') {
+  const removed = blocks[index];
+  if (!removed) return;
+  if (removed.type === 'text' && blocks.filter((block) => block.type === 'text').length <= 1) {
+    // 正文至少保留一个文字段落：删除最后一个段落时只清空内容。
+    blocks[index] = { ...removed, text: '' };
+    emitState({ blocks });
+    activeTextBlockId.value = removed.id;
+    savedSelections.set(removed.id, { start: 0, end: 0 });
+    void focusTextBlock(removed.id, 0);
+    return;
+  }
+  blocks.splice(index, 1);
+  if (removed.type === 'text') {
     textAreaRefs.delete(removed.id);
     savedSelections.delete(removed.id);
-    if (activeTextBlockId.value === removed.id) activeTextBlockId.value = null;
   }
   emitState({ blocks });
+  // 删除后活跃段落必须指向仍然存在的文字块。
+  const activeId = activeTextBlockId.value;
+  const nextActiveId = activeId && blocks.some((block) => block.id === activeId && block.type === 'text')
+    ? activeId
+    : nearestTextBlockId(blocks, index - 1);
+  activeTextBlockId.value = nextActiveId;
+  if (removed.type === 'text' && nextActiveId) {
+    const neighbor = blocks.find((block): block is Extract<PublishArticleBlock, { type: 'text' }> => block.id === nextActiveId && block.type === 'text');
+    const caret = neighbor?.text.length ?? 0;
+    savedSelections.set(nextActiveId, { start: caret, end: caret });
+    void focusTextBlock(nextActiveId, caret);
+  }
+}
+
+function canMergeText(index: number, offset: -1 | 1): boolean {
+  if (controlsDisabled.value) return false;
+  const blocks = props.modelValue.blocks;
+  return blocks[index]?.type === 'text' && blocks[index + offset]?.type === 'text';
+}
+
+function mergeTextBlock(index: number, offset: -1 | 1): void {
+  if (!canMergeText(index, offset)) return;
+  const blocks = [...props.modelValue.blocks];
+  const current = blocks[index] as Extract<PublishArticleBlock, { type: 'text' }>;
+  const targetIndex = index + offset;
+  const adjacent = blocks[targetIndex] as Extract<PublishArticleBlock, { type: 'text' }>;
+  // 保留靠前段落的 id，让 textarea 元素与滚动位置尽量留在原处。
+  const keep = offset === -1 ? adjacent : current;
+  const drop = offset === -1 ? current : adjacent;
+  const mergedText = offset === -1 ? `${adjacent.text}${current.text}` : `${current.text}${adjacent.text}`;
+  const caret = offset === -1 ? adjacent.text.length : current.text.length;
+  const insertIndex = Math.min(index, targetIndex);
+  const removeIndex = Math.max(index, targetIndex);
+  const nextBlocks = blocks.filter((_, position) => position !== removeIndex);
+  nextBlocks[insertIndex] = { ...keep, text: mergedText };
+  textAreaRefs.delete(drop.id);
+  savedSelections.delete(drop.id);
+  emitState({ blocks: nextBlocks });
+  activeTextBlockId.value = keep.id;
+  savedSelections.set(keep.id, { start: caret, end: caret });
+  void focusTextBlock(keep.id, caret);
 }
 
 function moveBlock(index: number, offset: number): void {
@@ -795,6 +933,33 @@ defineExpose({ openImagePicker, insertTextAtCaret, insertPreparedPicture, isPrep
   box-shadow: none;
 }
 
+.article-text-row {
+  min-width: 0;
+}
+
+/* 段落工具行始终占据固定高度，仅切换明暗，避免悬停时正文跳动。 */
+.article-text-actions {
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: -4px;
+  opacity: 0.7;
+  transition: opacity 0.16s ease;
+}
+
+.article-text-row:hover .article-text-actions,
+.article-text-row:focus-within .article-text-actions {
+  opacity: 1;
+}
+
+.article-text-actions button {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 3px;
+  color: var(--composer-muted, #858991);
+  background: transparent;
+  border-color: transparent;
+}
+
 .article-text-block {
   display: block;
   width: 100%;
@@ -974,6 +1139,12 @@ textarea:disabled {
   .article-text-block {
     min-height: 44px;
     font-size: 15px;
+  }
+
+  /* 移动端把段落工具按钮放大到可点按尺寸。 */
+  .article-text-actions button {
+    min-width: 32px;
+    min-height: 32px;
   }
 
   .article-image-block > :deep(.article-image-preview) {
