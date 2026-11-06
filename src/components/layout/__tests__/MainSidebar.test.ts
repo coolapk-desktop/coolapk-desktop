@@ -170,6 +170,47 @@ describe('MainSidebar', () => {
     window.removeEventListener(HOME_TAB_SCROLL_TOP_EVENT, scrollTopSpy);
   });
 
+  it('已在数码栏目时单击「数码」回到顶部，不重复导航', async () => {
+    routerMock.currentRoute.value.path = '/digital';
+    const scrollTopSpy = vi.fn();
+    window.addEventListener(HOME_TAB_SCROLL_TOP_EVENT, scrollTopSpy);
+    const main = document.createElement('div');
+    main.className = 'app-main-content';
+    const scroller = document.createElement('div');
+    scroller.scrollTop = 520;
+    main.appendChild(scroller);
+    document.body.appendChild(main);
+    const wrapper = mount(MainSidebar, {
+      global: { stubs: { 'router-link': RouterLinkStub } },
+    });
+    try {
+      await wrapper.find('a[href="/digital"]').trigger('click');
+      expect(scrollTopSpy).toHaveBeenCalledTimes(1);
+      expect(routerMock.push).not.toHaveBeenCalled();
+      expect(scroller.scrollTop).toBe(0);
+    } finally {
+      wrapper.unmount();
+      main.remove();
+      window.removeEventListener(HOME_TAB_SCROLL_TOP_EVENT, scrollTopSpy);
+    }
+  });
+
+  it('不在数码栏目时点击「数码」不接管导航', async () => {
+    const scrollTopSpy = vi.fn();
+    window.addEventListener(HOME_TAB_SCROLL_TOP_EVENT, scrollTopSpy);
+    const wrapper = mount(MainSidebar, {
+      global: { stubs: { 'router-link': RouterLinkStub } },
+    });
+    try {
+      await wrapper.find('a[href="/digital"]').trigger('click');
+      expect(scrollTopSpy).not.toHaveBeenCalled();
+      expect(routerMock.push).not.toHaveBeenCalled();
+    } finally {
+      wrapper.unmount();
+      window.removeEventListener(HOME_TAB_SCROLL_TOP_EVENT, scrollTopSpy);
+    }
+  });
+
   it('已在首页时双击「首页」回到顶部并刷新当前栏目', async () => {
     const refreshSpy = vi.fn();
     window.addEventListener(HOME_TAB_REFRESH_EVENT, refreshSpy);

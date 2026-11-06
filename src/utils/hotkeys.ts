@@ -4,6 +4,7 @@ import { useSettingsStore } from '../stores/settings';
 import { hasActiveComments, collapseActiveComments } from './activeCommentTracker';
 import { usePageTabsStore } from '../stores/pageTabs';
 import { refreshPageTabGeneration } from './pageTabs';
+import { navigateBack } from './navigation';
 
 /**
  * 全局快捷键注册：
@@ -21,6 +22,28 @@ import { refreshPageTabGeneration } from './pageTabs';
  *  - Ctrl+K / Esc 由 SearchCommand 及各浮层组件自行处理
  * 焦点在输入框/文本域/下拉框时忽略 J/K 等单键快捷键。
  */
+
+/**
+ * 会自行处理 Esc 的浮层根节点。
+ * 这些类名取自各自组件的真实模板：AppDialog 的 .dialog-wrapper、ImageViewer 的
+ * .image-viewer-backdrop、LoginModal 的 .login-overlay、AppContextMenu 的
+ * .app-context-menu 以及 .more-menu；与 AppShell 的手势守卫保持一致。
+ */
+const OVERLAY_ESCAPE_SELECTOR = '.dialog-wrapper, .image-viewer-backdrop, .login-overlay, .app-context-menu, .more-menu';
+
+/**
+ * 深链直接进入详情页时 Alt+← 的兜底页面：
+ * 优先回到当前页面所属的语义上级栏目，而不是一律回首页或按历史长度误退出应用。
+ */
+function resolveBackFallback(path: string): string {
+  const userMatch = path.match(/^\/user\/([^/]+)/);
+  if (userMatch) return `/user/${userMatch[1]}`;
+  if (path.startsWith('/topic/')) return '/topics';
+  if (path.startsWith('/live/')) return '/discover';
+  if (path.startsWith('/settings')) return '/settings';
+  return '/';
+}
+
 export function registerGlobalHotkeys() {
   const router = useRouter();
   const settingsStore = useSettingsStore();
@@ -48,6 +71,7 @@ export function registerGlobalHotkeys() {
       e.preventDefault();
       const tabsStore = usePageTabsStore();
       const route = tabsStore.close(tabsStore.activeId);
+      // 关闭页签沿用 replace：历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
       if (route) void router.replace(route);
       return;
     }
@@ -64,13 +88,14 @@ export function registerGlobalHotkeys() {
       const previous = controlTab ? e.shiftKey : controlPage ? e.key === 'PageUp'
         : e.code === 'BracketLeft' || e.key === '[' || e.key === '{';
       const route = usePageTabsStore().cycle(previous ? -1 : 1);
-      if (route) void router.replace(route);
+      // 切换页签属于「打开另一个页面」，用 push 保证随后后退能回到刚看过的那一页。
+      if (route) void router.push(route);
       return;
     }
 
     if (e.altKey && e.key === 'ArrowLeft') {
       e.preventDefault();
-      router.back();
+      navigateBack(router, resolveBackFallback(router.currentRoute.value.path));
       return;
     }
 
@@ -129,7 +154,7 @@ export function registerGlobalHotkeys() {
     if (e.key === 'Escape' && !e.defaultPrevented) {
       const appStore = useAppStore();
       if (appStore.isSearchOpen || appStore.isPublishOpen || appStore.activeImageViewer) return;
-      if (typeof document !== 'undefined' && document.querySelector('.app-dialog-container, .viewer-container, .login-modal-content')) return;
+      if (typeof document !== 'undefined' && document.querySelector(OVERLAY_ESCAPE_SELECTOR)) return;
       if (hasActiveComments()) {
         e.preventDefault();
         collapseActiveComments();

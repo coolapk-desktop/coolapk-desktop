@@ -97,7 +97,19 @@ function visibleTitle(tab: { title: string; icon: string }): string {
   return title.startsWith('#') && title.endsWith('#') ? title.slice(1, -1).trim() || '话题' : title || '话题';
 }
 
+/**
+ * 激活已打开的页签：用 push 而不是 replace，
+ * 否则「首页 → 页签跳到明细 → 后退」会跳过刚看过的那一页。
+ */
 function navigate(route: string | null) {
+  if (route) void router.push(route);
+}
+
+/**
+ * 关闭页签后落到相邻页签：这里保留 replace，
+ * 历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
+ */
+function replaceRoute(route: string | null) {
   if (route) void router.replace(route);
 }
 
@@ -105,7 +117,7 @@ function openTab(id: string) {
   if (suppressClick) return;
   // 固定首页标签：已在首页时不再重复导航，改为回到顶部（双击再刷新当前栏目）。
   if (id === 'home') {
-    activateHomeTab(router, { replace: true });
+    activateHomeTab(router);
     closeMenus();
     return;
   }
@@ -179,7 +191,7 @@ function removeFavorite(id: string) {
 }
 
 function closeTab(id: string) {
-  navigate(tabsStore.close(id));
+  replaceRoute(tabsStore.close(id));
   closeMenus();
 }
 
@@ -204,9 +216,9 @@ function runContextAction(action: 'favorite' | 'pin' | 'close' | 'others' | 'rig
   if (!id) return;
   if (action === 'favorite') tabsStore.toggleFavorite(id);
   else if (action === 'pin') tabsStore.togglePin(id);
-  else if (action === 'close') navigate(tabsStore.close(id));
-  else if (action === 'others') navigate(tabsStore.closeOthers(id));
-  else navigate(tabsStore.closeRight(id));
+  else if (action === 'close') replaceRoute(tabsStore.close(id));
+  else if (action === 'others') replaceRoute(tabsStore.closeOthers(id));
+  else replaceRoute(tabsStore.closeRight(id));
   closeMenus();
 }
 

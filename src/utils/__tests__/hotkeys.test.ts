@@ -3,19 +3,33 @@ import { registerGlobalHotkeys } from '../hotkeys';
 import * as commentTracker from '../activeCommentTracker';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 
-const { replace, cycle } = vi.hoisted(() => ({ replace: vi.fn(), cycle: vi.fn() }));
+const { push, replace, back, cycle, historyState } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  back: vi.fn(),
+  cycle: vi.fn(),
+  historyState: { state: { back: null as string | null, forward: null as string | null } },
+}));
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push,
     replace,
-    back: vi.fn(),
+    back,
     forward: vi.fn(),
-    currentRoute: { value: { path: '/' } },
+    options: { history: historyState },
+    currentRoute: { value: { path: '/', fullPath: '/' } },
   }),
 }));
 
-vi.mock('../../stores/pageTabs', () => ({ usePageTabsStore: () => ({ tabs: [{ id: 'home', generation: 0 }], cycle }) }));
+vi.mock('../../stores/pageTabs', () => ({
+  usePageTabsStore: () => ({
+    tabs: [{ id: 'home', generation: 0 }],
+    activeId: 'home',
+    cycle,
+    close: () => '/feed/123',
+  }),
+}));
 
 vi.mock('../../stores/app', () => ({
   useAppStore: () => ({
@@ -47,6 +61,7 @@ describe('registerGlobalHotkeys', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    historyState.state.back = null;
     cycle.mockReturnValue('/feed/123');
     commentTracker.resetActiveComments();
     unregister = registerGlobalHotkeys();
@@ -66,11 +81,13 @@ describe('registerGlobalHotkeys', () => {
     [{ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }, -1],
     [{ key: ']', metaKey: true, shiftKey: true }, 1],
     [{ key: '[', metaKey: true, shiftKey: true }, -1],
-  ] as const)('标签切换 %j 使用方向 %i 并替换当前路由', (init, direction) => {
+  ] as const)('标签切换 %j 使用方向 %i 并入栈当前路由', (init, direction) => {
     const event = new KeyboardEvent('keydown', { ...init, cancelable: true });
     window.dispatchEvent(event);
     expect(cycle).toHaveBeenCalledExactlyOnceWith(direction);
-    expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123');
+    // 切换页签用 push，保证随后后退能回到刚看过的那一页。
+    expect(push).toHaveBeenCalledExactlyOnceWith('/feed/123');
+    expect(replace).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -95,8 +112,29 @@ describe('registerGlobalHotkeys', () => {
       cycle.mockReturnValueOnce(null);
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', ctrlKey: true, bubbles: true }));
       expect(cycle).toHaveBeenCalledExactlyOnceWith(1);
-      expect(replace).not.toHaveBeenCalled();
+      expect(push).not.toHaveBeenCalled();
     } finally { input.remove(); }
+  });
+
+  it('关闭当前页签仍走 replace，历史里不留下已关闭的页面', () => {
+    const event = new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true });
+    window.dispatchEvent(event);
+    expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123');
+    expect(push).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('Alt+← 有应用内上一页时后退', () => {
+    historyState.state.back = '/feed/1';
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
+    expect(back).toHaveBeenCalledOnce();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('Alt+← 深链进入且没有上一页时走语义兜底页面', () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
+    expect(back).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledExactlyOnceWith('/');
   });
 
   it('尊重已处理的键盘事件，注销后不再切换标签', () => {
@@ -146,6 +184,27 @@ describe('registerGlobalHotkeys', () => {
     expect(collapseFn).toHaveBeenCalledTimes(1);
     expect(commentTracker.hasActiveComments()).toBe(false);
   });
+
+  it.each(['dialog-wrapper', 'image-viewer-backdrop', 'login-overlay', 'app-context-menu'])(
+    '浮层 .%s 打开时 Esc 不再穿透收起背后评论区',
+    (className) => {
+      const collapseFn = vi.fn();
+      commentTracker.registerOpenComments('feed-1', collapseFn);
+      const overlay = document.createElement('div');
+      overlay.className = className;
+      document.body.appendChild(overlay);
+      try {
+        const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        window.dispatchEvent(event);
+        expect(collapseFn).not.toHaveBeenCalled();
+        expect(commentTracker.hasActiveComments()).toBe(true);
+        expect(event.defaultPrevented).toBe(false);
+      } finally {
+        overlay.remove();
+        commentTracker.resetActiveComments();
+      }
+    }
+  );
 
   it('连续两次 Esc 不会收起屏幕外先前展开的评论', () => {
     const oldCollapse = vi.fn();

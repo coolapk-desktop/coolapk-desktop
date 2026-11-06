@@ -2,7 +2,7 @@
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="live-detail-page custom-scrollbar">
     <div class="live-detail-shell">
       <header class="live-detail-header">
-        <button type="button" class="live-back-button" aria-label="返回" @click="router.back()"><i class="fas fa-arrow-left"></i></button>
+        <button type="button" class="live-back-button" aria-label="返回" @click="navigateBack(router, '/discover')"><i class="fas fa-arrow-left"></i></button>
         <div class="live-detail-heading">
           <span class="live-detail-kicker"><i class="fas fa-tower-broadcast"></i> 直播</span>
           <h1>{{ title || '直播详情' }}</h1>
@@ -63,6 +63,8 @@ import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
 import { getErrorMessage } from '../utils/errors';
 import { showToast } from '../utils/toast';
+// 直播卡片主要出现在发现页，深链进入时退回该栏目。
+import { navigateBack } from '../utils/navigation';
 import type { DiscoveryEntity } from '../types/discovery';
 import {
   formatLiveCount,
