@@ -89,6 +89,8 @@ const detailShellRef = ref<HTMLElement | null>(null);
 const refreshFeedCard = ref<InstanceType<typeof FeedCard> | null>(null);
 const refreshAnswerCard = ref<InstanceType<typeof QuestionAnswerCard> | null>(null);
 let entryPositionApplied = false;
+// onActivated 在首次挂载时也会触发（晚于 onMounted），首次激活不重复请求详情。
+let activatedOnce = false;
 let stopEntryAnchor: (() => void) | undefined;
 let stopHeaderResize: (() => void) | undefined;
 
@@ -128,7 +130,14 @@ provide(feedPageVisibleKey, detailInteractive);
 const detailReading = useMobileReadingNavigation(computed(() => officialMobileDetail.value && detailInteractive.value
   && settingsStore.settings.autoHideMobileNavigation && !appStore.isSearchOpen && !appStore.isPublishOpen && !appStore.activeImageViewer), '.feed-detail-page.is-official-mobile');
 provide(mobileDetailActionsHiddenKey, detailReading.hidden);
-onActivated(() => { detailActive.value = true; entryPositionApplied = false; void applyEntryPosition(); });
+onActivated(() => {
+  detailActive.value = true;
+  entryPositionApplied = false;
+  // 首次激活由 onMounted 的 fetchDetail 负责；从缓存页返回时只做互动数据的静默刷新。
+  if (activatedOnce) void refreshInteractionsSilently();
+  activatedOnce = true;
+  void applyEntryPosition();
+});
 onDeactivated(() => { detailActive.value = false; stopHeaderResize?.(); stopEntryAnchor?.(); stopEntryAnchor = undefined; });
 // 注意：判据用 `mobileLayout`（纯布局）而不是 `officialMobileDetail`。
 // 后者是「布局 × officialMobileFeedDetail 开关」的合取 —— 用户关掉那个开关后，
@@ -192,6 +201,42 @@ const loading = ref(Boolean(feedId.value));
 const error = ref('');
 let requestVersion = 0;
 
+// 缓存页重新激活时的静默刷新：只回写互动计数与本人互动状态，不替换正文对象，
+// 也不改动滚动位置，避免回到详情页时闪烁或打断阅读。
+const INTERACTION_REFRESH_TTL_MS = 30_000;
+const INTERACTION_FIELDS = ['likenum', 'replynum', 'sharenum', 'favnum', 'forwardnum', 'collectnum', 'follownum'] as const;
+let lastDetailLoadedAt = 0;
+let interactionRefreshRunning = false;
+
+async function refreshInteractionsSilently() {
+  const current = feedDetail.value;
+  if (!feedId.value || !current || interactionRefreshRunning) return;
+  // TTL 内的重复激活不再请求，也避免与首次加载重叠。
+  if (Date.now() - lastDetailLoadedAt < INTERACTION_REFRESH_TTL_MS) return;
+  interactionRefreshRunning = true;
+  const requestedFeedId = feedId.value;
+  lastDetailLoadedAt = Date.now();
+  try {
+    const response: any = await CoolapkTauriAPI.getFeedDetail(requestedFeedId);
+    const detail = response?.data;
+    // 期间切到其它动态或正文已被替换时丢弃本次结果。
+    if (!detail || requestedFeedId !== feedId.value || feedDetail.value !== current) return;
+    for (const key of INTERACTION_FIELDS) {
+      const value = (detail as any)[key];
+      if (value !== undefined && value !== null) (current as any)[key] = value;
+    }
+    const userAction = (detail as any).userAction;
+    if (userAction && typeof userAction === 'object') {
+      if (current.userAction && typeof current.userAction === 'object') Object.assign(current.userAction, userAction);
+      else current.userAction = userAction;
+    }
+  } catch {
+    // 静默刷新失败保留当前展示内容，不影响页面状态与后续激活重试。
+  } finally {
+    interactionRefreshRunning = false;
+  }
+}
+
 const entryPosition = computed(() => {
   if (String(route.params.id || route.params.feedId || '') !== feedId.value || targetReplyId.value) return '';
   return ['top', 'comments'].includes(String(route.query.scrollTo || '')) ? String(route.query.scrollTo) : '';
@@ -234,6 +279,7 @@ async function fetchDetail() {
     if (!detail) throw new Error('接口没有返回原动态内容');
     if (currentRequest !== requestVersion || requestedFeedId !== feedId.value) return;
     feedDetail.value = detail;
+    lastDetailLoadedAt = Date.now();
     appStore.setFeedDetailContext(requestedFeedId, detail);
   } catch (requestError) {
     if (currentRequest === requestVersion) {

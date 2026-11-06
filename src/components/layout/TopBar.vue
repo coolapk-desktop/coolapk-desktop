@@ -393,7 +393,14 @@ const canGoBack = computed(() => {
   const back = router.options.history.state.back;
   return typeof back !== 'string' || back !== route.fullPath;
 });
-const canGoForward = computed(() => Boolean(route.fullPath && canNavigateForward(router)));
+// 前进按钮同类隐患：history.state.forward 指向的页面就是当前页时（重复进入同一页/
+// 前进目标被替换成当前路由），按钮会亮着但 navigateForward 看不到位置变化。
+// 与 canGoBack 使用同一判据：目标位置等于当前 fullPath 时禁用。
+const canGoForward = computed(() => {
+  if (!route.fullPath || !canNavigateForward(router)) return false;
+  const forward = router.options.history.state.forward;
+  return typeof forward !== 'string' || forward !== route.fullPath;
+});
 
 function goBack() {
   navigateBack(router);

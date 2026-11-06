@@ -99,6 +99,38 @@ describe('动态互动入口', () => {
 
 });
 
+describe('转发计数回写', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setActivePinia(createPinia());
+    loginAsUser();
+  });
+
+  it('转发成功后本地计数 +1 并回抛 share-changed，宿主已回写 props 时不重复累加', async () => {
+    const wrapper = mount(FeedActionBar, { props: { feedId: '42', sharenum: 3 } });
+    try {
+      // 打开转发弹窗时计数不变，只有宿主确认成功后才会更新。
+      await wrapper.get('.share-btn').trigger('click');
+      expect(wrapper.emitted('forward')).toHaveLength(1);
+      expect(wrapper.get('.share-btn span').text()).toBe('3');
+      expect(wrapper.emitted('share-changed')).toBeUndefined();
+
+      (wrapper.vm as any).notifyShareSuccess();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.get('.share-btn span').text()).toBe('4');
+      expect(wrapper.emitted('share-changed')).toEqual([[{ feedId: '42', count: 4 }]]);
+
+      // 宿主先回写 feed.sharenum 并透传为 prop 时，直接采用 prop 值，避免重复 +1。
+      await wrapper.get('.share-btn').trigger('click');
+      await wrapper.setProps({ sharenum: 5 });
+      (wrapper.vm as any).notifyShareSuccess();
+      await wrapper.vm.$nextTick();
+      expect(wrapper.get('.share-btn span').text()).toBe('5');
+      expect(wrapper.emitted('share-changed')?.[1]).toEqual([{ feedId: '42', count: 5 }]);
+    } finally { wrapper.unmount(); }
+  });
+});
+
 describe('点赞状态与接口调用', () => {
   beforeEach(() => {
     vi.clearAllMocks();

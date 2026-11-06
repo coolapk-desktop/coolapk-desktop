@@ -88,6 +88,8 @@ const emit = defineEmits<{
   (e: 'open-like-list'): void;
   (e: 'open-forward-list'): void;
   (e: 'like-changed', payload: { feedId: string | number; liked: boolean; count: number }): void;
+  /** 转发成功后回抛最新转发数，宿主据此回写 feed.sharenum，列表与详情共享同一份数据。 */
+  (e: 'share-changed', payload: { feedId: string | number; count: number }): void;
 }>();
 
 const isLiked = ref(props.userAction?.like === 1);
@@ -99,6 +101,8 @@ const isFav = ref(props.favorited ?? (props.userAction?.collect === 1 || props.u
 
 const replyCount = ref(props.replynum || 0);
 const shareCount = ref(props.sharenum || 0);
+// 发起转发时的计数基准：宿主可能先回写 feed.sharenum 再通知，二者只能 +1 一次。
+let shareBaseline = shareCount.value;
 
 function formatCount(num?: number, defaultText: string = ''): string {
   if (!num || num <= 0) return defaultText;
@@ -183,8 +187,24 @@ function shareFeed() {
     authStore.openLoginModal();
     return;
   }
+  shareBaseline = shareCount.value;
   emit('forward');
 }
+
+/**
+ * 转发成功后由打开转发弹窗的宿主调用（转发弹窗在宿主侧，本组件拿不到成功回调）：
+ * 更新本地转发数并回抛 share-changed。宿主若已把 feed.sharenum 递增后透传为 prop，
+ * 这里直接采用 prop 值，避免重复 +1。
+ */
+function notifyShareSuccess() {
+  const propCount = Number(props.sharenum);
+  shareCount.value = Number.isFinite(propCount) && propCount > shareBaseline
+    ? propCount
+    : shareBaseline + 1;
+  emit('share-changed', { feedId: props.feedId, count: shareCount.value });
+}
+// 转发弹窗由宿主持有，宿主在 @success 里调用此方法同步计数（见报告）。
+defineExpose({ notifyShareSuccess });
 </script>
 
 <style scoped>
