@@ -195,7 +195,7 @@
 
             <!-- 进度条与实时速率信息（进行中类状态显示） -->
             <div
-              v-if="task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'"
+              v-if="task.status === 'downloading' || task.status === 'paused' || task.status === 'queued' || task.status === 'failed'"
               class="download-progress-section"
             >
               <div class="download-progress-track">
@@ -266,10 +266,19 @@
               </AppButton>
             </template>
 
-            <!-- 失败或已取消：重试 / 删除 -->
+            <!-- 失败或已取消：继续断点 / 重新开始 / 删除 -->
             <template v-else-if="task.status === 'failed' || task.status === 'canceled'">
               <AppButton variant="primary" size="sm" icon="fas fa-rotate-right" @click="downloadStore.retry(task.id)">
-                重试
+                {{ task.downloaded > 0 ? '继续下载' : '重试' }}
+              </AppButton>
+              <AppButton
+                v-if="task.downloaded > 0"
+                variant="secondary"
+                size="sm"
+                icon="fas fa-arrow-rotate-left"
+                @click="downloadStore.restart(task.id)"
+              >
+                重新开始
               </AppButton>
               <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
                 删除记录

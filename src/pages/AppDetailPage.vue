@@ -1054,7 +1054,7 @@ async function handleDownload() {
   if (!packageName.value || downloadLoading.value) return;
   downloadLoading.value = true;
   try {
-    const task = downloadStore.enqueue({
+    const result = downloadStore.enqueue({
       title: appTitle.value,
       packageName: packageName.value,
       versionName: String(appVersion.value || ''),
@@ -1064,7 +1064,19 @@ async function handleDownload() {
       extraAnalysisData: appInfo.value?.extraAnalysisData || appInfo.value?.extra_analysis_data || '',
       total: Number(appInfo.value?.apksize || appInfo.value?.size || 0) || 0,
     });
-    showToast(task.status === 'completed' ? '该版本已经下载完成' : `已加入下载队列：${task.title}`, 'success', 2800, {
+    const { task, reused, resumed } = result;
+    // 按任务的真实状态提示，避免复用失败/暂停任务时谎报「已加入下载队列」。
+    let message: string;
+    if (resumed) {
+      message = `已重新排队下载：${task.title}`;
+    } else if (reused && task.status === 'completed') {
+      message = '该版本已下载完成';
+    } else if (reused && (task.status === 'downloading' || task.status === 'queued')) {
+      message = `该版本已在下载队列中：${task.title}`;
+    } else {
+      message = `已加入下载队列：${task.title}`;
+    }
+    showToast(message, 'success', 2800, {
       label: '打开下载中心',
       onClick: () => { void router.push('/downloads'); },
     });
