@@ -18,7 +18,7 @@
         @pointerdown="startPointerDrag($event, tab.id)"
         :class="{ active: tab.id === tabsStore.activeId, dragging: tab.id === draggedId, 'drop-before': dropTarget?.id === tab.id && !dropTarget.after, 'drop-after': dropTarget?.id === tab.id && dropTarget.after }"
       >
-        <i :class="[tab.icon, 'page-tab-icon']"></i>
+        <OfficialNavIcon class="page-tab-icon" :route="tab.route" :active="tab.id === tabsStore.activeId" :fallback="tab.icon" />
         <span class="page-tab-title">{{ visibleTitle(tab) }}</span>
         <i v-if="tab.pinned && tab.id !== 'home'" class="fas fa-thumbtack page-tab-status" title="已固定"></i>
         <i v-else-if="tab.favorite" class="fas fa-star page-tab-status" title="已收藏"></i>
@@ -43,7 +43,7 @@
     <div v-if="tabListOpen" class="page-tab-menu page-tab-list-menu">
       <div class="page-tab-menu-heading">已打开</div>
       <button v-for="tab in tabsStore.tabs" :key="tab.id" type="button" :class="{ active: tab.id === tabsStore.activeId }" @click="openTabFromList(tab.id)">
-        <i :class="tab.icon"></i>
+        <OfficialNavIcon class="page-tab-menu-icon" :route="tab.route" :active="tab.id === tabsStore.activeId" :fallback="tab.icon" />
         <span>{{ visibleTitle(tab) }}</span>
         <i v-if="tab.pinned && tab.id !== 'home'" class="fas fa-thumbtack"></i>
         <i v-if="tab.id === tabsStore.activeId" class="fas fa-check"></i>
@@ -52,7 +52,7 @@
         <div class="page-tab-menu-divider"></div>
         <div class="page-tab-menu-heading">收藏的页面</div>
         <div v-for="page in tabsStore.favoritePages" :key="page.id" class="saved-page-row">
-          <button type="button" @click="openSavedPage(page.id)"><i :class="page.icon"></i><span>{{ visibleTitle(page) }}</span></button>
+          <button type="button" @click="openSavedPage(page.id)"><OfficialNavIcon class="page-tab-menu-icon" :route="page.route" :fallback="page.icon" /><span>{{ visibleTitle(page) }}</span></button>
           <button type="button" class="saved-page-remove" :aria-label="`取消收藏 ${visibleTitle(page)}`" title="取消收藏" @click="removeFavorite(page.id)"><i class="fas fa-star"></i></button>
         </div>
       </template>
@@ -70,6 +70,7 @@
 </template>
 
 <script setup lang="ts">
+import OfficialNavIcon from './OfficialNavIcon.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePageTabsStore } from '../../stores/pageTabs';
@@ -318,6 +319,7 @@ onUnmounted(() => {
 }
 
 .page-tab-icon {
+  --official-nav-icon-size: 15px;
   flex: 0 0 auto;
   width: 15px;
   color: var(--text-tertiary);
@@ -438,7 +440,9 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
+.page-tab-menu-icon,
 .page-tab-menu button i {
+  --official-nav-icon-size: 16px;
   width: 16px;
   text-align: center;
 }

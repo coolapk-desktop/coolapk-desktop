@@ -37,7 +37,7 @@
           :title="item.label"
           @click="handlePrimaryNavClick($event, item.path)"
         >
-          <i :class="[item.icon, 'nav-icon']"></i>
+          <OfficialNavIcon class="nav-icon" :route="item.path" :active="isNavIconActive(item.path)" />
           <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
         </router-link>
 
@@ -49,7 +49,7 @@
           title="更多服务与专区"
           @click="handleNavSelection"
         >
-          <i class="fas fa-shapes nav-icon"></i>
+          <OfficialNavIcon class="nav-icon" route="/more" :active="isMoreActive" />
           <span v-if="!isCollapsed || mobileOpen" class="nav-label">更多</span>
         </router-link>
 
@@ -67,7 +67,7 @@
           :title="getNavTitle(item)"
           @click="handleNavSelection"
         >
-          <i :class="[item.icon, 'nav-icon']"></i>
+          <OfficialNavIcon class="nav-icon" :route="item.path" :active="isNavIconActive(item.path)" />
           <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
           <span
             v-if="getNavBadge(item.key) > 0"
@@ -87,7 +87,7 @@
         title="我的"
         @click="handleNavSelection"
       >
-        <i class="fas fa-user nav-icon"></i>
+        <OfficialNavIcon class="nav-icon" route="/my" :active="isMyActive" />
         <span v-if="!isCollapsed || mobileOpen" class="nav-label">我的</span>
       </router-link>
 
@@ -95,7 +95,7 @@
         <div class="nav-divider"></div>
         <div class="nav-group">
           <router-link to="/settings" class="nav-item" active-class="is-active" title="设置" @click="handleNavSelection">
-            <i class="fas fa-cog nav-icon"></i>
+            <OfficialNavIcon class="nav-icon" route="/settings" :active="isNavIconActive('/settings')" />
             <span v-if="!isCollapsed || mobileOpen" class="nav-label">设置</span>
           </router-link>
         </div>
@@ -135,6 +135,7 @@
 </template>
 
 <script setup lang="ts">
+import OfficialNavIcon from './OfficialNavIcon.vue';
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSettingsStore } from '../../stores/settings';
@@ -213,18 +214,18 @@ const isDark = computed(() => {
 
 // 主侧边栏精简保留核心主干
 const allPrimaryNavs = [
-  { key: 'home', path: '/', label: '首页', icon: 'fas fa-home' },
-  { key: 'digital', path: '/digital', label: '数码', icon: 'fas fa-microchip' },
-  { key: 'discover', path: '/discover', label: '发现', icon: 'fas fa-compass' },
-  { key: 'topics', path: '/topics', label: '话题', icon: 'fas fa-hashtag' },
-  { key: 'pictures', path: '/pictures', label: '酷图', icon: 'far fa-images' },
+  { key: 'home', path: '/', label: '首页' },
+  { key: 'digital', path: '/digital', label: '数码' },
+  { key: 'discover', path: '/discover', label: '发现' },
+  { key: 'topics', path: '/topics', label: '话题' },
+  { key: 'pictures', path: '/pictures', label: '酷图' },
 ];
 
 const allSecondaryNavs = [
-  { key: 'notifications', path: '/notifications', label: '通知', icon: 'far fa-bell' },
-  { key: 'messages', path: '/messages', label: '消息', icon: 'far fa-comment-alt' },
-  { key: 'history', path: '/history', label: '历史', icon: 'far fa-clock' },
-  { key: 'favorites', path: '/favorites', label: '收藏', icon: 'far fa-bookmark' },
+  { key: 'notifications', path: '/notifications', label: '通知' },
+  { key: 'messages', path: '/messages', label: '消息' },
+  { key: 'history', path: '/history', label: '历史' },
+  { key: 'favorites', path: '/favorites', label: '收藏' },
 ];
 
 const primaryNavs = computed(() => {
@@ -304,6 +305,10 @@ function getNavBadge(key: string): number {
   if (key === 'messages') return notificationStore.messageCount;
   if (key === 'downloads') return downloadStore.activeCount;
   return 0;
+}
+
+function isNavIconActive(path: string): boolean {
+  return route.path === path || route.path.startsWith(path + '/');
 }
 
 function getNavTitle(item: { key: string; label: string }): string {
