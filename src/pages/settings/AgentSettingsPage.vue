@@ -74,7 +74,7 @@
           <span class="row-label">授权预设</span>
           <span class="row-sub">{{ presetHint }}</span>
         </div>
-        <select v-model="preset" class="select-control" :disabled="busy" aria-label="Agent 授权预设" @change="applyPreset">
+        <select v-model="preset" class="select-control" :disabled="busy || presetApplying" aria-label="Agent 授权预设" @change="applyPreset">
           <option value="read-only">只读（默认）</option>
           <option value="confirm-writes">敏感写操作需确认</option>
           <option value="auto-writes">完全放开（自动执行）</option>
@@ -180,6 +180,8 @@ import AppSwitch from '../../components/common/AppSwitch.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { showToast } from '../../utils/toast';
 import { logDiagnostic, summarizeDiagnosticError } from '../../utils/diagnosticLogger';
+import { requestConfirmation } from '../../utils/confirm';
+import { getErrorMessage } from '../../utils/errors';
 
 type BridgePreferences = {
   enabled: boolean;
@@ -221,6 +223,8 @@ const status = reactive<BridgeStatus>({ ...emptyStatus });
 const preferences = reactive<BridgePreferences>({ enabled: false, transport: 'uds', scopes: ['read'], writeMode: 'disabled', allowedAccounts: [], mcpEnabled: false });
 const savedPreferences = ref<BridgePreferences>({ ...preferences, scopes: [...preferences.scopes], allowedAccounts: [...preferences.allowedAccounts] });
 const busy = ref(false);
+// 确认弹窗期间锁住预设下拉框，避免连续切换产生两次落库。
+const presetApplying = ref(false);
 const tokenVisible = ref(false);
 const readEnabled = ref(true);
 const publishEnabled = ref(false);
@@ -246,6 +250,26 @@ const writeModeHint = computed(() => {
 
 // 预览里把 token 打码，与上方 token 行的默认行为一致；「复制说明」复制完整文本。
 const guidePreview = computed(() => (status.token ? guide.value.split(status.token).join('••••••••') : guide.value));
+
+/** 写操作闸门的中文名，用于确认弹窗里说明「当前 → 目标」的差异。 */
+function writeModeLabel(mode: string): string {
+  switch (mode) {
+    case 'dry-run': return '只预演不提交';
+    case 'confirm': return '每次在应用内确认';
+    case 'auto': return '直接执行（不确认）';
+    default: return '禁用写操作';
+  }
+}
+
+/** 汇总当前已生效的写授权，确认弹窗需要让用户看清将被放开哪些操作。 */
+function currentWriteSummary(): string {
+  const scopes = savedPreferences.value.scopes;
+  const authorized = [
+    scopes.includes('write.publish') ? '发布内容' : '',
+    scopes.includes('write.interact') ? '互动操作' : '',
+  ].filter(Boolean);
+  return `写操作闸门「${writeModeLabel(savedPreferences.value.writeMode)}」${authorized.length ? `，已授权${authorized.join('、')}` : '，未授权任何写操作'}`;
+}
 
 const presetHint = computed(() => {
   switch (preset.value) {
@@ -317,6 +341,36 @@ async function refresh() {
   }
 }
 
+/** 后端错误转成可读的一句话，过长时截断，避免 toast 撑满屏幕。 */
+function failureReason(error: unknown, fallback: string): string {
+  const message = getErrorMessage(error, fallback).replace(/\s+/g, ' ').trim();
+  if (!message) return fallback;
+  return message.length > 120 ? `${message.slice(0, 120)}…` : message;
+}
+
+/**
+ * 启停/换 token/切传输/改端口/保存偏好失败后，后端（start_with_config 第一步就 stop_running）
+ * 可能已经不再监听，页面必须回到服务端真实状态，不能继续显示「运行中」和旧地址。
+ * 返回服务是否仍在监听；无法读取状态时返回 null。
+ */
+async function syncStatusAfterFailure(): Promise<boolean | null> {
+  try {
+    const response = await CoolapkTauriAPI.agentBridgeStatus();
+    applyStatus(response?.data);
+    await loadGuide();
+    return status.enabled;
+  } catch (error) {
+    logDiagnostic('warn', 'settings', 'agent_bridge_status_failed', summarizeDiagnosticError(error));
+    return null;
+  }
+}
+
+/** 失败提示统一带上服务端真实结论，避免用户误以为接口还在跑。 */
+function failureSuffix(stillRunning: boolean | null): string {
+  if (stillRunning === null) return '；暂时无法读取服务状态，请稍后重新打开本页';
+  return stillRunning ? '；服务当前仍在运行' : '；服务已停止，不再监听任何地址';
+}
+
 async function persistPreferences() {
   if (busy.value) return;
   const previous = { ...savedPreferences.value, scopes: [...savedPreferences.value.scopes], allowedAccounts: [...savedPreferences.value.allowedAccounts] };
@@ -327,7 +381,8 @@ async function persistPreferences() {
     await loadGuide();
   } catch (error) {
     applyPreferences(previous);
-    showToast('保存 Agent 接口设置失败', 'error');
+    const stillRunning = await syncStatusAfterFailure();
+    showToast(`保存 Agent 接口设置失败：${failureReason(error, '未知原因')}${failureSuffix(stillRunning)}`, 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_preferences_failed', summarizeDiagnosticError(error));
   } finally {
     busy.value = false;
@@ -343,8 +398,35 @@ async function updateScope(scope: string, enabled: boolean) {
 }
 
 async function applyPreset() {
-  if (busy.value) return;
+  if (busy.value || presetApplying.value) return;
   const value = preset.value;
+  // 服务端真实生效的预设，用于取消/回退时把下拉框恢复成没说谎的选项。
+  const previousPreset = detectPreset(savedPreferences.value.scopes, savedPreferences.value.writeMode);
+  if (value === 'custom') {
+    // 自定义组合只由下方「授权范围」与「写操作闸门」逐项设置，这里不能只改界面标签。
+    preset.value = previousPreset;
+    showToast('自定义组合请通过下方「授权范围」与「写操作闸门」逐项调整', 'info');
+    return;
+  }
+  if (value === 'auto-writes') {
+    // 「完全放开」会让写工具不再弹窗确认，必须先让用户确认这次权限跃升。
+    presetApplying.value = true;
+    let confirmed = false;
+    try {
+      confirmed = await requestConfirmation({
+        title: '允许 Agent 直接执行写操作？',
+        message: `当前：${currentWriteSummary()}\n目标：写操作闸门「直接执行（不确认）」，并授权发布内容与互动操作\n\n确认后，发动态、发图文、评论回复、编辑/删除/置顶动态、评论点赞、转发、收藏与收藏单、话题与用户关注、私信等写工具将不再弹窗确认，直接提交到当前酷安账号，只记录审计日志。只建议在本机可信环境中开启。`,
+        confirmText: '允许直接执行',
+        danger: true,
+      });
+    } finally {
+      presetApplying.value = false;
+    }
+    if (!confirmed) {
+      preset.value = previousPreset;
+      return;
+    }
+  }
   if (value === 'read-only') {
     publishEnabled.value = false;
     interactEnabled.value = false;
@@ -388,7 +470,8 @@ async function toggleService(enabled: boolean) {
     await loadGuide();
     showToast(enabled ? 'Agent 接口已开启' : 'Agent 接口已关闭');
   } catch (error) {
-    showToast(enabled ? '开启失败，请查看诊断日志' : '关闭失败，请查看诊断日志', 'error');
+    const stillRunning = await syncStatusAfterFailure();
+    showToast(`${enabled ? '开启' : '关闭'} Agent 接口失败：${failureReason(error, '未知原因')}${failureSuffix(stillRunning)}`, 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_toggle_failed', summarizeDiagnosticError(error));
   } finally {
     busy.value = false;
@@ -404,7 +487,8 @@ async function toggleMcp(enabled: boolean) {
     await loadGuide();
     showToast(enabled ? 'MCP 服务已开启' : 'MCP 服务已关闭');
   } catch (error) {
-    showToast('切换 MCP 服务失败，请查看诊断日志', 'error');
+    const stillRunning = await syncStatusAfterFailure();
+    showToast(`切换 MCP 服务失败：${failureReason(error, '未知原因')}${failureSuffix(stillRunning)}`, 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_mcp_failed', summarizeDiagnosticError(error));
   } finally {
     busy.value = false;
@@ -420,7 +504,9 @@ async function rotateToken() {
     await loadGuide();
     showToast('token 已重新生成，旧 token 立即失效');
   } catch (error) {
-    showToast('重新生成失败', 'error');
+    // 后端换发 token 走 start_with_config，第一步就停掉旧实例，失败后服务确实已停。
+    const stillRunning = await syncStatusAfterFailure();
+    showToast(`重新生成 token 失败：${failureReason(error, '未知原因')}${failureSuffix(stillRunning)}`, 'error');
     logDiagnostic('warn', 'settings', 'agent_bridge_rotate_failed', summarizeDiagnosticError(error));
   } finally {
     busy.value = false;
