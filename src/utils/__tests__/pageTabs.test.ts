@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { RouteLocationNormalizedLoaded } from 'vue-router';
-import { describePageTab, getPageTabId, refreshPageTabGeneration } from '../pageTabs';
+import { describePageTab, getPageTabId, getSearchPageComponentKey, getSearchPageScopeKey, getSearchScopeFromComponentKey, refreshPageTabGeneration } from '../pageTabs';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 import { usePageTabsStore } from '../../stores/pageTabs';
 
@@ -53,6 +53,46 @@ describe('页面标签身份', () => {
     expect(getPageTabId(followedNodes)).not.toBe(getPageTabId(followedTopics));
     expect(describePageTab(followedNodes).title).toBe('关注的论坛');
     expect(getPageTabId(nodeA)).not.toBe(getPageTabId(nodeB));
+  });
+});
+
+describe('搜索页实例 key', () => {
+  it('页签、排序、问答筛选不改变组件 key，只在同一实例内更新', () => {
+    const base = route('/search', 'Search', {}, { q: '小米', tab: 'all' });
+    const otherTab = route('/search', 'Search', {}, { q: '小米', tab: 'feed' });
+    const sorted = route('/search', 'Search', {}, { q: '小米', tab: 'all', sort: 'hot' });
+    const askFiltered = route('/search', 'Search', {}, { q: '小米', tab: 'ask', feedType: 'answer' });
+
+    expect(getSearchPageComponentKey(otherTab, 0)).toBe(getSearchPageComponentKey(base, 0));
+    expect(getSearchPageComponentKey(sorted, 0)).toBe(getSearchPageComponentKey(base, 0));
+    expect(getSearchPageComponentKey(askFiltered, 0)).toBe(getSearchPageComponentKey(base, 0));
+  });
+
+  it('搜索词、搜索范围变化以及 Ctrl+R 刷新都会换 key', () => {
+    const base = route('/search', 'Search', {}, { q: '小米', tab: 'all' });
+    const otherKeyword = route('/search', 'Search', {}, { q: '红米', tab: 'all' });
+    const scoped = route('/search', 'Search', {}, { q: '小米', tab: 'feed', pageType: 'tag', pageParam: '数码' });
+
+    expect(getSearchPageComponentKey(otherKeyword, 0)).not.toBe(getSearchPageComponentKey(base, 0));
+    expect(getSearchPageComponentKey(scoped, 0)).not.toBe(getSearchPageComponentKey(base, 0));
+    expect(getSearchPageComponentKey(base, 1)).not.toBe(getSearchPageComponentKey(base, 0));
+  });
+
+  it('可从组件 key 还原实例范围，非搜索页 key 视为无范围', () => {
+    const scoped = route('/search', 'Search', {}, { q: '小米', tab: 'feed', pageType: 'user', pageParam: '123' });
+    const key = getSearchPageComponentKey(scoped, 3);
+    expect(getSearchScopeFromComponentKey(key)).toBe(getSearchPageScopeKey(scoped));
+    expect(getSearchScopeFromComponentKey('/topic/数码:0')).toBe('');
+    expect(getSearchScopeFromComponentKey(undefined)).toBe('');
+  });
+
+  it('搜索标签按范围区分，关键词与页签变化复用同一标签', () => {
+    const global = route('/search', 'Search', {}, { q: '小米', tab: 'all' });
+    const globalOtherTab = route('/search', 'Search', {}, { q: '红米', tab: 'user', sort: 'hot' });
+    const scoped = route('/search', 'Search', {}, { q: '小米', tab: 'feed', pageType: 'tag', pageParam: '数码' });
+
+    expect(getPageTabId(global)).toBe(getPageTabId(globalOtherTab));
+    expect(getPageTabId(global)).not.toBe(getPageTabId(scoped));
   });
 });
 

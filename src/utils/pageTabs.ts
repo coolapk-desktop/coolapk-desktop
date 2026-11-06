@@ -42,12 +42,39 @@ const structuralQueryKeys: Partial<Record<string, string[]>> = {
   Product: ['tab'],
   Favorites: ['collectionId'],
   Messages: ['targetUid'],
+  // 搜索标签按搜索范围区分（全局搜索 / 话题内搜索 / 用户动态搜索），
+  // 关键词、页签和排序变化继续复用同一个搜索标签。
+  Search: ['pageType', 'pageParam'],
 };
 
 function structuralQuerySuffix(route: TabRoute): string {
   const keys = structuralQueryKeys[String(route.name || '')] || [];
   const values = keys.map((key) => [key, decodeRouteText(route.query[key])] as const).filter(([, value]) => Boolean(value));
   return values.length ? `:${values.map(([key, value]) => `${key}=${value}`).join('&')}` : '';
+}
+
+/**
+ * 搜索页组件实例的范围 key：只由搜索词和搜索范围决定。
+ * 页签、排序、问答筛选属于同一实例内部状态，切换时不能重建整页（否则页签缓存与滚动位置全部失效）。
+ */
+export function getSearchPageScopeKey(route: TabRoute): string {
+  const keyword = decodeRouteText(route.query.q).trim();
+  const pageType = decodeRouteText(route.query.pageType);
+  const pageParam = decodeRouteText(route.query.pageParam);
+  return `/search:${keyword}|${pageType}|${pageParam}`;
+}
+
+/** 搜索页组件 key：`/search:<刷新代数>:<关键词>|<范围>`，代数放在固定位置便于还原实例范围。 */
+export function getSearchPageComponentKey(route: TabRoute, generation: number): string {
+  const scope = getSearchPageScopeKey(route).replace(/^\/search:/, '');
+  return `/search:${generation}:${scope}`;
+}
+
+/** 从搜索页组件 key 还原实例所属的搜索范围（去掉 Ctrl+R 刷新的代数）；非搜索页 key 返回空串。 */
+export function getSearchScopeFromComponentKey(key: unknown): string {
+  const text = typeof key === 'string' ? key : '';
+  const match = /^\/search:\d+:(.*)$/.exec(text);
+  return match ? `/search:${match[1]}` : '';
 }
 
 const mySectionTitles: Record<string, string> = {

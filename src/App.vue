@@ -204,6 +204,7 @@ import { useOfficialMobileFeedDetail } from './composables/useOfficialMobileFeed
 import { registerGlobalSelectionClear } from './utils/selection';
 import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
+import { getSearchPageComponentKey } from './utils/pageTabs';
 import { logDiagnostic } from './utils/diagnosticLogger';
 import { setupKeyboardScrollAssist, setupViewportHeight } from './utils/viewport';
 import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
@@ -214,6 +215,11 @@ function getRouteKey(route: any): string {
   // /topics 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁
   if (route.path === '/topics') {
     return `/topics:${pageTabsStore.getGeneration(route)}`;
+  }
+  // 搜索页实例只由「搜索词 + 搜索范围」决定：页签、排序、问答筛选在同一实例内更新，
+  // 否则每次切页签都会整页重建，页签缓存与滚动位置全部失效。
+  if (route.path === '/search') {
+    return getSearchPageComponentKey(route, pageTabsStore.getGeneration(route));
   }
   return `${route.fullPath}:${pageTabsStore.getGeneration(route)}`;
 }

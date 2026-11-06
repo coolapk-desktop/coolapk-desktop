@@ -16,6 +16,7 @@ vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
 
 import SearchPage from '../SearchPage.vue';
 import { useSettingsStore } from '../../stores/settings';
+import { getSearchPageComponentKey } from '../../utils/pageTabs';
 
 describe('搜索联想弹层生命周期', () => {
   async function mountCachedSearch() {
@@ -26,8 +27,8 @@ describe('搜索联想弹层生命周期', () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/search', component: SearchPage }, { path: '/feed/1', component: { render: () => h('div', '帖子') } }] });
     await router.push('/search?q=nuke');
     await router.isReady();
-    // 与应用相同，按完整路由缓存页面，覆盖进入帖子后返回的流程。
-    const host = defineComponent({ setup: () => () => h(RouterView, null, { default: ({ Component, route }: any) => h(KeepAlive, null, { default: () => Component ? h(Component, { key: route.fullPath }) : null }) }) });
+    // 与应用相同，按「搜索词 + 搜索范围」缓存页面，覆盖进入帖子后返回的流程。
+    const host = defineComponent({ setup: () => () => h(RouterView, null, { default: ({ Component, route }: any) => h(KeepAlive, null, { default: () => Component ? h(Component, { key: getSearchPageComponentKey(route, 0) }) : null }) }) });
     const wrapper = mount(host, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
     await flushPromises();
     return { wrapper, router };
@@ -550,5 +551,111 @@ it('收起后首屏只有用户时自动补一页，避免整屏空白', async (
       expect((wrapper.findComponent({ name: 'SearchResultItem' }).props('entity') as { id: string }).id).toBe('f2');
       expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ page: 2, firstItem: 'f', lastItem: 'l' });
     } finally { wrapper.unmount(); localStorage.clear(); }
+  });
+});
+
+describe('搜索页交互一致性', () => {
+  function mountSearch(initial = { path: '/search', query: { q: '小米', tab: 'all' } }) {
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/search', component: SearchPage },
+      { path: '/user/:uid', component: { render: () => h('div', '用户主页') } },
+    ] });
+    const wrapper = mount(SearchPage, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
+    return { wrapper, router, initial };
+  }
+
+  function defaultMocks() {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.getSearchSuggestionsApp.mockResolvedValue({ data: [] });
+    mocks.getSearchSuggestions.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockReset().mockImplementation((request: any) => Promise.resolve({
+      data: [{ id: `${request.searchType}-${request.sort || 'none'}`, entityType: request.searchType === 'user' ? 'user' : 'feed' }],
+    }));
+  }
+
+  it('同条件再次回车会在当前页签重新搜索，而不是静默无反应', async () => {
+    defaultMocks();
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
+      await flushPromises();
+      const requests = mocks.searchByType.mock.calls.length;
+      await wrapper.get('.search-field').trigger('keydown.enter');
+      await flushPromises();
+      expect(mocks.searchByType.mock.calls.length).toBe(requests + 1);
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ page: 1, query: '小米', searchType: 'all' });
+    } finally { wrapper.unmount(); }
+  });
+
+  it('切换排序只重置受影响的页签，其它页签已加载结果保留', async () => {
+    defaultMocks();
+    const { wrapper, router } = mountSearch();
+    const userRequests = () => mocks.searchByType.mock.calls.filter(([request]) => request.searchType === 'user').length;
+    try {
+      await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
+      await flushPromises();
+      await wrapper.findAll('.search-tab-item').find((tab) => tab.text() === '用户')!.trigger('click');
+      await flushPromises();
+      expect(userRequests()).toBe(1);
+      await wrapper.findAll('.search-tab-item').find((tab) => tab.text() === '综合')!.trigger('click');
+      await flushPromises();
+      await wrapper.findAll('.search-feed-sort .filter-btn')[2].trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.query).toMatchObject({ tab: 'all', sort: 'hot' });
+      // 用户页签不使用排序，切换排序不能清掉它的缓存。
+      await wrapper.findAll('.search-tab-item').find((tab) => tab.text() === '用户')!.trigger('click');
+      await flushPromises();
+      expect(userRequests()).toBe(1);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('清空输入后重新展开最近搜索', async () => {
+    defaultMocks();
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
+      await flushPromises();
+      await wrapper.get('.search-field').trigger('keydown.enter');
+      await flushPromises();
+      await wrapper.get('.clear-btn').trigger('click');
+      await flushPromises();
+      expect((wrapper.get('.search-field').element as HTMLInputElement).value).toBe('');
+      expect(wrapper.find('.search-history-dropdown').exists()).toBe(true);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('问答页签切换筛选时保留输入框里尚未提交的关键词', async () => {
+    defaultMocks();
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '小米', tab: 'ask' } });
+      await flushPromises();
+      await wrapper.get('.search-field').setValue('红米');
+      await wrapper.findAll('.search-ask-filter-item')[2].trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.query).toMatchObject({ q: '红米', tab: 'ask', feedType: 'answer' });
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ query: '红米', searchType: 'ask', feedType: 'answer' });
+    } finally { wrapper.unmount(); }
+  });
+
+  it('联想词有实体路由时直达详情，与 Ctrl+K 面板一致', async () => {
+    defaultMocks();
+    mocks.getSearchSuggestionsApp.mockResolvedValue({ data: [{ entityType: 'user', uid: '123', username: '小米用户' }] });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push('/search');
+      await flushPromises();
+      const input = wrapper.get('.search-field');
+      await input.setValue('小米');
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await flushPromises();
+      await wrapper.find('.suggestion-item').trigger('mousedown');
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/user/123');
+    } finally { wrapper.unmount(); }
   });
 });
