@@ -3,12 +3,14 @@ import { registerGlobalHotkeys } from '../hotkeys';
 import * as commentTracker from '../activeCommentTracker';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 
-const { push, replace, back, cycle, historyState } = vi.hoisted(() => ({
+const { push, replace, back, cycle, closeTab, historyState, currentRoute } = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
   back: vi.fn(),
   cycle: vi.fn(),
+  closeTab: vi.fn(),
   historyState: { state: { back: null as string | null, forward: null as string | null } },
+  currentRoute: { path: '/' },
 }));
 
 vi.mock('vue-router', () => ({
@@ -18,7 +20,7 @@ vi.mock('vue-router', () => ({
     back,
     forward: vi.fn(),
     options: { history: historyState },
-    currentRoute: { value: { path: '/', fullPath: '/' } },
+    get currentRoute() { return { value: currentRoute }; },
   }),
 }));
 
@@ -27,7 +29,8 @@ vi.mock('../../stores/pageTabs', () => ({
     tabs: [{ id: 'home', generation: 0 }],
     activeId: 'home',
     cycle,
-    close: () => '/feed/123',
+    // Ctrl+W 走带守卫的异步关闭入口。
+    closeTab,
   }),
 }));
 
@@ -62,6 +65,9 @@ describe('registerGlobalHotkeys', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     historyState.state.back = null;
+    // `vi.clearAllMocks` 会清掉实现，这里每个用例重新给出关闭结果。
+    closeTab.mockResolvedValue('/feed/123');
+    currentRoute.path = '/';
     cycle.mockReturnValue('/feed/123');
     commentTracker.resetActiveComments();
     unregister = registerGlobalHotkeys();
@@ -116,12 +122,22 @@ describe('registerGlobalHotkeys', () => {
     } finally { input.remove(); }
   });
 
-  it('关闭当前页签仍走 replace，历史里不留下已关闭的页面', () => {
+  it('关闭当前页签仍走 replace，历史里不留下已关闭的页面', async () => {
     const event = new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true });
     window.dispatchEvent(event);
-    expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123');
+    expect(closeTab).toHaveBeenCalledExactlyOnceWith('home');
+    // 关闭入口是带守卫的异步方法，确认通过后才 replace。
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123'));
     expect(push).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('关闭守卫拒绝时不离开当前页面', async () => {
+    closeTab.mockResolvedValue(null);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true }));
+    await vi.waitFor(() => expect(closeTab).toHaveBeenCalledOnce());
+    await Promise.resolve();
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it('Alt+← 有应用内上一页时后退', () => {
@@ -135,6 +151,18 @@ describe('registerGlobalHotkeys', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
     expect(back).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledExactlyOnceWith('/');
+  });
+
+  it.each([
+    ['/user/12345', '/user/12345'],
+    ['/topic/摄影', '/topics'],
+    ['/live/88', '/discover'],
+    ['/settings/network', '/settings'],
+  ])('Alt+← 在 %s 深链进入时回到语义上级栏目 %s', (path, fallback) => {
+    currentRoute.path = path;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
+    expect(back).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledExactlyOnceWith(fallback);
   });
 
   it('尊重已处理的键盘事件，注销后不再切换标签', () => {

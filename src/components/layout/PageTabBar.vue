@@ -191,9 +191,10 @@ function removeFavorite(id: string) {
   tabsStore.removeFavorite(id);
 }
 
-function closeTab(id: string) {
-  replaceRoute(tabsStore.close(id));
+// 关闭页签先经过 store 的关闭守卫（如代理页未应用修改的确认），拒绝时页签保持原样。
+async function closeTab(id: string) {
   closeMenus();
+  replaceRoute(await tabsStore.closeTab(id));
 }
 
 function toggleTabList() {
@@ -212,15 +213,15 @@ function openContextMenu(event: MouseEvent, id: string) {
   };
 }
 
-function runContextAction(action: 'favorite' | 'pin' | 'close' | 'others' | 'right') {
+async function runContextAction(action: 'favorite' | 'pin' | 'close' | 'others' | 'right') {
   const id = contextMenu.value?.id;
   if (!id) return;
+  closeMenus();
   if (action === 'favorite') tabsStore.toggleFavorite(id);
   else if (action === 'pin') tabsStore.togglePin(id);
-  else if (action === 'close') replaceRoute(tabsStore.close(id));
-  else if (action === 'others') replaceRoute(tabsStore.closeOthers(id));
-  else replaceRoute(tabsStore.closeRight(id));
-  closeMenus();
+  else if (action === 'close') replaceRoute(await tabsStore.closeTab(id));
+  else if (action === 'others') replaceRoute(await tabsStore.closeOtherTabs(id));
+  else replaceRoute(await tabsStore.closeRightTabs(id));
 }
 
 function closeMenus() {

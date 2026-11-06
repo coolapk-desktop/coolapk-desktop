@@ -12,10 +12,13 @@ const mocks = vi.hoisted(() => ({
   installError: vi.fn(),
   quitApp: vi.fn(),
   flushSettings: vi.fn(),
+  showToast: vi.fn(),
+  desktopNotify: vi.fn(),
+  push: vi.fn(),
   settings: {
     updateChannel: 'stable', ignoredUpdateVersion: '', ignoreAllUpdates: false,
     checkUpdateOnStartup: false, autoCleanCache: false, desktopNotifications: false,
-    updateSpeedLimitKBps: 0,
+    notifyDownloadComplete: true, updateSpeedLimitKBps: 0,
   },
 }));
 vi.mock('../utils/platform', () => ({ getPlatformInfo: async () => mocks.platform }));
@@ -39,7 +42,12 @@ vi.mock('../stores/settings', async () => {
 });
 vi.mock('../stores/downloads', () => ({ useDownloadStore: () => ({ initialize: vi.fn() }) }));
 vi.mock('../stores/pageTabs', () => ({ usePageTabsStore: () => ({ getGeneration: () => 0, syncRoute: vi.fn() }) }));
-vi.mock('vue-router', () => ({ useRoute: () => ({ path: '/home', fullPath: '/home' }) }));
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ path: '/home', fullPath: '/home' }),
+  useRouter: () => ({ push: mocks.push }),
+}));
+vi.mock('../utils/toast', () => ({ showToast: mocks.showToast }));
+vi.mock('../utils/desktopNotify', () => ({ desktopNotify: mocks.desktopNotify }));
 vi.mock('../utils/routeTransition', () => ({ useSidebarTransition: () => ({ isSidebarTransitionActive: false, resetSidebarTransition: vi.fn() }) }));
 vi.mock('../utils/hotkeys', () => ({ registerGlobalHotkeys: () => vi.fn() }));
 vi.mock('../utils/selection', () => ({ registerGlobalSelectionClear: () => vi.fn() }));
@@ -100,6 +108,46 @@ describe('桌面自动更新交互', () => {
     expect(mocks.installUpdate).toHaveBeenCalledWith(path, packageType === 'portable');
     expect(mocks.quitApp).toHaveBeenCalledOnce();
     expect(mocks.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('下载完成但系统桌面通知关闭时，只给一次可跳转通知设置的轻量提示', async () => {
+    mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9',
+      installerUrl: 'https://github.com/download/new.dmg', installerName: 'coolapk-desktop_9.9.9_aarch64.dmg',
+      packageType: 'installer', releaseNotes: '更新说明',
+    });
+    mocks.settings.notifyDownloadComplete = true;
+    mocks.settings.desktopNotifications = false;
+    wrapper = mountApp();
+    await flushPromises();
+    window.dispatchEvent(new Event('check-for-update'));
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text().includes('后台下载更新'))!.trigger('click');
+    await flushPromises();
+    // 系统通知总开关关闭时不再尝试系统气泡，改为应用内提示并保留设置入口。
+    expect(mocks.desktopNotify).not.toHaveBeenCalled();
+    expect(mocks.showToast).toHaveBeenCalledOnce();
+    const [message, type, , action] = mocks.showToast.mock.calls[0]!;
+    expect(String(message)).toContain('更新包已下载完成');
+    expect(type).toBe('info');
+    action.onClick();
+    expect(mocks.push).toHaveBeenCalledWith('/settings/notifications');
+  });
+
+  it('系统桌面通知开启时仍走系统气泡，不再额外弹应用内提示', async () => {
+    mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9',
+      installerUrl: 'https://github.com/download/new.dmg', installerName: 'coolapk-desktop_9.9.9_aarch64.dmg',
+      packageType: 'installer', releaseNotes: '更新说明',
+    });
+    mocks.settings.notifyDownloadComplete = true;
+    mocks.settings.desktopNotifications = true;
+    wrapper = mountApp();
+    await flushPromises();
+    window.dispatchEvent(new Event('check-for-update'));
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text().includes('后台下载更新'))!.trigger('click');
+    await flushPromises();
+    expect(mocks.desktopNotify).toHaveBeenCalledOnce();
+    expect(mocks.showToast).not.toHaveBeenCalled();
   });
 
   it('手动检查 macOS 更新后可以下载并记录待安装包', async () => {

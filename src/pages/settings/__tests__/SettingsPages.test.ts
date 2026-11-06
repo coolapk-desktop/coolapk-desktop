@@ -69,6 +69,7 @@ import StartupSettingsPage from '../StartupSettingsPage.vue';
 import SettingsLayout from '../SettingsLayout.vue';
 import ShortcutSettingsPage from '../ShortcutSettingsPage.vue';
 import { normalizeSettings, useSettingsStore } from '../../../stores/settings';
+import { usePageTabsStore } from '../../../stores/pageTabs';
 import { confirmationState, settleConfirmation } from '../../../utils/confirm';
 import { getPlatformInfo } from '../../../utils/platform';
 
@@ -663,6 +664,71 @@ describe('设置页面交互', () => {
       await leaving;
       await flushPromises();
       expect(router.currentRoute.value.path).toBe('/settings/about');
+    } finally {
+      settleConfirmation(false);
+      wrapper.unmount();
+    }
+  });
+
+  it('关闭代理页标签时同样确认未保存修改，取消后标签与草稿都保留', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/settings/network', name: 'SettingsNetwork', component: NetworkSettingsPage },
+        { path: '/settings/about', name: 'SettingsAbout', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/settings/network');
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const tabsStore = usePageTabsStore(pinia);
+    const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router] } });
+    try {
+      await flushPromises();
+      tabsStore.syncRoute(router.currentRoute.value);
+      await wrapper.get('#proxy-address').setValue('127.0.0.1:7890');
+      await flushPromises();
+
+      // 页签关闭不经过路由守卫，必须由 store 的关闭前拦截兜住。
+      const closing = tabsStore.closeTab('settings');
+      await flushPromises();
+      expect(confirmationState.isOpen).toBe(true);
+      settleConfirmation(false);
+      expect(await closing).toBeNull();
+      expect(tabsStore.tabs.some((tab) => tab.id === 'settings')).toBe(true);
+      expect((wrapper.get('#proxy-address').element as HTMLInputElement).value).toBe('127.0.0.1:7890');
+
+      const confirmedClosing = tabsStore.closeTab('settings');
+      await flushPromises();
+      settleConfirmation(true);
+      expect(await confirmedClosing).toBe('/');
+      expect(tabsStore.tabs.some((tab) => tab.id === 'settings')).toBe(false);
+    } finally {
+      settleConfirmation(false);
+      wrapper.unmount();
+    }
+  });
+
+  it('无未保存修改时关闭代理页标签不再确认', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/settings/network', name: 'SettingsNetwork', component: NetworkSettingsPage }],
+    });
+    await router.push('/settings/network');
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const tabsStore = usePageTabsStore(pinia);
+    const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router] } });
+    try {
+      await flushPromises();
+      tabsStore.syncRoute(router.currentRoute.value);
+      const closing = tabsStore.closeTab('settings');
+      await flushPromises();
+      expect(confirmationState.isOpen).toBe(false);
+      expect(await closing).toBe('/');
+      expect(tabsStore.tabs.some((tab) => tab.id === 'settings')).toBe(false);
     } finally {
       settleConfirmation(false);
       wrapper.unmount();

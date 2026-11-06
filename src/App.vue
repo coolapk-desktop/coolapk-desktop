@@ -164,7 +164,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import EquipmentProductPicker from './components/profile/EquipmentProductPicker.vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { listen } from '@tauri-apps/api/event';
 import AppShell from './components/layout/AppShell.vue';
 import PublishDialog from './components/overlays/PublishDialog.vue';
@@ -232,6 +232,7 @@ type DownloadNotice = { version: string; releaseNotes?: string };
 
 type DownloadProgress = { downloaded: number; total: number; percent: number };
 
+const router = useRouter();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const downloadStore = useDownloadStore();
@@ -273,6 +274,8 @@ let unregisterViewport: (() => void) | null = null;
 let unregisterKeyboardAssist: (() => void) | null = null;
 let updateDownloadInFlight = false;
 let updateChannelEpoch = 0;
+// 本次运行内是否已经用应用内提示替代过桌面通知，保证每会话只打扰一次。
+let downloadToastHintShown = false;
 
 watch(() => settingsStore.settings.updateChannel, () => {
   updateChannelEpoch += 1;
@@ -452,14 +455,26 @@ async function startBackgroundDownload(info: UpdateInfo) {
     };
     readyUpdateVisible.value = true;
     localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify(readyInfo.value));
-    if (settingsStore.settings.desktopNotifications && settingsStore.settings.notifyDownloadComplete) {
-      void desktopNotify(
-        {
-          title: '更新包下载完成',
-          body: `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成，点击安装即可升级。`,
-        },
-        settingsStore.settings.notificationSound
-      );
+    if (settingsStore.settings.notifyDownloadComplete) {
+      if (settingsStore.settings.desktopNotifications) {
+        void desktopNotify(
+          {
+            title: '更新包下载完成',
+            body: `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成，点击安装即可升级。`,
+          },
+          settingsStore.settings.notificationSound
+        );
+      } else if (!downloadToastHintShown) {
+        // 用户要下载提示但关掉了系统桌面通知时，系统气泡不会出现；
+        // 改为每会话最多一次的轻量提示，并给出通知设置入口。
+        downloadToastHintShown = true;
+        showToast(
+          `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成。系统桌面通知已关闭，可在通知设置中开启提醒。`,
+          'info',
+          6000,
+          { label: '去设置', onClick: () => { void router.push('/settings/notifications'); } }
+        );
+      }
     }
   } catch (err) {
     logDiagnostic('error', 'update', 'download_failed');

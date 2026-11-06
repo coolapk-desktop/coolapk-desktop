@@ -31,19 +31,6 @@ import { navigateBack } from './navigation';
  */
 const OVERLAY_ESCAPE_SELECTOR = '.dialog-wrapper, .image-viewer-backdrop, .login-overlay, .app-context-menu, .more-menu';
 
-/**
- * 深链直接进入详情页时 Alt+← 的兜底页面：
- * 优先回到当前页面所属的语义上级栏目，而不是一律回首页或按历史长度误退出应用。
- */
-function resolveBackFallback(path: string): string {
-  const userMatch = path.match(/^\/user\/([^/]+)/);
-  if (userMatch) return `/user/${userMatch[1]}`;
-  if (path.startsWith('/topic/')) return '/topics';
-  if (path.startsWith('/live/')) return '/discover';
-  if (path.startsWith('/settings')) return '/settings';
-  return '/';
-}
-
 export function registerGlobalHotkeys() {
   const router = useRouter();
   const settingsStore = useSettingsStore();
@@ -70,9 +57,11 @@ export function registerGlobalHotkeys() {
     if (ctrl && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       const tabsStore = usePageTabsStore();
-      const route = tabsStore.close(tabsStore.activeId);
-      // 关闭页签沿用 replace：历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
-      if (route) void router.replace(route);
+      // 关闭前守卫（如代理页未应用修改的确认）是异步的，确认通过后才离开当前页面。
+      void tabsStore.closeTab(tabsStore.activeId).then(route => {
+        // 关闭页签沿用 replace：历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
+        if (route) void router.replace(route);
+      });
       return;
     }
 
@@ -95,7 +84,8 @@ export function registerGlobalHotkeys() {
 
     if (e.altKey && e.key === 'ArrowLeft') {
       e.preventDefault();
-      navigateBack(router, resolveBackFallback(router.currentRoute.value.path));
+      // 兜底页面由 navigation.ts 统一按当前路由给出语义上级栏目。
+      navigateBack(router);
       return;
     }
 

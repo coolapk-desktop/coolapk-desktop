@@ -15,7 +15,7 @@ vi.mock('vue-router', async (importOriginal) => {
   return {
     ...actual,
     useRoute: () => routeState.value,
-    useRouter: () => ({ push: vi.fn(), back: routeState.back, replace: routeState.replace, options: { history: { state: routeState.history } } }),
+    useRouter: () => ({ push: vi.fn(), back: routeState.back, replace: routeState.replace, options: { history: { state: routeState.history } }, get currentRoute() { return { value: routeState.value }; } }),
   };
 });
 
@@ -205,6 +205,19 @@ describe('AppShell', () => {
     routeState.history.back = null;
     await wrapper.get('.narrow-titlebar-back').trigger('click');
     expect(routeState.replace).toHaveBeenCalledWith('/');
+    // 深链详情没有应用内上一页时，按当前路由返回语义上级栏目，而不是一律回首页。
+    routeState.replace.mockClear();
+    Object.assign(routeState.value, { path: '/user/12345', fullPath: '/user/12345' });
+    await nextTick();
+    await wrapper.get('.narrow-titlebar-back').trigger('click');
+    expect(routeState.replace).toHaveBeenCalledWith('/user/12345');
+    routeState.replace.mockClear();
+    Object.assign(routeState.value, { path: '/topic/摄影', fullPath: '/topic/摄影' });
+    await nextTick();
+    await wrapper.get('.narrow-titlebar-back').trigger('click');
+    expect(routeState.replace).toHaveBeenCalledWith('/topics');
+    Object.assign(routeState.value, { path: '/feed/42', fullPath: '/feed/42' });
+    await nextTick();
     routeState.value.controls = false;
     await nextTick();
     expect(wrapper.find('.narrow-titlebar-back').exists()).toBe(false);
