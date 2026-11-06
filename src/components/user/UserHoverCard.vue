@@ -129,8 +129,8 @@
 import { ref, computed, onMounted, onUnmounted, onDeactivated, watch, nextTick } from 'vue';
 import { useDeviceModelNames } from '../../utils/deviceModelNames';
 import { useRouter } from 'vue-router';
-import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useAuthStore } from '../../stores/auth';
+import { useUserRelationsStore } from '../../stores/userRelations';
 import { preloadUserProfile, getUserProfileCached, getCachedUserProfileSync } from '../../utils/userProfilePreloader';
 import { normalizeUserUid } from '../../utils/userRoute';
 import AppAvatar from '../common/AppAvatar.vue';
@@ -153,6 +153,7 @@ const props = withDefaults(defineProps<Props>(), {
 const router = useRouter();
 const displayDeviceName = useDeviceModelNames();
 const authStore = useAuthStore();
+const userRelations = useUserRelationsStore();
 
 const triggerRef = ref<HTMLElement | null>(null);
 const cardRef = ref<HTMLElement | null>(null);
@@ -161,8 +162,6 @@ const visible = ref(false);
 const hasMounted = ref(false);
 const loading = ref(false);
 const profile = ref<any>(null);
-const isFollowing = ref(false);
-const followLoading = ref(false);
 
 const popoverStyle = ref({
   top: '0px',
@@ -175,11 +174,18 @@ let hideTimer: any = null;
 const currentUid = computed(() => normalizeUserUid(props.uid));
 const isSelf = computed(() => authStore.user?.uid && String(authStore.user.uid) === currentUid.value);
 
+// 关注状态统一取自关注关系 store，缓存缺失时回落到用户资料里的接口字段。
+const isFollowing = computed(() => {
+  const relation = currentUid.value ? userRelations.getRelation(currentUid.value) : undefined;
+  if (relation) return relation.isFollow;
+  return Number(profile.value?.isFollow) === 1;
+});
+const followLoading = computed(() => Boolean(currentUid.value) && userRelations.isPending(currentUid.value));
+
 // 初始化时若缓存中有数据直接同步展示
 const cachedInit = getCachedUserProfileSync(currentUid.value);
 if (cachedInit) {
   profile.value = cachedInit;
-  isFollowing.value = Number(cachedInit?.isFollow) === 1;
 }
 
 const currentUsername = computed(() => profile.value?.username || props.username || '酷友');
@@ -279,7 +285,6 @@ async function fetchUserData() {
   const cached = getCachedUserProfileSync(currentUid.value);
   if (cached) {
     profile.value = cached;
-    isFollowing.value = Number(cached?.isFollow) === 1;
     return;
   }
 
@@ -293,7 +298,6 @@ async function fetchUserData() {
     });
     if (data) {
       profile.value = data;
-      isFollowing.value = Number(data?.isFollow) === 1;
     }
   } finally {
     loading.value = false;
@@ -312,7 +316,6 @@ watch(currentUid, (newUid) => {
     const syncData = getCachedUserProfileSync(newUid);
     if (syncData) {
       profile.value = syncData;
-      isFollowing.value = Number(syncData?.isFollow) === 1;
     }
     preloadUserProfile(newUid);
   }
@@ -379,26 +382,8 @@ async function toggleFollow() {
     return;
   }
   if (followLoading.value || !currentUid.value) return;
-
-  followLoading.value = true;
-  const targetFollow = !isFollowing.value;
-  try {
-    if (targetFollow) {
-      await CoolapkTauriAPI.followUser(currentUid.value);
-      isFollowing.value = true;
-    } else {
-      await CoolapkTauriAPI.unfollowUser(currentUid.value);
-      isFollowing.value = false;
-    }
-    // 更新缓存
-    if (profile.value) {
-      profile.value.isFollow = isFollowing.value ? 1 : 0;
-    }
-  } catch (err: any) {
-    console.error('关注操作失败', err);
-  } finally {
-    followLoading.value = false;
-  }
+  // 失败由 store 统一提示并回滚，卡片中的关注态随之还原。
+  await userRelations.toggle(currentUid.value, isFollowing.value);
 }
 
 function closeCardImmediately() {

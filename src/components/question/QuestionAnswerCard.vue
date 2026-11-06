@@ -211,6 +211,7 @@ import QuestionRelatedContent from './QuestionRelatedContent.vue';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
 import { useAppStore } from '../../stores/app';
+import { productRelationKey, useUserRelationsStore } from '../../stores/userRelations';
 import { getErrorMessage } from '../../utils/errors';
 import { extractFeedImageInputs, type FeedImageInput } from '../../utils/livePhoto';
 import { registerOpenComments, touchActiveComments, isCommentHostVisible } from '../../utils/activeCommentTracker';
@@ -273,6 +274,7 @@ const router = useRouter();
 const appStore = useAppStore();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
+const userRelations = useUserRelationsStore();
 const mobileOfficialEnabled = useOfficialMobileFeedDetail();
 const commentSectionRef = ref<InstanceType<typeof FeedCommentSection> | null>(null);
 const componentActive = ref(true);
@@ -447,19 +449,21 @@ function targetId(target: any): string {
   return String(target?.id ?? target?.entityId ?? target?.entity_id ?? target?.targetId ?? target?.target_id ?? target?.productId ?? target?.product_id ?? '').trim();
 }
 
-const targetFollowStates = ref<Record<string, boolean>>({});
-const targetFollowPending = ref<Record<string, boolean>>({});
-
+/** 关联数码的关注同样走关注关系 store（产品 key），与数码卡片共享状态。 */
 function isTargetFollowed(target: any): boolean {
   const id = targetId(target);
   if (!id) return false;
-  if (id in targetFollowStates.value) return targetFollowStates.value[id];
+  const relation = userRelations.getRelation(productRelationKey(id));
+  if (relation) return relation.isFollow;
   const action = target?.userAction || target?.user_action || {};
   return action.follow === 1 || action.follow === true || action.isFollow === 1 || action.is_follow === 1
     || target?.isFollow === 1 || target?.is_follow === 1;
 }
 
-function isTargetFollowPending(target: any): boolean { return Boolean(targetFollowPending.value[targetId(target)]); }
+function isTargetFollowPending(target: any): boolean {
+  const id = targetId(target);
+  return Boolean(id) && userRelations.isPending(productRelationKey(id));
+}
 
 async function toggleTargetFollow(target: any) {
   if (!authStore.isLoggedIn) {
@@ -467,22 +471,11 @@ async function toggleTargetFollow(target: any) {
     return;
   }
   const id = targetId(target);
-  if (!id || targetFollowPending.value[id]) return;
-  const previous = isTargetFollowed(target);
-  const next = !previous;
-  targetFollowStates.value = { ...targetFollowStates.value, [id]: next };
-  targetFollowPending.value = { ...targetFollowPending.value, [id]: true };
-  try {
-    await CoolapkTauriAPI.changeProductFollowStatus(id, next ? 1 : 0);
-    showToast(next ? '已关注数码' : '已取消关注数码', 'success');
-  } catch (error) {
-    targetFollowStates.value = { ...targetFollowStates.value, [id]: previous };
-    showToast(getErrorMessage(error, next ? '关注数码失败' : '取消关注失败'), 'error');
-  } finally {
-    const pending = { ...targetFollowPending.value };
-    delete pending[id];
-    targetFollowPending.value = pending;
-  }
+  if (!id || isTargetFollowPending(target)) return;
+  const next = !isTargetFollowed(target);
+  // 失败由 store 统一回滚并提示。
+  const ok = await userRelations.toggleProduct(id, !next);
+  if (ok) showToast(next ? '已关注数码' : '已取消关注数码', 'success');
 }
 
 function openRelatedPost(_target: any) {
@@ -555,13 +548,18 @@ function handleCardClick(event: MouseEvent) {
   else openAnswerDetail();
 }
 
-const authorFollowed = ref(Boolean(
-  (props.answer as any).userAction?.follow === 1
-    || (props.answer as any).userAction?.isFollow === 1
-    || (props.answer as any).isFollow === 1
-    || (props.answer as any).is_follow === 1,
-));
-const authorFollowPending = ref(false);
+// 关注状态统一取自关注关系 store，缓存缺失时回落到回答自带的接口字段。
+const authorFollowed = computed(() => {
+  const relation = authorUid.value ? userRelations.getRelation(authorUid.value) : undefined;
+  if (relation) return relation.isFollow;
+  return Boolean(
+    (props.answer as any).userAction?.follow === 1
+      || (props.answer as any).userAction?.isFollow === 1
+      || (props.answer as any).isFollow === 1
+      || (props.answer as any).is_follow === 1,
+  );
+});
+const authorFollowPending = computed(() => Boolean(authorUid.value) && userRelations.isPending(authorUid.value));
 
 async function toggleAuthorFollow() {
   if (!authStore.isLoggedIn) {
@@ -569,19 +567,7 @@ async function toggleAuthorFollow() {
     return;
   }
   if (!authorUid.value || authorFollowPending.value) return;
-  const previous = authorFollowed.value;
-  const next = !previous;
-  authorFollowed.value = next;
-  authorFollowPending.value = true;
-  try {
-    if (next) await CoolapkTauriAPI.followUser(authorUid.value);
-    else await CoolapkTauriAPI.unfollowUser(authorUid.value);
-  } catch (error) {
-    authorFollowed.value = previous;
-    showToast(getErrorMessage(error, next ? '关注用户失败' : '取消关注失败'), 'error');
-  } finally {
-    authorFollowPending.value = false;
-  }
+  await userRelations.toggle(authorUid.value, authorFollowed.value);
 }
 
 const isFav = ref(

@@ -54,12 +54,12 @@
                 </template>
                 <template v-else>
                   <button 
-                    :class="['app-btn', isFlag(profile.isFollow) ? 'btn-following' : 'btn-follow-primary']"
+                    :class="['app-btn', isFollowedUser ? 'btn-following' : 'btn-follow-primary']"
                     :disabled="followLoading"
                     @click="toggleFollow"
                   >
-                    <i :class="isFlag(profile.isFollow) ? 'fas fa-check' : 'fas fa-plus'"></i>
-                    {{ isFlag(profile.isFollow) ? (isFlag(profile.isSpecialFollow) ? '特别关注' : '已关注') : '关注' }}
+                    <i :class="isFollowedUser ? 'fas fa-check' : 'fas fa-plus'"></i>
+                    {{ isFollowedUser ? (isSpecialFollowedUser ? '特别关注' : '已关注') : '关注' }}
                   </button>
                   <button class="app-btn btn-icon-glass" @click.stop="sendMessage" title="私信">
                     <i class="far fa-envelope"></i>
@@ -299,14 +299,14 @@
       <!-- 操作菜单项组 -->
       <div class="action-menu-card">
         <button
-          v-if="!isSelfUser && isFlag(profile?.isFollow)"
+          v-if="!isSelfUser && isFollowedUser"
           type="button"
           class="action-menu-tile"
           @click="toggleSpecialFollow"
         >
           <div class="tile-left">
-            <i :class="[isFlag(profile?.isSpecialFollow) ? 'fas fa-star' : 'far fa-star', 'tile-icon icon-star']"></i>
-            <span class="tile-title">{{ isFlag(profile?.isSpecialFollow) ? '取消特别关注' : '设为特别关注' }}</span>
+            <i :class="[isSpecialFollowedUser ? 'fas fa-star' : 'far fa-star', 'tile-icon icon-star']"></i>
+            <span class="tile-title">{{ isSpecialFollowedUser ? '取消特别关注' : '设为特别关注' }}</span>
           </div>
           <i class="fas fa-chevron-right tile-arrow"></i>
         </button>
@@ -568,6 +568,7 @@ import AppDialog from '../components/common/AppDialog.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import { useAuthStore } from '../stores/auth';
+import { useUserRelationsStore } from '../stores/userRelations';
 import { showToast } from '../utils/toast';
 import { getErrorMessage } from '../utils/errors';
 import { requestConfirmation } from '../utils/confirm';
@@ -578,6 +579,7 @@ import { usePageTabTitle } from '../composables/usePageTabTitle';
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const userRelations = useUserRelationsStore();
 
 const effectiveUid = computed(() => {
   const rUid = (route.params.uid as string) || (route.params.id as string) || '';
@@ -597,7 +599,6 @@ const isSelfUser = computed(() => {
 
 const loadingProfile = ref(false);
 const profileError = ref('');
-const followLoading = ref(false);
 const qrImageUrl = ref('');
 const qrLoading = ref(false);
 const profileActionOpen = ref(false);
@@ -609,6 +610,17 @@ const remarkSaving = ref(false);
 const relationshipActionLoading = ref(false);
 
 const profile = ref<any>(null);
+// 关注关系以 store 为单一真源：缓存命中优先，未命中时回落到个人主页接口字段。
+const isFollowedUser = computed(() => {
+  const relation = userRelations.getRelation(effectiveUid.value);
+  return relation ? relation.isFollow : isFlag(profile.value?.isFollow);
+});
+const isSpecialFollowedUser = computed(() => {
+  const relation = userRelations.getRelation(effectiveUid.value);
+  if (relation && relation.isSpecialFollow !== undefined) return relation.isSpecialFollow;
+  return isFlag(profile.value?.isSpecialFollow);
+});
+const followLoading = computed(() => Boolean(effectiveUid.value) && userRelations.isPending(effectiveUid.value));
 const displayUserName = computed(() => String(profile.value?.remarkName || profile.value?.username || '酷友'));
 usePageTabTitle(computed(() => profile.value?.remarkName || profile.value?.username || (isSelfUser.value ? '个人主页' : null)));
 const USER_REMARK_CACHE_KEY = 'coolapk_user_remark_cache';
@@ -1123,22 +1135,10 @@ async function toggleFollow() {
     authStore.openLoginModal();
     return;
   }
-  const previousFollow = isFlag(profile.value.isFollow);
-  followLoading.value = true;
-  profile.value.isFollow = !previousFollow;
-  try {
-    if (previousFollow) {
-      await CoolapkTauriAPI.unfollowUser(effectiveUid.value);
-      profile.value.isSpecialFollow = 0;
-    } else {
-      await CoolapkTauriAPI.followUser(effectiveUid.value);
-    }
-  } catch (err: any) {
-    profile.value.isFollow = previousFollow;
-    alert(err?.message || '关注操作失败，请稍后重试');
-  } finally {
-    followLoading.value = false;
-  }
+  const uid = effectiveUid.value;
+  if (!uid || followLoading.value) return;
+  // 失败由 store 统一回滚并提示，页面展示跟随 store 自动还原。
+  await userRelations.toggle(uid, isFollowedUser.value);
 }
 
 const isBlacklisted = ref(false);
@@ -1257,21 +1257,19 @@ function openRelations(relation: 'follow' | 'fans') {
 
 async function toggleSpecialFollow() {
   const uid = effectiveUid.value;
-  if (!uid || relationshipActionLoading.value || !profile.value?.isFollow) return;
+  if (!uid || relationshipActionLoading.value || !isFollowedUser.value) return;
   if (!authStore.isLoggedIn) {
     authStore.openLoginModal();
     return;
   }
-  const previous = isFlag(profile.value.isSpecialFollow);
+  const next = !isSpecialFollowedUser.value;
   relationshipActionLoading.value = true;
-  profile.value.isSpecialFollow = !previous;
   try {
-    await CoolapkTauriAPI.specialFollowUser(uid, !previous);
-    showToast(!previous ? '已特别关注' : '已取消特别关注');
+    // 失败由 store 统一提示并回滚。
+    const ok = await userRelations.specialFollow(uid, next);
+    if (!ok) return;
+    showToast(next ? '已特别关注' : '已取消特别关注');
     profileActionOpen.value = false;
-  } catch (err: any) {
-    profile.value.isSpecialFollow = previous;
-    alert(err?.message || '特别关注操作失败');
   } finally {
     relationshipActionLoading.value = false;
   }
