@@ -2,30 +2,29 @@
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" ref="pageContainerRef" class="page-container custom-scrollbar" @scroll.passive="handlePageScroll">
     <div class="page-header">
       <div class="notification-title-row">
-        <h2 class="page-title">通知中心</h2>
-        <div class="notification-actions">
-          <button type="button" class="header-action-btn" :disabled="loading" @click="refreshNotifications"><i class="fas fa-sync-alt"></i> 刷新</button>
-          <button type="button" class="header-action-btn" :disabled="clearingNotifications || !notificationStore.unreadCount" @click="markAllViewed"><i class="fas fa-check-double"></i> 全部已读</button>
+        <div class="notification-heading">
+          <button type="button" class="header-action-btn" :aria-label="isNotificationRoot ? '返回' : '返回通知中心'" @click="goBack"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
+          <h2 class="page-title">{{ currentTabTitle }}</h2>
         </div>
-      </div>
-      <button v-if="subNoteType" type="button" class="header-action-btn" @click="closeNotificationGroup">返回通知列表</button>
-      
-      <div class="tabs">
-        <button 
-          v-for="tab in tabs" 
-          :key="tab.value"
-          :class="['tab-btn', { active: currentTab === tab.value }]"
-          @click="switchTab(tab.value)"
-        >
-          {{ tab.label }}
-          <span v-if="notificationStore.categoryCounts[tab.countKey] > 0" class="tab-badge">
-            {{ notificationStore.categoryCounts[tab.countKey] }}
-          </span>
-        </button>
+        <div v-if="isNotificationRoot" class="notification-actions">
+          <button type="button" class="header-action-btn" aria-label="全部已读" title="全部已读" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="markAllViewed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19,4C19,4.17 18.96,4.34 18.87,4.49L9.87,20.49C9.6,20.97 8.99,21.14 8.51,20.87C8.39,20.8 8.28,20.71 8.2,20.6L2.2,12.6C2.07,12.43 2,12.22 2,12C2,11.45 2.45,11 3,11C3.31,11 3.61,11.15 3.8,11.4L8.88,18.17L17.13,3.51C17.31,3.2 17.64,3 18,3C18.55,3 19,3.45 19,4ZM18,11C17.45,11 17,11.45 17,12C17,12.55 17.45,13 18,13L21,13C21.55,13 22,12.55 22,12C22,11.45 21.55,11 21,11L18,11ZM16,15C15.45,15 15,15.45 15,16C15,16.55 15.45,17 16,17L21,17C21.55,17 22,16.55 22,16C22,15.45 21.55,15 21,15L16,15ZM14,19C13.45,19 13,19.45 13,20C13,20.55 13.45,21 14,21L21,21C21.55,21 22,20.55 22,20C22,19.45 21.55,19 21,19L14,19Z" /></svg></button>
+          <button type="button" class="header-action-btn" aria-label="全部删除" title="全部删除" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="deleteAllNotifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,3V4H4V6H5V19A2,2 0,0 0,7 21H17A2,2 0,0 0,19 19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z" /></svg></button>
+        </div>
       </div>
     </div>
 
-      <div class="content-wrapper">
+    <nav v-if="isNotificationRoot" class="notification-quick-nav" aria-label="通知分类">
+      <button v-for="entry in quickEntries" :key="entry.value" type="button" :class="['quick-nav-btn', entry.countKey]" @click="entry.value === 'messages' ? router.push('/messages') : switchTab(entry.value)">
+        <span class="quick-nav-icon">
+          <i v-if="entry.countKey === 'like'" class="fas fa-thumbs-up" aria-hidden="true"></i>
+          <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>
+          <span v-if="notificationStore.categoryCounts[entry.countKey] > 0" class="quick-nav-badge">{{ notificationStore.categoryCounts[entry.countKey] > 99 ? '99+' : notificationStore.categoryCounts[entry.countKey] }}</span>
+        </span>
+        {{ entry.label }}
+      </button>
+    </nav>
+
+    <div class="content-wrapper">
       <div v-if="!authStore.isLoggedIn" class="empty-wrapper">
         <EmptyState title="登录后查看通知" description="登录酷安账号后，可在这里查看评论回复、@ 提及、收到的赞和新关注提醒" />
         <div class="notification-login-hint">
@@ -46,43 +45,30 @@
       </div>
 
       <div v-else class="notification-list">
-        <div v-for="item in items" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]">
+        <div v-for="item in items" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
           <button type="button" class="notify-avatar-wrap notify-profile" :disabled="!getActorUid(item)" :aria-label="`查看${getUsername(item)}的主页`" @click.stop="openActor(item)">
-            <AppAvatar :src="getAvatar(item)" size="md" class="notify-avatar" />
+            <AppAvatar :src="getAvatar(item)" :size="40" />
           </button>
           <div class="notify-content">
-            <div class="notify-header">
-              <button type="button" class="notify-user notify-profile" :disabled="!getActorUid(item)" @click.stop="openActor(item)">{{ getUsername(item) }}</button>
-              <span class="notify-header-right">
-                <span class="notify-time">{{ formatTime(item.likeTime || item.dateline) }}</span>
-                <span v-if="getNotificationUnreadCount(item) > 0" class="notify-unread-badge" aria-label="未读通知数">{{ getNotificationUnreadLabel(item) }}</span>
-              </span>
-            </div>
-            
             <div class="notify-body">
               <div class="notify-body-text">
-                <div v-if="getNote(item)" class="notify-action" v-html="renderNotificationRichText(getNote(item))" @click="handleNotifyClick($event, item)"></div>
-                <div v-if="getMessage(item)" class="notify-message" v-html="renderNotificationRichText(getMessage(item))" @click="handleNotifyClick($event, item)"></div>
+                <div class="notify-header">
+                  <button type="button" class="notify-user notify-profile" :disabled="!getActorUid(item)" @click.stop="openActor(item)">{{ getUsername(item) }}</button>
+                  <span v-if="getNotificationUnreadCount(item) > 0" class="notify-unread-badge" aria-label="未读通知数">{{ getNotificationUnreadLabel(item) }}</span>
+                  <span v-if="item.note_type_title || item.noteTypeTitle" class="notify-type">{{ item.note_type_title || item.noteTypeTitle }}</span>
+                </div>
+                <div v-if="getNote(item)" class="notify-action" v-html="renderNotificationText(getNote(item))"></div>
+                <div v-if="getTarget(item)" class="notify-target" v-html="renderNotificationText(getTarget(item))"></div>
+                <div v-if="getMessage(item)" class="notify-message" v-html="renderNotificationText(getMessage(item))"></div>
               </div>
               <button v-if="getNotificationImage(item)" type="button" class="notify-image" aria-label="查看通知图片" @click.stop="appStore.openImageViewer([getNotificationImage(item)], 0)">
-                <AppImage :src="getNotificationImage(item)" alt="通知图片" />
+                <AppImage :src="getNotificationImage(item)" alt="" />
               </button>
+              <div v-else-if="getAdditionInfo(item)" class="notify-message notify-right-text" v-html="renderNotificationText(getAdditionInfo(item))"></div>
             </div>
-
-            <div v-if="getTarget(item)" class="notify-target">
-              <span class="target-title" v-html="renderCoolapkRichText(getTarget(item))" @click="handleNotifyClick($event, item)"></span>
+            <div class="notify-meta">
+              <span class="notify-time">{{ formatTime(item.likeTime || item.dateline) }}</span>
             </div>
-
-            <button
-              v-if="getOriginalFeedId(item)"
-              type="button"
-              class="original-feed-preview"
-              @click="openOriginalFeed(item)"
-            >
-              <span class="original-feed-label">原动态</span>
-              <span class="original-feed-summary">{{ getOriginalFeedSummary(item) }}</span>
-              <span class="original-feed-action">查看原动态 <i class="fas fa-chevron-right"></i></span>
-            </button>
           </div>
         </div>
 
@@ -107,6 +93,9 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
+import { formatCommentTime } from '../utils/commentList';
+import { navigateBack } from '../utils/navigation';
+import { loadFeedFullText } from '../utils/feedFullTextCache';
 import { htmlToPlainText } from '../utils/htmlText';
 import { routeNavigationIsHistory } from '../utils/routeScroll';
 import { computed, nextTick, onActivated, onDeactivated, ref, watch } from 'vue';
@@ -120,7 +109,7 @@ import { getNotificationActor, getNotificationImage } from '../utils/notificatio
 import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
-import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
+import { getNotificationExternalUrl, getNotificationFeedId, getNotificationReplyId, getNotificationProductName, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
 import { markNotificationRead } from '../utils/notificationRead';
 import { requestConfirmation } from '../utils/confirm';
 import { showToast } from '../utils/toast';
@@ -137,19 +126,29 @@ const authStore = useAuthStore();
 const appStore = useAppStore();
 const notificationStore = useNotificationStore();
 
-// 分类 Tabs（接口路径与官方 UWP 客户端一致）
+// 保留旧分类路由，通知中心使用官方的三个快捷入口。
 const tabs: Array<{ label: string; value: string; countKey: NotificationCategory }> = [
   { label: '通知', value: 'list', countKey: 'notification' },
   { label: '收到的赞', value: 'feedLikeList', countKey: 'like' },
-  { label: '新关注', value: 'contactsFollowList', countKey: 'follow' }
+  { label: '好友关注', value: 'contactsFollowList', countKey: 'follow' }
 ];
 
+const quickEntries = [
+  { label: '点赞', value: 'feedLikeList', countKey: 'like' },
+  { label: '关注', value: 'contactsFollowList', countKey: 'follow', path: 'M17 7a5 5 0 1 1-10 0 5 5 0 0 1 10 0ZM3 18a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z' },
+  { label: '私信', value: 'messages', countKey: 'message', path: 'M20 8l-8 5-8-5V6l8 5 8-5ZM20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Z' }
+] as const;
+
 const currentTab = ref('list');
+const currentTabTitle = computed(() => currentTab.value === 'list' ? '通知' : tabs.find(tab => tab.value === currentTab.value)?.label);
 const subNoteType = ref('');
+const isNotificationRoot = computed(() => currentTab.value === 'list' && !subNoteType.value);
 const loading = ref(false);
 const clearingNotifications = ref(false);
+const deletingNotifications = ref(false);
 let notificationRequestId = 0;
 const items = ref<any[]>([]);
+const feedSummaries = ref(new Map<string, string>());
 const page = ref(1);
 const hasMore = ref(true);
 const notificationError = ref('');
@@ -159,6 +158,12 @@ const pageContainerRef = ref<HTMLElement | null>(null);
 function normalizeNotificationTab(value: unknown): string {
   const tab = String(value || 'list');
   return ['feedLikeList', 'contactsFollowList'].includes(tab) ? tab : 'list';
+}
+
+function goBack() {
+  if (subNoteType.value) void closeNotificationGroup();
+  else if (currentTab.value !== 'list') void switchTab('list');
+  else navigateBack(router);
 }
 
 async function closeNotificationGroup() {
@@ -175,6 +180,7 @@ async function switchTab(tabValue: string) {
     return;
   }
   currentTab.value = tabValue;
+  if (pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
   subNoteType.value = '';
   page.value = 1;
   items.value = [];
@@ -247,6 +253,7 @@ async function fetchNotifications(): Promise<boolean> {
           items.value = [...items.value, ...data];
         }
       }
+      loadNotificationFeedSummaries(data);
       // 官方仅在点赞、关注首屏成功后清除该分类，普通通知保留逐条未读。
       if (page.value === 1 && ['like', 'follow'].includes(getCurrentCategory())) markCurrentTabViewed();
       fetchSucceeded = true;
@@ -323,11 +330,7 @@ function getNote(item: any): string {
 }
 
 function getMessage(item: any): string {
-  // 图片地址属于官方右侧附件，不作为附加正文重复显示，也不回退到旧 message。
-  if (getNotificationImage(item)) return '';
-  // 官方 NotificationSubTitleAndDesc 优先展示 addition_info，其中可包含服务端生成的动态摘要链接。
-  const additionInfo = item.addition_info || item.additionInfo;
-  if (typeof additionInfo === 'string' && additionInfo.trim()) return additionInfo;
+  if (getNotificationImage(item) || getAdditionInfo(item)) return '';
   // 提取具体评论或动态内容
   if (item.message) return item.message;
   if (item.replyRows && Array.isArray(item.replyRows) && item.replyRows[0]) {
@@ -338,39 +341,40 @@ function getMessage(item: any): string {
   return '';
 }
 
+function getAdditionInfo(item: any): string {
+  // 官方右侧区域使用 addition_info，图片和富文本按同一字段择一显示。
+  const text = item.addition_info || item.additionInfo;
+  return typeof text === 'string' ? text.trim() : '';
+}
+
 function getTarget(item: any): string {
-  // 目标标题，比如回复了哪篇文章
-  if (item.targetTitle) return item.targetTitle;
-  if (item.feedInfo?.message_title) return item.feedInfo.message_title;
-  if (item.feedInfo?.title) return item.feedInfo.title;
-  return '';
+  return item.addition_sub_info || item.additionSubInfo || item.targetTitle || item.feedInfo?.message_title || item.feedInfo?.title || '';
 }
 
-function getOriginalFeed(item: any): any {
-  return getNotificationFeedTarget(item);
+function renderNotificationText(text: string): string {
+  return renderNotificationRichText(text, feedId => feedSummaries.value.get(feedId));
 }
 
-function getOriginalFeedId(item: any): string {
-  return getNotificationFeedId(item);
-}
-
-function getOriginalFeedSummary(item: any): string {
-  const original = getOriginalFeed(item);
-  const text = original?.title
-    || original?.message_title
-    || original?.message
-    || item?.targetTitle
-    || item?.message_title
-    || item?.message
-    || '点击查看这条通知对应的完整动态';
-  return htmlToPlainText(String(text)).trim();
-}
-
-function openOriginalFeed(item: any) {
-  const id = getOriginalFeedId(item);
-  if (!id) return;
-  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-  openFeedDetail(router, id, item);
+function loadNotificationFeedSummaries(rows: any[]) {
+  const summaries = feedSummaries.value;
+  const requestSummary = (feedId: string) => {
+    if (!summaries.has(feedId)) {
+      // 同一列表只解析一次，失败时保留可点击的「【动态】」。
+      summaries.set(feedId, '');
+      void loadFeedFullText(feedId).then((message) => {
+        const text = htmlToPlainText(message, true).replace(/\s+/g, ' ').trim();
+        const characters = Array.from(text);
+        summaries.set(feedId, characters.length > 48 ? characters.slice(0, 48).join('') + '…' : text);
+      }).catch(() => {});
+    }
+    return undefined;
+  };
+  for (const item of rows) {
+    const addition = getNotificationImage(item) ? '' : getAdditionInfo(item);
+    for (const text of [getNote(item), getTarget(item), getMessage(item), addition]) {
+      if (text) renderNotificationRichText(text, requestSummary);
+    }
+  }
 }
 
 async function resolveNotificationTarget(item: any): Promise<string | null> {
@@ -414,22 +418,8 @@ async function openNotificationTarget(item: any): Promise<boolean> {
   return true;
 }
 
-function formatTime(dateline: any): string {
-  if (!dateline) return '';
-  // 酷安的时间可能是时间戳(秒)
-  const ts = typeof dateline === 'string' && /^\d+$/.test(dateline) 
-    ? parseInt(dateline, 10) 
-    : typeof dateline === 'number' 
-      ? dateline 
-      : 0;
-      
-  if (ts > 0) {
-    const date = new Date(ts > 9999999999 ? ts : ts * 1000);
-    return date.toLocaleString('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    });
-  }
-  return String(dateline);
+function formatTime(value: number | string | undefined): string {
+  return formatCommentTime({ dateline: value }) || String(value || '');
 }
 
 function getCurrentCategory(): NotificationCategory {
@@ -473,7 +463,7 @@ function markCurrentTabViewed(): number {
 
 /** 全部已读与官方一致包含私信，必须由用户确认后才发送请求。 */
 async function markAllViewed(): Promise<void> {
-  if (clearingNotifications.value || !authStore.isLoggedIn) return;
+  if (clearingNotifications.value || deletingNotifications.value || !authStore.isLoggedIn) return;
   const accountUid = authStore.user?.uid;
   clearingNotifications.value = true;
   try {
@@ -490,6 +480,33 @@ async function markAllViewed(): Promise<void> {
   } catch (error) {
     showToast(`设置全部已读失败：${error instanceof Error ? error.message : String(error)}`, 'error');
   } finally { clearingNotifications.value = false; }
+}
+
+/** 官方批量删除只清理通知列表，成功后从服务端重新加载列表和计数。 */
+async function deleteAllNotifications(): Promise<void> {
+  if (deletingNotifications.value || clearingNotifications.value || !authStore.isLoggedIn) return;
+  const accountUid = authStore.user?.uid;
+  deletingNotifications.value = true;
+  try {
+    if (!await requestConfirmation({ title: '清除通知', message: '确定删除所有通知内容？（不包含点赞、关注、私信内容）' })) return;
+    if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
+    await CoolapkTauriAPI.deleteAllNotifications();
+    if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
+    // 让删除前发出的列表和角标请求失效，保留其他分类的计数。
+    notificationStore.beginNotificationClear();
+    const stateVersion = notificationStore.notificationStateVersion;
+    items.value = [];
+    page.value = 1;
+    hasMore.value = true;
+    const [, count] = await Promise.allSettled([fetchNotifications(), CoolapkTauriAPI.getNotificationCount()]);
+    if (count.status === 'fulfilled' && count.value && authStore.user?.uid === accountUid && stateVersion === notificationStore.notificationStateVersion) {
+      notificationStore.applyServerResponse(count.value);
+    }
+  } catch (error) {
+    showToast(`删除通知失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+  } finally {
+    deletingNotifications.value = false;
+  }
 }
 
 function renderSafeHtml(text: string): string {
@@ -589,6 +606,7 @@ watch(() => route.query.noteType, async noteType => {
 watch(
   () => [authStore.isLoggedIn, authStore.user?.uid] as const,
   ([isLoggedIn]) => {
+    feedSummaries.value = new Map();
     notificationRequestId += 1;
     loading.value = false;
     page.value = 1;
@@ -615,6 +633,10 @@ async function refreshMobilePage() { await refreshNotifications(); }
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  container: notification-page / inline-size;
+  /* 全局字号只更新正文字号，通知的辅助文字从同一字号派生。 */
+  --notification-font-secondary: calc(var(--font-size-body) - 1px);
+  --notification-font-caption: max(11px, calc(var(--font-size-body) - 2px));
   padding: 0;
   margin: 0 auto;
   background-color: var(--background);
@@ -624,95 +646,35 @@ async function refreshMobilePage() { await refreshNotifications(); }
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: var(--surface);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  padding: var(--space-4) var(--space-2) 0;
-  border-bottom: 1px solid var(--border);
-  /* 与下方 content-wrapper 的左右留白保持一致，固定时不会比通知卡片更宽。 */
-  margin: 0 var(--space-3) var(--space-4);
+  background: var(--surface);
 }
 
-.page-title {
-  font-size: var(--font-size-title-lg);
-  font-weight: var(--font-weight-bold);
-  color: var(--text-primary);
-  margin-bottom: var(--space-3);
-  letter-spacing: -0.02em;
-}
-
-.notification-title-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
-.notification-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-.header-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; color: var(--text-secondary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-control); cursor: pointer; font-size: var(--font-size-caption); }
-.header-action-btn:hover:not(:disabled) { color: var(--brand-primary); border-color: var(--brand-primary); background: var(--brand-soft); }
-.header-action-btn:disabled { color: var(--text-disabled); cursor: not-allowed; }
-
-.tabs {
+.notification-title-row {
+  min-height: 56px;
+  padding: 0 max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left));
   display: flex;
-  gap: var(--space-4);
-  overflow-x: auto;
-  padding-bottom: var(--space-3);
-}
-
-.tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.tab-btn {
-  background: transparent;
-  border: none;
-  font-size: var(--font-size-sub);
-  font-weight: var(--font-weight-medium);
-  color: var(--text-secondary);
-  padding: var(--space-2) 0;
-  cursor: pointer;
-  position: relative;
-  transition: color 0.3s ease;
-  white-space: nowrap;
-}
-
-.tab-badge {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 17px;
-  height: 17px;
-  margin-left: 4px;
-  padding: 0 4px;
-  border-radius: var(--radius-full);
-  background-color: var(--danger);
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  line-height: 17px;
+  justify-content: space-between;
+  gap: 8px;
 }
+.notification-heading, .notification-actions { display: flex; align-items: center; gap: 8px; }
+.page-title { margin: 0; color: var(--text-primary); font-size: calc(var(--font-size-body) + 4px); font-weight: 500; }
+.header-action-btn { display: grid; place-items: center; width: 48px; height: 48px; padding: 0; color: var(--text-primary); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+.header-action-btn svg { width: 24px; height: 24px; fill: currentColor; }
+.header-action-btn:hover:not(:disabled) { background: var(--background); }
+.header-action-btn:disabled { color: var(--text-disabled); cursor: default; }
 
-.tab-btn:hover {
-  color: var(--text-primary);
-}
+.notification-quick-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 16px 24px; background: var(--surface); }
+.quick-nav-btn { display: grid; justify-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.45; cursor: pointer; }
+.quick-nav-btn.like { --quick-tint: #f44336; }
+.quick-nav-btn.follow { --quick-tint: #2196f3; }
+.quick-nav-btn.message { --quick-tint: #ff9800; }
+.quick-nav-icon { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: color-mix(in srgb, var(--quick-tint) 10%, transparent); color: var(--quick-tint); font-size: 26px; }
+.quick-nav-icon svg { width: 28px; height: 28px; fill: currentColor; }
+.quick-nav-badge, .notify-unread-badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; box-sizing: border-box; padding: 0 4px; border-radius: 999px; background: #f44336; color: #fff; font-size: 11px; line-height: 1; }
+.quick-nav-badge { position: absolute; top: -8px; right: -8px; min-width: 17px; height: 17px; font-size: 12px; }
 
-.tab-btn.active {
-  color: var(--brand-primary);
-  font-weight: var(--font-weight-semibold);
-}
-
-.tab-btn.active::after {
-  content: '';
-  position: absolute;
-  bottom: -2px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 60%;
-  height: 3px;
-  background-color: var(--brand-primary);
-  border-radius: var(--radius-full);
-}
-
-.content-wrapper {
-  /* 与固定页头使用同一组水平边界，避免页头加宽后与卡片错位。 */
-  padding: 0 var(--space-3) var(--space-5);
-  min-height: 200px;
-}
+.content-wrapper { min-height: 200px; padding-bottom: var(--space-5); }
 
 .loading-wrapper, .empty-wrapper {
   padding: var(--space-8) 0;
@@ -724,195 +686,44 @@ async function refreshMobilePage() { await refreshNotifications(); }
   margin-top: var(--space-3);
 }
 
-.notification-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
 .notify-card {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: var(--space-3);
-  background-color: var(--surface);
-  border-radius: var(--radius-card);
-  border: 1px solid var(--border-light, var(--border));
-  padding: var(--space-4);
-  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+  gap: 12px;
+  padding: 12px 16px 5px;
+  background: var(--surface);
 }
-
-.notify-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-  border-color: rgba(var(--brand-primary-rgb), 0.3);
+.notify-card + .notify-card::before {
+  position: absolute;
+  top: 0;
+  left: 68px;
+  right: 16px;
+  height: 1px;
+  background: var(--border-light, var(--border));
+  content: '';
 }
-
-.notify-card.unread {
-  border-left: 3px solid var(--danger);
-  padding-left: calc(var(--space-4) - 2px);
-}
-
-.notify-avatar-wrap {
-  flex-shrink: 0;
-}
-
-.notify-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
-}
-
-/* 官方右侧附件为 44dp，正文在窄屏中独立收缩，原动态入口保持整行。 */
-.notify-body { display: flex; align-items: flex-start; gap: var(--space-3); }
-.notify-body-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.notify-avatar-wrap { flex: 0 0 40px; }
+.notify-content { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notify-body { display: flex; align-items: flex-start; gap: 12px; }
+.notify-body-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .notify-image { flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; cursor: pointer; background: var(--background-secondary); }
 .notify-image :deep(.app-image-container) { width: 100%; height: 100%; }
-
-.notify-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.notify-header-right {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.notify-user {
-  min-width: 0;
-  font-size: var(--font-size-sub);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.notify-time {
-  font-size: var(--font-size-caption);
-  color: var(--text-tertiary);
-  white-space: nowrap;
-}
-
-.notify-unread-badge {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-full);
-  background: var(--danger);
-  color: #ffffff;
-  font-size: 11px;
-  font-weight: var(--font-weight-bold);
-  line-height: 18px;
-  box-sizing: border-box;
-}
-
-.notify-card.unread .notify-user {
-  font-weight: var(--font-weight-bold);
-}
-
-.notify-action {
-  font-size: var(--font-size-body);
-  color: var(--text-primary);
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-/* v-html 内的链接也应用主题色，长 URL 在卡片内换行。 */
-.notify-content { overflow-wrap: anywhere; }
-.notify-action, .notify-message, .notify-target { min-width: 0; max-width: 100%; }
-.notify-content :deep(a) { color: var(--brand-primary); text-decoration: underline; cursor: pointer; overflow-wrap: anywhere; }
+.notify-header { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.notify-user, .notify-type { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.notify-user { color: var(--text-primary); font-size: var(--font-size-body); font-weight: 400; }
+.notify-card.unread .notify-user { font-weight: 500; }
+.notify-type, .notify-message { color: var(--text-secondary); font-size: var(--notification-font-secondary); }
+.notify-unread-badge { flex-shrink: 0; }
+.notify-action { color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.45; cursor: pointer; }
+.notify-target { border-left: 1px solid var(--border); padding-left: 6px; color: var(--text-secondary); font-size: var(--notification-font-caption); line-height: 1.4; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.notify-right-text { flex: 0 0 44px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: max(10px, calc(var(--font-size-body) - 4px)); line-height: 1.3; }
+.notify-content :deep(a) { color: var(--brand-primary); cursor: pointer; overflow-wrap: anywhere; }
 .notify-profile { padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
 .notify-profile:disabled { cursor: default; }
-.notify-profile:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 3px; }
-
-.notify-message {
-  font-size: var(--font-size-sub);
-  color: var(--text-secondary);
-  background-color: var(--background);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  margin-top: 2px;
-  line-height: 1.5;
-  word-break: break-all;
-  cursor: pointer;
-}
-
-.notify-target {
-  font-size: var(--font-size-caption);
-  color: var(--text-tertiary);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.notify-target::before {
-  content: '对：';
-}
-
-.target-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.original-feed-preview {
-  min-width: 0;
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  margin-top: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-control);
-  background-color: var(--background);
-  text-align: left;
-  transition: border-color var(--duration-fast) var(--ease-default), background-color var(--duration-fast) var(--ease-default);
-}
-
-.original-feed-preview:hover {
-  border-color: var(--brand-primary);
-  background-color: var(--brand-soft);
-}
-
-.original-feed-label {
-  white-space: nowrap;
-  padding: 2px 7px;
-  border-radius: var(--radius-full);
-  background-color: var(--brand-soft);
-  color: var(--brand-primary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-semibold);
-}
-
-.original-feed-summary {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sub);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.original-feed-action {
-  color: var(--brand-primary);
-  font-size: var(--font-size-caption);
-  white-space: nowrap;
-}
+.notify-meta { display: flex; align-items: center; min-height: 32px; }
+.notify-time { font-size: var(--notification-font-caption); color: var(--text-tertiary); }
+.page-container button:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 
 .load-more-wrapper {
   display: flex;
@@ -920,14 +731,14 @@ async function refreshMobilePage() { await refreshNotifications(); }
   padding: var(--space-4) 0;
 }
 
-.notification-inline-error { margin-bottom: var(--space-3); color: var(--danger); font-size: var(--font-size-caption); }
+.notification-inline-error { margin-bottom: var(--space-3); color: var(--danger); font-size: var(--notification-font-caption); }
 .notification-inline-error button { margin-left: 6px; color: var(--brand-primary); background: transparent; border: 0; cursor: pointer; }
 
 .load-more-btn {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: var(--font-size-sub);
+  font-size: var(--notification-font-secondary);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-full);
   cursor: pointer;
@@ -946,7 +757,44 @@ async function refreshMobilePage() { await refreshNotifications(); }
 
 .no-more {
   color: var(--text-tertiary);
-  font-size: var(--font-size-caption);
+  font-size: var(--notification-font-caption);
+}
+
+/* 桌面按通知内容区的宽度适配，侧栏挤窄时回到紧凑布局。 */
+@media (hover: hover) and (pointer: fine) {
+  @container notification-page (min-width: 720px) {
+    .notification-title-row,
+    .notification-quick-nav,
+    .content-wrapper {
+      box-sizing: border-box;
+      max-width: 760px;
+      margin-inline: auto;
+    }
+
+    .notification-title-row { padding-inline: 8px; }
+    .notification-quick-nav {
+      display: flex;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-light, var(--border));
+    }
+    .quick-nav-btn {
+      display: flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 4px 12px 4px 4px;
+      border-radius: 8px;
+    }
+    .quick-nav-btn:hover { background: var(--background); }
+    .quick-nav-icon { width: 32px; height: 32px; border-radius: 8px; font-size: 16px; }
+    .quick-nav-icon svg { width: 20px; height: 20px; }
+    .quick-nav-badge { top: -4px; right: -6px; }
+    .content-wrapper { background: var(--surface); }
+    .notify-card { padding-bottom: 12px; }
+    .notify-meta { min-height: 0; margin-top: 6px; }
+    .notify-image { flex-basis: 56px; width: 56px; height: 56px; }
+    .notify-right-text { flex-basis: 112px; font-size: var(--notification-font-caption); line-height: 1.4; }
+  }
 }
 
 @media (max-width: 720px) {

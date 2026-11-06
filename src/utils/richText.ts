@@ -11,7 +11,7 @@ export function renderCoolapkRichText(text: string, keyword?: string): string {
 }
 
 /** 通知中的纯文本网址也显示为独立链接，只处理文本节点，保留已有链接和安全化结果。 */
-export function renderNotificationRichText(text: string): string {
+export function renderNotificationRichText(text: string, getFeedSummary?: (feedId: string) => string | undefined): string {
   if (!text) return '';
   // 官方 LinkTextParser 先还原实体再解析标题链接；还原后仍须经过安全过滤。
   const decoded = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
@@ -36,6 +36,18 @@ export function renderNotificationRichText(text: string): string {
     }
     fragment.append(doc.createTextNode(node.textContent!.slice(offset)));
     node.replaceWith(fragment);
+  }
+  if (getFeedSummary) {
+    for (const anchor of Array.from(doc.querySelectorAll('a[href]'))) {
+      const href = anchor.getAttribute('href') || '';
+      const label = anchor.textContent?.trim() || '';
+      // 保留服务端给出的标题，只替换正文中的裸动态地址。
+      if (label !== href && !/^https?:\/\//i.test(label)) continue;
+      const feedId = href.match(/^(?:(?:https?:)?\/\/(?:www\.|m\.)?coolapk\.com)?\/feed\/(\d+)\/?(?:[?#].*)?$/i)?.[1];
+      if (!feedId) continue;
+      const summary = getFeedSummary(feedId);
+      anchor.textContent = summary ? `【动态】${summary}` : '【动态】';
+    }
   }
   return doc.body.innerHTML;
 }

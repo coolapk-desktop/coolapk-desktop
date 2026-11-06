@@ -10,6 +10,7 @@
       'reading-navigation-hidden': reading.hidden.value,
       'has-topic-navigation': route.path.startsWith('/topic/'),
       'has-home-navigation': route.path === '/',
+      'has-notification-toolbar': route.path === '/notifications',
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
     }"
@@ -27,7 +28,7 @@
     </TopBar>
     <div class="mobile-reading-topbar"><div class="mobile-reading-topbar-content" :inert="reading.hidden.value || undefined" :aria-hidden="reading.hidden.value || undefined">
     <MobileTopBar
-      v-if="!isMobileLayoutDisabled && !route.path.startsWith('/my-plugins')"
+      v-if="!isMobileLayoutDisabled && route.path !== '/notifications' && !route.path.startsWith('/my-plugins')"
       :navigation-open="mobileNavigationOpen"
       :mac-overlay="usesMacOverlay"
       @toggle-navigation="toggleMobileNavigation"
@@ -250,6 +251,9 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   /* 网格折叠同时释放高度，不能只把导航移出屏幕而留下占位。 */
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar { display: grid; grid-template-rows: 1fr; flex: 0 0 auto; transition: grid-template-rows 200ms ease, padding-top 200ms ease; }
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar-content { display: block; min-height: 0; overflow: hidden; }
+  /* 通知页自带标题栏，外壳仅保留顶部安全区。 */
+  .app-shell:not(.prevent-mobile-layout).has-notification-toolbar .mobile-reading-topbar { padding-top: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-notification-toolbar.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
   /* 数码、发现收起搜索栏后仍保留状态栏安全区，底色与下方栏目栏一致，收起动画中也不露出外壳底色。 */
   .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar { background: var(--surface); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden .mobile-reading-topbar { grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); }

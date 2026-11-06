@@ -36,6 +36,17 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
+  it('通知页只显示页面自带的标题栏，离开后恢复移动顶栏', async () => {
+    Object.assign(routeState.value, { path: '/notifications', fullPath: '/notifications' });
+    const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
+    try {
+      expect(wrapper.find('.mobile-top-bar-stub').exists()).toBe(false);
+      Object.assign(routeState.value, { path: '/', fullPath: '/' });
+      await nextTick();
+      expect(wrapper.find('.mobile-top-bar-stub').exists()).toBe(true);
+    } finally { wrapper.unmount(); }
+  });
+
   it.each([['/', 'feed-scroll-container'], ['/digital', 'digital-content'], ['/discover', 'discover-scroll-container']])('%s 从详情返回时恢复离开前的导航高度，继续反向滚动仍能展开', async (path, listClass) => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
