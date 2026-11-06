@@ -1,6 +1,7 @@
 import { ref, watch, type InjectionKey, type Ref } from 'vue';
 
 export const mobileReadingNavigationKey: InjectionKey<{ hidden: Readonly<Ref<boolean>>; reset: () => void }> = Symbol('mobile-reading-navigation');
+export const mobileHomeToolbarTargetKey: InjectionKey<Readonly<Ref<HTMLElement | null>>> = Symbol('mobile-home-toolbar-target');
 export const mobileDetailActionsHiddenKey: InjectionKey<Readonly<Ref<boolean>>> = Symbol('mobile-detail-actions-hidden');
 
 /** 只响应指定阅读区域的纵向滚动，排除布局变化、后台栏目和横向手势。 */

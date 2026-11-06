@@ -1,10 +1,12 @@
 <template>
-  <div class="mobile-home-pager" :class="{ 'desktop-home-pager': !mobile, 'is-pager-moving': moving }">
+  <div class="mobile-home-pager" :class="{ 'desktop-home-pager': !mobile, 'is-pager-moving': moving, 'has-joined-toolbar': joinedToolbar }">
     <div class="home-main-column">
-    <div class="home-toolbar">
+    <Teleport :to="homeToolbarTarget || undefined" :disabled="!joinedToolbar">
+    <div class="home-toolbar" :class="{ 'is-mobile-toolbar': mobile }">
     <FeedTabs ref="tabBar" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="activeIndex" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
     <FeedLayoutToggle v-if="!mobile" v-model="settings.settings.feedLayout" />
     </div>
+    </Teleport>
     <div v-if="error" class="pager-warning" role="status"><span>{{ error }}</span><button type="button" @click="loadTabs">重试</button></div>
     <div v-if="!tabs.length" class="pager-state">正在加载栏目…</div>
     <div v-else ref="viewport" class="pager-viewport" @pointerdown="startDrag" @touchmove="preventSwipeScroll" @click.capture="blockSwipeClick" @wheel="wheel">
@@ -32,11 +34,16 @@ import { homePagerMovingKey } from '../../utils/feedPageVisibility';
 import { observeResizeOnFrame } from '../../utils/observeResizeOnFrame';
 import { logDiagnostic, summarizeDiagnosticError } from '../../utils/diagnosticLogger';
 import { desktopFeedCommentsOpenKey } from '../../utils/desktopFeedComments';
-import { mobileReadingNavigationKey } from '../../composables/useMobileReadingNavigation';
+import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey } from '../../composables/useMobileReadingNavigation';
 
 const props = withDefaults(defineProps<{ mobile?: boolean }>(), { mobile: true });
 const desktopCommentsOpen = inject(desktopFeedCommentsOpenKey, ref(false));
 const readingNavigation = inject(mobileReadingNavigationKey, undefined);
+const homeToolbarTarget = inject(mobileHomeToolbarTargetKey, undefined);
+const toolbarActive = ref(true);
+const joinedToolbar = computed(() => props.mobile && toolbarActive.value && Boolean(homeToolbarTarget?.value));
+onActivated(() => { toolbarActive.value = true; });
+onDeactivated(() => { toolbarActive.value = false; });
 const sidebarMounted = ref(!props.mobile);
 const settings = useSettingsStore();
 const serverTabs = ref<ConfigPageTab[]>([]), activeKey = ref(''), error = ref('');
@@ -259,15 +266,13 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
 .pager-state button { min-height: 44px; }
 /* 移动首页栏目浮在动态上方，滚动内容进入玻璃背后；顶部留白保证首屏内容可见。 */
 @media (max-width: 720px) {
-  .mobile-home-pager:not(.desktop-home-pager) .home-toolbar { position: absolute; top: var(--mobile-glass-topbar-space, 0px); left: 0; right: 0; z-index: 2; height: 48px; background: var(--home-glass-tint, color-mix(in srgb, var(--surface) 45%, transparent)); border-radius: 0; box-shadow: 0 6px 18px #0000000a, inset 0 -1px 0 var(--home-glass-edge, #ffffffa6); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); transition: top 200ms ease; }
-  .mobile-home-pager:not(.desktop-home-pager) .home-toolbar :deep(.feed-tabs-wrapper) { background: transparent; border-bottom: 0; }
-  .mobile-home-pager:not(.desktop-home-pager) .home-toolbar :deep(.tab-manage-btn) { background: transparent; border-radius: 0; }
-  .mobile-home-pager:not(.desktop-home-pager) :deep(.feed-scroll-container) { padding-top: calc(var(--mobile-glass-topbar-space, 0px) + 48px); scroll-padding-top: calc(var(--mobile-glass-topbar-space, 0px) + 48px); transition: padding-top 200ms ease; }
+  .home-toolbar.is-mobile-toolbar { height: 48px; }
+  .home-toolbar.is-mobile-toolbar :deep(.feed-tabs-wrapper) { background: transparent; border-bottom: 0; }
+  .home-toolbar.is-mobile-toolbar :deep(.tab-manage-btn) { background: transparent; border-radius: 0; }
+  .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container) { padding-top: var(--mobile-home-header-space, 0px); scroll-padding-top: var(--mobile-home-header-space, 0px); transition: padding-top 200ms ease, padding-bottom 200ms ease; }
   /* 关注子栏目位于滚动容器外，先为悬浮主栏目让位，动态区不再重复留白。 */
-  .mobile-home-pager:not(.desktop-home-pager) :deep(.has-follow-subchannels .main-feed-column) { box-sizing: border-box; padding-top: calc(var(--mobile-glass-topbar-space, 0px) + 48px); transition: padding-top 200ms ease; }
-  .mobile-home-pager:not(.desktop-home-pager) :deep(.has-follow-subchannels .feed-scroll-container) { padding-top: 0; scroll-padding-top: 0; }
-  @media (prefers-reduced-motion: reduce) { .mobile-home-pager:not(.desktop-home-pager) .home-toolbar, .mobile-home-pager:not(.desktop-home-pager) :deep(.feed-scroll-container), .mobile-home-pager:not(.desktop-home-pager) :deep(.has-follow-subchannels .main-feed-column) { transition: none; } }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .mobile-home-pager:not(.desktop-home-pager) .home-toolbar { background: var(--surface); } }
-  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .mobile-home-pager:not(.desktop-home-pager) .home-toolbar { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .main-feed-column) { box-sizing: border-box; padding-top: var(--mobile-home-header-space, 0px); transition: padding-top 200ms ease; }
+  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .feed-scroll-container) { padding-top: 0; scroll-padding-top: 0; }
+  @media (prefers-reduced-motion: reduce) { .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container), .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .main-feed-column) { transition: none; } }
 }
 </style>

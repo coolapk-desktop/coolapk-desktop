@@ -10,7 +10,7 @@
       'reading-navigation-hidden': reading.hidden.value,
       'has-topic-navigation': route.path.startsWith('/topic/'),
       'has-home-navigation': route.path === '/',
-      'has-notification-toolbar': route.path === '/notifications',
+      'has-page-toolbar': hasPageToolbar,
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
     }"
@@ -23,16 +23,19 @@
     <TopBar>
       <!-- 桌面窄窗口的返回入口固定在原生窗口按钮所在的标题栏，不随帖子滚动。 -->
       <template #narrow-navigation>
-        <button v-if="showWindowControls && !isMobileLayoutDisabled && mobileLayout && route.path !== '/'" type="button" class="narrow-titlebar-back" aria-label="返回" title="返回上一页" data-tauri-drag-region="false" @click="navigateBack(router)"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
+        <button v-if="showWindowControls && !isMobileLayoutDisabled && mobileLayout && route.path !== '/' && route.path !== '/search'" type="button" class="narrow-titlebar-back" aria-label="返回" title="返回上一页" data-tauri-drag-region="false" @click="navigateBack(router)"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
       </template>
     </TopBar>
     <div class="mobile-reading-topbar"><div class="mobile-reading-topbar-content" :inert="reading.hidden.value || undefined" :aria-hidden="reading.hidden.value || undefined">
+    <div class="mobile-reading-topbar-stack">
     <MobileTopBar
-      v-if="!isMobileLayoutDisabled && route.path !== '/notifications' && !route.path.startsWith('/my-plugins')"
+      v-if="!isMobileLayoutDisabled && !hasPageToolbar && !route.path.startsWith('/my-plugins')"
       :navigation-open="mobileNavigationOpen"
       :mac-overlay="usesMacOverlay"
       @toggle-navigation="toggleMobileNavigation"
     />
+    <div v-show="route.path === '/'" ref="homeToolbarTarget"></div>
+    </div>
     </div></div>
     <div class="app-body">
       <MainSidebar
@@ -76,7 +79,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { useAppStore } from '../../stores/app';
 import { useIosBackGesture } from '../../composables/useIosBackGesture';
 import { navigateBack } from '../../utils/navigation';
-import { mobileReadingNavigationKey, useMobileReadingNavigation } from '../../composables/useMobileReadingNavigation';
+import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey, useMobileReadingNavigation } from '../../composables/useMobileReadingNavigation';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 
 const route = useRoute();
@@ -88,8 +91,11 @@ const readingViewportWidth = ref(window.innerWidth);
 const topicGlassJoined = ref(false);
 function updateReadingViewport() { readingViewportWidth.value = window.innerWidth; updateTopicGlass(); }
 const mainContent = ref<HTMLElement | null>(null);
+const homeToolbarTarget = ref<HTMLElement | null>(null);
+provide(mobileHomeToolbarTargetKey, homeToolbarTarget);
 const desktopCommentFeed = shallowRef<FeedItem | null>(null);
 const mobileLayout = useMobileLayout();
+const hasPageToolbar = computed(() => ['/notifications', '/search'].includes(route.path));
 const wideSplitLayout = useWideSplitLayout();
 const showDesktopComments = computed(() => settingsStore.settings.desktopCommentsOnRight && !mobileLayout.value && wideSplitLayout.value);
 provide(desktopFeedCommentsOpenKey, computed(() => showDesktopComments.value && desktopCommentFeed.value !== null));
@@ -118,17 +124,22 @@ const isMobileLayoutDisabled = computed(() => {
 const showMobileBottomNav = computed(() => !isMobileLayoutDisabled.value
   && ['/', '/digital', '/discover', '/me'].includes(route.path));
 
-// 首页、数码和发现共用阅读收起；只跟随正文滚动，浮层打开或退出该布局时立即恢复。
+// 主栏目继续使用已有滚动区域，其他页面可用 data-reading-scroll 接入同一策略。
+const readingScrollSelectors = new Map([
+  ['/', undefined],
+  ['/digital', '.digital-content, .digital-server-content'],
+  ['/discover', '.discover-scroll-container'],
+]);
 const reading = useMobileReadingNavigation(computed(() => settingsStore.settings.autoHideMobileNavigation
-  && mobileLayout.value && readingViewportWidth.value <= 720 && !isMobileLayoutDisabled.value && ['/', '/digital', '/discover'].includes(route.path)
+  && mobileLayout.value && readingViewportWidth.value <= 720 && !isMobileLayoutDisabled.value
   && !mobileNavigationOpen.value && !appStore.isSearchOpen && !appStore.isPublishOpen && !appStore.activeImageViewer),
-  () => route.path === '/digital' ? '.digital-content, .digital-server-content' : route.path === '/discover' ? '.discover-scroll-container' : undefined);
+  () => readingScrollSelectors.has(route.path) ? readingScrollSelectors.get(route.path) : '[data-reading-scroll]');
 provide(mobileReadingNavigationKey, { hidden: reading.hidden, reset: reading.reset });
 // 返回列表要恢复离开时的导航高度，否则相同滚动值也会被重新展开的搜索栏遮挡。
 const readingStates = new Map<string, boolean>();
 let readingRoute = route.fullPath;
 watch(reading.hidden, hidden => {
-  if (route.fullPath === readingRoute && ['/', '/digital', '/discover'].includes(route.path)) readingStates.set(readingRoute, hidden);
+  if (route.fullPath === readingRoute && readingScrollSelectors.has(route.path)) readingStates.set(readingRoute, hidden);
 }, { flush: 'sync' });
 
 /** 话题栏目吸顶后由下方玻璃向上延伸，避免上下两次独立模糊在接缝处产生色差。 */
@@ -183,7 +194,7 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   background-color: var(--background);
 }
 
-.mobile-reading-topbar, .mobile-reading-topbar-content { display: contents; }
+.mobile-reading-topbar, .mobile-reading-topbar-content, .mobile-reading-topbar-stack { display: contents; }
 .app-shell.has-topic-navigation { --topic-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --topic-glass-edge: rgba(255, 255, 255, .65); }
 :global([data-theme="dark"] .app-shell.has-topic-navigation) { --topic-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --topic-glass-edge: rgba(255, 255, 255, .18); }
 
@@ -235,14 +246,11 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
 }
 
 @media (max-width: 720px) {
-  /* 首页搜索与栏目使用连续玻璃底色；只收起搜索，保留栏目与原有滚动状态。 */
+  /* 首页搜索和主栏目共用玻璃与折叠容器。 */
   .app-shell:not(.prevent-mobile-layout).has-home-navigation { --home-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --home-glass-edge: rgba(255, 255, 255, .65); }
   :global([data-theme="dark"] .app-shell:not(.prevent-mobile-layout).has-home-navigation) { --home-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --home-glass-edge: rgba(255, 255, 255, .18); }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-content { background: var(--home-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); box-shadow: inset 0 1px 0 var(--home-glass-edge); }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-search-entry) { background: color-mix(in srgb, var(--surface) 28%, transparent); border: 1px solid color-mix(in srgb, var(--border) 45%, transparent); box-shadow: inset 0 1px 0 var(--home-glass-edge); }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-content { background: var(--surface); } }
-  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-content { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
   /* 话题标题栏和下方吸顶筛选共用底色与边缘，拼成连续的玻璃导航。 */
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar-content { background: var(--topic-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); box-shadow: inset 0 1px 0 var(--topic-glass-edge); }
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
@@ -251,9 +259,9 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   /* 网格折叠同时释放高度，不能只把导航移出屏幕而留下占位。 */
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar { display: grid; grid-template-rows: 1fr; flex: 0 0 auto; transition: grid-template-rows 200ms ease, padding-top 200ms ease; }
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar-content { display: block; min-height: 0; overflow: hidden; }
-  /* 通知页自带标题栏，外壳仅保留顶部安全区。 */
-  .app-shell:not(.prevent-mobile-layout).has-notification-toolbar .mobile-reading-topbar { padding-top: var(--app-safe-area-top, 0px); }
-  .app-shell:not(.prevent-mobile-layout).has-notification-toolbar.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
+  /* 页面自带工具栏时，外壳仅保留顶部安全区。 */
+  .app-shell:not(.prevent-mobile-layout).has-page-toolbar .mobile-reading-topbar { padding-top: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-page-toolbar.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
   /* 数码、发现收起搜索栏后仍保留状态栏安全区，底色与下方栏目栏一致，收起动画中也不露出外壳底色。 */
   .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar { background: var(--surface); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden .mobile-reading-topbar { grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); }
@@ -284,22 +292,25 @@ onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigation
   .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) { --mobile-glass-topbar-space: calc(var(--mobile-topbar-height) + var(--app-safe-area-top, 0px)); }
   .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; background: var(--home-glass-tint, var(--topic-glass-tint)); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); }
   .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar-content { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden { --mobile-glass-topbar-space: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation { --mobile-home-header-space: calc(var(--mobile-glass-topbar-space) + 48px); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { display: block; transition: transform 200ms ease; }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden .mobile-reading-topbar-stack { transform: translateY(-100%); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden { --mobile-home-header-space: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.has-mobile-window-controls.reading-navigation-hidden { --mobile-home-header-space: 0px; }
+  @media (prefers-reduced-motion: reduce) { .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { transition: none; } }
   .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls:is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { top: var(--mobile-window-controls-height); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { background: var(--surface); } }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 
-  /* 状态栏、操作栏与栏目只采样一次背景；下方表面向上延伸，顶栏只承载按钮。 */
-  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .topic-glass-joined) .mobile-reading-topbar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.home-toolbar),
+  /* 话题仍由吸顶筛选向上延伸玻璃。 */
+  .app-shell:not(.prevent-mobile-layout).topic-glass-joined .mobile-reading-topbar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .app-shell:not(.prevent-mobile-layout).topic-glass-joined :deep(.topic-sticky-controls) { isolation: isolate; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.home-toolbar::before),
   .app-shell:not(.prevent-mobile-layout).topic-glass-joined :deep(.topic-sticky-controls::before) { content: ''; position: absolute; inset: calc(-1 * var(--mobile-glass-topbar-space)) 0 0; z-index: -1; pointer-events: none; background: var(--home-glass-tint, var(--topic-glass-tint)); border-radius: inherit; box-shadow: 0 6px 18px #0000000a, inset 0 -1px 0 var(--home-glass-edge, var(--topic-glass-edge)); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.home-toolbar::before), .app-shell:not(.prevent-mobile-layout).topic-glass-joined :deep(.topic-sticky-controls::before) { background: var(--surface); }
+    .app-shell:not(.prevent-mobile-layout).topic-glass-joined :deep(.topic-sticky-controls::before) { background: var(--surface); }
   }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-    .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.home-toolbar::before), .app-shell:not(.prevent-mobile-layout).topic-glass-joined :deep(.topic-sticky-controls::before) { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    .app-shell:not(.prevent-mobile-layout).topic-glass-joined :deep(.topic-sticky-controls::before) { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
   }
 
   .app-shell:not(.prevent-mobile-layout) :deep(.top-bar),

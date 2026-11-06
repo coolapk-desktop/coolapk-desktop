@@ -36,8 +36,8 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
-  it('通知页只显示页面自带的标题栏，离开后恢复移动顶栏', async () => {
-    Object.assign(routeState.value, { path: '/notifications', fullPath: '/notifications' });
+  it.each(['/notifications', '/search'])('%s 只显示页面自带的工具栏，离开后恢复移动顶栏', async (path) => {
+    Object.assign(routeState.value, { path, fullPath: path });
     const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
     try {
       expect(wrapper.find('.mobile-top-bar-stub').exists()).toBe(false);
@@ -45,6 +45,37 @@ describe('AppShell', () => {
       await nextTick();
       expect(wrapper.find('.mobile-top-bar-stub').exists()).toBe(true);
     } finally { wrapper.unmount(); }
+  });
+
+  it.each(['/search', '/other-list'])('%s 可通过滚动容器标记复用阅读收起判定', async (path) => {
+    const previousWidth = window.innerWidth;
+    window.innerWidth = 390;
+    Object.assign(routeState.value, { path, fullPath: path });
+    useSettingsStore().settings.autoHideMobileNavigation = true;
+    const wrapper = mount(AppShell, {
+      slots: { default: '<div data-reading-scroll>列表</div><div class="unmarked">其他区域</div>' },
+      global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } },
+    });
+    try {
+      const unmarked = wrapper.get<HTMLElement>('.unmarked');
+      await unmarked.trigger('wheel', { deltaY: 100 });
+      unmarked.element.scrollTop = 100;
+      await unmarked.trigger('scroll');
+      expect(wrapper.classes()).not.toContain('reading-navigation-hidden');
+      const list = wrapper.get<HTMLElement>('[data-reading-scroll]');
+      await list.trigger('wheel', { deltaY: 100 });
+      list.element.scrollTop = 100;
+      await list.trigger('scroll');
+      expect(wrapper.classes()).toContain('reading-navigation-hidden');
+      await list.trigger('wheel', { deltaY: -20 });
+      list.element.scrollTop = 80;
+      await list.trigger('scroll');
+      expect(wrapper.classes()).not.toContain('reading-navigation-hidden');
+    } finally {
+      wrapper.unmount();
+      window.innerWidth = previousWidth;
+      window.dispatchEvent(new Event('resize'));
+    }
   });
 
   it.each([['/', 'feed-scroll-container'], ['/digital', 'digital-content'], ['/discover', 'discover-scroll-container']])('%s 从详情返回时恢复离开前的导航高度，继续反向滚动仍能展开', async (path, listClass) => {

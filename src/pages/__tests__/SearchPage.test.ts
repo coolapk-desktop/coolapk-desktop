@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { defineComponent, h, KeepAlive } from 'vue';
+import { defineComponent, h, KeepAlive, ref } from 'vue';
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +16,7 @@ vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
 
 import SearchPage from '../SearchPage.vue';
 import { useSettingsStore } from '../../stores/settings';
+import { mobileReadingNavigationKey } from '../../composables/useMobileReadingNavigation';
 
 describe('搜索联想弹层生命周期', () => {
   async function mountCachedSearch() {
@@ -28,9 +29,14 @@ describe('搜索联想弹层生命周期', () => {
     await router.isReady();
     // 与应用相同，按完整路由缓存页面，覆盖进入帖子后返回的流程。
     const host = defineComponent({ setup: () => () => h(RouterView, null, { default: ({ Component, route }: any) => h(KeepAlive, null, { default: () => Component ? h(Component, { key: route.fullPath }) : null }) }) });
-    const wrapper = mount(host, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
+    const readingHidden = ref(false);
+    const wrapper = mount(host, { global: {
+      plugins: [createPinia(), router],
+      provide: { [mobileReadingNavigationKey as symbol]: { hidden: readingHidden, reset: () => { readingHidden.value = false; } } },
+      stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true },
+    } });
     await flushPromises();
-    return { wrapper, router };
+    return { wrapper, router, readingHidden };
   }
 
   it('进入帖子再返回时恢复关键词和结果，不自动请求或显示联想', async () => {
@@ -79,6 +85,38 @@ describe('搜索联想弹层生命周期', () => {
       expect(scroller.scrollTop).toBe(480);
       expect(mocks.searchByType).toHaveBeenCalledTimes(requests);
     } finally { wrapper.unmount(); }
+  });
+
+  it('窄屏搜索栏提供返回和提交，输入法确认期间不会发起搜索', async () => {
+    const previousWidth = window.innerWidth;
+    window.innerWidth = 390;
+    const { wrapper, router, readingHidden } = await mountCachedSearch();
+    try {
+      const form = wrapper.get('form[role="search"]');
+      expect(form.find('button[aria-label="返回"]').exists()).toBe(true);
+      expect(form.find('button[type="submit"][aria-label="搜索"]').exists()).toBe(true);
+      const toolbar = wrapper.get('.search-toolbar-frame');
+      expect(wrapper.get('.search-scroll-container').attributes('data-reading-scroll')).toBe('');
+      readingHidden.value = true;
+      await flushPromises();
+      expect(toolbar.classes()).toContain('is-collapsed');
+      expect(toolbar.attributes('inert')).toBeDefined();
+      readingHidden.value = false;
+      await flushPromises();
+      expect(toolbar.attributes('inert')).toBeUndefined();
+      const input = wrapper.get('.search-field');
+      await input.setValue('Android');
+      await input.trigger('keydown.enter', { isComposing: true });
+      await flushPromises();
+      expect(router.currentRoute.value.query.q).toBe('nuke');
+      await form.trigger('submit');
+      await flushPromises();
+      expect(router.currentRoute.value.query.q).toBe('Android');
+    } finally {
+      wrapper.unmount();
+      window.innerWidth = previousWidth;
+      window.dispatchEvent(new Event('resize'));
+    }
   });
 
   it.each(['submit', 'leave', 'blur', 'clear', 'edit'])('旧联想响应在 %s 后不能重新打开弹层', async (action) => {
