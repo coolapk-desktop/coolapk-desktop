@@ -356,6 +356,7 @@
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, reactive, watch, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, inject, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { routeNavigationIsHistory } from '../utils/routeScroll';
 import FeedTabs from '../components/feed/FeedTabs.vue';
 import FeedLayoutToggle from '../components/feed/FeedLayoutToggle.vue';
 import FeedCard from '../components/feed/FeedCard.vue';
@@ -1727,7 +1728,11 @@ function restoreHeadlineRecommendation() {
   resetHeadlineCursor();
   void loadFeeds(true);
 }
-onActivated(() => { bindGlobalListeners(); restoreHeadlineRecommendation(); });
+onActivated(() => {
+  bindGlobalListeners();
+  // 从通知、详情等页面返回时保留当前子栏目，交给路由恢复原来的滚动位置。
+  if (!routeNavigationIsHistory.value) restoreHeadlineRecommendation();
+});
 watch(() => props.selected, (selected) => {
   unbindGlobalListeners();
   if (selected) { bindGlobalListeners(); restoreHeadlineRecommendation(); }

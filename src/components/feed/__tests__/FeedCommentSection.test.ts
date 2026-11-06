@@ -833,6 +833,30 @@ describe('评论完整信息展示', () => {
     wrapper.unmount();
   });
 
+  it('独立回复框向指定楼层发送，成功后通知宿主关闭', async () => {
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    auth.user = { uid: 12345, username: '发布者' } as any;
+    useSettingsStore().settings.deviceFingerprint.deviceId = 'DU-MOCK-SAMPLE-DEVICE-ID-12345';
+    const wrapper = mountSection({}, {
+      comments: [], feedId: '333', standaloneTarget: { rid: '222', username: '通知作者' },
+    });
+    try {
+      await flushPromises();
+      const composer = new DOMWrapper(document.body.querySelector('.desktop-reply-composer')!);
+      expect(composer.get('.reply-target-name').text()).toBe('@通知作者');
+      expect(composer.find('.reply-target-clear-btn').exists()).toBe(false);
+      const editor = composer.get('.comment-rich-editor');
+      editor.element.textContent = '从通知回复';
+      await editor.trigger('input');
+      await composer.get('.stub-button').trigger('click');
+      await flushPromises();
+      expect(mocks.replyFeed).toHaveBeenCalledWith('333', '从通知回复', '222', undefined);
+      expect(wrapper.emitted('send-comment')).toEqual([['从通知回复']]);
+      expect(mocks.getSubReplies).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
   it('登录状态下成功提交评论并触发 replyFeed', async () => {
     const authStore = useAuthStore();
     authStore.user = { uid: 12345, username: '发布者' } as any;

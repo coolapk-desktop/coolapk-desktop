@@ -5,6 +5,17 @@ export interface NotificationActor {
   avatar: string;
 }
 
+/** 官方通知卡的操作绑定 target，而不是通知 ID 或正文中的链接。 */
+export function getNotificationActionTarget(item: any) {
+  const actorUid = Number(item.fromuid ?? item.from_uid ?? item.fromUserInfo?.uid);
+  const type = item.target_type ?? item.targetType;
+  const id = String(item.target_id ?? item.targetId ?? '');
+  const action = item.userAction ?? item.user_action;
+  if (!(actorUid >= 10000) || !action || !/^[1-9]\d*$/.test(id)) return null;
+  if (type !== 'feed' && type !== 'feed_reply') return null;
+  return { id, type, liked: Number(action.like) > 0 } as const;
+}
+
 /** 官方 NotificationRightInfo 仅将独立的酷安图片地址作为右侧缩略图。 */
 export function getNotificationImage(item: any): string {
   const value = item?.addition_info || item?.additionInfo;

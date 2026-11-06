@@ -1,9 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { createMemoryHistory, createRouter } from 'vue-router';
+import { KeepAlive, defineComponent, h, ref } from 'vue';
 import { expect, it, vi } from 'vitest';
 import HomeTabPanel from '../HomeTabPanel.vue';
 import { useSettingsStore } from '../../stores/settings';
+import { routeNavigationIsHistory } from '../../utils/routeScroll';
 
 const api = vi.hoisted(() => ({ getIndexV8EntitiesPaged: vi.fn(), getDiscoveryPageData: vi.fn(), getHotSearchKeywords: vi.fn().mockResolvedValue([]) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: api }));
@@ -113,7 +115,7 @@ it.each([
 });
 
 
-it('进入头条不自动选择快捷入口，离开后再进入恢复推荐流并收起子栏目', async () => {
+it('历史返回头条保留快捷入口，主动切换栏目后再进入恢复推荐流', async () => {
   const feed = { id: '100', entityType: 'feed', message: '推荐动态', uid: '123', username: '酷友' };
   const quickLinks = { entityType: 'card', entityTemplate: 'iconLinkGridCard', extraData: JSON.stringify({ row: 1, column: 5, pagination: 'true' }), entities: [{ id: 'worth', title: '值得看', url: '/page?url=worth' }] };
   api.getIndexV8EntitiesPaged.mockReset();
@@ -122,7 +124,14 @@ it('进入头条不自动选择快捷入口，离开后再进入恢复推荐流�
   const tab = { title: '头条', page_name: 'V9_HOME_TAB_HEADLINE', url: '/main/headline' };
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
   await router.push('/');
-  const wrapper = mount(HomeTabPanel, { props: { embedded: true, selected: true, tabKey: tab.page_name, tabs: [tab] }, global: { plugins: [router, createPinia()], stubs: { FeedCard: true, AppImage: true } } });
+  const shown = ref(true);
+  const selected = ref(true);
+  const host = defineComponent({
+    setup: () => () => h(KeepAlive, null, () => shown.value
+      ? h(HomeTabPanel, { embedded: true, selected: selected.value, tabKey: tab.page_name, tabs: [tab] })
+      : null),
+  });
+  const wrapper = mount(host, { global: { plugins: [router, createPinia()], stubs: { FeedCard: true, AppImage: true } } });
   try {
     await flushPromises();
     expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(false);
@@ -131,10 +140,27 @@ it('进入头条不自动选择快捷入口，离开后再进入恢复推荐流�
     await wrapper.get('.icon-btn-item').trigger('click'); await flushPromises();
     expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(true);
     expect(wrapper.find('.headline-nested-tabs').exists()).toBe(true);
-    await wrapper.setProps({ selected: false });
-    await wrapper.setProps({ selected: true }); await flushPromises();
+    const scroll = wrapper.get<HTMLElement>('.feed-scroll-container').element;
+    scroll.scrollTop = 500;
+    const requestCount = api.getIndexV8EntitiesPaged.mock.calls.length + api.getDiscoveryPageData.mock.calls.length;
+    shown.value = false;
+    await flushPromises();
+    routeNavigationIsHistory.value = true;
+    shown.value = true;
+    await flushPromises();
+    expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(true);
+    expect(wrapper.find('.headline-nested-tabs').exists()).toBe(true);
+    expect(wrapper.get('.feed-scroll-container').element).toBe(scroll);
+    expect(scroll.scrollTop).toBe(500);
+    expect(api.getIndexV8EntitiesPaged.mock.calls.length + api.getDiscoveryPageData.mock.calls.length).toBe(requestCount);
+
+    routeNavigationIsHistory.value = false;
+    selected.value = false;
+    await flushPromises();
+    selected.value = true;
+    await flushPromises();
     expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(false);
     expect(wrapper.find('.headline-nested-tabs').exists()).toBe(false);
     expect(api.getIndexV8EntitiesPaged).toHaveBeenLastCalledWith({ page: 1, firstItem: '', lastItem: '' });
-  } finally { wrapper.unmount(); }
+  } finally { wrapper.unmount(); routeNavigationIsHistory.value = false; }
 });

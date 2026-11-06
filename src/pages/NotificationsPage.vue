@@ -6,17 +6,6 @@
           <button type="button" class="header-action-btn" :aria-label="isNotificationRoot ? '返回' : '返回通知中心'" @click="goBack"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
           <h2 class="page-title">{{ currentTabTitle }}</h2>
         </div>
-        <nav v-if="!subNoteType" class="notification-quick-nav" :class="{ 'notification-nav-desktop-only': !isNotificationRoot }" aria-label="通知分类">
-          <button type="button" class="quick-nav-btn notification-list-tab" :aria-current="currentTab === 'list' ? 'page' : undefined" @click="switchTab('list')">通知</button>
-          <button v-for="entry in quickEntries" :key="entry.value" type="button" :class="['quick-nav-btn', entry.countKey]" :aria-current="currentTab === entry.value ? 'page' : undefined" @click="entry.value === 'messages' ? router.push('/messages') : switchTab(entry.value)">
-            <span class="quick-nav-icon">
-              <i v-if="entry.countKey === 'like'" class="fas fa-thumbs-up" aria-hidden="true"></i>
-              <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>
-              </span>
-            {{ entry.label }}
-          <span v-if="notificationStore.categoryCounts[entry.countKey] > 0" class="quick-nav-badge">{{ notificationStore.categoryCounts[entry.countKey] > 99 ? '99+' : notificationStore.categoryCounts[entry.countKey] }}</span>
-          </button>
-        </nav>
         <div v-if="isNotificationRoot" class="notification-actions">
           <button type="button" class="header-action-btn" aria-label="全部已读" title="全部已读" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="markAllViewed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19,4C19,4.17 18.96,4.34 18.87,4.49L9.87,20.49C9.6,20.97 8.99,21.14 8.51,20.87C8.39,20.8 8.28,20.71 8.2,20.6L2.2,12.6C2.07,12.43 2,12.22 2,12C2,11.45 2.45,11 3,11C3.31,11 3.61,11.15 3.8,11.4L8.88,18.17L17.13,3.51C17.31,3.2 17.64,3 18,3C18.55,3 19,3.45 19,4ZM18,11C17.45,11 17,11.45 17,12C17,12.55 17.45,13 18,13L21,13C21.55,13 22,12.55 22,12C22,11.45 21.55,11 21,11L18,11ZM16,15C15.45,15 15,15.45 15,16C15,16.55 15.45,17 16,17L21,17C21.55,17 22,16.55 22,16C22,15.45 21.55,15 21,15L16,15ZM14,19C13.45,19 13,19.45 13,20C13,20.55 13.45,21 14,21L21,21C21.55,21 22,20.55 22,20C22,19.45 21.55,19 21,19L14,19Z" /></svg></button>
           <button type="button" class="header-action-btn notification-mobile-delete" aria-label="全部删除" title="全部删除" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="deleteAllNotifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,3V4H4V6H5V19A2,2 0,0 0,7 21H17A2,2 0,0 0,19 19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z" /></svg></button>
@@ -26,6 +15,17 @@
           </details>
         </div>
       </div>
+      <nav v-if="!subNoteType" class="notification-quick-nav" :class="{ 'notification-nav-desktop-only': !isNotificationRoot }" aria-label="通知分类">
+        <button type="button" class="quick-nav-btn notification-list-tab" :aria-current="currentTab === 'list' ? 'page' : undefined" @click="switchTab('list')">通知</button>
+        <button v-for="entry in quickEntries" :key="entry.value" type="button" :class="['quick-nav-btn', entry.countKey]" :aria-current="currentTab === entry.value ? 'page' : undefined" @click="entry.value === 'messages' ? router.push('/messages') : switchTab(entry.value)">
+          <span class="quick-nav-icon">
+            <i v-if="entry.countKey === 'like'" class="fas fa-thumbs-up" aria-hidden="true"></i>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>
+          </span>
+          {{ entry.label }}
+          <span v-if="notificationStore.categoryCounts[entry.countKey] > 0" class="quick-nav-badge">{{ notificationStore.categoryCounts[entry.countKey] > 99 ? '99+' : notificationStore.categoryCounts[entry.countKey] }}</span>
+        </button>
+      </nav>
     </div>
 
 
@@ -50,7 +50,7 @@
       </div>
 
       <div v-else class="notification-list">
-        <div v-for="item in items" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
+        <div v-for="{ item, target, actionKey } in notificationCards" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
           <button type="button" class="notify-avatar-wrap notify-profile" :disabled="!getActorUid(item)" :aria-label="`查看${getUsername(item)}的主页`" @click.stop="openActor(item)">
             <AppAvatar :src="getAvatar(item)" :size="40" />
           </button>
@@ -71,8 +71,16 @@
               </button>
               <div v-else-if="getAdditionInfo(item)" class="notify-message notify-right-text" v-html="renderNotificationText(getAdditionInfo(item))"></div>
             </div>
-            <div class="notify-meta">
+            <div class="notify-meta" :class="{ 'with-actions': target }">
               <span class="notify-time">{{ formatTime(item.likeTime || item.dateline) }}</span>
+              <div v-if="target" class="notify-row-actions">
+                <button type="button" class="notify-row-action" :aria-pressed="likedTargets.get(actionKey) ?? target.liked" :aria-label="(likedTargets.get(actionKey) ?? target.liked) ? '取消点赞' : '点赞'" :title="(likedTargets.get(actionKey) ?? target.liked) ? '取消点赞' : '点赞'" :disabled="pendingLikes.has(actionKey)" @click.stop="toggleTargetLike(target, actionKey)">
+                  <i :class="[(likedTargets.get(actionKey) ?? target.liked) ? 'fas' : 'far', 'fa-thumbs-up']" aria-hidden="true"></i>
+                </button>
+                <button type="button" class="notify-row-action" aria-label="回复" title="回复" :disabled="!!pendingReply" @click.stop="openReplyComposer(item, target)">
+                  <i class="far fa-comment-dots" aria-hidden="true"></i>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -93,6 +101,15 @@
         </div>
       </div>
     </div>
+    <FeedCommentSection
+      v-if="replyComposer"
+      :feed-id="replyComposer.feedId"
+      :standalone-target="replyComposer"
+      :official-detail="mobileReplyComposer"
+      :comments="[]"
+      @close-composer="closeReplyComposer"
+      @send-comment="closeReplyComposer"
+    />
   </div>
 </template>
 
@@ -111,7 +128,8 @@ import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
 import { useNotificationStore } from '../stores/notifications';
 import type { NotificationCategory } from '../utils/notificationCount';
-import { getNotificationActor, getNotificationImage } from '../utils/notificationItem';
+import { getNotificationActionTarget, getNotificationActor, getNotificationImage } from '../utils/notificationItem';
+import { isCoarsePointer, isTouchMobilePlatform } from '../utils/platform';
 import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
@@ -125,6 +143,7 @@ import AppImage from '../components/common/AppImage.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
+import FeedCommentSection from '../components/feed/FeedCommentSection.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -159,6 +178,67 @@ const page = ref(1);
 const hasMore = ref(true);
 const notificationError = ref('');
 const desktopActions = ref<HTMLDetailsElement | null>(null);
+type NotificationActionTarget = NonNullable<ReturnType<typeof getNotificationActionTarget>>;
+const likedTargets = ref(new Map<string, boolean>());
+const pendingLikes = ref(new Set<string>());
+const pendingReply = ref<symbol>();
+const replyComposer = ref<{ feedId: string; rid?: string; username: string }>();
+const mobileReplyComposer = isTouchMobilePlatform() || isCoarsePointer();
+const notificationCards = computed(() => items.value.map(item => {
+  const target = currentTab.value === 'list' ? getNotificationActionTarget(item) : null;
+  return { item, target, actionKey: target ? `${target.type}:${target.id}` : '' };
+}));
+
+async function toggleTargetLike(target: NotificationActionTarget, key: string) {
+  const pending = pendingLikes.value;
+  if (pending.has(key)) return;
+  const previous = likedTargets.value.get(key);
+  const liked = !(previous ?? target.liked);
+  pending.add(key);
+  likedTargets.value.set(key, liked);
+  try {
+    if (target.type === 'feed') {
+      await (liked ? CoolapkTauriAPI.likeFeed(target.id) : CoolapkTauriAPI.unlikeFeed(target.id));
+    } else {
+      await (liked ? CoolapkTauriAPI.likeReply(target.id) : CoolapkTauriAPI.unlikeReply(target.id));
+    }
+  } catch (error) {
+    if (pending !== pendingLikes.value) return;
+    if (previous === undefined) likedTargets.value.delete(key);
+    else likedTargets.value.set(key, previous);
+    showToast(`${liked ? '点赞' : '取消点赞'}失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+  } finally {
+    pending.delete(key);
+  }
+}
+
+async function openReplyComposer(item: any, target: NotificationActionTarget) {
+  if (pendingReply.value || replyComposer.value) return;
+  const request = Symbol();
+  pendingReply.value = request;
+  try {
+    const rid = target.type === 'feed_reply' ? target.id : undefined;
+    let feedId = rid ? getNotificationFeedId(item) : target.id;
+    if (rid && !/^[1-9]\d*$/.test(feedId)) {
+      const response = await CoolapkTauriAPI.getReplyDetail(rid);
+      feedId = String(response?.data?.feedId || response?.data?.feed_id || '');
+    }
+    if (pendingReply.value !== request) return;
+    if (!/^[1-9]\d*$/.test(feedId)) throw new Error('无法找到评论所属的动态');
+    replyComposer.value = { feedId, rid, username: getUsername(item) };
+  } catch (error) {
+    if (pendingReply.value === request) {
+      showToast(`打开回复失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+    }
+  } finally {
+    if (pendingReply.value === request) pendingReply.value = undefined;
+  }
+}
+
+function closeReplyComposer() {
+  pendingReply.value = undefined;
+  replyComposer.value = undefined;
+}
 
 function closeDesktopActions() {
   const details = desktopActions.value;
@@ -199,6 +279,7 @@ async function switchTab(tabValue: string) {
   if (currentTab.value === tabValue && items.value.length > 0) {
     return;
   }
+  closeReplyComposer();
   currentTab.value = tabValue;
   if (pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
   subNoteType.value = '';
@@ -605,6 +686,7 @@ onActivated(() => {
 });
 
 onDeactivated(() => {
+  closeReplyComposer();
   window.removeEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
 });
 
@@ -617,6 +699,7 @@ watch(
 );
 
 watch(() => route.query.noteType, async noteType => {
+  closeReplyComposer();
   subNoteType.value = typeof noteType === 'string' ? noteType : '';
   page.value = 1;
   items.value = [];
@@ -627,6 +710,9 @@ watch(() => route.query.noteType, async noteType => {
 watch(
   () => [authStore.isLoggedIn, authStore.user?.uid] as const,
   ([isLoggedIn]) => {
+    closeReplyComposer();
+    likedTargets.value = new Map();
+    pendingLikes.value = new Set();
     feedSummaries.value = new Map();
     notificationRequestId += 1;
     loading.value = false;
@@ -663,14 +749,13 @@ async function refreshMobilePage() { await refreshNotifications(); }
   background-color: var(--background);
 }
 
-.page-header {
+.page-header { display: contents; }
+
+.notification-title-row {
   position: sticky;
   top: 0;
   z-index: 10;
   background: var(--surface);
-}
-
-.notification-title-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -686,7 +771,7 @@ async function refreshMobilePage() { await refreshNotifications(); }
 .header-action-btn:hover:not(:disabled) { background: var(--background); }
 .header-action-btn:disabled { color: var(--text-disabled); cursor: default; }
 
-.notification-quick-nav { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 16px 24px; background: var(--surface); }
+.notification-quick-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 16px 24px; background: var(--surface); }
 .quick-nav-btn { position: relative; display: grid; justify-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.45; cursor: pointer; }
 .notification-list-tab, .notification-nav-desktop-only { display: none; }
 .quick-nav-btn.like { --quick-tint: #f44336; }
@@ -745,6 +830,12 @@ async function refreshMobilePage() { await refreshNotifications(); }
 .notify-profile { padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
 .notify-profile:disabled { cursor: default; }
 .notify-meta { display: flex; align-items: center; min-height: 32px; }
+.notify-meta.with-actions { justify-content: space-between; gap: 8px; }
+.notify-row-actions { display: flex; align-items: center; gap: 2px; }
+.notify-row-action { display: grid; place-items: center; width: 42px; height: 38px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-tertiary); font-size: 16px; cursor: pointer; }
+.notify-row-action[aria-pressed="true"] { color: var(--brand-primary); }
+.notify-row-action:hover:not(:disabled) { background: var(--background); }
+.notify-row-action:disabled { cursor: default; opacity: 0.65; }
 .notify-time { font-size: var(--notification-font-caption); color: var(--text-tertiary); }
 .page-container :is(button, summary):focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 
@@ -801,6 +892,7 @@ async function refreshMobilePage() { await refreshNotifications(); }
   .notify-header { grid-area: 1 / 1; }
   .notify-user { font-weight: var(--font-weight-semibold); }
   .notify-meta { grid-area: 1 / 2; min-height: 0; justify-self: end; white-space: nowrap; }
+  .notify-row-action { width: 32px; height: 30px; }
   .notify-action, .notify-message, .notify-target { grid-column: 1; }
   .notify-target { order: 1; }
   .notify-image { grid-area: 2 / 2; justify-self: end; }
@@ -815,17 +907,23 @@ async function refreshMobilePage() { await refreshNotifications(); }
   }
 
   @container notification-page (min-width: 720px) {
-    .notification-title-row {
-      display: flex;
+    .page-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       gap: 16px;
       padding-inline: 16px;
+      background: var(--surface);
       border-bottom: 1px solid var(--border-light, var(--border));
     }
+    .notification-title-row { display: contents; }
     .notification-tab-heading, .notification-mobile-delete, .quick-nav-icon { display: none; }
     .notification-actions { margin-inline-start: auto; gap: 2px; }
     .notification-heading { min-height: 52px; flex-shrink: 0; }
-    .notification-quick-nav { display: flex; gap: 16px; padding: 0; }
+    .notification-quick-nav { grid-area: 1 / 1; display: flex; gap: 16px; padding: 0; }
     .quick-nav-btn {
       display: inline-flex;
       align-items: center;

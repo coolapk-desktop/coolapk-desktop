@@ -6,10 +6,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../../stores/notifications';
 import { useAppStore } from '../../stores/app';
 
-const mocks = vi.hoisted(() => ({ notifications: vi.fn(), feedFullText: vi.fn(), reply: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), deleteAll: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn() }));
+const mocks = vi.hoisted(() => ({ notifications: vi.fn(), feedFullText: vi.fn(), reply: vi.fn(), likeReply: vi.fn(), unlikeReply: vi.fn(), unlikeFeed: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), deleteAll: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn() }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: {
   getNotifications: mocks.notifications, getReplyDetail: mocks.reply, clearNotificationCount: mocks.clear, deleteAllNotifications: mocks.deleteAll, reportNotificationClick: mocks.report, readNotification: mocks.read, getNotificationCount: mocks.count,
+  likeReply: mocks.likeReply, unlikeReply: mocks.unlikeReply, unlikeFeed: mocks.unlikeFeed,
 } }));
 vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: true, user: { uid: 'notification-test' } }) }));
 vi.mock('../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
@@ -24,7 +25,7 @@ describe('通知评论点击入口', () => {
     mocks.notifications.mockResolvedValue({ data: [] });
     const shown = ref(true);
     const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, setup: () => ({ shown }), template: '<KeepAlive><NotificationsPage v-if="shown" /></KeepAlive>' }), {
-      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
+      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true, FeedCommentSection: true } },
     });
     try {
       await flushPromises();
@@ -40,11 +41,50 @@ describe('通知评论点击入口', () => {
   async function mountPage(item: any) {
     mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? (Array.isArray(item) ? item : [item]) : [] }));
     const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
-      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true } },
+      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true, FeedCommentSection: true } },
     });
     await flushPromises();
     return wrapper;
   }
+
+  it('针对通知的评论目标点赞和取消点赞，失败恢复状态', async () => {
+    const wrapper = await mountPage({ id: '99', fromuid: '12345', target_type: 'feed_reply', target_id: '222', userAction: { like: 0 } });
+    try {
+      const button = wrapper.get('.notify-row-action[aria-pressed]');
+      mocks.likeReply.mockRejectedValueOnce(new Error('网络失败'));
+      await button.trigger('click');
+      await flushPromises();
+      expect(button.attributes('aria-pressed')).toBe('false');
+      await button.trigger('click');
+      await flushPromises();
+      expect(mocks.likeReply).toHaveBeenLastCalledWith('222');
+      expect(button.attributes('aria-pressed')).toBe('true');
+      await button.trigger('click');
+      await flushPromises();
+      expect(mocks.unlikeReply).toHaveBeenCalledWith('222');
+      expect(button.attributes('aria-pressed')).toBe('false');
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
+  it.each(['feed_reply', 'feed'])('直接打开 %s 通知的回复框', async type => {
+    const isReply = type === 'feed_reply';
+    const wrapper = await mountPage({ id: '99', fromuid: '12345', fromusername: '酷友甲', target_type: type, target_id: '222', userAction: { like: 1 } });
+    try {
+      if (isReply) mocks.reply.mockResolvedValueOnce({ data: { feedId: '333' } });
+      if (!isReply) {
+        await wrapper.get('.notify-row-action[aria-label="取消点赞"]').trigger('click');
+        expect(mocks.unlikeFeed).toHaveBeenCalledWith('222');
+      }
+      await wrapper.get('.notify-row-action[aria-label="回复"]').trigger('click');
+      await flushPromises();
+      const composer = wrapper.getComponent({ name: 'FeedCommentSection' });
+      expect(composer.props('feedId')).toBe(isReply ? '333' : '222');
+      expect(composer.props('standaloneTarget')).toMatchObject({ rid: isReply ? '222' : undefined, username: '酷友甲' });
+      expect(mocks.reply).toHaveBeenCalledTimes(isReply ? 1 : 0);
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
 
   it('点击官方 v18 通知后用服务端已读快照更新角标', async () => {
     const store = useNotificationStore();
