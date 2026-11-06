@@ -213,12 +213,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-live-tile.ps1</code></pre
         <AppSwitch v-model="settingsStore.settings.rememberWindowState" />
       </div>
 
+      <!-- 同一开关只在外观设置中提供入口，这里仅保留说明与跳转，避免两处配置口径分叉。 -->
       <div v-if="showDesktopLayoutSwitch" class="setting-row">
         <div class="row-info">
-          <span class="row-label">禁止窄窗口自动切换手机模式</span>
-          <span class="row-sub">窗口宽度缩小（&lt; 720px）时保持桌面端顶栏与侧边栏，不自动切换为手机端导航栏</span>
+          <span class="row-label">窗口响应式布局</span>
+          <span class="row-sub">「禁止窄窗口自动切换手机模式」已统一到外观设置，可在“外观设置 → 窗口响应式布局”中调整</span>
         </div>
-        <AppSwitch v-model="settingsStore.settings.disableAutoMobileMode" />
+        <router-link class="settings-link" to="/settings/appearance">前往外观设置</router-link>
       </div>
 
       <p class="tray-tip">
@@ -354,6 +355,18 @@ function reopenTip() {
 
 .select-control:hover {
   border-color: var(--brand-primary);
+}
+
+.settings-link {
+  flex-shrink: 0;
+  color: var(--brand-primary);
+  font-size: var(--font-size-sub);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
 }
 
 .tray-tip {

@@ -69,6 +69,7 @@ import StartupSettingsPage from '../StartupSettingsPage.vue';
 import SettingsLayout from '../SettingsLayout.vue';
 import ShortcutSettingsPage from '../ShortcutSettingsPage.vue';
 import { normalizeSettings, useSettingsStore } from '../../../stores/settings';
+import { confirmationState, settleConfirmation } from '../../../utils/confirm';
 import { getPlatformInfo } from '../../../utils/platform';
 
 const RouterViewStub = { template: '<div><slot :Component="null" /></div>' };
@@ -554,7 +555,8 @@ describe('设置页面交互', () => {
     const { wrapper } = mountPage(AboutSettingsPage);
     await flushPromises();
     expect(wrapper.text()).toContain(APP_VERSION);
-    expect(wrapper.get('.about-channel').text()).toBe(`${APP_VERSION.includes('-') ? '测试版' : '稳定版'} · 稳定版更新渠道`);
+    expect(wrapper.get('.about-channel').text()).toBe(APP_VERSION.includes('-') ? '测试版' : '稳定版');
+    expect(wrapper.text()).toContain('稳定版更新渠道');
     expect(wrapper.text()).toContain('1.2k');
     await wrapper.get('.about-head button').trigger('click');
     expect(eventSpy).toHaveBeenCalled();
@@ -571,11 +573,100 @@ describe('设置页面交互', () => {
     vi.unstubAllGlobals();
   });
 
-  it('关于页切换更新渠道时仍保留安装版本类型', async () => {
+  it('关于页只读展示更新渠道当前值，不再提供可编辑下拉', async () => {
     const { wrapper, settings } = mountPage(AboutSettingsPage);
+    const findRow = () => wrapper.findAll('.setting-row').find((row) => row.find('.row-label').text() === '更新渠道')!;
+    // 安装版本类型仍显示在标题旁，更新渠道单独一行只读展示。
+    expect(wrapper.get('.about-channel').text()).toBe(APP_VERSION.includes('-') ? '测试版' : '稳定版');
+    expect(findRow().get('.channel-value').text()).toBe('稳定版更新渠道');
+    expect(findRow().find('select').exists()).toBe(false);
+    expect(findRow().find('.switch-input').exists()).toBe(false);
+    expect(findRow().find('.settings-link').exists()).toBe(true);
     settings.settings.updateChannel = 'beta';
     await flushPromises();
-    expect(wrapper.get('.about-channel').text()).toBe(`${APP_VERSION.includes('-') ? '测试版' : '稳定版'} · 测试版更新渠道`);
+    expect(findRow().get('.channel-value').text()).toBe('测试版更新渠道');
+  });
+
+  it('重复的窗口响应式布局开关只保留外观设置一处入口', async () => {
+    const appearance = mountPage(AppearanceSettingsPage);
+    const startup = mountPage(StartupSettingsPage);
+    try {
+      await flushPromises();
+      const appearanceRow = appearance.wrapper
+        .findAll('.setting-row')
+        .find((row) => row.text().includes('禁止窄窗口自动切换手机模式'))!;
+      expect(appearanceRow.find('.switch-input').exists()).toBe(true);
+
+      // 启动页同一开关不再重复出现，只保留一句说明和跳转链接。
+      const startupRow = startup.wrapper
+        .findAll('.setting-row')
+        .find((row) => row.text().includes('禁止窄窗口自动切换手机模式'))!;
+      expect(startupRow.find('.switch-input').exists()).toBe(false);
+      expect(startupRow.get('.settings-link').text()).toBe('前往外观设置');
+      expect(startup.wrapper.findAll('.switch-input').some((input) => input.element.getAttribute('aria-label') === '禁止窄窗口自动切换手机模式')).toBe(false);
+    } finally {
+      appearance.wrapper.unmount();
+      startup.wrapper.unmount();
+    }
+  });
+
+  it('下载完成桌面通知受系统桌面通知总开关约束', async () => {
+    const { wrapper, settings } = mountPage(DownloadSettingsPage);
+    const findRow = () => wrapper.findAll('.setting-row').find((row) => row.find('.row-label').text() === '下载完成桌面通知')!;
+    try {
+      await flushPromises();
+      expect(findRow().text()).toContain('需先在通知设置中开启系统桌面通知');
+      expect(findRow().find('.settings-link').exists()).toBe(true);
+      expect(findRow().get('.switch-input').attributes('disabled')).toBeDefined();
+      settings.settings.desktopNotifications = true;
+      await flushPromises();
+      expect(findRow().get('.switch-input').attributes('disabled')).toBeUndefined();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('代理页有未保存改动时离开会确认', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/settings/network', component: NetworkSettingsPage },
+        { path: '/settings/about', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/settings/network');
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    // onBeforeRouteLeave 只在 <router-view> 内的组件上生效，因此挂载一个路由宿主再断言守卫。
+    const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router] } });
+    try {
+      await flushPromises();
+      expect(wrapper.find('#proxy-address').exists()).toBe(true);
+      expect(wrapper.find('.setting-unsaved').exists()).toBe(false);
+      await wrapper.get('#proxy-address').setValue('127.0.0.1:7890');
+      await flushPromises();
+      expect(wrapper.get('.setting-unsaved').text()).toContain('有未保存的修改');
+
+      const navigation = router.push('/settings/about');
+      await flushPromises();
+      expect(confirmationState.isOpen).toBe(true);
+      // 取消确认后停留在代理页，草稿保留。
+      settleConfirmation(false);
+      await navigation;
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/settings/network');
+      expect((wrapper.get('#proxy-address').element as HTMLInputElement).value).toBe('127.0.0.1:7890');
+
+      // 确认放弃后才真正离开。
+      const leaving = router.push('/settings/about');
+      await flushPromises();
+      settleConfirmation(true);
+      await leaving;
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/settings/about');
+    } finally {
+      settleConfirmation(false);
+      wrapper.unmount();
+    }
   });
 
   it('账号页在没有本地账户时展示空状态', async () => {

@@ -144,12 +144,22 @@
         </select>
       </div>
 
+      <!-- 该开关依赖通知设置中的系统桌面通知总开关，总开关关闭时置灰并说明原因，避免看似开启却收不到通知。 -->
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">下载完成桌面通知</span>
-          <span class="row-sub">更新包下载完成后发送系统通知提醒</span>
+          <span class="row-sub">
+            更新包下载完成后发送系统通知提醒；
+            <router-link class="settings-link" to="/settings/notifications">需先在通知设置中开启系统桌面通知</router-link>
+          </span>
+          <span v-if="!settingsStore.settings.desktopNotifications" class="row-sub unsaved-warning">
+            系统桌面通知总开关当前已关闭，此开关不会生效；开启总开关后自动恢复。
+          </span>
         </div>
-        <AppSwitch v-model="settingsStore.settings.notifyDownloadComplete" />
+        <AppSwitch
+          v-model="settingsStore.settings.notifyDownloadComplete"
+          :disabled="!settingsStore.settings.desktopNotifications"
+        />
       </div>
     </div>
 
@@ -534,6 +544,19 @@ onMounted(() => {
 .text-input:hover,
 .text-input:focus {
   border-color: var(--brand-primary);
+}
+
+.settings-link {
+  color: var(--brand-primary);
+  text-decoration: none;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
+}
+
+.unsaved-warning {
+  color: var(--warning, var(--danger));
 }
 
 .tray-tip {

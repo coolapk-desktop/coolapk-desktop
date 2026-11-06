@@ -19,6 +19,11 @@
           <button class="action-button" :disabled="saving || testing || composedProxyUrl === settingsStore.settings.networkProxyUrl" @click="applyProxy">{{ saving ? '应用中…' : '应用' }}</button>
         </div>
       </div>
+      <!-- 代理是本页唯一的“改完必须点应用”设置，草稿未应用时高亮提醒，离开前再确认一次。 -->
+      <p v-if="hasUnsavedChanges" class="setting-unsaved" aria-live="polite">
+        <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+        有未保存的修改，点击「应用」后才会生效；离开本页将放弃这些修改。
+      </p>
       <p class="setting-note">清空地址并应用可恢复默认连接。SOCKS4a / SOCKS5h 由代理解析域名。移动设备请填写设备可访问的代理地址；网页登录窗口使用设备的系统网络设置。</p>
       <p v-if="testResult" class="setting-success" role="status">{{ testResult }}</p>
       <p v-if="error" class="setting-error" role="alert">{{ error }}</p>
@@ -28,8 +33,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
+import { requestConfirmation } from '../../utils/confirm';
 
 type ProxyType = 'http' | 'https' | 'socks4' | 'socks4a' | 'socks5' | 'socks5h';
 const proxyTypes: ProxyType[] = ['http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h'];
@@ -43,6 +50,8 @@ const initialProxy = parseProxyUrl(settingsStore.settings.networkProxyUrl);
 const draftProxyType = ref<ProxyType>(initialProxy.type);
 const draftProxyAddress = ref(initialProxy.address);
 const composedProxyUrl = computed(() => draftProxyAddress.value.trim() ? `${draftProxyType.value}://${draftProxyAddress.value.trim()}` : '');
+// 草稿与已保存值不一致即存在未应用修改。
+const hasUnsavedChanges = computed(() => composedProxyUrl.value !== settingsStore.settings.networkProxyUrl);
 const saving = ref(false);
 const testing = ref(false);
 const error = ref('');
@@ -70,6 +79,17 @@ async function applyProxy() {
   try { if (!await settingsStore.setNetworkProxyUrl(value)) error.value = '代理设置未能生效，请检查地址后重试。'; }
   finally { saving.value = false; }
 }
+
+// 离开本页时草稿会被直接丢弃，需要先确认；未修改或无路由环境（如单测直挂组件）时直接放行。
+onBeforeRouteLeave(async () => {
+  if (!hasUnsavedChanges.value) return true;
+  return await requestConfirmation({
+    title: '放弃未保存的代理设置？',
+    message: '代理设置尚未应用，离开后本次修改将不会生效。',
+    confirmText: '放弃修改',
+    danger: true
+  });
+});
 
 async function testProxy() {
   if (saving.value || testing.value) return;
@@ -102,6 +122,7 @@ async function testProxy() {
 .row-label { color: var(--text-primary); font-weight: var(--font-weight-medium); }
 .row-sub, .setting-note { color: var(--text-tertiary); font-size: var(--font-size-caption); line-height: 1.5; }
 .setting-note { margin: var(--space-3) 0 0; }
+.setting-unsaved { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--warning, var(--border)); border-radius: var(--radius-md); background: var(--warning-soft, var(--surface)); color: var(--text-primary); font-size: var(--font-size-caption); }
 .setting-error { margin: var(--space-3) 0 0; color: var(--danger); font-size: var(--font-size-caption); }
 .setting-success { margin: var(--space-3) 0 0; color: var(--success); font-size: var(--font-size-caption); }
 </style>
