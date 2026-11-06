@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
+import { useUserRelationsStore } from './userRelations';
 
 export interface UserProfile {
   uid: string | number;
@@ -38,6 +39,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   function clearFrontendAuthState() {
     clearResourceMemoryCache();
+    // 关注关系带账号视角，切号/登出必须清掉，否则会显示上一个账号的关注状态。
+    useUserRelationsStore().reset();
     user.value = null;
     isLoggedIn.value = false;
     rawCookie.value = '';
@@ -360,16 +363,6 @@ export const useAuthStore = defineStore('auth', () => {
     return await loginWithCookie(cookieStr);
   }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('校验请求超时')), ms);
-    p.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); }
-    );
-  });
-}
-
   /**
    * 校验当前凭据是否仍有效，并同步刷新用户资料。
    * 凭据只存在于 Rust 侧（Webview 授权登录路径 save_cookie_securely 只写 Rust），
@@ -379,13 +372,15 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
     try {
       let res: any;
       try {
-        res = await withTimeout(CoolapkTauriAPI.checkLoginInfo(), 8000);
+        // 超时与重试统一由 requestCenter 的策略控制（checkLoginInfo/checkLoginStatus 都是
+        // retry:false + timeoutMs 6000），这里不再叠一层假超时，避免最坏情况累计到十几秒。
+        res = await CoolapkTauriAPI.checkLoginInfo();
       } catch {
         res = null;
       }
       let data = res?.data || res || {};
       if (!data || (!data.uid && !data.username)) {
-        const fallbackRes = await withTimeout(CoolapkTauriAPI.checkLoginStatus(), 10000);
+        const fallbackRes = await CoolapkTauriAPI.checkLoginStatus();
         data = fallbackRes?.data || fallbackRes || {};
       }
       // 酷安未登录时也可能返回游客资料（uid=10000），不能把它当成已登录。
