@@ -1,14 +1,20 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: activeState.loading || activeState.loadingMore }" class="search-page-layout">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: activeState.loading || activeState.loadingMore }" class="search-page-layout" :class="{ 'is-mobile-search': mobileLayout }">
     <div class="search-main-column">
+      <div class="search-toolbar-frame" :class="{ 'is-collapsed': toolbarHidden }" :inert="toolbarHidden || undefined" :aria-hidden="toolbarHidden || undefined">
+      <div class="search-toolbar-clip">
       <div class="search-toolbar">
         <div class="search-toolbar-content">
           <div ref="searchAreaRef" class="search-input-area">
-            <div class="search-input-wrapper">
-              <i class="fas fa-search search-input-icon"></i>
-              <input v-model="searchQuery" type="text" class="search-field" :placeholder="searchPlaceholder" @input="onSearchInput" @keydown.enter="doSearch(searchQuery)" @focus="onInputFocus" @blur="closeSearchDropdowns" />
-              <button v-if="searchQuery" type="button" class="clear-btn" aria-label="清空搜索" @click="clearSearch"><i class="fas fa-times"></i></button>
-            </div>
+            <form class="search-input-wrapper" role="search" @submit.prevent="doSearch(searchQuery)">
+              <button v-if="mobileLayout" type="button" class="search-header-button" aria-label="返回" @click="navigateBack(router)"><img :src="backIcon" alt="" /></button>
+              <i v-else class="fas fa-search search-input-icon" aria-hidden="true"></i>
+              <input ref="searchInputRef" v-model="searchQuery" type="text" class="search-field" enterkeyhint="search" aria-label="搜索关键词" :placeholder="searchPlaceholder" @input="onSearchInput" @keydown.enter="handleSearchEnter" @focus="onInputFocus" @blur="closeSearchDropdowns" />
+              <button v-if="searchQuery" type="button" class="clear-btn" :class="{ 'search-header-button': mobileLayout }" aria-label="清空搜索" @mousedown.prevent @click="clearSearch">
+                <img v-if="mobileLayout" :src="clearIcon" alt="" /><i v-else class="fas fa-times" aria-hidden="true"></i>
+              </button>
+              <button v-if="mobileLayout" type="submit" class="search-header-button" aria-label="搜索" :disabled="!searchQuery.trim()"><img :src="searchIcon" alt="" /></button>
+            </form>
             <div v-if="showHistory && !searchQuery.trim() && searchHistory.length" class="search-history-dropdown">
               <div class="search-history-header"><span>最近搜索</span><button type="button" @mousedown.prevent="clearHistory">清空</button></div>
               <button v-for="item in searchHistory" :key="item" type="button" class="search-history-item" @mousedown.prevent="selectHistory(item)">
@@ -47,8 +53,10 @@
           </button>
         </div>
       </div>
+      </div>
+      </div>
 
-      <div class="search-scroll-container custom-scrollbar" @scroll="handleScroll">
+      <div class="search-scroll-container custom-scrollbar" :data-reading-scroll="queryStr ? '' : undefined" @scroll="handleScroll">
         <template v-if="queryStr">
           <section class="search-results-section">
             <div v-if="activeState.loading && !activeState.items.length" class="loading-wrapper"><LoadingState text="正在搜索..." /></div>
@@ -91,7 +99,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, getCurrentInstance, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch } from 'vue';
+import { computed, getCurrentInstance, inject, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import EmptyState from '../components/common/EmptyState.vue';
@@ -106,12 +114,18 @@ import { orderSearchTabs } from '../utils/searchTabOrder';
 import type { SearchEntity, SearchTabDefinition, SearchTabState } from '../types/search';
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, removeSearchHistory, searchHistory } from '../utils/searchHistory';
-import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntityRoute, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
+import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntityRoute, getSearchEntitySearchTarget, getSearchEntityTitle, getSearchEntityUid, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
 import { fetchSearchSuggestions } from '../utils/searchSuggestions';
 import { readSearchUsersCollapsed, writeSearchUsersCollapsed } from '../utils/searchUserGroup';
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
+import { useMobileLayout } from '../composables/useOfficialMobileFeedDetail';
+import { mobileReadingNavigationKey } from '../composables/useMobileReadingNavigation';
+import { navigateBack } from '../utils/navigation';
 import { getSearchPageScopeKey, getSearchScopeFromComponentKey } from '../utils/pageTabs';
 import { showToast } from '../utils/toast';
+import backIcon from '../assets/icons/search/ic_back_gray_24dp.png';
+import clearIcon from '../assets/icons/search/ic_clear_gray_24dp.png';
+import searchIcon from '../assets/icons/search/ic_magnify_white_24dp.png';
 
 const route = useRoute();
 // App 按「搜索词 + 搜索范围」缓存搜索页实例；范围不同的常驻实例不能响应别的搜索条件。
@@ -120,6 +134,8 @@ const instanceScopeKey = getSearchScopeFromComponentKey(getCurrentInstance()?.vn
 const router = useRouter();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
+const mobileLayout = useMobileLayout();
+const readingNavigation = inject(mobileReadingNavigationKey, undefined);
 // 关注关系以 store 为单一真源，搜索结果与个人页/动态卡片共享同一份状态。
 const userRelations = useUserRelationsStore();
 
@@ -131,6 +147,7 @@ const initialPageType = readQueryString(route.query.pageType);
 const initialPageParam = readQueryString(route.query.pageParam);
 const initialScopedSearch = ['tag', 'user'].includes(initialPageType) && initialPageParam;
 const queryStr = ref(readQueryString(route.query.q));
+const toolbarHidden = computed(() => Boolean(mobileLayout.value && queryStr.value && readingNavigation?.hidden.value));
 const searchQuery = ref(queryStr.value);
 const configuredSearchTabs = ref<SearchTabDefinition[]>(DEFAULT_SEARCH_TABS);
 // 配置只改变展示顺序；当前分类、结果缓存和范围搜索继续使用原来的键。
@@ -150,6 +167,7 @@ const showSuggestions = ref(false);
 const showHistory = ref(false);
 const searchSuggestions = ref<SearchEntity[]>([]);
 const searchAreaRef = ref<HTMLElement | null>(null);
+const searchInputRef = ref<HTMLInputElement | null>(null);
 let suggestTimer: ReturnType<typeof setTimeout> | null = null;
 let suggestionSequence = 0;
 let searchSequence = 0;
@@ -230,9 +248,12 @@ function entityKey(entity: SearchEntity, index: number): string {
   return `${getSearchEntityId(entity) || getSearchEntityTitle(entity) || 'entity'}-${index}`;
 }
 
-// 去重只看实体身份，不能混入列表下标，否则同一实体翻页后会重复出现。
+// 不同类型可能复用同一 ID，用户结果也可能只提供 UID。
 function entityIdentity(entity: SearchEntity): string {
-  return getSearchEntityId(entity) || getSearchEntityTitle(entity);
+  const kind = getSearchEntityKind(entity);
+  const id = (kind === 'user' ? getSearchEntityUid(entity) : '') || getSearchEntityId(entity);
+  const title = getSearchEntityTitle(entity);
+  return id ? JSON.stringify([kind, 'id', id]) : title ? JSON.stringify([kind, 'title', title]) : '';
 }
 
 const usersCollapsed = ref(readSearchUsersCollapsed());
@@ -358,7 +379,8 @@ async function fetchTab(tabKey: string, loadMore = false) {
       if (requestVersion !== state.requestVersion || sequence !== searchSequence) return;
       rows = extractRows(response);
     }
-    const existing = new Set(state.items.map(entityIdentity));
+    // 翻页追加时才与旧列表去重，刷新首页时应以新结果替换旧列表。
+    const existing = new Set(loadMore ? state.items.map(entityIdentity) : []);
     const uniqueRows = rows.filter((item) => {
       const key = entityIdentity(item);
       if (key && existing.has(key)) return false;
@@ -378,7 +400,7 @@ async function fetchTab(tabKey: string, loadMore = false) {
       noMore: responseFlag(response?.noMore ?? response?.data?.noMore) || rows.length === 0,
     };
     // 用户组收起且当前只有用户结果时继续翻页，避免整屏空白且无法触发滚动加载。
-    if (usersCollapsed.value && !state.cursor.noMore && !state.items.some((item) => getSearchEntityKind(item) !== 'user')) {
+    if (tab.searchType === 'all' && !isScopedSearch.value && usersCollapsed.value && !state.cursor.noMore && state.items.every((item) => getSearchEntityKind(item) === 'user')) {
       const nextTabKey = tab.key;
       queueMicrotask(() => void fetchTab(nextTabKey, true));
     }
@@ -417,8 +439,19 @@ function closeSearchDropdowns() {
 function clearSearch() {
   searchQuery.value = '';
   closeSearchDropdowns();
+  if (mobileLayout.value) {
+    searchInputRef.value?.focus();
+    showHistory.value = true;
+    return;
+  }
   // 清空后重新展开最近搜索，与聚焦空输入框时的下拉保持一致。
   showHistory.value = searchHistory.value.length > 0;
+}
+
+function handleSearchEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  doSearch(searchQuery.value);
 }
 
 function selectHistory(value: string) {
@@ -463,6 +496,7 @@ function currentSearchRouteSignature(): string {
 function doSearch(value: string, requestedSearchType = '') {
   const trimmed = value.trim();
   if (!trimmed) return;
+  if (mobileLayout.value) searchInputRef.value?.blur();
   closeSearchDropdowns();
   addSearchHistory(trimmed);
   const query: Record<string, string> = { q: trimmed };
@@ -633,6 +667,8 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
 <style scoped>
 .search-page-layout { container-type: inline-size; container-name: search-layout; display: flex; width: 100%; height: 100%; overflow: hidden; }
 .search-main-column { display: flex; flex: 1; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; background: var(--surface); }
+.search-toolbar-frame { position: relative; z-index: 2; display: grid; grid-template-rows: 1fr; flex: 0 0 auto; }
+.search-toolbar-clip { min-height: 0; }
 .search-toolbar { position: relative; z-index: 2; flex: 0 0 auto; background: var(--surface); border-bottom: 1px solid var(--border-light, rgba(0, 0, 0, .06)); }
 .search-toolbar-content { padding: 14px 20px 12px; }
 .search-input-area { position: relative; margin: 0; }
@@ -643,6 +679,11 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
 .search-field::placeholder { color: var(--text-tertiary); }
 .clear-btn { display: grid; place-items: center; width: 26px; height: 26px; color: var(--text-tertiary); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
 .clear-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
+.search-header-button { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.search-header-button img { width: 20px; height: 20px; object-fit: contain; filter: brightness(0) invert(.35); }
+:global([data-theme="dark"]) .search-header-button img { filter: brightness(0) invert(.75); }
+.search-header-button:hover:not(:disabled) { background: var(--surface-hover); }
+.search-header-button:disabled { opacity: .55; cursor: default; }
 .suggestions-dropdown, .search-history-dropdown { position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 20; max-height: 260px; padding: 6px; overflow-y: auto; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: var(--radius-control); box-shadow: var(--shadow-dialog); }
 .suggestion-item, .search-history-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px; color: var(--text-secondary); text-align: left; background: transparent; border: 0; border-radius: var(--radius-xs); cursor: pointer; }
 .suggestion-item:hover, .search-history-item:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -686,5 +727,18 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
   .search-ask-filter { padding: 8px 12px 10px; }
   .search-feed-sort { padding: 8px 12px; }
   .search-results-section, .search-welcome { padding: 12px 12px 24px; }
+}
+.is-mobile-search .search-toolbar-content { padding: 6px 16px; }
+.is-mobile-search .search-input-wrapper { height: 36px; gap: 0; padding: 0 2px; border: 0; border-radius: 8px; background: var(--surface-hover); }
+.is-mobile-search .search-field { height: 100%; font-size: 14px; }
+.is-mobile-search .clear-btn { display: none; }
+.is-mobile-search .search-input-wrapper:focus-within .clear-btn { display: grid; }
+.is-mobile-search .search-toolbar-frame { transition: grid-template-rows 200ms ease; }
+.is-mobile-search .search-toolbar { transition: transform 200ms ease; }
+.search-toolbar-frame.is-collapsed { grid-template-rows: 0fr; pointer-events: none; }
+.search-toolbar-frame.is-collapsed .search-toolbar-clip { overflow: hidden; }
+.search-toolbar-frame.is-collapsed .search-toolbar { transform: translateY(-100%); }
+@media (prefers-reduced-motion: reduce) {
+  .is-mobile-search .search-toolbar-frame, .is-mobile-search .search-toolbar { transition: none; }
 }
 </style>

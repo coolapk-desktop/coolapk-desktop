@@ -7,8 +7,7 @@
 @import './transitions.css';
 
 /* 液态玻璃默认关闭；覆盖各导航宿主及延伸表面，避免某一段仍在模糊或透出正文。 */
-:root[data-header-glass="off"] .app-shell.has-home-navigation :is(.mobile-reading-topbar, .mobile-reading-topbar-content, .home-toolbar),
-:root[data-header-glass="off"] .app-shell.has-home-navigation .home-toolbar::before,
+:root[data-header-glass="off"] .app-shell.has-home-navigation .mobile-reading-topbar,
 :root[data-header-glass="off"] .app-shell.has-topic-navigation :is(.mobile-reading-topbar, .mobile-reading-topbar-content),
 :root[data-header-glass="off"] :is(.single-column-top-nav, .topic-sticky-controls, .topic-sticky-controls .is-glass .filter-type-menu),
 :root[data-header-glass="off"] .topic-sticky-controls::before {

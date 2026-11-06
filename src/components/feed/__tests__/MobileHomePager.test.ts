@@ -8,7 +8,7 @@ import MobileHomePager from '../MobileHomePager.vue';
 import HomePage from '../../../pages/HomePage.vue';
 import { useSettingsStore } from '../../../stores/settings';
 import { desktopFeedCommentsOpenKey } from '../../../utils/desktopFeedComments';
-import { mobileReadingNavigationKey } from '../../../composables/useMobileReadingNavigation';
+import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey } from '../../../composables/useMobileReadingNavigation';
 const progress = vi.fn();
 const Tabs = defineComponent({ name: 'FeedTabs', props: ['activeKey', 'tabs', 'swipeProgress'], setup(_, { expose }) { expose({ setSwipeProgress: progress }); }, template: '<nav />' });
 const panelUpdated = vi.fn();
@@ -47,24 +47,33 @@ describe('移动首页一体滑动', () => {
     HTMLElement.prototype.releasePointerCapture = vi.fn();
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-  it('阅读时保留主栏目栏，切换频道会恢复外壳导航', async () => {
+  it('窄屏主栏目进入外壳顶栏，跨断点保留同一组标签', async () => {
     const hidden = ref(false);
     const reset = vi.fn(() => { hidden.value = false; });
+    const target = ref<HTMLElement | null>(null);
     const w = mount(MobileHomePager, { global: {
-      provide: { [mobileReadingNavigationKey as symbol]: { hidden, reset } },
-      stubs: { HomeTabPanel: Panel, FeedTabs: Tabs },
+      provide: { [mobileReadingNavigationKey as symbol]: { hidden, reset }, [mobileHomeToolbarTargetKey as symbol]: target },
+      stubs: { HomeTabPanel: Panel, FeedTabs: Tabs, RightSidebar: true },
     } });
     try {
-      await flushPromises(); reset.mockClear(); hidden.value = true;
+      await flushPromises();
+      const toolbar = w.get('.home-toolbar').element;
+      target.value = document.createElement('div');
+      reset.mockClear(); hidden.value = true;
       await flushPromises();
       expect(w.get('.pager-page[data-tab-key="digest"]').attributes('inert')).toBeUndefined();
       expect(w.get('.pager-page[data-tab-key="follow"]').attributes('inert')).toBeDefined();
-      expect(w.get('.home-toolbar').attributes('inert')).toBeUndefined();
-      expect(w.get('.home-toolbar').attributes('aria-hidden')).toBeUndefined();
+      expect(target.value.querySelector('.home-toolbar')).toBe(toolbar);
+      expect(w.find('.home-toolbar').exists()).toBe(false);
       w.findComponent({ name: 'FeedTabs' }).vm.$emit('update:activeKey', 'hot');
       finish(); await flushPromises();
       expect(reset).toHaveBeenCalledOnce();
       expect(hidden.value).toBe(false);
+      await w.setProps({ mobile: false });
+      expect(w.get('.home-toolbar').element).toBe(toolbar);
+      expect(target.value.querySelector('.home-toolbar')).toBeNull();
+      await w.setProps({ mobile: true });
+      expect(target.value.querySelector('.home-toolbar')).toBe(toolbar);
     } finally { w.unmount(); }
   });
   it('右侧评论展开时隐藏推荐栏，关闭后恢复同一实例并保留栏目和滚动', async () => {

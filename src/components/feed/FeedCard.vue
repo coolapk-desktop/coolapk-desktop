@@ -95,7 +95,7 @@
         <i class="fas fa-thumbtack"></i> {{ isMemberPinned ? '取消置顶' : '置顶' }}
       </button>
       <button v-if="isMyFeed" class="more-menu-item is-danger" @click="handleDeleteFeed">
-        <i class="fas fa-trash-alt"></i> 删除动态
+        <i class="fas fa-trash-alt"></i> {{ replyMode ? '删除回复' : '删除动态' }}
       </button>
       <div v-if="!officialMobileDetail" class="more-menu-divider"></div>
       <!-- 点赞和转发列表入口放在省略号菜单末尾。 -->
@@ -1045,24 +1045,27 @@ function getHistoryImages(item: any): string[] {
 }
 
 async function handleDeleteFeed() {
+  const id = props.feed.id;
+  const isReply = props.replyMode;
+  const kind = isReply ? '回复' : '动态';
   const confirmed = await requestConfirmation({
-    title: '删除动态',
-    message: '确定要删除这条动态吗？删除后无法恢复。',
+    title: `删除${kind}`,
+    message: `确定要删除这条${kind}吗？删除后无法恢复。`,
     confirmText: '删除',
     danger: true
   });
-  if (!confirmed) return;
+  if (!confirmed || !isMyFeed.value || props.feed.id !== id || props.replyMode !== isReply) return;
   moreMenuOpen.value = false;
   try {
-    const res = await CoolapkTauriAPI.deleteFeed(String(props.feed.id));
+    const res = isReply ? await CoolapkTauriAPI.deleteReply(String(id)) : await CoolapkTauriAPI.deleteFeed(String(id));
     if (res && res.code === 200) {
-      showToast('动态已删除');
-      emit('deleted', props.feed.id);
+      showToast(`${kind}已删除`);
+      emit('deleted', id);
     } else {
-      showToast(res?.message || '删除动态失败', 'error');
+      showToast(res?.message || `删除${kind}失败`, 'error');
     }
   } catch (err: any) {
-    showToast(getErrorMessage(err, '删除动态失败'), 'error');
+    showToast(getErrorMessage(err, `删除${kind}失败`), 'error');
   }
 }
 

@@ -1,6 +1,6 @@
 <template>
   <div ref="sectionRef" class="feed-comment-section" :class="{ 'official-detail-comments': officialDetail, 'aside-comments': asideLayout }">
-    <div class="comment-toolbar">
+    <div v-if="!standaloneTarget" class="comment-toolbar">
       <div class="comment-toolbar-left">
         <strong class="comment-title"><template v-if="officialDetail">共 {{ commentCount }} 回复</template><template v-else>评论 <span>{{ commentCount }}</span></template></strong>
         <div v-if="!preserveApiOrder || showSortControls" class="comment-sort" aria-label="评论排序和筛选">
@@ -56,6 +56,7 @@
           class="reply-target-clear-btn"
           title="取消回复"
           aria-label="取消回复"
+          v-if="!standaloneTarget"
           @click="clearReplyTarget"
         >
           <i class="fa-solid fa-xmark"></i>
@@ -174,6 +175,7 @@
     </div>
     </Teleport>
 
+    <template v-if="!standaloneTarget">
     <!-- 评论加载中 -->
     <div v-if="targetReplyError" class="comment-error" role="status">
       <span>{{ targetReplyError }}</span>
@@ -340,6 +342,8 @@
               data-context-kind="comment"
               :data-context-feed-id="feedId"
               :data-context-comment-id="sub.id"
+              :data-can-delete-reply="isOwn(sub) && !!sub.id"
+              @coolapk-delete-reply.stop="handleDeleteSubReply(sub)"
               :data-comment-username="sub.username || sub.fromUserName || '酷友'"
               :data-comment-text="getCommentText(sub)"
               @click="handleSubReplyClick($event, sub, c)"
@@ -430,11 +434,12 @@
                     <span>{{ getLikeCount(sub) > 0 ? formatLikeCount(getLikeCount(sub)) : '赞' }}</span>
                   </button>
                   <button
-                    v-if="isOwn(sub)"
+                    v-if="isOwn(sub) && sub.id"
                     type="button"
+                    :disabled="deletingSubReplyIds.has(String(sub.id))"
                     class="comment-delete-btn sub-delete-btn"
                     aria-label="删除回复"
-                    @click.stop="handleDeleteSubReply(c, sub)"
+                    @click.stop="handleDeleteSubReply(sub)"
                   >
                     <i class="fa-solid fa-trash-can"></i>
                     删除
@@ -522,6 +527,7 @@
         继续下滑加载更多评论
       </button>
     </div>
+    </template>
   </div>
 </template>
 
@@ -563,6 +569,7 @@ import { reactiveUserProfileMap, getCachedUserProfileSync } from '../../utils/us
 import { verifyWithCaptcha, extractCaptchaParamsFromResponse } from '../../utils/neteaseCaptcha';
 import { openShuzilmGuide, isRiskControlError, hasActiveShuzilmDeviceId } from '../../utils/shuzilmDeviceGuide';
 import { hasActiveTextSelection } from '../../utils/selection';
+import { useAndroidBackButton } from '../../utils/androidBackButton';
 import {
   COMMENT_SORT_OPTIONS,
   formatCommentAbsoluteTime,
@@ -586,6 +593,7 @@ const props = withDefaults(
     feedId?: string | number;
     targetReplyId?: string;
     officialDetail?: boolean;
+    standaloneTarget?: { rid?: string; username: string };
     defaultSortMode?: CommentSortMode;
     /** 宿主保存楼主筛选，切换互动栏目后重新挂载时恢复按钮状态。 */
     defaultAuthorOnly?: boolean;
@@ -660,6 +668,7 @@ const emit = defineEmits<{
   (e: 'retry-more-comments'): void;
   (e: 'comment-sort-change', selection: CommentSortSelection): void;
   (e: 'collapse'): void;
+  (e: 'close-composer'): void;
 }>();
 
 const instance = getCurrentInstance();
@@ -677,14 +686,14 @@ const showShortcutHints = useShortcutHints();
 const inputMsg = ref('');
 const sending = ref(false);
 const inputRef = ref<HTMLDivElement | null>(null);
-const composerOpen = ref(false);
+const composerOpen = ref(Boolean(props.standaloneTarget));
 const floatingReplyComposer = ref(false);
 const inlineComposerHeight = ref(0);
-const floatingComposer = computed(() => props.officialDetail || floatingReplyComposer.value);
+const floatingComposer = computed(() => props.officialDetail || !!props.standaloneTarget || floatingReplyComposer.value);
 const systemBarDimOwner = Symbol('comment-composer');
 watch([composerOpen, () => props.officialDetail], ([open, official]) => {
   settingsStore.setAndroidSystemBarDimmed(systemBarDimOwner, Boolean(open && official));
-}, { flush: 'sync' });
+}, { flush: 'sync', immediate: !!props.standaloneTarget });
 onUnmounted(() => {
   settingsStore.setAndroidSystemBarDimmed(systemBarDimOwner, false);
   // 卸载前补一次落盘，避免最后 400ms 的输入随组件销毁丢失。
@@ -693,9 +702,10 @@ onUnmounted(() => {
 async function openComposer() { if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; } composerOpen.value = true; await nextTick(); syncMsgToEditor(inputMsg.value); inputRef.value?.focus({ preventScroll: true }); }
 watch(composerOpen, async visible => { if (visible) { await nextTick(); syncMsgToEditor(inputMsg.value); } });
 onDeactivated(closeComposer);
+useAndroidBackButton(() => !!props.standaloneTarget && composerOpen.value, closeComposer);
 defineExpose({ openComposer });
-const replyTargetUser = ref('');
-const replyTargetId = ref('');
+const replyTargetUser = ref(props.standaloneTarget?.username || '');
+const replyTargetId = ref(props.standaloneTarget?.rid || '');
 const commentSortMode = ref<CommentSortMode>(props.defaultSortMode ?? settingsStore.settings.commentDefaultSortMode);
 const authorOnly = ref(props.defaultAuthorOnly);
 const commentSortOptions = COMMENT_SORT_OPTIONS;
@@ -1012,7 +1022,7 @@ function hasCommentDetails(item: any): boolean {
 const myUid = computed(() => (authStore.isLoggedIn ? String(authStore.user?.uid ?? '').trim() : ''));
 
 function getCommentUid(item: any): string {
-  return String(item?.uid || item?.fromUid || item?.userId || item?.userInfo?.uid || item?.user_info?.uid || '').trim();
+  return String(item?.uid || item?.fromUid || item?.fromuid || item?.userId || item?.userInfo?.uid || item?.user_info?.uid || item?.user?.uid || '').trim();
 }
 
 function isOwn(item: any): boolean {
@@ -1042,27 +1052,33 @@ async function handleDeleteComment(comment: any) {
   }
 }
 
-async function handleDeleteSubReply(floor: any, sub: any) {
-  const confirmed = await requestConfirmation({
-    title: '删除回复',
-    message: '确定要删除这条回复吗？',
-    confirmText: '删除',
-    danger: true
-  });
-  if (!confirmed) return;
+const deletingSubReplyIds = ref(new Set<string>());
+
+async function handleDeleteSubReply(sub: any) {
+  const replyId = String(sub?.id ?? '').trim();
+  if (!replyId || !isOwn(sub) || deletingSubReplyIds.value.has(replyId) || deletedCommentIds.value.has(replyId)) return;
+  const feedId = props.feedId;
+  deletingSubReplyIds.value.add(replyId);
   try {
-    const res = await CoolapkTauriAPI.deleteReply(String(sub.id));
-    if (res && res.code === 200) {
+    const confirmed = await requestConfirmation({
+      title: '删除回复',
+      message: '确定要删除这条回复吗？',
+      confirmText: '删除',
+      danger: true
+    });
+    if (!confirmed || !isOwn(sub) || props.feedId !== feedId) return;
+    const res = await CoolapkTauriAPI.deleteReply(replyId);
+    if (res?.code === 200) {
+      // 预览、置顶和分页回复共享同一个删除标记，后到的列表也不会重新显示该回复。
+      if (props.feedId === feedId) deletedCommentIds.value.add(replyId);
       showToast('回复已删除');
-      const source = props.comments.find((c: any) => String(c.id) === String(floor.id));
-      if (source && Array.isArray(source.replyRows)) {
-        source.replyRows = source.replyRows.filter((r: any) => String(r.id) !== String(sub.id));
-      }
     } else {
       showToast(res?.message || '删除回复失败', 'error');
     }
-  } catch (err: any) {
-    showToast(getErrorMessage(err, '删除回复失败'), 'error');
+  } catch (error) {
+    showToast(getErrorMessage(error, '删除回复失败'), 'error');
+  } finally {
+    deletingSubReplyIds.value.delete(replyId);
   }
 }
 
@@ -1276,7 +1292,8 @@ function getSubReplyRows(floor: any): any[] {
   const rows = state?.loaded
     ? state.items.map(mergeReplyDetail)
     : mergeSubReplyRows(getEmbeddedSubReplies(floor), state?.items || []);
-  return authorOnly.value && !props.preserveApiOrder ? collectAuthorReplies(rows) : rows;
+  const visibleRows = rows.filter(item => !deletedCommentIds.value.has(String(item.id)));
+  return authorOnly.value && !props.preserveApiOrder ? collectAuthorReplies(visibleRows) : visibleRows;
 }
 
 function ensureSubReplyState(floor: any): SubReplyState | null {
@@ -1590,7 +1607,9 @@ function handleKeydown(e: KeyboardEvent) {
     handleSend();
   } else if (e.key === 'Escape') {
     e.preventDefault();
-    if (replyTargetUser.value) {
+    if (props.standaloneTarget) {
+      closeComposer();
+    } else if (replyTargetUser.value) {
       clearReplyTarget();
     } else if (!props.hideCollapseButton) {
       handleCollapse();
@@ -1638,7 +1657,14 @@ function setReplyTarget(username?: string, replyId?: string | number) {
   });
 }
 
-function closeComposer() { composerOpen.value = false; clearReplyTarget(); }
+function closeComposer() {
+  if (props.standaloneTarget) {
+    if (!sending.value) emit('close-composer');
+    return;
+  }
+  composerOpen.value = false;
+  clearReplyTarget();
+}
 
 function clearReplyTarget() {
   // 收起输入框/取消回复目标时，把仍在防抖窗口内的草稿立即落盘。
@@ -1683,7 +1709,7 @@ function handleContextReplyComment(event: Event) {
 function bindGlobalListeners() {
   // 捕获阶段先判断面板外部点击，避免评论卡片的 @click.stop 阻断关闭。
   window.addEventListener('click', handleClickOutside, true);
-  window.addEventListener('coolapk-context-reply-comment', handleContextReplyComment);
+  if (!props.standaloneTarget) window.addEventListener('coolapk-context-reply-comment', handleContextReplyComment);
 }
 
 function unbindGlobalListeners() {
@@ -1706,6 +1732,7 @@ onMounted(() => {
     });
   }
   void restoreDraft();
+  if (props.standaloneTarget) inputRef.value?.focus({ preventScroll: true });
   void nextTick(refreshLoadMoreObserver);
 });
 
@@ -2006,6 +2033,7 @@ async function handleSend() {
   }
 
   const currentFeedId = props.feedId;
+  const draftAccount = currentDraftAccount();
   if (!currentFeedId) {
     emit('send-comment', rawMsg);
     inputMsg.value = '';
@@ -2046,8 +2074,10 @@ async function handleSend() {
       // 官方 ReplyActivity 为纯图片回复补上 [图片]，服务端不接受空正文。
       const finalMessage = buildFinalMessage(rawMsg || (pic ? '[图片]' : ''));
       const targetRid = replyTargetId.value || undefined;
-
       const executeReply = async (postToken?: string) => {
+        if (props.standaloneTarget && (!authStore.isLoggedIn || currentDraftAccount() !== draftAccount)) {
+          throw new Error('登录账号已切换，请重新打开回复');
+        }
         if (postToken) {
           return await CoolapkTauriAPI.replyFeed(
             String(currentFeedId),
@@ -2111,17 +2141,18 @@ async function handleSend() {
       if (res && res.code === 200) {
       // 发表成功后草稿已作废：先丢弃待写入的防抖任务，避免旧正文被写回。
       cancelPendingDraft();
-      await clearCommentDraft(currentDraftAccount(), currentFeedId, targetRid);
+      await clearCommentDraft(props.standaloneTarget ? draftAccount : currentDraftAccount(), currentFeedId, targetRid);
       inputMsg.value = '';
       if (inputRef.value) {
         inputRef.value.innerHTML = '';
       }
       images.value = [];
-      clearReplyTarget();
+      if (!props.standaloneTarget) clearReplyTarget();
       if (props.officialDetail) composerOpen.value = false;
       showEmojiPicker.value = false;
       showToast('评论发表成功');
       emit('send-comment', rawMsg);
+      if (props.standaloneTarget) return;
       // 楼中楼回复只补齐当前楼层，保留主评论分页和已展开的楼层；
       // 主评论把接口返回的新评论交给宿主就地插入，不再 emit retry-comments 整页重拉。
       const createdComment = res.data && typeof res.data === 'object'

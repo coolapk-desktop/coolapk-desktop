@@ -832,6 +832,10 @@ export class CoolapkTauriAPI {
     return await invokeNative('clear_notification_count', { notificationType });
   }
 
+  static async deleteAllNotifications() {
+    return await invokeNative('delete_all_notifications', {}, { retry: false });
+  }
+
   static async reportNotificationClick(taskId: string) {
     return await invokeNative('report_notification_click', { taskId }, { retry: false });
   }

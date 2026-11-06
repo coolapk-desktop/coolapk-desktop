@@ -8,12 +8,16 @@
       :aria-current="isActive(item.path) ? 'page' : undefined"
       @click="activate(item.path)"
     >
-      <i :class="item.icon"></i>
+      <OfficialNavIcon class="mobile-nav-icon" :route="item.path" :active="isActive(item.path)" />
       <span>{{ item.label }}</span>
     </button>
 
     <button type="button" class="mobile-publish" aria-label="发布动态" @click="appStore.openPublish">
-      <i class="fas fa-plus"></i>
+      <!-- 官方 APK 的 ic_v15_plus。 -->
+      <svg class="mobile-publish-icon" viewBox="0 0 15 15" aria-hidden="true">
+        <path d="M7.5,0L7.5,0A1.5,1.5 0,0 1,9 1.5L9,13.5A1.5,1.5 0,0 1,7.5 15L7.5,15A1.5,1.5 0,0 1,6 13.5L6,1.5A1.5,1.5 0,0 1,7.5 0z" />
+        <path d="M1.5,6L13.5,6A1.5,1.5 0,0 1,15 7.5L15,7.5A1.5,1.5 0,0 1,13.5 9L1.5,9A1.5,1.5 0,0 1,0 7.5L0,7.5A1.5,1.5 0,0 1,1.5 6z" />
+      </svg>
     </button>
 
     <button
@@ -24,7 +28,7 @@
       :aria-current="isActive(item.path) ? 'page' : undefined"
       @click="activate(item.path)"
     >
-      <i :class="item.icon"></i>
+      <OfficialNavIcon class="mobile-nav-icon" :route="item.path" :active="isActive(item.path)" />
       <span>{{ item.label }}</span>
     </button>
   </nav>
@@ -35,6 +39,7 @@ import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../../stores/app';
 import { useSettingsStore } from '../../stores/settings';
+import OfficialNavIcon from './OfficialNavIcon.vue';
 import { activateRootTab } from '../../utils/homeTab';
 
 const route = useRoute();
@@ -43,15 +48,15 @@ const appStore = useAppStore();
 const settingsStore = useSettingsStore();
 
 const leftItems = computed(() => [
-  { path: '/', label: '首页', icon: 'fas fa-house' },
+  { path: '/', label: '首页' },
   ...(settingsStore.settings.navVisibility?.digital !== false
-    ? [{ path: '/digital', label: '数码', icon: 'fas fa-microchip' }] : []),
+    ? [{ path: '/digital', label: '数码' }] : []),
 ]);
 
 const rightItems = computed(() => [
   ...(settingsStore.settings.navVisibility?.discover !== false
-    ? [{ path: '/discover', label: '发现', icon: 'fas fa-compass' }] : []),
-  { path: '/me', label: '我的', icon: 'fas fa-user' },
+    ? [{ path: '/discover', label: '发现' }] : []),
+  { path: '/me', label: '我的' },
 ]);
 
 function isActive(path: string): boolean {
@@ -82,18 +87,20 @@ function activate(path: string) {
     --nav-glass-selection: rgba(255, 255, 255, .4);
     position: absolute;
     bottom: var(--mobile-bottom-nav-offset, 20px);
-    /* 普通声明保证旧 WebView 仍能横向撑开；新内核继续避让横屏安全区。 */
+    /* 左右留白限制可用宽度，导航栏按可见入口数量居中。 */
     left: 20px;
     right: 20px;
     left: max(20px, env(safe-area-inset-left));
     right: max(20px, env(safe-area-inset-right));
+    width: fit-content;
+    margin-inline: auto;
     border: 1px solid var(--nav-glass-edge);
     border-radius: 40px;
     box-shadow: 0 10px 32px #00000016, 0 2px 8px #00000008, inset 0 1px 0 var(--nav-glass-edge), inset 0 -1px 0 #ffffff30;
     padding: 4px;
     display: grid;
     grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-columns: minmax(0, 64px);
     flex: 0 0 auto;
     align-items: center;
     min-height: var(--mobile-bottom-nav-height);
@@ -145,9 +152,12 @@ function activate(path: string) {
     font-weight: 600;
   }
 
-  .mobile-nav-item i {
-    font-size: 18px;
-    line-height: 22px;
+  .mobile-nav-icon { --official-nav-icon-size: 24px; }
+
+  .mobile-publish-icon {
+    width: 15px;
+    height: 15px;
+    fill: currentColor;
   }
 
   .mobile-nav-item.active {
@@ -160,6 +170,7 @@ function activate(path: string) {
     display: grid;
     place-items: center;
     width: 48px;
+    max-width: 100%;
     height: 44px;
     margin: 0 auto;
     border-radius: 28px;
@@ -167,7 +178,6 @@ function activate(path: string) {
     background: linear-gradient(145deg, #ffffff36, transparent 55%, #0000000c), var(--brand-primary);
     color: #fff;
     box-shadow: inset 0 1px 1px #ffffff85, inset 0 -1px 1px #00000015, 0 5px 18px color-mix(in srgb, var(--brand-primary) 30%, transparent);
-    font-size: 18px;
   }
 
   .mobile-nav-item:active,

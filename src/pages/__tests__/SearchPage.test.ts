@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { defineComponent, h, KeepAlive } from 'vue';
+import { defineComponent, h, KeepAlive, ref } from 'vue';
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +16,7 @@ vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
 
 import SearchPage from '../SearchPage.vue';
 import { useSettingsStore } from '../../stores/settings';
+import { mobileReadingNavigationKey } from '../../composables/useMobileReadingNavigation';
 import { getSearchPageComponentKey } from '../../utils/pageTabs';
 
 describe('搜索联想弹层生命周期', () => {
@@ -29,9 +30,14 @@ describe('搜索联想弹层生命周期', () => {
     await router.isReady();
     // 与应用相同，按「搜索词 + 搜索范围」缓存页面，覆盖进入帖子后返回的流程。
     const host = defineComponent({ setup: () => () => h(RouterView, null, { default: ({ Component, route }: any) => h(KeepAlive, null, { default: () => Component ? h(Component, { key: getSearchPageComponentKey(route, 0) }) : null }) }) });
-    const wrapper = mount(host, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
+    const readingHidden = ref(false);
+    const wrapper = mount(host, { global: {
+      plugins: [createPinia(), router],
+      provide: { [mobileReadingNavigationKey as symbol]: { hidden: readingHidden, reset: () => { readingHidden.value = false; } } },
+      stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true },
+    } });
     await flushPromises();
-    return { wrapper, router };
+    return { wrapper, router, readingHidden };
   }
 
   it('进入帖子再返回时恢复关键词和结果，不自动请求或显示联想', async () => {
@@ -80,6 +86,38 @@ describe('搜索联想弹层生命周期', () => {
       expect(scroller.scrollTop).toBe(480);
       expect(mocks.searchByType).toHaveBeenCalledTimes(requests);
     } finally { wrapper.unmount(); }
+  });
+
+  it('窄屏搜索栏提供返回和提交，输入法确认期间不会发起搜索', async () => {
+    const previousWidth = window.innerWidth;
+    window.innerWidth = 390;
+    const { wrapper, router, readingHidden } = await mountCachedSearch();
+    try {
+      const form = wrapper.get('form[role="search"]');
+      expect(form.find('button[aria-label="返回"]').exists()).toBe(true);
+      expect(form.find('button[type="submit"][aria-label="搜索"]').exists()).toBe(true);
+      const toolbar = wrapper.get('.search-toolbar-frame');
+      expect(wrapper.get('.search-scroll-container').attributes('data-reading-scroll')).toBe('');
+      readingHidden.value = true;
+      await flushPromises();
+      expect(toolbar.classes()).toContain('is-collapsed');
+      expect(toolbar.attributes('inert')).toBeDefined();
+      readingHidden.value = false;
+      await flushPromises();
+      expect(toolbar.attributes('inert')).toBeUndefined();
+      const input = wrapper.get('.search-field');
+      await input.setValue('Android');
+      await input.trigger('keydown.enter', { isComposing: true });
+      await flushPromises();
+      expect(router.currentRoute.value.query.q).toBe('nuke');
+      await form.trigger('submit');
+      await flushPromises();
+      expect(router.currentRoute.value.query.q).toBe('Android');
+    } finally {
+      wrapper.unmount();
+      window.innerWidth = previousWidth;
+      window.dispatchEvent(new Event('resize'));
+    }
   });
 
   it.each(['submit', 'leave', 'blur', 'clear', 'edit'])('旧联想响应在 %s 后不能重新打开弹层', async (action) => {
@@ -140,6 +178,30 @@ describe('综合搜索空首页', () => {
     const wrapper = mount(SearchPage, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
     return { wrapper, router };
   }
+
+  it('下拉刷新保留再次返回的实体，并显示更新后的内容', async () => {
+    vi.stubGlobal('innerWidth', 390);
+    vi.clearAllMocks();
+    mocks.searchByType.mockReset()
+      .mockResolvedValueOnce({ data: [{ entityType: 'feed', id: '1', message: '旧内容' }] })
+      .mockResolvedValueOnce({ data: [{ entityType: 'feed', id: '1', message: '新内容' }] });
+    const { wrapper } = await mountSearch();
+    try {
+      await flushPromises();
+      expect(wrapper.findComponent({ name: 'SearchResultItem' }).props('entity')).toMatchObject({ id: '1', message: '旧内容' });
+      const target = wrapper.get('.search-scroll-container').element;
+      for (const [type, clientY] of [['touchstart', 100], ['touchmove', 280], ['touchend', 280]] as const) {
+        const points = [{ identifier: 0, clientX: 100, clientY }];
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, { touches: { value: type === 'touchend' ? [] : points }, changedTouches: { value: points } });
+        target.dispatchEvent(event);
+      }
+      await flushPromises();
+      expect(mocks.searchByType.mock.calls.map(([request]) => request.page)).toEqual([1, 1]);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(wrapper.findComponent({ name: 'SearchResultItem' }).props('entity')).toMatchObject({ id: '1', message: '新内容' });
+    } finally { wrapper.unmount(); vi.unstubAllGlobals(); }
+  });
 
   it('排序配置不显示为结果卡片，选择热度和精确时发送正确请求', async () => {
     vi.clearAllMocks();
@@ -389,7 +451,7 @@ describe('搜索结果去重与筛选一致性', () => {
     mocks.searchByType.mockReset();
     mocks.searchByType
       .mockResolvedValueOnce({ data: [{ id: '1', entityType: 'feed', message: '重复' }], firstItem: 'f1', lastItem: 'l1' })
-      .mockResolvedValueOnce({ data: [{ id: '1', entityType: 'feed', message: '重复' }, { id: '2', entityType: 'feed', message: '新' }], firstItem: 'f2', lastItem: 'l2' });
+      .mockResolvedValueOnce({ data: [{ id: '1', entityType: 'feed', message: '重复' }, { id: '1', entityType: 'product', title: '同 ID 的数码产品' }, { id: '2', entityType: 'feed', message: '新' }], firstItem: 'f2', lastItem: 'l2' });
     const { wrapper, router } = mountSearch();
     try {
       await router.push({ path: '/search', query: { q: '重复', tab: 'all' } });
@@ -397,8 +459,12 @@ describe('搜索结果去重与筛选一致性', () => {
       expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
       await wrapper.get('.search-scroll-container').trigger('scroll');
       await flushPromises();
-      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(2);
-      expect(wrapper.findAllComponents({ name: 'SearchResultItem' }).map((item) => (item.props('entity') as { id: string }).id)).toEqual(['1', '2']);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(3);
+      expect(wrapper.findAllComponents({ name: 'SearchResultItem' }).map((item) => item.props('entity'))).toMatchObject([
+        { id: '1', entityType: 'feed' },
+        { id: '1', entityType: 'product' },
+        { id: '2', entityType: 'feed' },
+      ]);
     } finally { wrapper.unmount(); localStorage.clear(); }
   });
 
@@ -477,7 +543,7 @@ describe('综合搜索相关用户分组', () => {
     return { wrapper, router };
   }
 
-  it('用户名命中的结果收进可折叠分组，收起状态持久化', async () => {
+  it('相关用户默认折叠，展开状态持久化', async () => {
     localStorage.clear();
     vi.clearAllMocks();
     mocks.getTabConfig.mockResolvedValue({ data: [] });
@@ -490,25 +556,25 @@ describe('综合搜索相关用户分组', () => {
     try {
       await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
       await flushPromises();
-      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(2);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
       const toggle = wrapper.get('.search-user-group-toggle');
       expect(toggle.text()).toContain('相关用户');
       expect(toggle.text()).toContain('1');
-      expect(toggle.attributes('aria-expanded')).toBe('true');
+      expect(toggle.attributes('aria-expanded')).toBe('false');
       await toggle.trigger('click');
       await flushPromises();
-      expect(wrapper.find('.search-user-group-list').exists()).toBe(false);
-      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
-      expect(wrapper.get('.search-user-group-toggle').attributes('aria-expanded')).toBe('false');
-      expect(localStorage.getItem('coolapk-desktop-search-users-collapsed')).toBe('1');
+      expect(wrapper.find('.search-user-group-list').exists()).toBe(true);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(2);
+      expect(wrapper.get('.search-user-group-toggle').attributes('aria-expanded')).toBe('true');
+      expect(localStorage.getItem('coolapk-desktop-search-users-collapsed')).toBe('0');
     } finally { wrapper.unmount(); }
 
     const { wrapper: second, router: secondRouter } = mountSearch();
     try {
       await secondRouter.push({ path: '/search', query: { q: '小米', tab: 'all' } });
       await flushPromises();
-      expect(second.find('.search-user-group-list').exists()).toBe(false);
-      expect(second.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(second.find('.search-user-group-list').exists()).toBe(true);
+      expect(second.findAll('search-result-item-stub')).toHaveLength(2);
     } finally { second.unmount(); localStorage.clear(); }
   });
 
@@ -523,15 +589,19 @@ describe('综合搜索相关用户分组', () => {
       await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
       await flushPromises();
       expect(wrapper.find('.search-user-group-toggle').exists()).toBe(false);
+      mocks.searchByType.mockReset()
+        .mockResolvedValueOnce({ data: [{ entityType: 'user', uid: '11', username: '小米用户' }] })
+        .mockResolvedValue({ data: [], noMore: true });
       await router.push({ path: '/search', query: { q: '小米', tab: 'user' } });
-      mocks.searchByType.mockResolvedValue({ data: [{ entityType: 'user', uid: '11', username: '小米用户' }] });
       await flushPromises();
       expect(wrapper.find('.search-user-group-toggle').exists()).toBe(false);
       expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(mocks.searchByType.mock.calls.map(([request]) => request.page)).toEqual([1]);
     } finally { wrapper.unmount(); }
   });
-it('收起后首屏只有用户时自动补一页，避免整屏空白', async () => {
+  it('收起后首屏只有用户时自动补一页，避免整屏空白', async () => {
     localStorage.clear();
+    localStorage.setItem('coolapk-desktop-search-users-collapsed', '0');
     vi.clearAllMocks();
     mocks.getTabConfig.mockResolvedValue({ data: [] });
     mocks.getHotSearches.mockResolvedValue({ data: [] });
