@@ -341,7 +341,8 @@ async function fetchTab(tabKey: string, loadMore = false) {
       if (requestVersion !== state.requestVersion || sequence !== searchSequence) return;
       rows = extractRows(response);
     }
-    const existing = new Set(state.items.map(entityIdentity));
+    // 翻页追加时才与旧列表去重，刷新首页时应以新结果替换旧列表。
+    const existing = new Set(loadMore ? state.items.map(entityIdentity) : []);
     const uniqueRows = rows.filter((item) => {
       const key = entityIdentity(item);
       if (key && existing.has(key)) return false;

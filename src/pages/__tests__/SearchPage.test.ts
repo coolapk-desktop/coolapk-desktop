@@ -140,6 +140,30 @@ describe('综合搜索空首页', () => {
     return { wrapper, router };
   }
 
+  it('下拉刷新保留再次返回的实体，并显示更新后的内容', async () => {
+    vi.stubGlobal('innerWidth', 390);
+    vi.clearAllMocks();
+    mocks.searchByType.mockReset()
+      .mockResolvedValueOnce({ data: [{ entityType: 'feed', id: '1', message: '旧内容' }] })
+      .mockResolvedValueOnce({ data: [{ entityType: 'feed', id: '1', message: '新内容' }] });
+    const { wrapper } = await mountSearch();
+    try {
+      await flushPromises();
+      expect(wrapper.findComponent({ name: 'SearchResultItem' }).props('entity')).toMatchObject({ id: '1', message: '旧内容' });
+      const target = wrapper.get('.search-scroll-container').element;
+      for (const [type, clientY] of [['touchstart', 100], ['touchmove', 280], ['touchend', 280]] as const) {
+        const points = [{ identifier: 0, clientX: 100, clientY }];
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(event, { touches: { value: type === 'touchend' ? [] : points }, changedTouches: { value: points } });
+        target.dispatchEvent(event);
+      }
+      await flushPromises();
+      expect(mocks.searchByType.mock.calls.map(([request]) => request.page)).toEqual([1, 1]);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(wrapper.findComponent({ name: 'SearchResultItem' }).props('entity')).toMatchObject({ id: '1', message: '新内容' });
+    } finally { wrapper.unmount(); vi.unstubAllGlobals(); }
+  });
+
   it('排序配置不显示为结果卡片，选择热度和精确时发送正确请求', async () => {
     vi.clearAllMocks();
     const menu = ['综合', '实时', '热度', '评论', '精确'].map((title) => ({ entityType: 'textLink', title }));
