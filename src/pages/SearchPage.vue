@@ -105,7 +105,7 @@ import { orderSearchTabs } from '../utils/searchTabOrder';
 import type { SearchEntity, SearchTabDefinition, SearchTabState } from '../types/search';
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, removeSearchHistory, searchHistory } from '../utils/searchHistory';
-import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
+import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntitySearchTarget, getSearchEntityTitle, getSearchEntityUid, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
 import { fetchSearchSuggestions } from '../utils/searchSuggestions';
 import { readSearchUsersCollapsed, writeSearchUsersCollapsed } from '../utils/searchUserGroup';
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
@@ -222,9 +222,12 @@ function entityKey(entity: SearchEntity, index: number): string {
   return `${getSearchEntityId(entity) || getSearchEntityTitle(entity) || 'entity'}-${index}`;
 }
 
-// 去重只看实体身份，不能混入列表下标，否则同一实体翻页后会重复出现。
+// 不同类型可能复用同一 ID，用户结果也可能只提供 UID。
 function entityIdentity(entity: SearchEntity): string {
-  return getSearchEntityId(entity) || getSearchEntityTitle(entity);
+  const kind = getSearchEntityKind(entity);
+  const id = (kind === 'user' ? getSearchEntityUid(entity) : '') || getSearchEntityId(entity);
+  const title = getSearchEntityTitle(entity);
+  return id ? JSON.stringify([kind, 'id', id]) : title ? JSON.stringify([kind, 'title', title]) : '';
 }
 
 const usersCollapsed = ref(readSearchUsersCollapsed());
@@ -362,7 +365,7 @@ async function fetchTab(tabKey: string, loadMore = false) {
       noMore: responseFlag(response?.noMore ?? response?.data?.noMore) || rows.length === 0,
     };
     // 用户组收起且当前只有用户结果时继续翻页，避免整屏空白且无法触发滚动加载。
-    if (usersCollapsed.value && !state.cursor.noMore && !state.items.some((item) => getSearchEntityKind(item) !== 'user')) {
+    if (tab.searchType === 'all' && !isScopedSearch.value && usersCollapsed.value && !state.cursor.noMore && state.items.every((item) => getSearchEntityKind(item) === 'user')) {
       const nextTabKey = tab.key;
       queueMicrotask(() => void fetchTab(nextTabKey, true));
     }

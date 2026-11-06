@@ -3,10 +3,10 @@ const STORAGE_KEY = 'coolapk-desktop-search-users-collapsed';
 
 export function readSearchUsersCollapsed(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) === '1';
+    return localStorage.getItem(STORAGE_KEY) !== '0';
   } catch {
-    // 浏览器存储不可用时按默认展开处理，不影响搜索。
-    return false;
+    // 浏览器存储不可用时沿用默认折叠状态。
+    return true;
   }
 }
 
