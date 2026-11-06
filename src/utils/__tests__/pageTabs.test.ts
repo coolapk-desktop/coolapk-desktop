@@ -127,17 +127,29 @@ describe('页面实例 key（keep-alive 槽位）', () => {
     expect(getPageComponentKey(search, 2)).toBe(getSearchPageComponentKey(search, 2));
   });
 
-  it('实例绑定参数继续区分实例，避免复用陈旧页面', () => {
+  it('入口定位、对比项、私信预填与选机页数据源等临时 query 复用同一实例', () => {
     const detail = route('/feed/100', 'FeedDetail', { feedId: '100' });
     const replyEntry = route('/feed/100', 'FeedDetail', { feedId: '100' }, { replyId: '5' });
     const commentsEntry = route('/feed/100', 'FeedDetail', { feedId: '100' }, { scrollTo: 'comments' });
+    const compare = route('/product-compare', 'ProductCompare', {}, { ids: '1,2', productIds: '9,10' });
+    const otherCompare = route('/product-compare', 'ProductCompare', {}, { ids: '3,4', productIds: '11,12' });
+    const following = route('/following', 'Following', {}, { category: 'feeds' });
+    const followingFans = route('/following', 'Following', {}, { category: 'feeds', tab: 'fans' });
+    const messages = route('/messages', 'Messages', {}, { targetUid: '5' });
+    const messagesPrefilled = route('/messages', 'Messages', {}, { targetUid: '5', initialText: 'hi' });
     const selector = route('/product-selector', 'ProductSelector', {}, { callFunction: 'indexSearch' });
     const otherSelector = route('/product-selector', 'ProductSelector', {}, { callFunction: 'brandList' });
 
-    expect(getPageComponentKey(replyEntry, 0)).not.toBe(getPageComponentKey(detail, 0));
-    expect(getPageComponentKey(commentsEntry, 0)).not.toBe(getPageComponentKey(detail, 0));
-    expect(getPageComponentKey(replyEntry, 0)).not.toBe(getPageComponentKey(commentsEntry, 0));
-    expect(getPageComponentKey(selector, 0)).not.toBe(getPageComponentKey(otherSelector, 0));
+    // 页面在 setup 后改为响应式跟随地址，因此这些 query 变化不再换 keep-alive 槽位。
+    expect(getPageComponentKey(replyEntry, 0)).toBe(getPageComponentKey(detail, 0));
+    expect(getPageComponentKey(commentsEntry, 0)).toBe(getPageComponentKey(detail, 0));
+    expect(getPageInstanceKey(replyEntry)).toBe(getPageInstanceKey(detail));
+    expect(getPageComponentKey(otherCompare, 0)).toBe(getPageComponentKey(compare, 0));
+    expect(getPageComponentKey(followingFans, 0)).toBe(getPageComponentKey(following, 0));
+    expect(getPageComponentKey(messagesPrefilled, 0)).toBe(getPageComponentKey(messages, 0));
+    expect(getPageComponentKey(otherSelector, 0)).toBe(getPageComponentKey(selector, 0));
+    // 不同动态/不同结构性栏目仍必须是不同实例。
+    expect(getPageComponentKey(route('/feed/200', 'FeedDetail', { feedId: '200' }), 0)).not.toBe(getPageComponentKey(detail, 0));
   });
 
   it('keep-alive 上限跟随已开页签数量', () => {
@@ -206,6 +218,70 @@ describe('页面标签状态', () => {
     expect(store.activeId).toBe('FeedDetail:100');
     expect(store.close('home')).toBeNull();
     expect(store.tabs.some((tab) => tab.id === 'home')).toBe(true);
+  });
+
+  it('关闭守卫拒绝时标签和当前页都保留，通过后才真正关闭', async () => {
+    const store = usePageTabsStore();
+    store.syncRoute(route('/settings/network', 'SettingsNetwork'));
+    store.syncRoute(route('/feed/100', 'FeedDetail', { feedId: '100' }));
+    store.activate('settings');
+    const guard = vi.fn().mockResolvedValue(false);
+    store.registerTabCloseGuard('settings', guard);
+
+    expect(await store.closeTab('settings')).toBeNull();
+    expect(guard).toHaveBeenCalledOnce();
+    expect(store.tabs.some((tab) => tab.id === 'settings')).toBe(true);
+    expect(store.activeId).toBe('settings');
+
+    guard.mockResolvedValueOnce(true);
+    expect(await store.closeTab('settings')).toBe('/feed/100');
+    expect(store.tabs.some((tab) => tab.id === 'settings')).toBe(false);
+  });
+
+  it('没有守卫时带守卫的关闭入口与直接关闭行为一致', async () => {
+    const store = usePageTabsStore();
+    store.syncRoute(route('/feed/100', 'FeedDetail', { feedId: '100' }));
+    expect(await store.closeTab('home')).toBeNull();
+    expect(await store.closeTab('FeedDetail:100')).toBe('/');
+    expect(store.tabs.map((tab) => tab.id)).toEqual(['home']);
+  });
+
+  it('守卫抛错按拒绝处理，注销后不再询问', async () => {
+    const store = usePageTabsStore();
+    store.syncRoute(route('/feed/100', 'FeedDetail', { feedId: '100' }));
+    const guard = vi.fn().mockRejectedValue(new Error('broken'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      store.registerTabCloseGuard('FeedDetail:100', guard);
+      expect(await store.closeTab('FeedDetail:100')).toBeNull();
+      expect(store.tabs.some((tab) => tab.id === 'FeedDetail:100')).toBe(true);
+
+      store.unregisterTabCloseGuard('FeedDetail:100');
+      expect(await store.closeTab('FeedDetail:100')).toBe('/');
+      expect(guard).toHaveBeenCalledOnce();
+    } finally { warn.mockRestore(); }
+  });
+
+  it('关闭其他标签时任一个守卫拒绝就不关闭任何标签', async () => {
+    const store = usePageTabsStore();
+    store.syncRoute(route('/topic/摄影', 'Topic', { tag: '摄影' }));
+    store.syncRoute(route('/feed/100', 'FeedDetail', { feedId: '100' }));
+    store.registerTabCloseGuard('Topic:摄影', vi.fn().mockResolvedValue(true));
+    store.registerTabCloseGuard('FeedDetail:100', vi.fn().mockResolvedValue(false));
+
+    // 目标是首页，两个可见标签都会被关闭；只要有一个拒绝就整体中止。
+    expect(await store.closeOtherTabs('home')).toBeNull();
+    expect(store.tabs.map((tab) => tab.id)).toEqual(['home', 'Topic:摄影', 'FeedDetail:100']);
+  });
+
+  it('关闭右侧标签同样经过守卫', async () => {
+    const store = usePageTabsStore();
+    store.syncRoute(route('/topic/摄影', 'Topic', { tag: '摄影' }));
+    store.syncRoute(route('/feed/100', 'FeedDetail', { feedId: '100' }));
+    const guard = vi.fn().mockResolvedValue(false);
+    store.registerTabCloseGuard('FeedDetail:100', guard);
+    expect(await store.closeRightTabs('Topic:摄影')).toBeNull();
+    expect(store.tabs.map((tab) => tab.id)).toEqual(['home', 'Topic:摄影', 'FeedDetail:100']);
   });
 
   it('关闭其他标签时保留首页和目标标签', () => {

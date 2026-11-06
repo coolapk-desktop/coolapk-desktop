@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia';
 
 const mocks = vi.hoisted(() => ({
   router: { push: vi.fn(), replace: vi.fn() },
-  route: { query: { uid: '20002' } as Record<string, string> },
+  query: { uid: '20002' } as Record<string, string>,
   listMessages: vi.fn(),
   listChatHistory: vi.fn(),
   sendPrivateMessage: vi.fn(),
@@ -23,10 +23,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<any>();
+  const { reactive } = await import('vue');
+  // query 必须是响应式的：私信预填文本改由 watch(query) 在同一实例内生效。
+  mocks.query = reactive({ uid: '20002' } as Record<string, string>);
   return {
     ...actual,
     useRouter: () => mocks.router,
-    useRoute: () => mocks.route,
+    useRoute: () => ({ get query() { return mocks.query; } }),
   };
 });
 
@@ -97,7 +100,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    delete mocks.route.query.feedback;
+    delete mocks.query.feedback;
     const pinia = createPinia();
     setActivePinia(pinia);
 
@@ -135,7 +138,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    delete mocks.route.query.initialText;
+    delete mocks.query.initialText;
     if (wrapper) {
       wrapper.unmount();
       wrapper = null;
@@ -179,7 +182,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 16)');
     const focus = vi.spyOn(HTMLElement.prototype, 'focus');
     const text = 'https://www.coolapk.com/feed/123';
-    if (source === 'share') mocks.route.query.initialText = text;
+    if (source === 'share') mocks.query.initialText = text;
     else await saveMessageDraft('10001', '10001_20002', text);
     const w = await mountMessagesPage();
     expect(w.get('.message-rich-editor').text()).toBe(text);
@@ -223,7 +226,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
   });
 
   it('旧版反馈查询参数不会在私信中上传诊断日志', async () => {
-    mocks.route.query.feedback = '1';
+    mocks.query.feedback = '1';
     const w = await mountMessagesPage();
     expect(w.find('.feedback-log-option').exists()).toBe(false);
     const editor = w.find('.message-rich-editor');
@@ -1014,5 +1017,29 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     await new Promise<void>(resolve => setTimeout(resolve, 0));
 
     expect(await loadMessageDraft('10001', '10001_20002')).toBe('未发送的草稿');
+  });
+  it('同一实例内地址栏预填文本变化也能注入，且不覆盖正在编辑的草稿', async () => {
+    const w = await mountMessagesPage();
+    expect(w.get('.message-rich-editor').text()).toBe('');
+
+    // 用户已有输入时，新的预填文本不能覆盖草稿。
+    const editor = w.get('.message-rich-editor');
+    editor.element.textContent = '正在写的草稿';
+    await editor.trigger('input');
+    mocks.query.initialText = 'https://www.coolapk.com/feed/999';
+    await flushPromises();
+    expect(w.get('.message-rich-editor').text()).toBe('正在写的草稿');
+    // 未被消费：query 里的预填文本保持原样，等用户清空输入后再注入。
+    expect(mocks.query.initialText).toBe('https://www.coolapk.com/feed/999');
+
+    // 清空输入后再来预填文本，同一实例内直接注入并消费该 query。
+    editor.element.textContent = '';
+    await editor.trigger('input');
+    await saveMessageDraft('10001', '10001_20002', '');
+    await flushPromises();
+    mocks.query.initialText = 'https://www.coolapk.com/feed/1000';
+    await flushPromises();
+    expect(w.get('.message-rich-editor').text()).toBe('https://www.coolapk.com/feed/1000');
+    expect(mocks.router.replace).toHaveBeenCalledWith({ path: '/messages', query: { uid: '20002' } });
   });
 });

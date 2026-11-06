@@ -71,35 +71,13 @@ export function getSearchPageComponentKey(route: TabRoute, generation: number): 
 }
 
 /**
- * 实例绑定查询参数：这些页面在 setup 阶段就把路由状态钉在实例上，只有换实例才能读到新值，
- * 因此仍按参数区分缓存槽位。
- */
-const instanceBoundQueryKeys: Partial<Record<string, string[]>> = {
-  // 详情页在 setup 时钉住 ownerRoute（含 replyId/scrollTo），复用旧实例会被判为失活页而停止渲染。
-  FeedDetail: ['replyId', 'scrollTo'],
-  // 机型对比只在挂载时按 ids 读一次对比项。
-  ProductCompare: ['ids', 'productIds'],
-  // 关注页在挂载时按 tab 切换侧栏。
-  Following: ['tab'],
-  // 私信会话的预填文本只在实例创建时读取。
-  Messages: ['initialText', 'text'],
-};
-
-/** 地址自身即页面语义、无法安全归一化的页面（选机页按外部链接 query 直接请求）继续按完整地址区分实例。 */
-const fullPathInstanceRoutes = new Set(['ProductSelector']);
-
-/**
  * 页面实例身份：同一实体（含结构性查询）只占一个 keep-alive 槽位。
- * 排序、筛选、页签、定位等临时 query 在同一实例内更新，不再额外吃缓存槽位。
+ * 排序、筛选、页签、定位、入口定位（replyId/scrollTo）、对比项、私信预填文本等临时 query
+ * 全部由页面自身响应式跟随地址更新，不再按 query 区分实例。
+ * 结构性查询（见 structuralQueryKeys）仍按页面语义区分，例如我的栏目、搜索范围。
  */
 export function getPageInstanceKey(route: TabRoute): string {
-  const keys = instanceBoundQueryKeys[String(route.name || '')] || [];
-  const suffix = keys
-    .map((key) => [key, decodeRouteText(route.query[key])] as const)
-    .filter(([, value]) => Boolean(value))
-    .map(([key, value]) => `${key}=${value}`)
-    .join('&');
-  return suffix ? `${getPageTabId(route)}?${suffix}` : getPageTabId(route);
+  return getPageTabId(route);
 }
 
 /**
@@ -111,7 +89,6 @@ export function getPageComponentKey(route: TabRoute, generation: number): string
   // 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁。
   if (route.path === '/topics') return `/topics:${generation}`;
   if (route.path === '/search') return getSearchPageComponentKey(route, generation);
-  if (fullPathInstanceRoutes.has(String(route.name || ''))) return `${route.fullPath}:${generation}`;
   return `${getPageInstanceKey(route)}:${generation}`;
 }
 

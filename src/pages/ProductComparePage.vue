@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import LoadingState from '../components/common/LoadingState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
@@ -164,18 +164,27 @@ function isDifferent(fieldName: string): boolean {
   return new Set(values.filter(Boolean)).size > 1;
 }
 
+let compareRequestVersion = 0;
+
 async function loadCompare() {
+  const requestVersion = ++compareRequestVersion;
   const ids = String(route.query.ids || '')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean);
   if (ids.length < 2) {
+    configs.value = [];
+    modelTitles.value = {};
     loading.value = false;
+    error.value = '';
     return;
   }
   const productIds = String(route.query.productIds || '')
     .split(',')
     .map((id) => id.trim());
+  // 对比项换了就立即撤下旧表格，避免请求期间仍显示上一次的对比内容。
+  configs.value = [];
+  modelTitles.value = {};
   loading.value = true;
   error.value = '';
   try {
@@ -204,18 +213,23 @@ async function loadCompare() {
       const title = product.title || product.index_title || product.alias_title || product.name;
       if (title) titles[productEntries[index][0]] = String(title);
     });
+    if (requestVersion !== compareRequestVersion) return;
     modelTitles.value = titles;
     configs.value = loaded;
   } catch (err: any) {
+    if (requestVersion !== compareRequestVersion) return;
     error.value = err?.message || '加载对比数据失败';
   } finally {
-    loading.value = false;
+    if (requestVersion === compareRequestVersion) loading.value = false;
   }
 }
 
-onMounted(() => {
-  void loadCompare();
-});
+/** 对比项完全由地址栏 ids/productIds 决定：同一实例内随 query 变化重新加载，不再靠重建实例刷新。 */
+watch(
+  () => [String(route.query.ids || ''), String(route.query.productIds || '')] as const,
+  () => { void loadCompare(); },
+  { immediate: true },
+);
 </script>
 
 <style scoped>

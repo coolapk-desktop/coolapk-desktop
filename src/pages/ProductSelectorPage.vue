@@ -152,14 +152,25 @@ const sortOptions = [
 ] as const;
 
 function getSourceUrl(pageNum: number) {
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(route.query)) {
-    if (key === 'mode') continue;
-    if (typeof value === 'string' && value) query.set(key, value);
-  }
+  const query = routeRequestParams();
   if (!query.has('callFunction')) query.set('callFunction', 'indexSearch');
   query.set('page', String(pageNum));
   return `https://m.coolapk.com/mp/productSelector/configSearch?${query.toString()}`;
+}
+
+/** 决定服务端机型列表的请求参数（模式与分页不属于数据源）。 */
+function routeRequestParams(): URLSearchParams {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(route.query)) {
+    if (key === 'mode' || key === 'page') continue;
+    if (typeof value === 'string' && value) query.set(key, value);
+  }
+  return query;
+}
+
+/** 数据源签名：外部链接的 query 决定机型列表，签名变化才需要重新请求。 */
+function routeRequestSignature(): string {
+  return routeRequestParams().toString();
 }
 
 const filteredModels = computed(() => {
@@ -198,6 +209,8 @@ function parseModel(element: Element): PhoneModel {
 
 async function loadModels(isRefresh: boolean = true) {
   if (loading.value || (loadingMore.value && !isRefresh)) return;
+  // 请求发起时记下数据源签名：期间地址栏换了数据源，请求结束后必须按新 query 重载。
+  const requestSignature = routeRequestSignature();
   if (isRefresh) {
     page.value = 1;
     noMore.value = false;
@@ -291,6 +304,8 @@ async function loadModels(isRefresh: boolean = true) {
   } finally {
     loading.value = false;
     loadingMore.value = false;
+    // 数据源在请求期间变化（外部链接切换到另一组 query）时补一次按新 query 的重载。
+    if (requestSignature !== routeRequestSignature()) void loadModels(true);
   }
 }
 
@@ -357,6 +372,15 @@ async function startCompare() {
 }
 
 let observer: IntersectionObserver | null = null;
+
+// 选机页由外部链接 query（callFunction/brandId/keyword 等）决定数据源：
+// 同一实例内检测到数据源变化时清空选择、重置筛选并重新拉取，不再靠重建页面实例刷新。
+watch(routeRequestSignature, () => {
+  appliedQuery.value = '';
+  searchQuery.value = '';
+  selectedModelIds.value = [];
+  void loadModels(true);
+});
 
 onMounted(() => {
   void loadModels(true);

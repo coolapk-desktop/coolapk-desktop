@@ -831,12 +831,7 @@ async function restoreDraft(session: any) {
   if (initialText && routeTargetUid && sessionPartnerUid === routeTargetUid && !savedDraft) {
     // 仅在当前会话是路由目标会话且没有历史草稿时，填入预设模版
     inputText.value = initialText;
-    // 消费后立即清理 URL query 中的 initialText，防止切换会话或清空后反复注入
-    const cleanQuery = { ...route.query };
-    delete cleanQuery.initialText;
-    delete cleanQuery.text;
-    delete cleanQuery.open;
-    void router.replace({ path: '/messages', query: cleanQuery });
+    consumeRouteInitialText();
   } else {
     // 读取当前会话专属草稿，没有则为空
     inputText.value = savedDraft || '';
@@ -862,6 +857,37 @@ async function restoreDraft(session: any) {
     });
   }
 }
+
+/** 预填文本只在地址栏出现一次：消费后立即清理，防止切换会话或清空后反复注入。 */
+function consumeRouteInitialText() {
+  if (!String(route.query.initialText || route.query.text || '')) return;
+  const cleanQuery = { ...route.query };
+  delete cleanQuery.initialText;
+  delete cleanQuery.text;
+  delete cleanQuery.open;
+  void router.replace({ path: '/messages', query: cleanQuery });
+}
+
+/**
+ * 地址栏预填文本（如一键反馈分享链接）在同一实例内变化时也要生效：
+ * 目标会话已打开且用户没有正在编辑的内容时才注入，绝不覆盖用户草稿。
+ */
+watch(
+  () => String(route.query.initialText || route.query.text || ''),
+  () => {
+    const initialText = String(route.query.initialText || route.query.text || '').trim();
+    if (!initialText) return;
+    const targetUid = getRouteTargetUid();
+    const partnerUid = String(getSessionPartnerUid(currentSession.value) || '').trim();
+    // 目标会话还没打开时交给 openTargetConversation / restoreDraft 流程消费预填文本。
+    if (!targetUid || !partnerUid || partnerUid !== targetUid) return;
+    if (inputText.value.trim()) return;
+    inputText.value = initialText;
+    draftSaved.value = true;
+    syncTextToEditor(initialText);
+    consumeRouteInitialText();
+  },
+);
 
 watch(inputText, () => {
   draftSaved.value = Boolean(inputText.value.trim());

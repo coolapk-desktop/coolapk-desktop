@@ -193,7 +193,6 @@ import { relationUserBio } from '../types/userSpace';
 
 const router = useRouter();
 const route = useRoute();
-const initialTab = String(route.query.tab || '');
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 
@@ -237,12 +236,17 @@ const users = ref<any[]>([]);
 const fansUsers = ref<any[]>([]);
 const selectedUid = ref<string | null>(null);
 const userSearchQuery = ref('');
-const sidebarTab = ref<'users' | 'fans'>('users');
+/** 侧栏页签由地址栏 `?tab=fans` 决定（顶栏「我的粉丝」入口），切换 query 时在同一实例内跟随。 */
+function sidebarTabFromRoute(value: unknown): 'users' | 'fans' {
+  const tab = Array.isArray(value) ? value[0] : value;
+  return tab === 'fans' ? 'fans' : 'users';
+}
+const sidebarTab = ref<'users' | 'fans'>(sidebarTabFromRoute(route.query.tab));
 
 function switchSidebarTab(tab: 'users' | 'fans') {
   sidebarTab.value = tab;
   if (tab === 'fans' && fansUsers.value.length === 0) {
-    loadFansUsers();
+    void loadFansUsers(true);
   }
 }
 
@@ -442,11 +446,15 @@ function onSidebarScroll(e: Event) {
   }
 }
 
-function syncTabFromRoute() {
-  if (initialTab === 'fans') {
-    switchSidebarTab('fans');
-  }
-}
+/** 地址栏页签变化（顶栏「我的关注 / 我的粉丝」入口）时复用同一实例切换侧栏，不重建整页。 */
+watch(() => route.query.tab, value => {
+  const nextTab = sidebarTabFromRoute(value);
+  // 地址未指定页签（如切换关注分类）时保留用户手动选择的侧栏页签。
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return;
+  if (nextTab === sidebarTab.value) return;
+  switchSidebarTab(nextTab);
+});
 
 function navigateToUser(uid: string | number) {
   if (!uid) return;
@@ -493,9 +501,10 @@ function unbindGlobalListeners() {
 
 onMounted(() => {
   if (authStore.isLoggedIn) {
-    loadFollowUsers();
-    loadFollowingFeeds(true);
-    syncTabFromRoute();
+    void loadFollowUsers();
+    void loadFollowingFeeds(true);
+    // 直接以 ?tab=fans 进入时首个实例的侧栏页签由 setup 快照决定，这里补上粉丝列表。
+    if (sidebarTab.value === 'fans') switchSidebarTab('fans');
   }
 });
 

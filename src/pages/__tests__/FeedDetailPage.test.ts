@@ -5,13 +5,15 @@ import { mobileDetailActionsHiddenKey } from '../../composables/useMobileReading
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { feedPageVisibleKey } from '../../utils/feedPageVisibility';
 
-const mocks = vi.hoisted(() => ({ routeFullPath: { value: '/feed/42' }, detail: vi.fn(), context: vi.fn(), save: vi.fn(), back: vi.fn(), replace: vi.fn(), query: { replyId: '123' } as Record<string, string>, history: { back: '/' as string | null }, mobile: { value: true } as { value: boolean } }));
+const mocks = vi.hoisted(() => ({ routeFullPath: { value: '/feed/42' }, routeParams: { value: { feedId: '42' } as Record<string, string> }, detail: vi.fn(), context: vi.fn(), save: vi.fn(), back: vi.fn(), replace: vi.fn(), query: { replyId: '123' } as Record<string, string>, history: { back: '/' as string | null }, mobile: { value: true } as { value: boolean } }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: { getFeedDetail: mocks.detail } }));
 vi.mock('../../stores/app', () => ({ useAppStore: () => ({ getFeedDetailContext: mocks.context, setFeedDetailContext: mocks.save }) }));
+// 实例归属改看「路径 + 动态 id」，因此路由 mock 需要可变的 path 与 params（不再是纯 fullPath 比对）。
 vi.mock('vue-router', async () => {
   const { ref } = await import('vue');
   mocks.routeFullPath = ref('/feed/42');
-  return { useRoute: () => ({ get fullPath() { return mocks.routeFullPath.value; }, params: { feedId: '42' }, query: mocks.query }), useRouter: () => ({ back: mocks.back, replace: mocks.replace, options: { history: { state: mocks.history } } }) };
+  mocks.routeParams = ref({ feedId: '42' });
+  return { useRoute: () => ({ get fullPath() { return mocks.routeFullPath.value; }, get path() { return mocks.routeFullPath.value.split('?')[0]; }, get params() { return mocks.routeParams.value; }, query: mocks.query }), useRouter: () => ({ back: mocks.back, replace: mocks.replace, options: { history: { state: mocks.history } } }) };
 });
 vi.mock('../../router', () => ({ router: { push: vi.fn(), resolve: vi.fn(() => ({ matched: [] })) } }));
 vi.mock('../../composables/usePageTabTitle', () => ({ usePageTabTitle: () => {} }));
@@ -41,9 +43,15 @@ describe('官方详情评论加载', () => {
       expect(document.querySelector('.test-owned-actions')).toBeNull();
       mocks.routeFullPath.value = '/feed/42?scrollTo=comments'; await flushPromises();
       expect(document.querySelectorAll('.test-owned-actions')).toHaveLength(1);
+      // 同一动态换入口参数（replyId/scrollTo）时实例仍归它所有，页面内容不能消失。
       mocks.routeFullPath.value = '/feed/42?scrollTo=top'; await flushPromises();
+      expect(document.querySelectorAll('.test-owned-actions')).toHaveLength(1);
+      mocks.routeFullPath.value = '/feed/42?replyId=9'; await flushPromises();
+      expect(document.querySelectorAll('.test-owned-actions')).toHaveLength(1);
+      // 换成另一个动态（params 变化）或被复用到别的路由时才判为失活。
+      mocks.routeParams.value = { feedId: '43' }; await flushPromises();
       expect(document.querySelector('.test-owned-actions')).toBeNull();
-      mocks.routeFullPath.value = '/digital'; await flushPromises();
+      mocks.routeParams.value = { feedId: '42' }; mocks.routeFullPath.value = '/digital'; await flushPromises();
       expect(document.querySelector('.test-owned-actions')).toBeNull();
     } finally { wrapper.unmount(); }
   });
@@ -73,6 +81,7 @@ describe('官方详情评论加载', () => {
   });
   beforeEach(() => {
     mocks.routeFullPath.value = '/feed/42';
+    mocks.routeParams.value = { feedId: '42' };
     routeNavigationIsHistory.value = false;
     mocks.query = { replyId: '123' };
     mocks.mobile.value = true;

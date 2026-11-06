@@ -123,9 +123,14 @@ watch([detailShellRef, officialMobileDetail, detailActive], () => { void observe
 onUnmounted(() => { stopHeaderResize?.(); stopEntryAnchor?.(); });
 
 const detailVisible = inject(feedPageVisibleKey, ref(true));
-// Teleport 内容不随缓存页面一起隐藏，必须同时校验该详情实例所属的完整路由。
-const ownerRoute = route.fullPath;
-const detailInteractive = computed(() => detailActive.value && detailVisible.value && route.fullPath === ownerRoute);
+// Teleport 内容不随缓存页面一起隐藏，必须同时校验该详情实例归属的「路由路径 + 动态 id」。
+// ?replyId/?scrollTo 只是入口定位参数，由 entryPosition 在同一实例内响应式处理，
+// 不能再把它们算进实例归属，否则同一动态换入口参数会被误判成失活页而停止渲染。
+const ownerPath = route.path;
+const routeOwnerFeedId = computed(() => String(route.params.id || route.params.feedId || ''));
+const detailInteractive = computed(() => detailActive.value && detailVisible.value
+  && route.path === ownerPath
+  && routeOwnerFeedId.value === String(props.feedId || ''));
 provide(feedPageVisibleKey, detailInteractive);
 const detailReading = useMobileReadingNavigation(computed(() => officialMobileDetail.value && detailInteractive.value
   && settingsStore.settings.autoHideMobileNavigation && !appStore.isSearchOpen && !appStore.isPublishOpen && !appStore.activeImageViewer), '.feed-detail-page.is-official-mobile');
