@@ -52,6 +52,7 @@
           </button>
 
           <div v-if="searchSuggestions.length > 0 && query" class="suggestion-list custom-scrollbar">
+            <div class="group-title suggestion-group-title">搜索建议</div>
             <div
               v-for="(item, i) in searchSuggestions"
               :key="i"
@@ -60,8 +61,9 @@
               @mouseenter="activeSuggestionIndex = i; activeResultIndex = -1"
               @mousedown.prevent="selectSuggestion(item)"
             >
-              <i class="fas fa-search suggestion-icon"></i>
+              <i :class="[getSuggestionIcon(item), 'suggestion-icon']"></i>
               <span class="suggestion-text">{{ getSearchEntityTitle(item) }}</span>
+              <span class="suggestion-kind">{{ getSuggestionKindLabel(item) }}</span>
             </div>
           </div>
 
@@ -75,6 +77,7 @@
                 <div class="quick-section-header"><span class="group-title">最近搜索</span><button type="button" @click="clearHistory">清空</button></div>
                 <div class="recent-search-list">
                   <button v-for="item in searchHistory.slice(0, 8)" :key="item" type="button" class="recent-search-item" @click="applySearch(item)"><i class="far fa-clock"></i>{{ item }}</button>
+                <!-- 与搜索页一致：点击历史直接搜索，而不是只把词填进输入框。 -->
                 </div>
               </div>
               <span class="group-title">热门搜索</span>
@@ -97,6 +100,7 @@
               <EmptyState title="未找到相关结果" />
             </div>
             <div v-else class="result-list">
+              <div class="group-title result-group-title">相关内容</div>
               <div
                 v-for="(item, i) in results"
                 :key="i"
@@ -144,6 +148,7 @@ import {
   isNavigableSearchEntity,
 } from '../../utils/searchEntities';
 import { normalizeCoolapkCollectionLink, normalizeCoolapkDeepLink, normalizeCoolapkFeedLink, normalizeCoolapkRoute } from '../../utils/coolapkRoute';
+import { fetchSearchSuggestions } from '../../utils/searchSuggestions';
 
 const appStore = useAppStore();
 const showShortcutHints = useShortcutHints();
@@ -213,10 +218,12 @@ watch(query, (val) => {
     }
     loading.value = true;
     try {
-      const [searchRes, suggestRes] = await Promise.all([CoolapkTauriAPI.searchAll(val.trim(), 1), CoolapkTauriAPI.getSearchSuggestions(val.trim())]);
+      const [searchRes, suggestions] = await Promise.all([CoolapkTauriAPI.searchAll(val.trim(), 1), fetchSearchSuggestions(val.trim())]);
       if (requestVersion !== searchRequestVersion) return;
       results.value = deduplicateSearchResults(searchRes).slice(0, 8);
-      searchSuggestions.value = extractSearchEntities(suggestRes).filter((item) => getSearchEntityTitle(item)).slice(0, 8);
+      // 联想项与即时结果同屏展示，先去掉标题重复的条目，避免同一个目标出现两次。
+      const resultTitles = new Set(results.value.map(getSearchEntityTitle));
+      searchSuggestions.value = suggestions.filter((item) => !resultTitles.has(getSearchEntityTitle(item)));
     } catch (err) {
       console.error('Search error', err);
     } finally {
@@ -256,8 +263,10 @@ function deduplicateSearchResults(response: unknown): SearchEntity[] {
   return unique;
 }
 
+// 与搜索页一致：点击历史/热门词直接发起搜索，不再要求用户再按一次回车。
 function applySearch(tag: string) {
   query.value = tag;
+  handleEnterSearch(tag);
 }
 
 function selectSuggestion(item: SearchEntity) {
@@ -339,6 +348,16 @@ function selectResult(item: SearchEntity) {
   appStore.closeSearch();
   if (route) void router.push(route);
   else handleEnterSearch();
+}
+
+function getSuggestionKindLabel(item: SearchEntity): string {
+  // 通用联想词没有实体类型，明确标成“搜索词”，与话题/用户等实体区分。
+  if (isTopicSearchResult(item)) return '话题';
+  return ({ user: '用户', app: '应用', question: '问答', answer: '回答', feed: '动态', product: '数码', hot: '热词', generic: '搜索词' } as Record<string, string>)[getSearchEntityKind(item)] || '搜索词';
+}
+
+function getSuggestionIcon(item: SearchEntity): string {
+  return getSuggestionKindLabel(item) === '搜索词' ? 'fas fa-search' : getIcon(item);
 }
 
 function getIcon(item: SearchEntity) {
@@ -575,12 +594,17 @@ onUnmounted(() => window.removeEventListener('keydown', handleGlobalKeydown));
 }
 
 .suggestion-text {
+  flex: 1;
   font-size: var(--font-size-sub);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.suggestion-kind { flex: 0 0 auto; color: var(--text-tertiary); font-size: var(--font-size-caption); }
+.suggestion-group-title, .result-group-title { padding: 2px 4px 6px; }
+.result-group-title { padding-top: 2px; }
 
 .mobile-search-cancel { display: none; }
 

@@ -94,6 +94,7 @@ import type { SearchEntity, SearchTabDefinition, SearchTabState } from '../types
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, removeSearchHistory, searchHistory } from '../utils/searchHistory';
 import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
+import { fetchSearchSuggestions } from '../utils/searchSuggestions';
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
 
 const route = useRoute();
@@ -180,8 +181,13 @@ function normalizeFeedSearchSort(value: string): string {
 }
 
 function switchFeedSearchSort() {
-  // 排序只更新筛选条件，保留用户当前选择的搜索页签。
-  void router.push({ path: '/search', query: { ...route.query, q: queryStr.value, tab: activeTab.value, sort: feedSearchSort.value } });
+  // 排序只更新筛选条件，保留用户当前选择的搜索页签，并带上输入框里尚未提交的关键词。
+  const nextQuery = pendingSearchValue();
+  const query: Record<string, string> = { ...(route.query as Record<string, string>), q: nextQuery, tab: activeTab.value };
+  if (activeTab.value === 'all' && feedSearchSort.value === 'default') delete query.sort;
+  else query.sort = feedSearchSort.value;
+  if (nextQuery && nextQuery !== queryStr.value) addSearchHistory(nextQuery);
+  void router.push({ path: '/search', query });
 }
 
 function normalizeAskFeedType(value: string): string {
@@ -203,6 +209,10 @@ function entityKey(entity: SearchEntity, index: number): string {
   return `${getSearchEntityId(entity) || getSearchEntityTitle(entity) || 'entity'}-${index}`;
 }
 
+// 去重只看实体身份，不能混入列表下标，否则同一实体翻页后会重复出现。
+function entityIdentity(entity: SearchEntity): string {
+  return getSearchEntityId(entity) || getSearchEntityTitle(entity);
+}
 function resetTabStates() {
   tabStates.clear();
   searchTabs.value.forEach((tab) => ensureTabState(tab.key));
@@ -270,7 +280,9 @@ async function fetchTab(tabKey: string, loadMore = false) {
   try {
     let requestedPage = loadMore ? state.cursor.page : 1;
     // 综合页的动态排序使用 feed 接口，结果仍保存在综合页，不改变页签。
-    const searchType = tab.searchType === 'all' && readQueryString(route.query.sort) ? 'feed' : tab.searchType;
+    // “综合”排序等价于服务端实体搜索；只有选择实时/热度/评论/精确时才改用动态接口。
+    const routeSort = readQueryString(route.query.sort);
+    const searchType = tab.searchType === 'all' && routeSort && routeSort !== 'default' ? 'feed' : tab.searchType;
     const requestPage = () => CoolapkTauriAPI.searchByType({
       searchType,
       query: queryStr.value,
@@ -296,11 +308,11 @@ async function fetchTab(tabKey: string, loadMore = false) {
       if (requestVersion !== state.requestVersion || sequence !== searchSequence) return;
       rows = extractRows(response);
     }
-    const existing = new Set(state.items.map((item) => entityKey(item, 0)));
-    const uniqueRows = rows.filter((item, index) => {
-      const key = entityKey(item, index);
-      if (existing.has(key)) return false;
-      existing.add(key);
+    const existing = new Set(state.items.map(entityIdentity));
+    const uniqueRows = rows.filter((item) => {
+      const key = entityIdentity(item);
+      if (key && existing.has(key)) return false;
+      if (key) existing.add(key);
       return true;
     });
     if (loadMore) state.items.push(...uniqueRows);
@@ -382,20 +394,26 @@ function doSearch(value: string, requestedSearchType = '') {
     const targetDefinition = searchTabs.value.find((tab) => tab.key === targetTab);
     if (targetDefinition?.searchType === 'ask' || targetTab === 'ask') query.feedType = askFeedType.value;
   }
-  if (query.tab === 'feed') query.sort = feedSearchSort.value;
-  if (query.tab === 'all' && readQueryString(route.query.sort)) query.sort = feedSearchSort.value;
+  if (query.tab === 'feed' || (query.tab === 'all' && feedSearchSort.value !== 'default')) query.sort = feedSearchSort.value;
   void router.push({ path: '/search', query });
 }
 
 function switchTab(key: string) {
   if (isScopedSearch.value) return;
   if (activeTab.value === key) return;
+  const nextQuery = pendingSearchValue();
   activeTab.value = key;
   const targetTab = searchTabs.value.find((tab) => tab.key === key);
-  const query: Record<string, string> = { q: queryStr.value, tab: key };
+  const query: Record<string, string> = { q: nextQuery, tab: key };
   if (targetTab?.searchType === 'ask' || key === 'ask') query.feedType = askFeedType.value;
-  if (key === 'feed') query.sort = feedSearchSort.value;
+  if (key === 'feed' || (key === 'all' && feedSearchSort.value !== 'default')) query.sort = feedSearchSort.value;
+  if (nextQuery && nextQuery !== queryStr.value) addSearchHistory(nextQuery);
   void router.push({ path: '/search', query });
+}
+
+// 页签、排序等切换动作应保留输入框里已经输入但尚未回车提交的关键词。
+function pendingSearchValue(): string {
+  return searchQuery.value.trim() || queryStr.value;
 }
 
 function removeEntity(id: string | number) {
@@ -432,20 +450,10 @@ async function fetchSuggestions(value: string, sequence: number) {
   if (isScopedSearch.value) return;
   const trimmed = value.trim();
   if (!trimmed) { searchSuggestions.value = []; return; }
-  try {
-    let response = await CoolapkTauriAPI.getSearchSuggestionsApp(trimmed);
-    if (sequence !== suggestionSequence) return;
-    let rows = extractSearchEntities(response).filter((item) => getSearchEntityTitle(item));
-    if (!rows.length) {
-      response = await CoolapkTauriAPI.getSearchSuggestions(trimmed);
-      if (sequence !== suggestionSequence) return;
-      rows = extractSearchEntities(response).filter((item) => getSearchEntityTitle(item));
-    }
-    searchSuggestions.value = rows.slice(0, 8);
-    showSuggestions.value = rows.length > 0;
-  } catch (error) {
-    console.warn('加载搜索联想失败', error);
-  }
+  const rows = await fetchSearchSuggestions(trimmed);
+  if (sequence !== suggestionSequence) return;
+  searchSuggestions.value = rows;
+  showSuggestions.value = rows.length > 0;
 }
 
 // 仅用户编辑触发联想，路由返回时恢复关键词不应遮挡已有结果。
@@ -459,6 +467,7 @@ function onSearchInput() {
 }
 
 let appliedSearchKey = '';
+let appliedSearchContextKey = '';
 let searchPageActive = true;
 watch(() => [
   route.path,
@@ -471,9 +480,13 @@ watch(() => [
 ], ([path, nextQuery, nextTab, , , nextFeedType, nextSort]) => {
   // 缓存页仍能收到全局路由变化；离开搜索及返回相同条件时不能清空结果和分页。
   if (path !== '/search' || !searchPageActive || (cachedSearchPath && cachedSearchPath !== route.fullPath)) return;
-  const key = JSON.stringify([nextQuery, nextTab, readQueryString(route.query.pageType), readQueryString(route.query.pageParam), nextFeedType, nextSort]);
-  if (key === appliedSearchKey) return;
-  appliedSearchKey = key;
+  // 查询条件与页签分开记录：只切页签时保留各页签已加载的结果和分页，不重新请求。
+  const contextKey = JSON.stringify([nextQuery, readQueryString(route.query.pageType), readQueryString(route.query.pageParam), nextFeedType, nextSort]);
+  const routeKey = JSON.stringify([contextKey, nextTab]);
+  if (routeKey === appliedSearchKey) return;
+  const contextChanged = contextKey !== appliedSearchContextKey;
+  appliedSearchKey = routeKey;
+  appliedSearchContextKey = contextKey;
   const normalizedQuery = nextQuery;
   queryStr.value = normalizedQuery;
   searchQuery.value = normalizedQuery;
@@ -484,11 +497,12 @@ watch(() => [
   } else if (configLoaded) {
     syncActiveTab(nextTab || activeTab.value || 'all');
   }
-  searchSequence += 1;
+  if (contextChanged) searchSequence += 1;
   closeSearchDropdowns();
-  resetTabStates();
-  // 等页签配置就绪再发起首次搜索，避免初始化重置使空首页补查失效。
-  if (normalizedQuery && configLoaded) void fetchTab(activeTab.value);
+  if (contextChanged) resetTabStates();
+  // 等页签配置就绪再发起首次搜索，避免初始化重置使空首页补查失效；
+  // 仅切换页签时只在目标页签还没有数据时补拉。
+  if (normalizedQuery && configLoaded && (contextChanged || !ensureTabState(activeTab.value).items.length)) void fetchTab(activeTab.value);
 }, { immediate: true });
 
 function bindGlobalListeners() {

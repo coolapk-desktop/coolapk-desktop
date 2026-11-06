@@ -373,3 +373,98 @@ describe('话题内搜索', () => {
     expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ searchType: 'ask', feedType: 'answer' });
   });
 });
+describe('搜索结果去重与筛选一致性', () => {
+  function mountSearch() {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/search', component: SearchPage }] });
+    const wrapper = mount(SearchPage, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
+    return { wrapper, router };
+  }
+
+  it('翻页返回同一实体时只保留一条', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockReset();
+    mocks.searchByType
+      .mockResolvedValueOnce({ data: [{ id: '1', entityType: 'feed', message: '重复' }], firstItem: 'f1', lastItem: 'l1' })
+      .mockResolvedValueOnce({ data: [{ id: '1', entityType: 'feed', message: '重复' }, { id: '2', entityType: 'feed', message: '新' }], firstItem: 'f2', lastItem: 'l2' });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '重复', tab: 'all' } });
+      await flushPromises();
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      await wrapper.get('.search-scroll-container').trigger('scroll');
+      await flushPromises();
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(2);
+      expect(wrapper.findAllComponents({ name: 'SearchResultItem' }).map((item) => (item.props('entity') as { id: string }).id)).toEqual(['1', '2']);
+    } finally { wrapper.unmount(); localStorage.clear(); }
+  });
+
+  it('综合页排序选回综合后恢复实体搜索，不再降级为动态接口', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockReset().mockResolvedValue({ data: [{ entityType: 'feed', id: '1' }] });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '伪回锁', tab: 'all' } });
+      await flushPromises();
+      await wrapper.findAll('.search-feed-sort .filter-btn')[2].trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.query).toMatchObject({ tab: 'all', sort: 'hot' });
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ searchType: 'feed', sort: 'hot' });
+      await wrapper.findAll('.search-feed-sort .filter-btn')[0].trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.query.sort).toBeUndefined();
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ searchType: 'all' });
+    } finally { wrapper.unmount(); localStorage.clear(); }
+  });
+
+  it('切换页签时保留输入框里已输入但未提交的关键词', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockReset().mockResolvedValue({ data: [{ entityType: 'feed', id: '1' }] });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '旧关键词', tab: 'all' } });
+      await flushPromises();
+      await wrapper.get('.search-field').setValue('新关键词');
+      const feedTab = wrapper.findAll('.search-tab-item').find((tab) => tab.text() === '动态');
+      await feedTab!.trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.query).toMatchObject({ q: '新关键词', tab: 'feed' });
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ searchType: 'feed', query: '新关键词' });
+      expect((wrapper.get('.search-field').element as HTMLInputElement).value).toBe('新关键词');
+    } finally { wrapper.unmount(); localStorage.clear(); }
+  });
+
+  it('切回已加载过的页签复用结果，不重复请求', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockReset().mockImplementation((request: any) => Promise.resolve({
+      data: [{ id: request.searchType === 'apk' ? 'apk-1' : 'all-1', entityType: request.searchType === 'apk' ? 'apk' : 'topic', title: request.searchType }],
+    }));
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '缓存', tab: 'all' } });
+      await flushPromises();
+      const allRequests = () => mocks.searchByType.mock.calls.filter(([request]) => request.searchType === 'all').length;
+      expect(allRequests()).toBe(1);
+      const apkTab = wrapper.findAll('.search-tab-item').find((tab) => tab.text() === '应用');
+      await apkTab!.trigger('click');
+      await flushPromises();
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ searchType: 'apk' });
+      const allTab = wrapper.findAll('.search-tab-item').find((tab) => tab.text() === '综合');
+      await allTab!.trigger('click');
+      await flushPromises();
+      expect(allRequests()).toBe(1);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+    } finally { wrapper.unmount(); localStorage.clear(); }
+  });
+});
