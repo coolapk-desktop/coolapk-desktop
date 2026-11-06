@@ -518,7 +518,9 @@ export class CoolapkTauriAPI {
 
 
 
-  // 7. 全站搜索
+  // 7. 全站搜索（原生 /v6/search?type=all，返回动态/用户/商品等混合实体，不同于按 searchType 请求的 searchByType）
+  // 供「清单选帖/选商品」这类需要跨实体类型检索、再在本地按 entityType 过滤的场景使用；
+  // 搜索页的多页签检索请用 searchByType(···, 'all')，两者的入参与返回结构不同，不要互相替换。
   static async searchAll(query: string, page: number = 1) {
     return await safeFetch(`/search?q=${encodeURIComponent(query)}&page=${page}`, 'search_all', { query, page });
   }
