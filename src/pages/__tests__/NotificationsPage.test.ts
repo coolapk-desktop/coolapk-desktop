@@ -6,7 +6,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../../stores/notifications';
 import { useAppStore } from '../../stores/app';
 
-const mocks = vi.hoisted(() => ({ notifications: vi.fn(), reply: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn() }));
+const mocks = vi.hoisted(() => ({ notifications: vi.fn(), reply: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn(), toast: vi.fn() }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: {
   getNotifications: mocks.notifications, getReplyDetail: mocks.reply, clearNotificationCount: mocks.clear, reportNotificationClick: mocks.report, readNotification: mocks.read, getNotificationCount: mocks.count,
@@ -15,6 +15,7 @@ vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: true, u
 vi.mock('../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
 vi.mock('../../utils/feedNavigation', () => ({ openFeedDetail: mocks.openFeed }));
 vi.mock('../../utils/anchorClick', () => ({ handleAnchorClick: mocks.anchor }));
+vi.mock('../../utils/toast', () => ({ showToast: mocks.toast }));
 
 import NotificationsPage from '../NotificationsPage.vue';
 
@@ -274,6 +275,52 @@ describe('通知评论点击入口', () => {
     expect(mocks.push).toHaveBeenCalledWith('/user/555');
     wrapper.unmount();
   });
+  it('无法打开的通知保留未读并给出明确提示', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 1, dateline: 100 } });
+    const wrapper = await mountPage({ id: 'unopenable', message: '通知内容', isnew: 1 });
+    try {
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
+      expect(store.unreadCount).toBe(1);
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(mocks.toast).toHaveBeenCalledWith('该通知暂无法在客户端打开', 'info');
+      // 点不动就不能把卡片变灰、扣掉未读。
+      expect(mocks.read).not.toHaveBeenCalled();
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+      expect(mocks.push).not.toHaveBeenCalled();
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
+      expect(store.unreadCount).toBe(1);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('可打开的通知在跳转的同时才置读', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 1, dateline: 100 } });
+    const item = { id: 'openable', feedId: '333', message: '赞了你的动态', isnew: 1, url: '/feed/333?notificationV18Id=777&notificationV18Type=feedlike' };
+    const wrapper = await mountPage(item);
+    try {
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(mocks.openFeed).toHaveBeenCalledWith(expect.anything(), '333', item);
+      expect(mocks.read).toHaveBeenCalledWith('777', 'feedlike');
+      expect(mocks.toast).not.toHaveBeenCalled();
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(false);
+      expect(store.unreadCount).toBe(0);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('系统/活动通知正文只有一个站内链接时按该链接跳转', async () => {
+    const wrapper = await mountPage({ id: 'activity-1', note: '活动消息', message: '<a href="/feed/555">查看活动详情</a>', isnew: 1, url: '/u/0' });
+    try {
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(mocks.push).toHaveBeenCalledWith('/feed/555');
+      expect(mocks.toast).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
   it('通知正文打开所属评论，正文分享链接仅打开链接自身，人物入口独立导航', async () => {
     const item = { id: '99', fromuid: '555', fromusername: '回复者', feedId: '333', replyId: '222', message: '6 月没躲过 https://www.coolapk.com/feed/72357393?s=share' };
     const wrapper = await mountPage(item);

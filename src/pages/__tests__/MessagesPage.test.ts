@@ -61,7 +61,7 @@ window.URL.revokeObjectURL = mocks.revokeObjectURL;
 import MessagesPage from '../MessagesPage.vue';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
-import { clearMessageDraft, saveMessageDraft } from '../../utils/messageDrafts';
+import { clearMessageDraft, loadMessageDraft, saveMessageDraft } from '../../utils/messageDrafts';
 
 describe('MessagesPage 粘贴图片发送功能', () => {
   let wrapper: any;
@@ -883,5 +883,70 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     expect(w.findAll('.message-item')).toHaveLength(3);
     expect(w.findAll('.msg-text').map((item: any) => item.text())).toEqual(['最早消息', '中间消息', '最新消息']);
     expect(chatAreaElement.scrollTop).toBe(100);
+  });
+
+  const unreadSession = {
+    ukey: '10001_20002',
+    id: '10001_20002',
+    uid: 10001,
+    fromuid: 20002,
+    entityId: 20002,
+    messageUid: 20002,
+    messageUsername: '好友酷友',
+    username: '好友酷友',
+    message: '未读消息',
+    dateline: 1700000000,
+    isNewConversation: false,
+    isnew: 1,
+    unreadNum: 3,
+  };
+
+  it('聊天记录加载失败时不置为已读，保留未读角标', async () => {
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([unreadSession]));
+    mocks.listMessages.mockResolvedValue({ data: [unreadSession] });
+    mocks.listChatHistory.mockRejectedValue(new Error('网络错误'));
+    mocks.readMessage.mockClear();
+
+    const w = await mountMessagesPage();
+    await flushPromises();
+
+    expect(mocks.readMessage).not.toHaveBeenCalled();
+    expect(w.find('.session-unread-badge').exists()).toBe(true);
+  });
+
+  it('聊天记录成功加载并渲染后才置为已读', async () => {
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([unreadSession]));
+    mocks.listMessages.mockResolvedValue({ data: [unreadSession] });
+    let resolveHistory!: (value: any) => void;
+    mocks.listChatHistory.mockImplementationOnce(() => new Promise(resolve => { resolveHistory = resolve; }));
+    mocks.readMessage.mockClear();
+
+    const w = await mountMessagesPage();
+
+    // 记录还没回来：不请求置读，角标也还在。
+    expect(mocks.readMessage).not.toHaveBeenCalled();
+    expect(w.find('.session-unread-badge').exists()).toBe(true);
+
+    resolveHistory({ data: [{ id: 'm1', message: '未读消息', dateline: 1700000000, fromuid: 20002 }] });
+    await flushPromises();
+
+    expect(mocks.readMessage).toHaveBeenCalledWith('10001_20002');
+    expect(w.find('.session-unread-badge').exists()).toBe(false);
+  });
+
+  it('输入草稿防抖，卸载时立即落盘不丢字', async () => {
+    const w = await mountMessagesPage();
+    const editor = w.get('.message-rich-editor');
+    editor.element.textContent = '未发送的草稿';
+    await editor.trigger('input');
+    // 防抖窗口内还没有落盘。
+    expect(await loadMessageDraft('10001', '10001_20002')).not.toBe('未发送的草稿');
+
+    wrapper.unmount();
+    wrapper = null;
+    await flushPromises();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    expect(await loadMessageDraft('10001', '10001_20002')).toBe('未发送的草稿');
   });
 });

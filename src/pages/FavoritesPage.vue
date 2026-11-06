@@ -623,6 +623,9 @@ const collectionItemsPage = ref(1);
 const collectionItemsNoMore = ref(false);
 const collectionItemsFirstItem = ref('');
 const collectionItemsLastItem = ref('');
+// 收藏单快速切换竞态：详情与条目请求各自递增序号，只有最新一次请求的响应允许回填。
+let collectionDetailRequestSequence = 0;
+let collectionItemsRequestSequence = 0;
 const collectionContentSearchKeyword = ref('');
 const collectionContentSearchIds = ref<Set<string>>(new Set());
 const collectionContentSearchLoading = ref(false);
@@ -1137,6 +1140,16 @@ function activateCollection(collection: any) {
   collectionItemNum.value = getCollectionItemCount(collection);
   collectionFollowed.value = toBool(firstValue(collection, ['isFollowed', 'isFollow', 'is_followed']));
   collectionLiked.value = toBool(firstValue(collection, ['isLiked', 'isLike', 'is_liked']));
+  // 切号时同步清空上一个收藏单的列表与分页状态，避免旧内容/旧 loading 影响新收藏单。
+  collectionItems.value = [];
+  collectionItemsPage.value = 1;
+  collectionItemsNoMore.value = false;
+  collectionItemsFirstItem.value = '';
+  collectionItemsLastItem.value = '';
+  collectionItemsError.value = '';
+  collectionItemsLoading.value = false;
+  collectionItemsLoadingMore.value = false;
+  collectionItemActionId.value = '';
   void fetchCollectionDetail();
   void fetchCollectionItems(true);
 }
@@ -1183,6 +1196,9 @@ watch(
 
 function applyCollectionDetail(detail: any, fallback: any) {
   const source = detail && Object.keys(detail).length > 0 ? detail : fallback;
+  // 只接受属于当前收藏单的详情数据，防止切号时旧响应覆盖新收藏单的标题/封面/条目数。
+  const sourceCollectionId = collectionId(source) || collectionId(fallback);
+  if (sourceCollectionId && activeCollectionId.value && sourceCollectionId !== String(activeCollectionId.value)) return;
   const fav = firstValue(source, ['fav_num', 'favnum', 'favNum', 'like_num', 'likeNum'])
     ?? firstValue(fallback, ['fav_num', 'favnum', 'favNum', 'like_num', 'likeNum']);
   if (fav !== undefined && fav !== null) {
@@ -1223,15 +1239,20 @@ function applyCollectionDetail(detail: any, fallback: any) {
 }
 
 async function fetchCollectionDetail() {
-  if (!activeCollectionId.value) return;
+  const collectionIdValue = String(activeCollectionId.value || '');
+  if (!collectionIdValue) return;
+  const requestId = ++collectionDetailRequestSequence;
+  const isStale = () => requestId !== collectionDetailRequestSequence || String(activeCollectionId.value || '') !== collectionIdValue;
   try {
-    const res = await CoolapkTauriAPI.getCollectionDetail(activeCollectionId.value);
+    const res = await CoolapkTauriAPI.getCollectionDetail(collectionIdValue);
+    if (isStale()) return;
     const detail = res && res.data ? res.data : {};
     collectionDetail.value = { ...collectionDetail.value, ...detail };
-    applyCollectionDetail(detail, collections.value.find(c => collectionId(c) === activeCollectionId.value) || {});
+    applyCollectionDetail(detail, collections.value.find(c => collectionId(c) === collectionIdValue) || {});
   } catch (err) {
+    if (isStale()) return;
     console.warn('获取收藏单详情失败', err);
-    applyCollectionDetail({}, collections.value.find(c => collectionId(c) === activeCollectionId.value) || {});
+    applyCollectionDetail({}, collections.value.find(c => collectionId(c) === collectionIdValue) || {});
   }
 }
 
@@ -1278,24 +1299,33 @@ async function toggleLikeCollection() {
 }
 
 async function fetchCollectionItems(isRefresh = false) {
-  if (!activeCollectionId.value) return;
-  if (collectionItemsLoading.value || (collectionItemsLoadingMore.value && !isRefresh)) return;
+  const collectionIdValue = String(activeCollectionId.value || '');
+  if (!collectionIdValue) return;
 
   if (isRefresh) {
+    // 刷新（含切换收藏单）不再被进行中的旧请求阻塞，旧请求的响应会因序号过期被丢弃。
     collectionItemsPage.value = 1;
     collectionItemsNoMore.value = false;
     collectionItemsFirstItem.value = '';
     collectionItemsLastItem.value = '';
     collectionItems.value = [];
     collectionItemsLoading.value = true;
+    collectionItemsLoadingMore.value = false;
   } else {
-    if (collectionItemsNoMore.value) return;
+    if (collectionItemsLoading.value || collectionItemsLoadingMore.value || collectionItemsNoMore.value) return;
     collectionItemsLoadingMore.value = true;
   }
   collectionItemsError.value = '';
 
+  const requestId = ++collectionItemsRequestSequence;
+  const isStale = () => requestId !== collectionItemsRequestSequence || String(activeCollectionId.value || '') !== collectionIdValue;
+  const page = collectionItemsPage.value;
+  const firstItem = collectionItemsFirstItem.value;
+  const lastItem = collectionItemsLastItem.value;
+
   try {
-    const res = await CoolapkTauriAPI.getCollectionItemList(activeCollectionId.value, collectionItemsPage.value, collectionItemsFirstItem.value, collectionItemsLastItem.value);
+    const res = await CoolapkTauriAPI.getCollectionItemList(collectionIdValue, page, firstItem, lastItem);
+    if (isStale()) return;
     const newItems = (res && res.data && Array.isArray(res.data)) ? res.data : [];
     if (newItems.length === 0) {
       collectionItemsNoMore.value = true;
@@ -1308,13 +1338,17 @@ async function fetchCollectionItems(isRefresh = false) {
       }
       if (!collectionItemsFirstItem.value) collectionItemsFirstItem.value = favoriteFeedCursorId(collectionItems.value[0]);
       collectionItemsLastItem.value = favoriteFeedCursorId(collectionItems.value[collectionItems.value.length - 1]);
-      collectionItemsPage.value++;
+      collectionItemsPage.value = page + 1;
     }
   } catch (err: any) {
+    if (isStale()) return;
     collectionItemsError.value = err?.message || '加载失败，请检查网络';
   } finally {
-    collectionItemsLoading.value = false;
-    collectionItemsLoadingMore.value = false;
+    // 过期请求不能改动当前收藏单的 loading 状态，否则新请求的转圈会被旧响应提前关掉。
+    if (!isStale()) {
+      collectionItemsLoading.value = false;
+      collectionItemsLoadingMore.value = false;
+    }
   }
 }
 

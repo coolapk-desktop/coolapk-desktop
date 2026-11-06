@@ -120,7 +120,7 @@ import { getNotificationActor, getNotificationImage } from '../utils/notificatio
 import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
-import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
+import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, getNotificationTargetRoute, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
 import { markNotificationRead } from '../utils/notificationRead';
 import { requestConfirmation } from '../utils/confirm';
 import { showToast } from '../utils/toast';
@@ -407,11 +407,78 @@ async function openNotificationTarget(item: any): Promise<boolean> {
     return true;
   }
   const targetRoute = await resolveNotificationTarget(item);
-  if (!targetRoute) {
+  if (targetRoute) {
+    void router.push(targetRoute);
+    return true;
+  }
+  // 活动/系统通知有时只在正文富文本里带唯一目标链接，可安全映射时才跳转。
+  const bodyRoute = resolveNotificationBodyRoute(item);
+  if (bodyRoute) {
+    void router.push(bodyRoute);
+    return true;
+  }
+  return false;
+}
+
+/** 正文只含一个站内链接时返回其路由；多个链接无法判断意图，保持不跳转。 */
+function resolveNotificationBodyRoute(item: any): string | null {
+  const links = new Set<string>();
+  for (const value of [item?.addition_info, item?.additionInfo, item?.note, item?.message, item?.message_title, item?.targetTitle, item?.infoHtml]) {
+    if (typeof value !== 'string') continue;
+    // 正文可能是实体编码的富文本，先还原 &amp; 再提取链接。
+    const text = value.replace(/&amp;/g, '&');
+    for (const match of text.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) links.add(match[1]);
+    for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/gi)) links.add(match[0]);
+  }
+  if (links.size !== 1) return null;
+  const link = [...links][0];
+  // 复用统一解析，账号安全等无本地目标的链接仍按原规则过滤。
+  return link ? getNotificationTargetRoute({ ...item, targetUrl: link }) : null;
+}
+
+/** 打开通知目标；只有确实打开成功才置读，失败时保留未读并给出反馈。 */
+async function openNotificationTargetWithFeedback(item: any, href?: string): Promise<boolean> {
+  const opened = await openNotificationTarget(item).catch(() => false);
+  if (!opened) {
+    reportNotificationUnopenable(item, href);
     return false;
   }
-  void router.push(targetRoute);
+  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
   return true;
+}
+
+/** 解析失败或没有目标时保留未读，并给出明确反馈；通知带链接时可一键复制。 */
+function reportNotificationUnopenable(item: any, href?: string) {
+  const link = getNotificationCopyableLink(item, href);
+  if (!link) {
+    showToast('该通知暂无法在客户端打开', 'info');
+    return;
+  }
+  showToast('该通知暂无法在客户端打开，可复制其中的链接查看', 'info', 4000, {
+    label: '复制链接',
+    onClick: () => { void copyNotificationLink(link); },
+  });
+}
+
+async function copyNotificationLink(link: string) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('当前环境不支持剪贴板');
+    await navigator.clipboard.writeText(link);
+    showToast('链接已复制', 'success');
+  } catch {
+    showToast('复制失败，请手动选择通知中的链接复制', 'warning');
+  }
+}
+
+function getNotificationCopyableLink(item: any, href?: string): string {
+  for (const value of [href, item?.targetUrl, item?.target_url, item?.webUrl, item?.web_url, item?.url]) {
+    const text = String(value || '').replace(/&amp;/g, '&').trim();
+    if (!text || text === '#' || /^javascript:/i.test(text)) continue;
+    if (/^https?:\/\//i.test(text)) return text;
+    // 相对路径只在用户实际点击的链接上提供，避免复制通知自身的已读参数地址。
+    if (value === href && /^\/(?!\/)/.test(text)) return `https://www.coolapk.com${text}`;
+  }
+  return '';
 }
 
 function formatTime(dateline: any): string {
@@ -498,7 +565,6 @@ function renderSafeHtml(text: string): string {
 
 // 通知内链接点击：动态链接携带通知上下文进入完整动态页，其余走统一处理。
 async function handleNotifyClick(e: Event, item: any) {
-  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
   const anchor = (e.target as HTMLElement).closest('a');
   const href = anchor?.getAttribute('href') || '';
   // 正文链接始终由应用处理，危险协议不得继续触发浏览器默认导航。
@@ -514,17 +580,20 @@ async function handleNotifyClick(e: Event, item: any) {
     return;
   }
   // 正文链接只打开其自身；空白正文点击才进入通知所属动态和评论。
+  // 置读必须发生在确认能打开目标之后，无法打开的通知保留未读。
   if (!anchor?.href || !href || href === '#' || /^javascript:/i.test(href.trim())) {
-    await openNotificationTarget(item);
+    await openNotificationTargetWithFeedback(item);
     return;
   }
   if (href && /(?:\/feed\/\d+|\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
     handleAnchorClick(e);
     return;
   }
   const feedMatch = href.match(/^\/feed\/(\d+)/);
   if (feedMatch?.[1]) {
     e.preventDefault();
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
     openFeedDetail(router, feedMatch[1], item);
     return;
   }
@@ -538,15 +607,23 @@ async function handleNotifyClick(e: Event, item: any) {
   // 不能让该链接先走用户页路由，否则会落到“用户资料加载失败”。
   const externalUrl = getNotificationExternalUrl(notification);
   if (externalUrl) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
     void CoolapkTauriAPI.openUrl(externalUrl);
     return;
   }
   const targetRoute = await resolveNotificationTarget(notification);
   if (targetRoute) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
     void router.push(targetRoute);
     return;
   }
-  if (!getNotificationProductName(notification)) handleAnchorClick(e);
+  // 链接能交给统一入口处理时才算打开了目标。
+  if (!getNotificationProductName(notification)) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
+    handleAnchorClick(e);
+    return;
+  }
+  reportNotificationUnopenable(notification, href);
 }
 
 onActivated(() => {

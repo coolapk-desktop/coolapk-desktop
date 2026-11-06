@@ -792,6 +792,31 @@ async function saveCurrentDraft() {
   draftSaved.value = Boolean(inputText.value.trim());
 }
 
+// 逐字输入时不必每次都写草稿：节流后再落盘，切换会话或离开页面时强制 flush。
+const DRAFT_SAVE_DEBOUNCE_MS = 400;
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let draftSavePending = false;
+
+function scheduleSaveCurrentDraft() {
+  draftSavePending = true;
+  if (draftSaveTimer !== null) return;
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    void flushPendingDraftSave();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+async function flushPendingDraftSave() {
+  if (draftSaveTimer !== null) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  if (!draftSavePending) return;
+  // 先清标记再保存，避免保存过程中触发新的输入重复排队。
+  draftSavePending = false;
+  await saveCurrentDraft();
+}
+
 async function restoreDraft(session: any) {
   const key = getConversationKey(session);
   const savedDraft = key ? await loadMessageDraft(currentUserUid.value, key) : '';
@@ -838,7 +863,7 @@ async function restoreDraft(session: any) {
 
 watch(inputText, () => {
   draftSaved.value = Boolean(inputText.value.trim());
-  void saveCurrentDraft();
+  scheduleSaveCurrentDraft();
 });
 
 function sessionsCacheKey() {
@@ -1574,8 +1599,28 @@ useAndroidBackButton(
   showMobileSessionList,
 );
 
+/**
+ * 聊天记录成功加载并渲染后再置为已读。
+ * 加载失败/超时不能清角标，否则用户没看到的新消息会永久失去未读提示。
+ */
+async function markConversationRead(session: any, requestSequence: number) {
+  const sessionKey = String(session?.ukey || session?.id || '');
+  if (!sessionKey || requestSequence !== historyRequestSequence) return;
+  try {
+    const readResult = await withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时');
+    if (requestSequence !== historyRequestSequence) return;
+    if (markSessionRead(session)) notificationStore.markViewed('message');
+    if (readResult?.data && typeof readResult.data === 'object') notificationStore.applyServerResponse(readResult);
+    persistSessionsCache();
+  } catch (err) {
+    // 置读失败不影响阅读，下一轮同步或轮询会继续尝试。
+    console.error('标记会话已读失败', err);
+  }
+}
+
 const selectSession = async (session: any) => {
-  await saveCurrentDraft();
+  // 先把上一个会话的延迟草稿落盘，再切换会话，避免草稿写到新会话上。
+  await flushPendingDraftSave();
   clearPendingImages();
   const requestSequence = ++historyRequestSequence;
   currentSession.value = session;
@@ -1584,8 +1629,7 @@ const selectSession = async (session: any) => {
   loadingMoreHistory.value = false;
   historyLoadMoreError.value = '';
   hasMoreHistory.value = false;
-  // 进入会话即先清理本地角标，不等待聊天记录和下一轮轮询返回。
-  if (markSessionRead(session)) notificationStore.markViewed('message');
+  // 进入会话立刻显示聊天区域（体验不变），但置读推迟到聊天记录成功加载之后。
   await restoreDraft(session);
   historyError.value = '';
   const partnerUid = getSessionPartnerUid(session);
@@ -1613,18 +1657,6 @@ const selectSession = async (session: any) => {
   }
   const sessionKey = String(ukey);
 
-  // APK 在打开具体会话后调用 message/read；请求与聊天记录加载并行，避免已读状态延迟到下一次轮询。
-  void withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时')
-    .then((readResult: any) => {
-      markSessionRead(session);
-      if (readResult?.data && typeof readResult.data === 'object') {
-        notificationStore.applyServerResponse(readResult);
-      }
-    })
-    .catch((err) => {
-      console.error('标记会话已读失败', err);
-    });
-
   // 1. 如果缓存中已存在历史记录，直接使用，实现 0 延迟秒切无转圈
   const cachedHistory = chatHistoryCache.get(sessionKey) || [];
   const hasCachedHistory = cachedHistory.length > 0;
@@ -1642,6 +1674,7 @@ const selectSession = async (session: any) => {
   }
 
   // 2. 静默发送 API 请求抓取最新记录并同步更新缓存
+  let historyLoaded = false;
   try {
     const refreshLastItem = hasCachedHistory ? getNewestChatHistoryCursor(cachedHistory) : '';
     const res = await withTimeout(
@@ -1663,6 +1696,7 @@ const selectSession = async (session: any) => {
       chatHistoryPagination.set(sessionKey, pagination);
       hasMoreHistory.value = pagination.hasMore;
       historyLoadMoreError.value = '';
+      historyLoaded = true;
     } else {
       throw new Error('聊天记录返回格式不正确');
     }
@@ -1674,6 +1708,8 @@ const selectSession = async (session: any) => {
     if (requestSequence === historyRequestSequence) {
       loadingHistory.value = false;
       await scrollToBottom();
+      // 记录渲染完成后再置读；加载失败的会话保留未读角标，等待重试。
+      if (historyLoaded) await markConversationRead(session, requestSequence);
     }
   }
 };
@@ -1758,6 +1794,8 @@ onDeactivated(() => {
   clearPendingImages();
   unbindGlobalListeners();
   stopMessagePolling();
+  // 离开页面时立即落盘未保存的草稿，避免防抖窗口内的输入丢失。
+  void flushPendingDraftSave();
 });
 
 // --- 交互事件 ---
@@ -2111,7 +2149,7 @@ onUnmounted(() => {
   if (isDraggingSidebar) stopResizeSidebar();
   if (isDraggingInput) stopResizeInput();
   stopMessagePolling();
-  saveCurrentDraft();
+  void flushPendingDraftSave();
 });
 
 // 下拉仅刷新当前栏目，不切换筛选、路由或页面实例。

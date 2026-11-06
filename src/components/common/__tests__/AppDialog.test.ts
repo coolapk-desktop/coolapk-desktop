@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 import { mount } from '@vue/test-utils';
 import AppDialog from '../AppDialog.vue';
 
@@ -18,6 +19,31 @@ it('listens for Escape only while open and preserves closing behavior', async ()
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   expect(wrapper.emitted('close')).toHaveLength(1);
   wrapper.unmount();
+});
+
+it('keepContent 关闭时保留内容 DOM，默认行为仍然销毁内容', async () => {
+  // 内容在 Teleport 目标（body）中，直接按文档查询才能比较 DOM 实例身份。
+  const kept = mount(AppDialog, { props: { isOpen: true, keepContent: true }, slots: { default: '<div class="probe">正文</div>' }, attachTo: document.body });
+  try {
+    const probe = document.querySelector('.probe')!;
+    const wrapper = document.querySelector('.dialog-wrapper')!;
+    await kept.setProps({ isOpen: false });
+    await nextTick();
+    expect(document.querySelector('.dialog-wrapper')).toBe(wrapper);
+    expect(document.querySelector('.probe')).toBe(probe);
+    expect((wrapper as HTMLElement).style.display).toBe('none');
+    await kept.setProps({ isOpen: true });
+    await nextTick();
+    expect((wrapper as HTMLElement).style.display).not.toBe('none');
+    expect(document.querySelector('.probe')).toBe(probe);
+  } finally { kept.unmount(); }
+
+  const destroyed = mount(AppDialog, { props: { isOpen: true }, slots: { default: '<div class="probe">正文</div>' }, attachTo: document.body });
+  try {
+    await destroyed.setProps({ isOpen: false });
+    await nextTick();
+    expect(document.querySelector('.probe')).toBeNull();
+  } finally { destroyed.unmount(); }
 });
 
 it('opens an earlier-mounted confirmation above its source dialog and Escape closes only the top dialog', async () => {
