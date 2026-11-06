@@ -271,6 +271,10 @@ pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, 
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         let tail = &bytes[bytes.len().saturating_sub(MAX_TAIL_BYTES)..];
         content.push_str(&format!("\n===== {name} =====\n"));
+        // 超长文件只导出尾部，必须显式标注，避免把截断后的内容当成完整日志。
+        if bytes.len() > MAX_TAIL_BYTES {
+            content.push_str(&format!("<文件前部已截断，仅保留最近 {}MB>\n", MAX_TAIL_BYTES / 1_000_000));
+        }
         content.push_str(&String::from_utf8_lossy(tail));
         files.push(DiagnosticFile {
             name,

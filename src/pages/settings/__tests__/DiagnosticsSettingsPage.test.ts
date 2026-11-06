@@ -41,7 +41,7 @@ describe('DiagnosticsSettingsPage', () => {
   it('exports the selected system file URI through the filesystem plugin', async () => {
     const wrapper = mount(DiagnosticsSettingsPage);
     await flushPromises();
-    const exportButton = wrapper.findAll('button').find((button) => button.text().includes('导出日志'))!;
+    const exportButton = wrapper.findAll('button').find((button) => button.text().includes('导出全部日志'))!;
     await exportButton.trigger('click');
     await flushPromises();
     expect(mocks.save).toHaveBeenCalledOnce();
@@ -62,7 +62,7 @@ describe('DiagnosticsSettingsPage', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('clear_diagnostic_logs');
   });
 
-  it.each(['复制日志', '导出日志'])('%s 在点击时读取新日志，不使用进入页面时的快照', async action => {
+  it.each(['复制全部日志', '导出全部日志'])('%s 在点击时读取新日志，不使用进入页面时的快照', async action => {
     const wrapper = mount(DiagnosticsSettingsPage);
     await flushPromises();
     const fresh = '[INFO] android.foreground resume\n[INFO] android.foreground draw_requested\n[INFO] android.foreground visual_ready\n[INFO] android.foreground js_state';
@@ -71,7 +71,7 @@ describe('DiagnosticsSettingsPage', () => {
     await flushPromises();
     expect(mocks.invoke).toHaveBeenCalledTimes(2);
     expect(wrapper.find('.log-content').text()).toContain('js_state');
-    if (action === '复制日志') expect(mocks.copyText).toHaveBeenCalledWith(fresh);
+    if (action === '复制全部日志') expect(mocks.copyText).toHaveBeenCalledWith(fresh);
     else expect(mocks.writeTextFile).toHaveBeenCalledWith('content://documents/diagnostics', fresh);
     wrapper.unmount();
   });
@@ -81,14 +81,14 @@ describe('DiagnosticsSettingsPage', () => {
     const wrapper = mount(DiagnosticsSettingsPage);
     await flushPromises();
     mocks.invoke.mockResolvedValueOnce({ files: [], content: '刚复现的黑屏恢复日志', directory: '/logs' });
-    await wrapper.findAll('button').find(button => button.text() === '导出日志')!.trigger('click');
+    await wrapper.findAll('button').find(button => button.text() === '导出全部日志')!.trigger('click');
     await flushPromises();
     expect(mocks.exportJsonFile).toHaveBeenCalledWith('coolapk-diagnostics.txt', '刚复现的黑屏恢复日志');
     expect(mocks.save).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
-  it.each(['复制日志', '导出日志'])('%s 读取失败时不退回旧快照', async action => {
+  it.each(['复制全部日志', '导出全部日志'])('%s 读取失败时不退回旧快照', async action => {
     const wrapper = mount(DiagnosticsSettingsPage);
     await flushPromises();
     mocks.invoke.mockRejectedValueOnce(new Error('读取失败'));
@@ -108,9 +108,46 @@ describe('DiagnosticsSettingsPage', () => {
     const wrapper = mount(DiagnosticsSettingsPage);
     await flushPromises();
     mocks.invoke.mockResolvedValueOnce({ files: [], content: 'resume', directory: '/logs' });
-    await wrapper.findAll('button').find(button => button.text() === '复制日志')!.trigger('click');
+    await wrapper.findAll('button').find(button => button.text() === '复制全部日志')!.trigger('click');
     await flushPromises();
     expect(mocks.copyText).toHaveBeenCalledWith('resume');
+    wrapper.unmount();
+  });
+
+  it('只显示最近 1000 行时标注总行数，复制按钮明确为全部日志', async () => {
+    const lines = Array.from({ length: 1200 }, (_, index) => `[INFO] line-${index + 1}`);
+    mocks.invoke.mockResolvedValueOnce({ files: [], content: lines.join('\n'), directory: '/logs' });
+    const wrapper = mount(DiagnosticsSettingsPage);
+    await flushPromises();
+    const summary = wrapper.find('.lines-summary').text();
+    expect(summary).toContain('仅显示最近 1000 行');
+    expect(summary).toContain('共 1200 行');
+    expect(summary).toContain('复制/导出仍包含全部日志');
+    const copyButton = wrapper.findAll('button').find(button => button.text() === '复制全部日志')!;
+    expect(copyButton.text()).toBe('复制全部日志');
+    const shown = wrapper.find('.log-content').text().split('\n');
+    expect(shown).toHaveLength(1000);
+    expect(shown[0]).toBe('[INFO] line-201');
+    expect(shown.at(-1)).toBe('[INFO] line-1200');
+    // 显示全部后屏幕内容与复制/导出一致，也不再有截断标注。
+    await wrapper.find('.filters input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    expect(wrapper.find('.log-content').text().split('\n')).toHaveLength(1200);
+    expect(wrapper.find('.lines-summary').text()).toContain('已显示全部 1200 行');
+    wrapper.unmount();
+  });
+
+  it('复制与导出保留日志文件尾部截断标记', async () => {
+    const content = '<文件前部已截断，仅保留最近 2MB>\n[INFO] tail-line';
+    const wrapper = mount(DiagnosticsSettingsPage);
+    await flushPromises();
+    mocks.invoke.mockResolvedValue({ files: [], content, directory: '/logs' });
+    await wrapper.findAll('button').find(button => button.text() === '复制全部日志')!.trigger('click');
+    await flushPromises();
+    expect(mocks.copyText).toHaveBeenCalledWith(content);
+    await wrapper.findAll('button').find(button => button.text() === '导出全部日志')!.trigger('click');
+    await flushPromises();
+    expect(mocks.writeTextFile).toHaveBeenCalledWith('content://documents/diagnostics', content);
     wrapper.unmount();
   });
 

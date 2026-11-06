@@ -5,8 +5,8 @@
 
     <div class="toolbar">
       <AppButton variant="secondary" size="sm" :loading="loading" :disabled="savingLogs" @click="loadLogs">刷新</AppButton>
-      <AppButton variant="secondary" size="sm" :disabled="loading || savingLogs" @click="copyLogs">复制日志</AppButton>
-      <AppButton variant="secondary" size="sm" :disabled="loading || savingLogs" @click="exportLogs">导出日志</AppButton>
+      <AppButton variant="secondary" size="sm" :disabled="loading || savingLogs" @click="copyLogs">复制全部日志</AppButton>
+      <AppButton variant="secondary" size="sm" :disabled="loading || savingLogs" @click="exportLogs">导出全部日志</AppButton>
       <AppButton variant="danger" size="sm" :disabled="loading || savingLogs || snapshot.files.length === 0" @click="clearLogs">清空日志</AppButton>
     </div>
     <label class="verbose-toggle"><input v-model="verbose" type="checkbox" @change="changeVerbose" /> 本次运行记录详细调试信息</label>
@@ -19,10 +19,11 @@
         <option value="info">信息</option>
       </select>
       <input v-model="keyword" class="control search" type="search" placeholder="搜索日志内容" aria-label="搜索日志内容" />
+      <label v-if="canShowAll" class="verbose-toggle"><input v-model="showAll" type="checkbox" /> 显示全部行</label>
     </div>
 
     <p v-if="error" class="error-text">{{ error }}</p>
-    <p class="meta">{{ snapshot.files.length }} 个文件 · {{ visibleLines.length }} 行结果</p>
+    <p class="meta lines-summary">{{ snapshot.files.length }} 个文件 · {{ linesSummary }}</p>
     <pre class="log-content custom-scrollbar">{{ visibleLines.length ? visibleLines.join('\n') : '暂无日志' }}</pre>
     <p class="path">日志目录：{{ snapshot.directory || '正在获取…' }}</p>
     <section class="report-reader">
@@ -123,13 +124,30 @@ const error = ref('');
 const level = ref('all');
 const keyword = ref('');
 const verbose = ref(false);
+/** 展示最多只渲染最近 1000 行；复制与导出始终使用完整日志，避免卡住 UI。 */
+const VIEW_LINE_LIMIT = 1000;
+const showAll = ref(false);
 
-const visibleLines = computed(() => {
+/** 按级别/关键词过滤后的全部日志行（不做行数截断）。 */
+const filteredLines = computed(() => {
   const query = keyword.value.trim().toLowerCase();
   return snapshot.value.content.split('\n').filter((line) => {
     if (level.value !== 'all' && !line.toLowerCase().includes(`[${level.value}]`)) return false;
     return !query || line.toLowerCase().includes(query);
-  }).slice(-1000);
+  });
+});
+
+/** 只有筛选后超过展示上限时才需要「显示全部」开关。 */
+const canShowAll = computed(() => filteredLines.value.length > VIEW_LINE_LIMIT);
+
+const visibleLines = computed(() => showAll.value ? filteredLines.value : filteredLines.value.slice(-VIEW_LINE_LIMIT));
+
+/** 明确区分「屏幕显示的行」与「复制/导出内容」，两者不一致时必须标注。 */
+const linesSummary = computed(() => {
+  const total = filteredLines.value.length;
+  if (total <= VIEW_LINE_LIMIT) return `${total} 行结果`;
+  if (showAll.value) return `已显示全部 ${total} 行（筛选后）`;
+  return `仅显示最近 ${VIEW_LINE_LIMIT} 行（共 ${total} 行；复制/导出仍包含全部日志）`;
 });
 
 async function readLatestLogs(): Promise<string> {
