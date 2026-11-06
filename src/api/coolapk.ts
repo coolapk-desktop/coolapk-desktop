@@ -12,6 +12,7 @@ import type { UpdatePackageType } from '../utils/updateChecker';
 import { showToast } from '../utils/toast';
 import { getOriginalImageUrl } from '../utils/image';
 import { getMemoryCachedResourceSync, retainResourceUrl } from '../utils/resourceCache';
+import { invalidateFeedFullText } from '../utils/feedFullTextCache';
 import { useSettingsStore } from '../stores/settings';
 
 function tauriInvokeAvailable(): boolean {
@@ -1298,7 +1299,10 @@ export class CoolapkTauriAPI {
   }
 
   static async deleteFeed(feedId: string) {
-    return await invokeNative('delete_feed', { feedId });
+    const result = await invokeNative('delete_feed', { feedId });
+    // 动态已删除，旧的全文缓存不可再复用。
+    invalidateFeedFullText(feedId);
+    return result;
   }
 
   static async deleteReply(replyId: string) {
@@ -1430,7 +1434,10 @@ export class CoolapkTauriAPI {
   }
 
   static async updateFeed(feedId: string, message: string, pic: string, postToken?: string, options?: PublishOptions) {
-    return await invokeNative('update_feed', { feedId, message, pic, postToken, options });
+    const result = await invokeNative('update_feed', { feedId, message, pic, postToken, options });
+    // 正文已编辑，展开缓存必须失效，否则详情页会继续显示旧全文。
+    invalidateFeedFullText(feedId);
+    return result;
   }
 
   static async saveCookie(cookieStr: string) {

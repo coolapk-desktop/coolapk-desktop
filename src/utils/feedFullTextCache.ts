@@ -10,6 +10,8 @@ type QueueTask = {
 
 const fullTextCache = new Map<string, string>();
 const pendingRequests = new Map<string, Promise<string>>();
+// 写后失效的代次：动态被编辑/删除后在途请求不得把旧正文回写到缓存。
+const invalidationEpoch = new Map<string, number>();
 const requestQueue: QueueTask[] = [];
 let activeRequestCount = 0;
 
@@ -60,6 +62,7 @@ export function loadFeedFullText(feedId: string | number): Promise<string> {
     return pending;
   }
 
+  const epoch = invalidationEpoch.get(key) || 0;
   const request = enqueueRequest(async () => {
     const started = Date.now();
     logDiagnostic('info', 'feed_full_text', 'request_started', `feed_id=${key}`);
@@ -67,7 +70,8 @@ export function loadFeedFullText(feedId: string | number): Promise<string> {
       const response: any = await CoolapkTauriAPI.getFeedDetail(key);
       const message = getFeedDetailMessage(response?.data);
       if (!message) throw new Error('动态详情没有返回完整正文');
-      fullTextCache.set(key, message);
+      // 请求期间动态被编辑或删除时不再回写，避免缓存旧正文。
+      if ((invalidationEpoch.get(key) || 0) === epoch) fullTextCache.set(key, message);
       logDiagnostic('info', 'feed_full_text', 'request_succeeded', `feed_id=${key} elapsed_ms=${Date.now() - started} length=${message.length}`);
       return message;
     } catch (error) {
@@ -85,6 +89,21 @@ export function loadFeedFullText(feedId: string | number): Promise<string> {
 
 export function getCachedFeedFullText(feedId: string | number): string {
   return fullTextCache.get(String(feedId).trim()) || '';
+}
+
+/**
+ * 动态正文被编辑或删除后立即失效该条缓存（写后失效）。
+ * 只做写后失效：缓存命中时再比对 lastupdate 需要额外请求，展开正文时成本更高，
+ * 而编辑/删除都会经过 updateFeed / deleteFeed，写侧失效已能覆盖陈旧正文。
+ */
+export function invalidateFeedFullText(feedId: string | number | undefined | null) {
+  const key = String(feedId ?? '').trim();
+  if (!key) return;
+  invalidationEpoch.set(key, (invalidationEpoch.get(key) || 0) + 1);
+  fullTextCache.delete(key);
+  // 放弃在途请求的共享入口，下次展开会重新拉取最新正文。
+  pendingRequests.delete(key);
+  logDiagnostic('info', 'feed_full_text', 'cache_invalidated', `feed_id=${key}`);
 }
 
 /** 仅供测试或账号上下文重置时清空内存正文缓存。 */

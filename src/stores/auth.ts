@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
+import { clearUserProfileCache } from '../utils/userProfilePreloader';
 import { useUserRelationsStore } from './userRelations';
 
 export interface UserProfile {
@@ -39,6 +40,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   function clearFrontendAuthState() {
     clearResourceMemoryCache();
+    // 用户资料缓存带账号维度（uid@viewerUid），登出/切号/凭据失效后必须整体清空。
+    clearUserProfileCache();
     // 关注关系带账号视角，切号/登出必须清掉，否则会显示上一个账号的关注状态。
     useUserRelationsStore().reset();
     user.value = null;
@@ -213,6 +216,8 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = profile;
     isLoggedIn.value = true;
     clearResourceMemoryCache();
+    // 切换账号成功后旧的账号维度缓存不再适用。
+    clearUserProfileCache();
     localStorage.setItem('coolapk_user', JSON.stringify(profile));
     await loadAccounts();
     return profile;
@@ -295,6 +300,8 @@ export const useAuthStore = defineStore('auth', () => {
 
     user.value = profile;
     isLoggedIn.value = true;
+    // 登录成功即换账号视角，先清掉上一个账号的用户资料缓存。
+    clearUserProfileCache();
     localStorage.setItem('coolapk_user', JSON.stringify(profile));
 
     const tokenStr = `SESSID=${sessid}; uid=${uid}`;
@@ -346,6 +353,8 @@ export const useAuthStore = defineStore('auth', () => {
 
     user.value = profile;
     isLoggedIn.value = true;
+    // 登录成功即换账号视角，先清掉上一个账号的用户资料缓存。
+    clearUserProfileCache();
     localStorage.setItem('coolapk_user', JSON.stringify(profile));
 
     const tokenStr = `SESSID=${sessid}; uid=${uid}`;
