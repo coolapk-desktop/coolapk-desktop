@@ -55,7 +55,19 @@
             <div v-else-if="activeState.error && !activeState.items.length" class="empty-wrapper"><EmptyState title="搜索失败" :description="activeState.error" /><button type="button" class="retry-button" @click="fetchTab(activeTab)">重试</button></div>
             <div v-else-if="!activeState.items.length" class="empty-wrapper"><EmptyState title="未搜索到相关结果" description="请尝试输入其他关键字重新搜索" /></div>
             <div v-else class="search-result-list">
-              <SearchResultItem v-for="(item, index) in activeState.items" :key="entityKey(item, index)" :entity="item" :highlight-keyword="queryStr" :show-follow="activeTab === 'user' || activeTab === 'users'" :followed="isUserFollowed(item)" @deleted="removeEntity" @search="doSearch" @toggle-follow="toggleFollow" />
+              <!-- 综合页的用户名命中结果单独成组，可一键收起，避免干扰后面的相关帖子。 -->
+              <section v-if="resultGroups.showUsers" class="search-user-group">
+                <button type="button" class="search-user-group-toggle" :aria-expanded="!usersCollapsed" :title="usersCollapsed ? '展开相关用户' : '收起相关用户'" @click="toggleUserGroup">
+                  <i class="fas fa-user-group search-user-group-icon" aria-hidden="true"></i>
+                  <span class="search-user-group-label">相关用户</span>
+                  <span class="search-user-group-count">{{ resultGroups.users.length }}</span>
+                  <span class="search-user-group-action"><i :class="usersCollapsed ? 'fas fa-chevron-down' : 'fas fa-chevron-up'" aria-hidden="true"></i>{{ usersCollapsed ? '展开' : '收起' }}</span>
+                </button>
+                <div v-if="!usersCollapsed" class="search-user-group-list">
+                  <SearchResultItem v-for="row in resultGroups.users" :key="entityKey(row.entity, row.index)" :entity="row.entity" :highlight-keyword="queryStr" :show-follow="false" :followed="isUserFollowed(row.entity)" @deleted="removeEntity" @search="doSearch" @toggle-follow="toggleFollow" />
+                </div>
+              </section>
+              <SearchResultItem v-for="row in resultGroups.others" :key="entityKey(row.entity, row.index)" :entity="row.entity" :highlight-keyword="queryStr" :show-follow="activeTab === 'user' || activeTab === 'users'" :followed="isUserFollowed(row.entity)" @deleted="removeEntity" @search="doSearch" @toggle-follow="toggleFollow" />
               <div class="pagination-footer">
                 <LoadingState v-if="activeState.loadingMore" text="加载更多中..." />
                 <div v-else-if="activeState.cursor.noMore" class="no-more">没有更多结果了</div>
@@ -93,8 +105,9 @@ import { orderSearchTabs } from '../utils/searchTabOrder';
 import type { SearchEntity, SearchTabDefinition, SearchTabState } from '../types/search';
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, removeSearchHistory, searchHistory } from '../utils/searchHistory';
-import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
+import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
 import { fetchSearchSuggestions } from '../utils/searchSuggestions';
+import { readSearchUsersCollapsed, writeSearchUsersCollapsed } from '../utils/searchUserGroup';
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
 
 const route = useRoute();
@@ -213,6 +226,26 @@ function entityKey(entity: SearchEntity, index: number): string {
 function entityIdentity(entity: SearchEntity): string {
   return getSearchEntityId(entity) || getSearchEntityTitle(entity);
 }
+
+const usersCollapsed = ref(readSearchUsersCollapsed());
+
+// 综合页才把用户名命中的用户单独成组；其他页签和范围搜索保持服务端顺序。
+const resultGroups = computed(() => {
+  const rows = activeState.value.items.map((entity, index) => ({ entity, index }));
+  const tab = searchTabs.value.find((item) => item.key === activeTab.value);
+  if (isScopedSearch.value || tab?.searchType !== 'all') return { users: [], others: rows, showUsers: false };
+  const users = rows.filter((row) => getSearchEntityKind(row.entity) === 'user');
+  if (!users.length) return { users: [], others: rows, showUsers: false };
+  return { users, others: rows.filter((row) => getSearchEntityKind(row.entity) !== 'user'), showUsers: true };
+});
+
+function toggleUserGroup() {
+  usersCollapsed.value = !usersCollapsed.value;
+  writeSearchUsersCollapsed(usersCollapsed.value);
+  // 收起后若首屏只有用户，滚动区域会失去滚动空间，需主动补一页后续结果。
+  if (usersCollapsed.value && !resultGroups.value.others.length) void fetchTab(activeTab.value, true);
+}
+
 function resetTabStates() {
   tabStates.clear();
   searchTabs.value.forEach((tab) => ensureTabState(tab.key));
@@ -327,6 +360,11 @@ async function fetchTab(tabKey: string, loadMore = false) {
       lastItem: responseLast || last || state.cursor.lastItem,
       noMore: responseFlag(response?.noMore ?? response?.data?.noMore) || rows.length === 0,
     };
+    // 用户组收起且当前只有用户结果时继续翻页，避免整屏空白且无法触发滚动加载。
+    if (usersCollapsed.value && !state.cursor.noMore && !state.items.some((item) => getSearchEntityKind(item) !== 'user')) {
+      const nextTabKey = tab.key;
+      queueMicrotask(() => void fetchTab(nextTabKey, true));
+    }
   } catch (error) {
     if (requestVersion === state.requestVersion) state.error = error instanceof Error ? error.message : String(error);
   } finally {
@@ -567,6 +605,13 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
 .search-result-list { display: flex; flex-direction: column; gap: 12px; width: 100%; }
 .loading-wrapper, .empty-wrapper { padding: var(--space-6) 0; text-align: center; }
 .retry-button { margin-top: 10px; padding: 6px 14px; color: var(--brand-primary); background: var(--brand-soft); border: 0; border-radius: var(--radius-control); cursor: pointer; }
+.search-user-group { display: flex; flex-direction: column; gap: 12px; }
+.search-user-group-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 14px; color: var(--text-secondary); font-size: var(--font-size-sub); font-weight: var(--font-weight-semibold); text-align: left; background: var(--surface); border: 1px solid var(--border-light, var(--border)); border-radius: var(--radius-control); cursor: pointer; transition: background var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default); }
+.search-user-group-toggle:hover { color: var(--text-primary); background: var(--surface-hover); }
+.search-user-group-icon { color: var(--brand-primary); }
+.search-user-group-count { padding: 1px 7px; color: var(--brand-primary); font-size: var(--font-size-caption); background: var(--brand-soft); border-radius: 999px; }
+.search-user-group-action { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--brand-primary); font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); }
+.search-user-group-list { display: flex; flex-direction: column; gap: 12px; }
 .pagination-footer { padding: var(--space-4) 0; text-align: center; }
 .no-more { color: var(--text-tertiary); font-size: var(--font-size-caption); }
 .search-welcome { display: flex; flex-direction: column; gap: 12px; }

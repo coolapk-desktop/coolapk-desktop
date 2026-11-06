@@ -468,3 +468,87 @@ describe('搜索结果去重与筛选一致性', () => {
     } finally { wrapper.unmount(); localStorage.clear(); }
   });
 });
+
+describe('综合搜索相关用户分组', () => {
+  function mountSearch() {
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/search', component: SearchPage }] });
+    const wrapper = mount(SearchPage, { global: { plugins: [createPinia(), router], stubs: { SearchResultItem: true, SearchHotListCard: true, LoadingState: true, EmptyState: true } } });
+    return { wrapper, router };
+  }
+
+  it('用户名命中的结果收进可折叠分组，收起状态持久化', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockResolvedValue({ data: [
+      { entityType: 'user', uid: '11', username: '小米用户' },
+      { entityType: 'feed', id: 'f1', message: '小米帖子' },
+    ] });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
+      await flushPromises();
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(2);
+      const toggle = wrapper.get('.search-user-group-toggle');
+      expect(toggle.text()).toContain('相关用户');
+      expect(toggle.text()).toContain('1');
+      expect(toggle.attributes('aria-expanded')).toBe('true');
+      await toggle.trigger('click');
+      await flushPromises();
+      expect(wrapper.find('.search-user-group-list').exists()).toBe(false);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect(wrapper.get('.search-user-group-toggle').attributes('aria-expanded')).toBe('false');
+      expect(localStorage.getItem('coolapk-desktop-search-users-collapsed')).toBe('1');
+    } finally { wrapper.unmount(); }
+
+    const { wrapper: second, router: secondRouter } = mountSearch();
+    try {
+      await secondRouter.push({ path: '/search', query: { q: '小米', tab: 'all' } });
+      await flushPromises();
+      expect(second.find('.search-user-group-list').exists()).toBe(false);
+      expect(second.findAll('search-result-item-stub')).toHaveLength(1);
+    } finally { second.unmount(); localStorage.clear(); }
+  });
+
+  it('没有用户结果或其他页签不显示分组', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockResolvedValue({ data: [{ entityType: 'feed', id: 'f1', message: '小米帖子' }] });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '小米', tab: 'all' } });
+      await flushPromises();
+      expect(wrapper.find('.search-user-group-toggle').exists()).toBe(false);
+      await router.push({ path: '/search', query: { q: '小米', tab: 'user' } });
+      mocks.searchByType.mockResolvedValue({ data: [{ entityType: 'user', uid: '11', username: '小米用户' }] });
+      await flushPromises();
+      expect(wrapper.find('.search-user-group-toggle').exists()).toBe(false);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+    } finally { wrapper.unmount(); }
+  });
+it('收起后首屏只有用户时自动补一页，避免整屏空白', async () => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    mocks.getTabConfig.mockResolvedValue({ data: [] });
+    mocks.getHotSearches.mockResolvedValue({ data: [] });
+    mocks.searchByType.mockReset();
+    mocks.searchByType
+      .mockResolvedValueOnce({ data: [{ entityType: 'user', uid: '11', username: '阿杰' }], firstItem: 'f', lastItem: 'l' })
+      .mockResolvedValueOnce({ data: [{ entityType: 'feed', id: 'f2', message: '阿杰的帖子' }] });
+    const { wrapper, router } = mountSearch();
+    try {
+      await router.push({ path: '/search', query: { q: '阿杰', tab: 'all' } });
+      await flushPromises();
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      await wrapper.get('.search-user-group-toggle').trigger('click');
+      await flushPromises();
+      expect(mocks.searchByType.mock.calls.map(([request]) => request.page)).toEqual([1, 2]);
+      expect(wrapper.findAll('search-result-item-stub')).toHaveLength(1);
+      expect((wrapper.findComponent({ name: 'SearchResultItem' }).props('entity') as { id: string }).id).toBe('f2');
+      expect(mocks.searchByType.mock.calls.at(-1)?.[0]).toMatchObject({ page: 2, firstItem: 'f', lastItem: 'l' });
+    } finally { wrapper.unmount(); localStorage.clear(); }
+  });
+});
