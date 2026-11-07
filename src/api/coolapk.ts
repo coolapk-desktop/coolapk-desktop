@@ -1415,6 +1415,20 @@ export class CoolapkTauriAPI {
     });
   }
 
+  /// 探测断点(.part)文件是否还在。Rust 侧返回三态：exists / missing / unknown。
+  /// unknown 表示路径不合法、越界或目录无法解析，调用方应保持现有保守提示而不是清进度。
+  static async apkDownloadPartialExists(
+    partialPath?: string,
+    dir?: string,
+    fileName?: string,
+  ): Promise<'exists' | 'missing' | 'unknown'> {
+    return await invoke<'exists' | 'missing' | 'unknown'>('apk_download_partial_exists', {
+      dir: dir || '',
+      partialPath: partialPath || '',
+      fileName: fileName || '',
+    });
+  }
+
   static async openApkDownloadDirectory(dir?: string) {
     return await invoke<void>('open_apk_download_directory', { dir: dir || '' });
   }

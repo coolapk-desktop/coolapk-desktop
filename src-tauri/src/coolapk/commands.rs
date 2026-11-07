@@ -1837,14 +1837,14 @@ fn paths_equivalent(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn path_is_direct_child_of(path: &Path, target_dir: &Path) -> Result<bool, String> {
+pub(crate) fn path_is_direct_child_of(path: &Path, target_dir: &Path) -> Result<bool, String> {
     let parent = path.parent().ok_or_else(|| "下载文件路径不合法".to_string())?;
     let canonical_dir = std::fs::canonicalize(target_dir).map_err(|_| "下载目录不存在或无法访问".to_string())?;
     let canonical_parent = std::fs::canonicalize(parent).map_err(|_| "下载文件所在目录不存在或无法访问".to_string())?;
     Ok(paths_equivalent(&canonical_dir, &canonical_parent))
 }
 
-fn reject_download_symlink(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_download_symlink(path: &Path) -> Result<(), String> {
     if let Ok(metadata) = std::fs::symlink_metadata(path) {
         if metadata.file_type().is_symlink() {
             return Err("拒绝操作符号链接下载文件".to_string());
@@ -2198,7 +2198,7 @@ pub fn cancel_apk_download(state: State<'_, AppState>, task_id: String) -> Resul
     state.downloads.request(&task_id, DownloadControl::Cancel)
 }
 
-fn validate_download_path_for_file_operation(raw_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn validate_download_path_for_file_operation(raw_path: &str) -> Result<PathBuf, String> {
     let path = validate_custom_dir(raw_path.trim(), "下载文件路径")?;
     let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
     let lower_name = name.to_ascii_lowercase();
@@ -2597,7 +2597,7 @@ fn validate_custom_dir(value: &str, label: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn user_save_dir(app: &tauri::AppHandle, custom_dir: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn user_save_dir(app: &tauri::AppHandle, custom_dir: Option<&str>) -> Result<PathBuf, String> {
     // Android 先在应用目录落盘，再通过 MediaStore/系统保存器导出；跨设备导入的桌面路径不适用。
     #[cfg(target_os = "android")]
     {
