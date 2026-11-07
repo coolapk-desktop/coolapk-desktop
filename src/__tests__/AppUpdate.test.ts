@@ -40,7 +40,18 @@ vi.mock('../stores/settings', async () => {
   settings: mocks.settings, flushSettings: mocks.flushSettings, refreshAutoZoom: vi.fn(),
 }) };
 });
-vi.mock('../stores/downloads', () => ({ useDownloadStore: () => ({ initialize: vi.fn() }) }));
+// 更新器会把自己的下载任务镜像进下载中心；这里给出对应的 no-op 接口，
+// 断言仍集中在更新器自身的提示与弹窗行为上。
+vi.mock('../stores/downloads', () => ({
+  useDownloadStore: () => ({
+    initialize: vi.fn(),
+    appendUpdate: vi.fn(() => ({ id: 'update-task' })),
+    updateUpdateProgress: vi.fn(),
+    markUpdateReady: vi.fn(),
+    markUpdateFailed: vi.fn(),
+    removeUpdateTask: vi.fn(),
+  }),
+}));
 vi.mock('../stores/pageTabs', () => ({ usePageTabsStore: () => ({ getGeneration: () => 0, syncRoute: vi.fn() }) }));
 vi.mock('vue-router', () => ({
   useRoute: () => ({ path: '/home', fullPath: '/home' }),

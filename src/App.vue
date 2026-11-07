@@ -274,6 +274,10 @@ let unregisterViewport: (() => void) | null = null;
 let unregisterKeyboardAssist: (() => void) | null = null;
 let updateDownloadInFlight = false;
 let updateChannelEpoch = 0;
+// 下载中心重试入口需要的最近一次更新信息；store 只存展示字段，重发下载必须回到这里。
+const lastUpdateAttempt = ref<UpdateInfo | null>(null);
+// 当前更新任务在下载中心 store 里的镜像 id；下载本体仍由本组件驱动。
+let updateTaskId = '';
 // 本次运行内是否已经用应用内提示替代过桌面通知，保证每会话只打扰一次。
 let downloadToastHintShown = false;
 
@@ -404,6 +408,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
     return;
   }
   if (!canInstallInApp.value || !url || updateDownloadInFlight || downloading.value) return;
+  lastUpdateAttempt.value = info;
   updateDownloadInFlight = true;
   logDiagnostic('info', 'update', 'download_started');
   updateInfo.value = null;
@@ -413,6 +418,15 @@ async function startBackgroundDownload(info: UpdateInfo) {
     releaseNotes: info.releaseNotes || '',
   };
   downloading.value = { downloaded: 0, total: 0, percent: 0 };
+  // 在下载中心登记镜像任务（仅展示与入口），不改变本组件驱动下载的既有流程。
+  const updateTask = downloadStore.appendUpdate({
+    version: info.latestVersion || '新版本',
+    fileName: info.installerName,
+    total: 0,
+    packageType: info.packageType || updatePackageType.value,
+    url,
+  });
+  updateTaskId = updateTask.id;
   let unlisten: (() => void) | null = null;
   let lastDownloaded = 0;
   try {
@@ -426,6 +440,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
         total,
         percent: total ? Math.min(100, Math.round((downloaded / total) * 100)) : 0,
       };
+      downloadStore.updateUpdateProgress(updateTaskId, downloaded, total);
     });
     const path = await CoolapkTauriAPI.downloadUpdate(url, {
       speedLimitKbps: settingsStore.settings.updateSpeedLimitKBps,
@@ -435,6 +450,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
     if (!isVersionAllowedInChannel(downloadedVersion, settingsStore.settings.updateChannel)) {
       downloading.value = null;
       downloadNotice.value = null;
+      downloadStore.removeUpdateTask(updateTaskId); // 渠道已不提供该版本，镜像记录一并移除。
       await CoolapkTauriAPI.cleanupUpdatePackages();
       return;
     }
@@ -445,7 +461,10 @@ async function startBackgroundDownload(info: UpdateInfo) {
     }
     downloading.value = null;
     downloadNotice.value = null;
-    if (!isVersionAllowedInChannel(downloadedVersion, settingsStore.settings.updateChannel)) return;
+    if (!isVersionAllowedInChannel(downloadedVersion, settingsStore.settings.updateChannel)) {
+      downloadStore.removeUpdateTask(updateTaskId);
+      return;
+    }
     readyInfo.value = {
       version: downloadedVersion,
       path,
@@ -454,6 +473,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
       releaseNotes: info.releaseNotes || '',
     };
     readyUpdateVisible.value = true;
+    downloadStore.markUpdateReady(updateTaskId, path);
     localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify(readyInfo.value));
     if (settingsStore.settings.notifyDownloadComplete) {
       if (settingsStore.settings.desktopNotifications) {
@@ -480,6 +500,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
     logDiagnostic('error', 'update', 'download_failed');
     downloading.value = null;
     downloadNotice.value = null;
+    downloadStore.markUpdateFailed(updateTaskId, `更新包下载失败：${String(err)}`);
     downloadError.value = `更新包下载失败，请检查网络连接后重试。(${String(err)})`;
   } finally {
     if (unlisten) await unlisten();
@@ -526,6 +547,30 @@ function installNow() {
       downloadError.value = `启动安装程序失败：${String(err)}`;
     }
   })();
+}
+
+// 下载中心只发 window 事件、不依赖更新器内部状态：
+// - coolapk:install-update（detail: { version?: string }）→ 打开待安装弹窗并走现有 installNow；
+// - coolapk:retry-update（无载荷）→ 用最近一次更新信息重新发起下载，退化到手动手检查。
+function handleDownloadCenterInstall(event: Event) {
+  const version = (event as CustomEvent<{ version?: string }>).detail?.version || '';
+  logDiagnostic('info', 'update', 'download_center_install', version);
+  if (!readyInfo.value || installingUpdate.value) return;
+  readyUpdateVisible.value = true;
+  installNow();
+}
+
+function handleDownloadCenterRetry() {
+  if (updateDownloadInFlight || downloading.value) return;
+  if (readyInfo.value) {
+    readyUpdateVisible.value = true;
+    return;
+  }
+  if (lastUpdateAttempt.value) {
+    void startBackgroundDownload(lastUpdateAttempt.value);
+    return;
+  }
+  void checkForUpdate(true);
 }
 
 function ignoreThisVersion() {
@@ -654,6 +699,8 @@ onMounted(() => {
     }
   })();
   window.addEventListener('check-for-update', handleCheckForUpdate);
+  window.addEventListener('coolapk:install-update', handleDownloadCenterInstall);
+  window.addEventListener('coolapk:retry-update', handleDownloadCenterRetry);
 
   // 启动时先清理过期图片，再按总占用阈值决定是否清理全部缓存。
   if (settingsStore.settings.autoCleanCache) {
@@ -684,6 +731,8 @@ onUnmounted(() => {
   unregisterAndroidError?.();
   unregisterAgentBridgeConfirm?.();
   window.removeEventListener('check-for-update', handleCheckForUpdate);
+  window.removeEventListener('coolapk:install-update', handleDownloadCenterInstall);
+  window.removeEventListener('coolapk:retry-update', handleDownloadCenterRetry);
   window.removeEventListener('resize', settingsStore.refreshAutoZoom);
   unregisterHotkeys?.();
   unregisterSelectionClear?.();

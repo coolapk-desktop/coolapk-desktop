@@ -7,6 +7,14 @@ import { desktopNotify } from '../utils/desktopNotify';
 import { useSettingsStore } from './settings';
 import type { DownloadStatus, DownloadTask } from '../types/download';
 
+/** 应用更新包的 kind 标记（DownloadTask.kind 的合法取值之一）。 */
+export const UPDATE_KIND = 'update';
+
+/** 判断任务是否是应用更新包任务（.apk 安装包专属逻辑必须绕开它）。 */
+export function isUpdateTask(task: DownloadTask): boolean {
+  return task?.kind === UPDATE_KIND;
+}
+
 const STORAGE_KEY = 'coolapk_desktop_downloads_v1';
 const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused'];
 // 进度类字段更新极其频繁（每个进度事件一次），单独节流写盘；状态/路径/错误必须立即落盘。
@@ -308,6 +316,12 @@ export const useDownloadStore = defineStore('downloads', () => {
       // 前端无法直接探测 .part 是否还在（fs 插件未授予 exists 权限，见 batch6 报告）；
       // 有进度却没有断点路径，说明断点大概率已随换设备/清目录丢失，给出保守提示，
       // 不清空进度数字，用户可用「重新开始」自行决定重下。
+      // 更新任务在应用重启后原生下载必然已中断，且不支持断点，直接标失败让用户重试。
+      if (isUpdateTask(task) && task.status === 'paused') {
+        task.status = 'failed';
+        task.error = '应用重启导致下载中断，请重试';
+        continue;
+      }
       if (task.status === 'paused' && task.downloaded > 0 && !task.partialPath && !task.error) {
         task.error = '断点文件可能已失效，可重新开始';
       }
@@ -332,7 +346,8 @@ export const useDownloadStore = defineStore('downloads', () => {
       ? settingsStore.settings.maxConcurrentDownloads
       : 3;
     while (runningIds.size < limit) {
-      const task = tasks.value.find((item) => item.status === 'queued' && !runningIds.has(item.id));
+      // 更新包由 App.vue 的更新器驱动（Rust 侧独立命令），不走 apk 原生下载队列。
+      const task = tasks.value.find((item) => item.status === 'queued' && !isUpdateTask(item) && !runningIds.has(item.id));
       if (!task) break;
       runningIds.add(task.id);
       patchTask(task.id, { status: 'downloading', error: '' });
@@ -438,7 +453,8 @@ export const useDownloadStore = defineStore('downloads', () => {
 
   async function pause(taskId: string) {
     const task = findTask(taskId);
-    if (!task) return;
+    // 更新包不支持暂停/断点（Rust 侧无对应命令），批量操作也不得把任务标成已暂停误导用户。
+    if (!task || isUpdateTask(task)) return;
     if (task.status === 'queued') {
       patchTask(taskId, { status: 'paused' });
       return;
@@ -468,7 +484,8 @@ export const useDownloadStore = defineStore('downloads', () => {
   /** 继续：保留已下载的断点进度。 */
   async function resume(taskId: string) {
     const task = findTask(taskId);
-    if (!task || !['paused', 'failed', 'canceled'].includes(task.status)) return;
+    // 更新包的重试通过 coolapk:retry-update 事件交给 App.vue 重新发起下载，不进 apk 队列。
+    if (!task || isUpdateTask(task) || !['paused', 'failed', 'canceled'].includes(task.status)) return;
     patchTask(taskId, { status: 'queued', error: '', speed: 0 });
     await pump();
   }
@@ -476,7 +493,7 @@ export const useDownloadStore = defineStore('downloads', () => {
   /** 重新开始：丢弃已有进度与断点文件，从头下载。 */
   async function restart(taskId: string) {
     const task = findTask(taskId);
-    if (!task || !['paused', 'failed', 'canceled'].includes(task.status)) return;
+    if (!task || isUpdateTask(task) || !['paused', 'failed', 'canceled'].includes(task.status)) return;
     patchTask(taskId, { status: 'queued', downloaded: 0, speed: 0, partialPath: '', error: '' });
     await pump();
   }
@@ -491,6 +508,7 @@ export const useDownloadStore = defineStore('downloads', () => {
     }
     if (task.status !== 'downloading') return;
     patchTask(taskId, { status: 'canceled', downloaded: 0, speed: 0, partialPath: '', error: '' });
+    if (isUpdateTask(task)) return; // 更新包取消由更新器内部处理，这里只更新记录状态。
     try {
       await CoolapkTauriAPI.cancelApkDownload(taskId);
     } catch (error) {
@@ -526,10 +544,14 @@ export const useDownloadStore = defineStore('downloads', () => {
   }
 
   async function open(task: DownloadTask) {
+    // 更新包保存在更新器管理的缓存目录，不属于「打开安装包目录」的范围。
+    if (isUpdateTask(task)) return;
     await CoolapkTauriAPI.openApkDownloadDirectory(task.downloadDir);
   }
 
   async function install(task: DownloadTask) {
+    // 更新包的安装走 App.vue 的 installUpdate（portable/deb/rpm 分支），绝不进 apk 安装器。
+    if (isUpdateTask(task)) return;
     if (task.status !== 'completed' || !task.targetPath || !/\.apk$/i.test(task.targetPath)) return;
     try {
       const result = await CoolapkTauriAPI.installApkDownload(task.targetPath);
@@ -553,7 +575,8 @@ export const useDownloadStore = defineStore('downloads', () => {
     try {
       while (guard < 5) {
         guard += 1;
-        const active = activeTasks.value.filter((task) => task.status === 'downloading' || task.status === 'queued');
+        // 更新包不可暂停，也不参与 apk 队列调度。
+        const active = activeTasks.value.filter((task) => !isUpdateTask(task) && (task.status === 'downloading' || task.status === 'queued'));
         if (active.length === 0) break;
         for (const task of active) {
           await pause(task.id);
@@ -589,6 +612,103 @@ export const useDownloadStore = defineStore('downloads', () => {
     }
   }
 
+  /**
+   * 登记（或复用）一个应用更新包任务。任务仅作为下载中心的展示镜像，
+   * 实际下载/重试由 App.vue 的更新器驱动，不进入 apk 原生下载队列。
+   */
+  function appendUpdate(input: { version: string; fileName?: string; total?: number; packageType?: string; url?: string }): DownloadTask {
+    const version = input.version.trim() || '';
+    const existing = tasks.value.find((task) => isUpdateTask(task) && task.versionName === version);
+    if (existing) {
+      // 同版本复用同一条记录：更新包不可断点续传，重新发起时进度归零。
+      patchTask(existing.id, { status: 'queued', downloaded: 0, total: 0, speed: 0, error: '' });
+      return existing;
+    }
+    const createdAt = now();
+    const task: DownloadTask = {
+      id: `update-${version || createTaskId()}`,
+      kind: UPDATE_KIND,
+      title: isAndroidUA() ? '酷安' : '酷安桌面版',
+      packageName: 'app-update',
+      versionName: version,
+      versionCode: '',
+      apkId: '',
+      logoUrl: '',
+      fileName: input.fileName?.trim() || `coolapk-update-${version || '未知版本'}`,
+      extraAnalysisData: '',
+      downloadDir: '',
+      targetPath: '',
+      partialPath: '',
+      publicPath: '',
+      status: 'queued',
+      downloaded: 0,
+      total: typeof input.total === 'number' && input.total > 0 ? input.total : 0,
+      speed: 0,
+      retryCount: 0,
+      error: '',
+      createdAt,
+      updatedAt: createdAt,
+      completedAt: 0,
+      packageType: input.packageType || '',
+      updateUrl: input.url || '',
+    };
+    tasks.value.unshift(task);
+    persist();
+    // 注意：不调用 pump()，更新任务不占用 apk 下载并发。
+    return task;
+  }
+
+  function isAndroidUA() {
+    return typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+  }
+
+  /** 镜像更新包下载进度（由 App.vue 的 update-download-progress 事件驱动）。 */
+  function updateUpdateProgress(taskId: string, downloaded: number, total: number) {
+    const task = findTask(taskId);
+    if (!task || !isUpdateTask(task)) return;
+    patchTask(taskId, {
+      // 首个进度事件把排队态推进为下载中；真实速率未知，不编造数字。
+      status: task.status === 'queued' ? 'downloading' : task.status,
+      downloaded: Math.max(0, downloaded),
+      total: total > 0 ? total : task.total,
+      speed: 0, // 更新器不汇报速率，页面隐藏速度字段即可，不编造数字。
+    });
+  }
+
+  /** 更新包下载完成：记录真实安装包路径，供「安装」入口校验。 */
+  function markUpdateReady(taskId: string, path: string) {
+    const task = findTask(taskId);
+    if (!task || !isUpdateTask(task)) return;
+    patchTask(taskId, {
+      status: 'completed',
+      targetPath: path || task.targetPath,
+      downloaded: task.total || task.downloaded,
+      speed: 0,
+      error: '',
+      completedAt: now(),
+    });
+  }
+
+  /** 更新包下载失败：把错误暴露给下载中心，重试通过事件交回 App.vue。 */
+  function markUpdateFailed(taskId: string, error: string) {
+    const task = findTask(taskId);
+    if (!task || !isUpdateTask(task)) return;
+    patchTask(taskId, {
+      status: 'failed',
+      error: error || '更新包下载失败',
+      speed: 0,
+      retryCount: task.retryCount + 1,
+    });
+  }
+
+  /** 移除更新任务记录（不动安装包文件，文件生命周期归更新器管）。 */
+  async function removeUpdateTask(taskId: string) {
+    const task = findTask(taskId);
+    if (!task || !isUpdateTask(task)) return;
+    tasks.value = tasks.value.filter((item) => item.id !== taskId);
+    persist();
+  }
+
   watch(
     () => useSettingsStore().settings.maxConcurrentDownloads,
     () => void pump(),
@@ -619,6 +739,11 @@ export const useDownloadStore = defineStore('downloads', () => {
     clearHistory,
     clearFailed,
     applyNativeEvent,
+    appendUpdate,
+    updateUpdateProgress,
+    markUpdateReady,
+    markUpdateFailed,
+    removeUpdateTask,
     get eventUnlisten() { return eventUnlisten; },
   };
 });

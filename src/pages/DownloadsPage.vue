@@ -182,7 +182,7 @@
             <!-- 标题、格式与状态徽标 -->
             <div class="download-title-row">
               <h3 class="download-task-title" :title="task.title">{{ task.title }}</h3>
-              <span class="download-kind-badge">{{ task.kind.toUpperCase() }}</span>
+              <span class="download-kind-badge">{{ kindBadgeText(task) }}</span>
               <span :class="['download-status-badge', `status-${task.status}`]">
                 <span v-if="task.status === 'downloading'" class="status-pulse-dot"></span>
                 <i v-else :class="statusIcon(task.status)" class="status-badge-icon"></i>
@@ -248,8 +248,11 @@
 
           <!-- 操作按钮组 -->
           <div class="download-actions">
+            <!-- 更新包下载中：不支持暂停/取消（Rust 侧无对应命令），不提供按钮避免误导 -->
+            <template v-if="isUpdateTask(task) && task.status === 'downloading'"></template>
+
             <!-- 下载中：暂停 / 取消 -->
-            <template v-if="task.status === 'downloading'">
+            <template v-else-if="task.status === 'downloading'">
               <AppButton variant="secondary" size="sm" icon="fas fa-pause" @click="downloadStore.pause(task.id)">
                 暂停
               </AppButton>
@@ -259,14 +262,14 @@
             </template>
 
             <!-- 排队中：取消 -->
-            <template v-else-if="task.status === 'queued'">
+            <template v-else-if="task.status === 'queued' && !isUpdateTask(task)">
               <AppButton variant="ghost" size="sm" icon="fas fa-ban" @click="downloadStore.cancel(task.id)">
                 取消
               </AppButton>
             </template>
 
             <!-- 暂停中：继续 / 删除 -->
-            <template v-else-if="task.status === 'paused'">
+            <template v-else-if="task.status === 'paused' && !isUpdateTask(task)">
               <AppButton variant="primary" size="sm" icon="fas fa-play" @click="downloadStore.resume(task.id)">
                 继续
               </AppButton>
@@ -275,8 +278,18 @@
               </AppButton>
             </template>
 
+            <!-- 更新包失败：重试通过 window 事件交回 App.vue 重新发起下载（更新器不支持断点续传） -->
+            <template v-else-if="isUpdateTask(task) && task.status === 'failed'">
+              <AppButton variant="primary" size="sm" icon="fas fa-rotate-right" @click="retryUpdate(task)">
+                重试
+              </AppButton>
+              <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
+                删除记录
+              </AppButton>
+            </template>
+
             <!-- 失败或已取消：继续断点 / 重新开始 / 删除 -->
-            <template v-else-if="task.status === 'failed' || task.status === 'canceled'">
+            <template v-else-if="(task.status === 'failed' || task.status === 'canceled') && !isUpdateTask(task)">
               <AppButton variant="primary" size="sm" icon="fas fa-rotate-right" @click="downloadStore.retry(task.id)">
                 {{ task.downloaded > 0 ? '继续下载' : '重试' }}
               </AppButton>
@@ -294,8 +307,18 @@
               </AppButton>
             </template>
 
+            <!-- 更新包完成：安装入口通过 window 事件交回 App.vue（含 portable/deb/rpm 分支） -->
+            <template v-else-if="isUpdateTask(task) && task.status === 'completed'">
+              <AppButton variant="primary" size="sm" icon="fas fa-arrows-rotate" @click="installUpdate(task)">
+                安装
+              </AppButton>
+              <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
+                删除记录
+              </AppButton>
+            </template>
+
             <!-- 已完成：打开位置 / 删除 -->
-            <template v-else-if="task.status === 'completed'">
+            <template v-else-if="task.status === 'completed' && !isUpdateTask(task)">
               <AppButton v-if="isAndroid && /\.apk$/i.test(task.targetPath)" variant="primary" size="sm" icon="fas fa-download" @click="downloadStore.install(task)">
                 安装
               </AppButton>
@@ -320,7 +343,7 @@ import { useRoute, useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import AppImage from '../components/common/AppImage.vue';
 import EmptyState from '../components/common/EmptyState.vue';
-import { useDownloadStore } from '../stores/downloads';
+import { isUpdateTask, useDownloadStore } from '../stores/downloads';
 import { useSettingsStore } from '../stores/settings';
 import { requestConfirmation } from '../utils/confirm';
 import type { DownloadStatus, DownloadTask } from '../types/download';
@@ -412,6 +435,22 @@ function remainingTimeText(task: DownloadTask) {
   return m > 0 ? `${h}小时${m}分` : `${h}小时`;
 }
 
+function kindBadgeText(task: DownloadTask) {
+  // 更新包任务的 kind 是 'update'，直接大写展示（UPDATE）对用户没有意义，给中文徽标。
+  if (isUpdateTask(task)) return '应用更新';
+  return task.kind.toUpperCase();
+}
+
+/** 请求 App.vue 打开待安装弹窗并启动更新安装（载荷仅带版本号用于诊断日志）。 */
+function installUpdate(task: DownloadTask) {
+  window.dispatchEvent(new CustomEvent('coolapk:install-update', { detail: { version: task.versionName } }));
+}
+
+/** 请求 App.vue 重新发起更新包下载（更新器不支持断点，只能整体重下）。 */
+function retryUpdate(_task: DownloadTask) {
+  window.dispatchEvent(new CustomEvent('coolapk:retry-update'));
+}
+
 function statusIcon(status: DownloadStatus) {
   return {
     queued: 'fas fa-clock',
@@ -435,6 +474,11 @@ function statusText(status: DownloadStatus) {
 }
 
 async function removeTask(task: DownloadTask) {
+  // 更新包文件由更新器管理（含待安装校验），删除记录不动文件，也无需确认弹窗。
+  if (isUpdateTask(task)) {
+    await downloadStore.removeUpdateTask(task.id);
+    return;
+  }
   const deleteFile =
     task.status !== 'completed' ||
     (await requestConfirmation({
