@@ -1643,7 +1643,8 @@ async function markConversationRead(session: any, requestSequence: number) {
   try {
     const readResult = await withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时');
     if (requestSequence !== historyRequestSequence) return;
-    if (markSessionRead(session)) notificationStore.markViewed('message');
+    // 与 refreshCurrentChatHistory 同一口径：整会话未读可能 >1，固定 -1 会把角标留在 2、3 上。
+    markSessionAndViewBadge(session);
     if (readResult?.data && typeof readResult.data === 'object') notificationStore.applyServerResponse(readResult);
     persistSessionsCache();
   } catch (err) {

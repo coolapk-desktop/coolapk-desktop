@@ -165,6 +165,28 @@ describe('MessagesPage 批次9：会话竞态与未读口径', () => {
     expect(mocks.readMessage).toHaveBeenCalledWith('10001_20002');
   });
 
+  it('点击切换会话时按该会话实际未读数扣减，不再固定只减 1', async () => {
+    mocks.query = {};
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 1, message: 5, dateline: 200 } });
+    expect(store.messageCount).toBe(5);
+
+    const w = await mountMessagesPage();
+    await flushPromises();
+    const items = w.findAll('.session-item');
+    expect(items.length).toBe(2);
+
+    // 会话 A 的 unreadNum=2：置读后角标应减 2（旧实现只减 1，残留 1）
+    await items[0]!.trigger('click');
+    await flushPromises();
+
+    expect(mocks.readMessage).toHaveBeenCalledWith('10001_20002');
+    expect(store.messageCount).toBe(3);
+
+    // 还原路由目标，后续用例依赖默认 uid=20002 自动打开会话 A。
+    mocks.query = { uid: '20002' };
+  });
+
   it('上传期间切换会话：不发送图片、不污染新会话摘要，图片退回待发送区', async () => {
     const w = await mountMessagesPage();
     // 首个请求挂起：此刻仍处于会话 A
