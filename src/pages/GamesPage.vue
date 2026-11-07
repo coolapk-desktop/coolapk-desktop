@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll="handleScroll">
     <!-- 头部区域 -->
     <div class="page-header">
       <div class="header-main">
@@ -44,6 +44,11 @@
       <LoadingState :text="loadingText" />
     </div>
 
+    <!-- 加载失败状态（与空态严格区分） -->
+    <div v-else-if="error" class="error-wrapper">
+      <ErrorState :message="error" retryable @retry="retryInitial" />
+    </div>
+
     <!-- 空数据状态 -->
     <div v-else-if="currentItems.length === 0" class="empty-wrapper">
       <EmptyState
@@ -75,6 +80,13 @@
           <span class="stat"><i class="far fa-thumbs-up"></i> {{ feed.likenum || 0 }}</span>
           <span class="stat"><i class="far fa-comment"></i> {{ feed.replynum || 0 }}</span>
         </div>
+      </div>
+
+      <!-- 底部分页状态 -->
+      <div class="pagination-footer">
+        <LoadingState v-if="loading && page > 1" text="正在加载更多游评..." />
+        <button v-else-if="footerError" class="retry-inline" @click="retryLoadMore">加载失败，点击重试</button>
+        <div v-else-if="noMore" class="no-more">已加载全部游评</div>
       </div>
     </div>
 
@@ -111,6 +123,13 @@
           详情
         </AppButton>
       </div>
+
+      <!-- 底部分页状态 -->
+      <div class="pagination-footer">
+        <LoadingState v-if="loading && page > 1" text="正在加载更多游戏..." />
+        <button v-else-if="footerError" class="retry-inline" @click="retryLoadMore">加载失败，点击重试</button>
+        <div v-else-if="noMore" class="no-more">已加载全部游戏</div>
+      </div>
     </div>
   </div>
 </template>
@@ -125,14 +144,24 @@ import AppImage from '../components/common/AppImage.vue';
 import AppButton from '../components/common/AppButton.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
+import ErrorState from '../components/common/ErrorState.vue';
+import { showToast } from '../utils/toast';
 
 const router = useRouter();
 const activeCat = ref('hot');
 const searchQuery = ref('');
 const isSearching = ref(false);
 const loading = ref(false);
+const error = ref('');
+const footerError = ref('');
+const page = ref(1);
+const noMore = ref(false);
 const gamesList = ref<any[]>([]);
 const reviewsList = ref<any[]>([]);
+
+// 请求序号：切分类/搜索发出的新请求使在途旧请求整体失效，
+// 慢的旧响应到达时序号已过期，不得覆盖当前列表（对应 S4 请求版本保护）。
+let fetchSequence = 0;
 
 // 点评 message 为富文本 HTML，文本插值渲染需先转纯文本
 function plainReviewText(feed: any): string {
@@ -178,39 +207,86 @@ function getAvatar(item: any): string {
   );
 }
 
-async function loadData() {
-  loading.value = true;
+function resetList() {
   gamesList.value = [];
   reviewsList.value = [];
+  page.value = 1;
+  noMore.value = false;
+  error.value = '';
+  footerError.value = '';
+}
+
+async function loadData(isLoadMore = false) {
+  // 只有「加载更多」受 loading/noMore 守卫避免滚动重入；
+  // 刷新类请求（首载/切分类/搜索）用序号作废旧响应，不被 loading 拦截。
+  if (isLoadMore && (loading.value || noMore.value)) return;
+  if (!isLoadMore) fetchSequence += 1;
+  const sequence = fetchSequence;
+  const snapCat = activeCat.value;
+  const snapQuery = searchQuery.value.trim();
+  const snapSearching = isSearching.value;
+  loading.value = true;
+  if (!isLoadMore) {
+    error.value = '';
+    footerError.value = '';
+    gamesList.value = [];
+    reviewsList.value = [];
+    page.value = 1;
+  }
 
   try {
-    if (isSearching.value && searchQuery.value.trim()) {
-      const res = await CoolapkTauriAPI.searchGames(searchQuery.value.trim(), 1);
-      const list = res?.data || res || [];
-      if (Array.isArray(list)) {
-        gamesList.value = list.filter((item: any) => item.title || item.packageName);
-      }
-      return;
+    let res: any;
+    if (snapSearching && snapQuery) {
+      res = await CoolapkTauriAPI.searchGames(snapQuery, page.value);
+    } else if (snapCat === 'reviews') {
+      res = await CoolapkTauriAPI.searchFeeds('游戏评测', page.value);
+    } else {
+      res = await CoolapkTauriAPI.getGameList(snapCat, page.value);
     }
-
-    if (activeCat.value === 'reviews') {
-      const res = await CoolapkTauriAPI.searchFeeds('游戏评测', 1);
-      const list = res?.data || res || [];
-      if (Array.isArray(list)) {
-        reviewsList.value = list.filter((item: any) => item.message || item.title);
-      }
-      return;
+    // 响应到达时校验请求版本与条件快照，过期则丢弃
+    if (sequence !== fetchSequence || snapCat !== activeCat.value || snapQuery !== searchQuery.value.trim() || snapSearching !== isSearching.value) return;
+    const list = (res && Array.isArray(res.data)) ? res.data : (Array.isArray(res) ? res : []);
+    const isReviews = snapCat === 'reviews' && !snapSearching;
+    const filtered = list.filter((item: any) => (isReviews ? item.message || item.title : item.title || item.packageName));
+    if (filtered.length === 0) {
+      noMore.value = true;
+    } else if (isLoadMore) {
+      const target = isReviews ? reviewsList : gamesList;
+      const existingKeys = new Set(target.value.map((a: any) => a.id || a.feedId || a.packageName || a.title));
+      target.value.push(...filtered.filter((i: any) => !existingKeys.has(i.id || i.feedId || i.packageName || i.title)));
+      page.value++;
+    } else if (isReviews) {
+      reviewsList.value = filtered;
+      page.value = 2;
+    } else {
+      gamesList.value = filtered;
+      page.value = 2;
     }
-
-    const res = await CoolapkTauriAPI.getGameList(activeCat.value, 1);
-    const list = res?.data || res || [];
-    if (Array.isArray(list)) {
-      gamesList.value = list.filter((item: any) => item.title || item.packageName);
-    }
-  } catch (err) {
-    console.warn('Failed to load game module data', err);
+  } catch (err: any) {
+    const msg = err?.message || '网络请求异常，请检查网络后重试';
+    if (sequence !== fetchSequence) return;
+    if (isLoadMore) footerError.value = msg;
+    else error.value = msg;
   } finally {
-    loading.value = false;
+    if (sequence === fetchSequence) loading.value = false;
+  }
+}
+
+function retryInitial() {
+  fetchSequence += 1;
+  void loadData(false);
+}
+
+function retryLoadMore() {
+  footerError.value = '';
+  void loadData(true);
+}
+
+function handleScroll(e: Event) {
+  const target = e.target as HTMLElement;
+  const { scrollTop, clientHeight, scrollHeight } = target;
+  if (scrollTop + clientHeight >= scrollHeight - 200) {
+    if (!loading.value && !noMore.value) void loadData(true);
   }
 }
 
@@ -220,26 +296,33 @@ function selectCategory(catKey: string) {
     isSearching.value = false;
     searchQuery.value = '';
   }
-  loadData();
+  resetList();
+  void loadData();
 }
 
 function handleSearch() {
   if (searchQuery.value.trim()) {
     isSearching.value = true;
-    loadData();
+    resetList();
+    void loadData();
   }
 }
 
 function clearSearch() {
   searchQuery.value = '';
   isSearching.value = false;
-  loadData();
+  resetList();
+  void loadData();
 }
 
+// 只有 packageName/id 才能拼出 /app/{pkg} 详情路由；
+// title 只是显示名，用它拼路由会得到无效页面。
 function navigateToApp(game: any) {
-  const pkg = game.packageName || game.id || game.title;
+  const pkg = game.packageName || game.id;
   if (pkg) {
     router.push(`/app/${pkg}`);
+  } else {
+    showToast('该条目缺少应用标识，无法打开详情');
   }
 }
 
@@ -391,6 +474,27 @@ async function refreshMobilePage() { await loadData(); }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: var(--space-4);
+}
+
+.pagination-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-4) 0;
+}
+
+.retry-inline {
+  border: none;
+  background: transparent;
+  color: var(--danger, #ef4444);
+  cursor: pointer;
+  font-size: var(--font-size-sub);
+  padding: var(--space-2) var(--space-4);
+}
+
+.no-more {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
 }
 
 .game-card {

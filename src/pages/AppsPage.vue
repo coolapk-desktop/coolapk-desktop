@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll="handleScroll">
     <!-- 顶栏工具条：左侧分类 Tab，右侧搜索模式切换 + 搜索框 -->
     <div class="apps-toolbar-bar">
       <div class="apps-tabs-wrapper">
@@ -50,6 +50,11 @@
       <LoadingState :text="loadingText" />
     </div>
 
+    <!-- 加载失败状态（与空态严格区分） -->
+    <div v-else-if="error" class="error-wrapper">
+      <ErrorState :message="error" retryable @retry="retryInitial" />
+    </div>
+
     <!-- 空数据状态 -->
     <div v-else-if="apps.length === 0" class="empty-wrapper">
       <EmptyState
@@ -91,6 +96,13 @@
           查看
         </AppButton>
       </div>
+
+      <!-- 底部分页状态 -->
+      <div class="pagination-footer">
+        <LoadingState v-if="loading && page > 1" text="正在加载更多应用..." />
+        <button v-else-if="footerError" class="retry-inline" @click="retryLoadMore">加载失败，点击重试</button>
+        <div v-else-if="noMore" class="no-more">已加载全部应用</div>
+      </div>
     </div>
   </div>
 </template>
@@ -104,6 +116,8 @@ import AppImage from '../components/common/AppImage.vue';
 import AppButton from '../components/common/AppButton.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
+import ErrorState from '../components/common/ErrorState.vue';
+import { showToast } from '../utils/toast';
 
 const router = useRouter();
 const activeCat = ref('recommend');
@@ -111,7 +125,15 @@ const searchQuery = ref('');
 const searchMode = ref('name');
 const isSearching = ref(false);
 const loading = ref(false);
+const error = ref('');
+const footerError = ref('');
+const page = ref(1);
+const noMore = ref(false);
 const apps = ref<any[]>([]);
+
+// 请求序号：切分类/搜索发出的新请求使在途旧请求整体失效，
+// 慢的旧响应到达时序号已过期，不得覆盖当前列表（对应 S4 请求版本保护）。
+let fetchSequence = 0;
 
 const searchModes = [
   { key: 'name', label: '应用名', icon: 'fas fa-magnifying-glass' },
@@ -149,37 +171,84 @@ function getAppIcon(app: any): string {
   );
 }
 
-async function loadApps() {
-  loading.value = true;
+function resetList() {
   apps.value = [];
+  page.value = 1;
+  noMore.value = false;
+  error.value = '';
+  footerError.value = '';
+}
+
+async function loadApps(isLoadMore = false) {
+  // 只有「加载更多」受 loading/noMore 守卫避免滚动重入；
+  // 刷新类请求（首载/切分类/搜索）用序号作废旧响应，不被 loading 拦截。
+  if (isLoadMore && (loading.value || noMore.value)) return;
+  if (!isLoadMore) fetchSequence += 1;
+  const sequence = fetchSequence;
+  const snapCat = activeCat.value;
+  const snapQuery = searchQuery.value.trim();
+  const snapMode = searchMode.value;
+  const snapSearching = isSearching.value;
+  loading.value = true;
+  if (!isLoadMore) {
+    error.value = '';
+    footerError.value = '';
+    apps.value = [];
+    page.value = 1;
+  }
 
   try {
-    if (isSearching.value && searchQuery.value.trim()) {
-      const query = searchQuery.value.trim();
-      let res: any;
-      if (searchMode.value === 'developer') {
-        res = await CoolapkTauriAPI.searchApksByDeveloper(query, 1);
-      } else if (searchMode.value === 'tag') {
-        res = await CoolapkTauriAPI.searchApksByTag(query, '1', 1);
+    let res: any;
+    if (snapSearching && snapQuery) {
+      if (snapMode === 'developer') {
+        res = await CoolapkTauriAPI.searchApksByDeveloper(snapQuery, page.value);
+      } else if (snapMode === 'tag') {
+        res = await CoolapkTauriAPI.searchApksByTag(snapQuery, '1', page.value);
       } else {
-        res = await CoolapkTauriAPI.searchApks(query, 1);
+        res = await CoolapkTauriAPI.searchApks(snapQuery, page.value);
       }
-      const list = res?.data || res || [];
-      if (Array.isArray(list)) {
-        apps.value = list.filter((item: any) => item.title || item.packageName);
-      }
-      return;
+    } else {
+      res = await CoolapkTauriAPI.getAppList(snapCat, page.value);
     }
-
-    const res = await CoolapkTauriAPI.getAppList(activeCat.value, 1);
-    const list = res?.data || res || [];
-    if (Array.isArray(list)) {
-      apps.value = list.filter((item: any) => item.title || item.packageName);
+    // 响应到达时校验请求版本与条件快照，过期则丢弃
+    if (sequence !== fetchSequence || snapCat !== activeCat.value || snapQuery !== searchQuery.value.trim() || snapSearching !== isSearching.value) return;
+    const list = (res && Array.isArray(res.data)) ? res.data : (Array.isArray(res) ? res : []);
+    const filtered = list.filter((item: any) => item.title || item.packageName);
+    if (filtered.length === 0) {
+      noMore.value = true;
+    } else if (isLoadMore) {
+      const existingKeys = new Set(apps.value.map((a: any) => a.id || a.packageName || a.title));
+      apps.value.push(...filtered.filter((i: any) => !existingKeys.has(i.id || i.packageName || i.title)));
+      page.value++;
+    } else {
+      apps.value = filtered;
+      page.value = 2;
     }
-  } catch (err) {
-    console.warn('Fetch apps failed', err);
+  } catch (err: any) {
+    const msg = err?.message || '网络请求异常，请检查网络后重试';
+    if (sequence !== fetchSequence) return;
+    if (isLoadMore) footerError.value = msg;
+    else error.value = msg;
   } finally {
-    loading.value = false;
+    if (sequence === fetchSequence) loading.value = false;
+  }
+}
+
+function retryInitial() {
+  fetchSequence += 1;
+  void loadApps(false);
+}
+
+function retryLoadMore() {
+  footerError.value = '';
+  void loadApps(true);
+}
+
+function handleScroll(e: Event) {
+  const target = e.target as HTMLElement;
+  const { scrollTop, clientHeight, scrollHeight } = target;
+  if (scrollTop + clientHeight >= scrollHeight - 200) {
+    if (!loading.value && !noMore.value) void loadApps(true);
   }
 }
 
@@ -189,13 +258,15 @@ function selectCategory(catKey: string) {
     isSearching.value = false;
     searchQuery.value = '';
   }
-  loadApps();
+  resetList();
+  void loadApps();
 }
 
 function handleSearch() {
   if (searchQuery.value.trim()) {
     isSearching.value = true;
-    loadApps();
+    resetList();
+    void loadApps();
   }
 }
 
@@ -203,20 +274,26 @@ function selectSearchMode(mode: string) {
   if (searchMode.value === mode) return;
   searchMode.value = mode;
   if (isSearching.value && searchQuery.value.trim()) {
-    loadApps();
+    resetList();
+    void loadApps();
   }
 }
 
 function clearSearch() {
   searchQuery.value = '';
   isSearching.value = false;
-  loadApps();
+  resetList();
+  void loadApps();
 }
 
+// 只有 packageName/id 才能拼出 /app/{pkg} 详情路由；
+// title 只是显示名，用它拼路由会得到无效页面。
 function navigateToApp(app: any) {
-  const pkg = app.packageName || app.id || app.title;
+  const pkg = app.packageName || app.id;
   if (pkg) {
     router.push(`/app/${pkg}`);
+  } else {
+    showToast('该条目缺少应用标识，无法打开详情');
   }
 }
 
@@ -381,6 +458,27 @@ async function refreshMobilePage() { await loadApps(); }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
   gap: var(--space-4);
+}
+
+.pagination-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-4) 0;
+}
+
+.retry-inline {
+  border: none;
+  background: transparent;
+  color: var(--danger, #ef4444);
+  cursor: pointer;
+  font-size: var(--font-size-sub);
+  padding: var(--space-2) var(--space-4);
+}
+
+.no-more {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-caption);
 }
 
 .app-card {
