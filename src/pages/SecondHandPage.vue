@@ -29,7 +29,7 @@
     <!-- 闲置实体列表：保留 APK 的分类、型号和动态卡片。 -->
     <div v-else class="feed-list-wrapper">
       <div class="feed-list discovery-page-list">
-        <DiscoveryEntityCard v-for="(item, index) in dynamicItems" :key="getEntityKey(item, index)" :entity="item" @open="openEntity" />
+        <DiscoveryEntityCard v-for="item in dynamicItems" :key="stableEntityKey(item)" :entity="item" @open="openEntity" />
       </div>
       <div v-if="loadingMore" class="loading-more-footer">
         <i class="fas fa-circle-notch fa-spin"></i> 正在加载更多闲置...
@@ -50,7 +50,7 @@ import DiscoveryEntityCard from '../components/discovery/DiscoveryEntityCard.vue
 import DiscoverySkeleton from '../components/discovery/DiscoverySkeleton.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
-import { getEntityKey, parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
+import { parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
 import { normalizeCoolapkRoute } from '../utils/coolapkRoute';
 import { getSecondHandViewerUid, isSecondHandPageCacheFresh, secondHandPageCache as pageCache } from '../utils/secondHandCache';
 import type { DiscoveryEntity } from '../types/discovery';
@@ -68,6 +68,16 @@ const dynamicFirstItem = ref(pageCache.firstItem);
 const dynamicLastItem = ref(pageCache.lastItem);
 const dynamicPageContext = ref(pageCache.pageContext);
 const error = ref('');
+// 静默刷新失败后的退避窗口：窗口内的 onActivated 不再重复打接口。
+const SILENT_REFRESH_RETRY_MS = 30 * 1000;
+let lastSilentAttemptAt = 0;
+
+// 去重与模板 :key 共用同一基准：有稳定 id 用 id，无 id 用内容键；不把下标混入键派生，避免跨页键空间错位、:key 漂移。
+function stableEntityKey(entity: DiscoveryEntity): string {
+  const stable = entity.entityId ?? entity.id ?? entity.url;
+  if (stable !== undefined && stable !== null && String(stable).trim() !== '') return `id-${String(stable)}`;
+  return `content-${JSON.stringify([entity.title ?? '', entity.subTitle ?? '', entity.description ?? '', entity.pic ?? '', entity.price ?? ''])}`;
+}
 
 function syncPageCache() {
   pageCache.initialized = true;
@@ -138,8 +148,8 @@ async function loadFeeds(isRefresh: boolean = false, options: { silent?: boolean
     if (isRefresh) {
       dynamicItems.value = incoming;
     } else {
-      const existingKeys = new Set(dynamicItems.value.map((item, index) => getEntityKey(item, index)));
-      dynamicItems.value = [...dynamicItems.value, ...incoming.filter((item, index) => !existingKeys.has(getEntityKey(item, dynamicItems.value.length + index)))];
+      const existingKeys = new Set(dynamicItems.value.map(stableEntityKey));
+      dynamicItems.value = [...dynamicItems.value, ...incoming.filter((item) => !existingKeys.has(stableEntityKey(item)))];
     }
     dynamicFirstItem.value = parsed.firstItem;
     dynamicLastItem.value = parsed.lastItem;
@@ -211,7 +221,11 @@ function ensureFeedsFresh() {
     void loadFeeds(true);
     return;
   }
-  if (!isSecondHandPageCacheFresh()) void loadFeeds(true, { silent: true });
+  if (isSecondHandPageCacheFresh()) return;
+  // 失败或成功都记录尝试时间：刚尝试过的短时间内不再重复静默刷新。
+  if (Date.now() - lastSilentAttemptAt < SILENT_REFRESH_RETRY_MS) return;
+  lastSilentAttemptAt = Date.now();
+  void loadFeeds(true, { silent: true });
 }
 
 onMounted(ensureFeedsFresh);

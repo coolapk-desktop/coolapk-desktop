@@ -32,7 +32,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import DiscoverySecondHandGrid from '../components/discovery/DiscoverySecondHandGrid.vue';
@@ -209,7 +209,13 @@ function reload() {
 
 function handleRouteChange() {
   if (route.path !== '/secondhand/list') return;
-  // 命中缓存（含过期/换号）先渲染旧列表；新鲜就直接用，否则后台静默刷新。
+  // 换号后缓存属于上一账号：不先渲染旧条目，直接清空缓存重新加载。
+  const cached = secondHandListCache.get(listCacheKey.value);
+  if (cached?.initialized && (cached.viewerUid || '') !== getSecondHandViewerUid()) {
+    reload();
+    return;
+  }
+  // 命中缓存（含过期）先渲染旧列表；新鲜就直接用，否则后台静默刷新。
   if (!restoreCachedState()) {
     reload();
     return;
@@ -236,14 +242,26 @@ function openEntity(entity: DiscoveryEntity) {
   void router.push({ path: '/page', query: { url: routeInfo.target, title: routeInfo.title || String(entity.title || ''), renderer: 'discovery' } });
 }
 
+// 滚动只记录位置；缓存同步挂在数据变化（loadPage 成功后）与离开页面时，避免高频滚动反复展开整个列表。
 function handleScroll(event: Event) {
   const element = event.currentTarget as HTMLElement;
   scrollTop.value = element.scrollTop;
-  syncCache();
   if (element.scrollHeight - element.scrollTop - element.clientHeight < 360) void loadPage(true);
 }
 
-watch(() => route.fullPath, handleRouteChange, { immediate: true });
+function persistCacheOnLeave() {
+  if (items.value.length > 0) syncCache();
+}
+
+watch(() => route.fullPath, () => {
+  if (route.path !== '/secondhand/list') {
+    persistCacheOnLeave();
+    return;
+  }
+  handleRouteChange();
+}, { immediate: true });
+
+onUnmounted(persistCacheOnLeave);
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
 const mobileRefreshBusy = computed(() => loading.value || loadingMore.value || silentRefreshing.value);
