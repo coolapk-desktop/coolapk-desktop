@@ -170,6 +170,36 @@ describe('favorite export', () => {
     expect(bundle.items[0].comments[0].replies).toHaveLength(1);
   });
 
+  it('快照条目只存差异字段，不保存 feed 正文，超期缺失项被淘汰', async () => {
+    const options = { includeAllComments: false, includeAuthorComments: false, includePinnedComments: false, includeAuthorReplies: false };
+    await saveFavoriteExportSnapshot(await buildFavoriteExport('42', options));
+
+    // 注入旧实现的历史缺失条目（带完整 feed 字段且 lastSeenAt 超过 90 天）。
+    const key = 'account:42';
+    const snapshot = mocks.values.get(key) as any;
+    snapshot.entries['old-feed'] = {
+      id: 'old-feed',
+      title: '旧条目',
+      author: '作者',
+      contentHash: 'hash-old',
+      lastSeenAt: new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(),
+      feed: { id: 'old-feed', message: '旧条目的完整正文'.repeat(50) },
+    };
+
+    mocks.feeds = ['200'];
+    await saveFavoriteExportSnapshot(await buildFavoriteExport('42', options));
+
+    const saved = mocks.values.get(key) as any;
+    // 超期缺失项被淘汰，旧 feed 字段不残留。
+    expect(saved.entries['old-feed']).toBeUndefined();
+    expect(JSON.stringify(saved)).not.toContain('旧条目的完整正文');
+    // 当前条目只保留差异字段，不保存完整 feed（正文只进 contentHash）。
+    expect(JSON.stringify(saved.entries['200'])).not.toContain('完整正文');
+    expect(Object.keys(saved.entries['200']).sort()).toEqual(['author', 'contentHash', 'id', 'lastSeenAt', 'title']);
+    // 未超期的缺失项仍保留，供下次导出继续对比取消收藏状态。
+    expect(saved.entries['100']).toBeDefined();
+  });
+
   it('收到取消信号后停止导出', async () => {
     const controller = new AbortController();
     controller.abort();

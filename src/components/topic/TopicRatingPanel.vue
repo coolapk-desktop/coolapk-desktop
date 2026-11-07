@@ -1,7 +1,7 @@
 <template>
   <section class="topic-rating-panel" aria-label="话题评分详情">
     <header class="rating-topic-header" :style="{ backgroundColor: heroColor }">
-      <button class="rating-back" type="button" aria-label="返回话题" @click="router.back()"><i class="fas fa-arrow-left"></i></button>
+      <button class="rating-back" type="button" aria-label="返回话题" @click="navigateBack(router, '/topics')"><i class="fas fa-arrow-left"></i></button>
       <AppImage v-if="detail.logo" :src="detail.logo" image-class="rating-header-background" fit="cover" />
       <div class="rating-topic-identity"><AppImage v-if="detail.logo" :src="detail.logo" image-class="rating-topic-logo" fit="cover" /><span v-else class="rating-topic-logo logo-fallback">#</span>
         <div><h2>{{ detail.title || '话题评分' }}</h2><p v-if="topicReleaseLabel(detail.release_time)">{{ topicReleaseLabel(detail.release_time) }}</p></div>
@@ -95,6 +95,8 @@ import LoadingState from '../common/LoadingState.vue';
 import ErrorState from '../common/ErrorState.vue';
 import EmptyState from '../common/EmptyState.vue';
 import { showToast } from '../../utils/toast';
+// 评分面板嵌在话题页内，深链进入时退回话题中心。
+import { navigateBack } from '../../utils/navigation';
 import { openFeedDetail } from '../../utils/feedNavigation';
 import { extractTopicRatings, ratingNumber, topicRatingCursor, topicRatingDimensions, topicScoreStars, topicReleaseLabel } from '../../utils/topicRating';
 import face1 from '../../assets/official-rating/ic_face_star_1.png';

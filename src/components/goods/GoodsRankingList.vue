@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading }" class="page-container custom-scrollbar">
+  <div ref="pageRef" v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading }" class="page-container custom-scrollbar">
     <div class="page-header">
       <div class="header-main">
         <h2 class="page-title"><i :class="[icon, 'icon']"></i> {{ title }}</h2>
@@ -54,7 +54,12 @@
     </div>
 
     <div v-else-if="items.length === 0 && allItems.length > 0" class="state-wrapper">
-      <EmptyState title="该分类暂无好物" description="切换其他分类看看" />
+      <!-- 分类是前端对「已加载行」的过滤：还没翻完就宣判「暂无」会误导用户。 -->
+      <EmptyState
+        :title="activeType && !noMore ? '该分类在已加载内容中暂无' : '该分类暂无好物'"
+        :description="activeType && !noMore ? '继续加载下一页，可能会找到该分类的内容' : '切换其他分类看看'"
+      />
+      <AppButton v-if="activeType && !noMore" size="sm" @click="load(false)">加载更多</AppButton>
     </div>
 
     <div v-else-if="allItems.length === 0" class="state-wrapper">
@@ -124,6 +129,8 @@ import ErrorState from '../common/ErrorState.vue';
 import EmptyState from '../common/EmptyState.vue';
 import CreateGoodsListDialog from './CreateGoodsListDialog.vue';
 import { useAuthStore } from '../../stores/auth';
+import { applyGoodsRows, getGoodsRowState, type GoodsRowState } from '../../stores/goodsRows';
+import { showToast } from '../../utils/toast';
 
 const props = withDefaults(
   defineProps<{
@@ -196,12 +203,22 @@ function listMessage(item: any): string {
   return info.message || info.description || info.sort_message || '';
 }
 
+/**
+ * 统计字段优先读行状态注册表：详情页（或本页刷新）写入的最新值存在时
+ * 覆盖本页持有的行对象副本，避免从详情返回后计数陈旧。
+ */
+function rowStat(item: any, pick: (state: GoodsRowState) => number | undefined, fallback: number): number {
+  const state = getGoodsRowState(listKey(item));
+  const v = state ? pick(state) : undefined;
+  return v === undefined ? fallback : v;
+}
+
 function listItemNum(item: any): number {
-  return Number(goodsListInfo(item)?.item_num || 0);
+  return rowStat(item, (s) => s.itemNum, Number(goodsListInfo(item)?.item_num || 0));
 }
 
 function listVoteNum(item: any): number {
-  return Number(goodsListInfo(item)?.vote_num || 0);
+  return rowStat(item, (s) => s.voteNum, Number(goodsListInfo(item)?.vote_num || 0));
 }
 
 function isVoteList(item: any): boolean {
@@ -210,11 +227,11 @@ function isVoteList(item: any): boolean {
 }
 
 function listFollowNum(item: any): number {
-  return Number(goodsListInfo(item)?.follow_num || 0);
+  return rowStat(item, (s) => s.followNum, Number(goodsListInfo(item)?.follow_num || 0));
 }
 
 function listReplyNum(item: any): number {
-  return Number(goodsListInfo(item)?.reply_num || 0);
+  return rowStat(item, (s) => s.replynum, Number(goodsListInfo(item)?.reply_num || 0));
 }
 
 async function loadTypes() {
@@ -251,6 +268,8 @@ async function load(isRefresh = false) {
         allItems.value.push(...list.filter((i: any) => !existing.has(listKey(i))));
       }
       page.value++;
+      // 加载到的行灌入注册表，作为后续跨页合并与覆盖展示的基准。
+      applyGoodsRows(list);
     }
   } catch (err: any) {
     error.value = err?.message || '加载失败';
@@ -265,7 +284,11 @@ function selectType(_type: string) {
 
 function openDetail(item: any) {
   const id = String(item?.id ?? item?.entityId ?? '');
-  if (!id) return;
+  if (!id) {
+    // 卡片可点击却毫无反应，用户无法判断是加载失败还是缺数据。
+    showToast('该条目缺少标识，暂时无法打开', 'info');
+    return;
+  }
   router.push(`${detailBase.value}/${id}`);
 }
 
@@ -286,7 +309,12 @@ function handleCreated() {
   void load(true);
 }
 
+const pageRef = ref<HTMLElement | null>(null);
+
 function onScrollEvent(e: Event) {
+  // window 捕获监听会收到所有滚动元素的事件：横向滚动条（分类 chips 等）的
+  // scrollHeight - clientHeight ≈ 0，会被误判成「到底了」而白白消耗一页分页。
+  if (pageRef.value && e.target !== pageRef.value) return;
   const el = e.target as HTMLElement;
   const scrollDiff = el && el.scrollHeight
     ? el.scrollHeight - el.scrollTop - el.clientHeight
@@ -309,7 +337,31 @@ onMounted(() => {
   void load(true);
 });
 
-onActivated(bindGlobalListeners);
+// 从详情页（keep-alive）返回时静默补拉第 1 页：详情页的收藏/评论/投票
+// 只回写它自己那份副本，这里按 id 原地合并进已加载行并同步注册表，
+// 不重置分页与滚动位置，避免打断用户的浏览状态。
+async function refreshOnActivated() {
+  if (loading.value || allItems.value.length === 0) return;
+  try {
+    const res = await CoolapkTauriAPI.getGoodsList({ uid: props.uid || '', page: 1 });
+    const list = (res?.data && Array.isArray(res.data)) ? res.data : [];
+    if (list.length === 0) return;
+    applyGoodsRows(list);
+    const byId = new Map(list.map((row: any) => [listKey(row), row]));
+    const known = new Set(allItems.value.map(listKey));
+    // 旧行按 id 原地覆盖；同时把服务端新出现、本地还没有的行插到头部，
+    // 否则别人新建的清单在返回列表后看不到，必须手动下拉才会出现。
+    const fresh = list.filter((row: any) => !known.has(listKey(row)));
+    allItems.value = [...fresh, ...allItems.value.map((row) => byId.get(listKey(row)) || row)];
+  } catch {
+    // 静默刷新失败不打扰用户；用户仍可下拉或翻页重试。
+  }
+}
+
+onActivated(() => {
+  bindGlobalListeners();
+  void refreshOnActivated();
+});
 onDeactivated(unbindGlobalListeners);
 onUnmounted(unbindGlobalListeners);
 

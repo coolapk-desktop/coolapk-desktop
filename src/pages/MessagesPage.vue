@@ -263,7 +263,8 @@
         ></div>
         
         <div class="input-bottom-bar">
-          <div v-if="draftSaved" class="draft-status"><i class="far fa-save"></i> 草稿已自动保存</div>
+          <div v-if="draftSaving" class="draft-status"><i class="fas fa-circle-notch fa-spin"></i> 草稿保存中...</div>
+          <div v-else-if="draftSaved" class="draft-status"><i class="far fa-save"></i> 草稿已自动保存</div>
           <div v-else class="draft-status-placeholder"></div>
 
           <div class="input-actions">
@@ -309,6 +310,7 @@ import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
 import { useNotificationStore } from '../stores/notifications';
 import { useSettingsStore } from '../stores/settings';
+import { useUserRelationsStore } from '../stores/userRelations';
 import { useShortcutHints } from '../composables/useShortcutHints';
 import AppAvatar from '../components/common/AppAvatar.vue';
 import AppImage from '../components/common/AppImage.vue';
@@ -330,7 +332,7 @@ import { showToast } from '../utils/toast';
 import {
   getMessageSenderUid,
   getMessageUnreadCount,
-  getSelfMessageUnreadCount,
+  getRawMessageUnreadCount,
   isMessageSentByCurrentUser,
 } from '../utils/messageUnread';
 
@@ -345,6 +347,7 @@ const router = useRouter();
 const authStore = useAuthStore();
 const notificationStore = useNotificationStore();
 const settingsStore = useSettingsStore();
+const userRelations = useUserRelationsStore();
 const showShortcutHints = useShortcutHints();
 const currentUserUid = computed(() => authStore.user?.uid || '');
 
@@ -402,6 +405,28 @@ interface ChatHistoryPaginationState {
   hasMore: boolean;
 }
 const chatHistoryPagination = new Map<string, ChatHistoryPaginationState>();
+// 会话历史缓存上限：按最近访问 LRU 淘汰，淘汰时同步清理 pagination 与滚动记录，避免状态错配。
+const MAX_CACHED_CONVERSATIONS = 20;
+function evictChatHistoryCacheEntry(key: string) {
+  chatHistoryCache.delete(key);
+  chatHistoryPagination.delete(key);
+  chatScrollMap.delete(key);
+}
+function trimChatHistoryCaches(activeKey: string) {
+  while (chatHistoryCache.size > MAX_CACHED_CONVERSATIONS) {
+    const oldestKey = [...chatHistoryCache.keys()].find((key) => key !== activeKey);
+    // 当前打开中的会话受保护不被淘汰；仅当缓存里只剩当前会话时保持现状。
+    if (oldestKey === undefined) break;
+    evictChatHistoryCacheEntry(oldestKey);
+  }
+}
+function setChatHistoryCache(sessionKey: string, list: any[]) {
+  if (!sessionKey) return;
+  // Map 按插入序近似 LRU：重新插入把该会话移到最新端，再裁掉最旧的条目。
+  chatHistoryCache.delete(sessionKey);
+  chatHistoryCache.set(sessionKey, list);
+  trimChatHistoryCaches(sessionKey);
+}
 let historyRequestSequence = 0;
 const refreshingHistoryRequests = new Set<number>();
 const MESSAGE_POLL_INTERVAL_MS = 10_000;
@@ -410,6 +435,7 @@ let messagePollingActive = false;
 
 const inputText = ref('');
 const draftSaved = ref(false);
+const draftSaving = ref(false);
 const sending = ref(false);
 const sendingImage = ref(false);
 const followingPartner = ref(false);
@@ -787,9 +813,36 @@ function getConversationKey(session: any = currentSession.value): string {
 
 async function saveCurrentDraft() {
   const key = getConversationKey();
-  if (!key) return;
+  if (!key) { draftSaving.value = false; return; }
   await saveMessageDraft(currentUserUid.value, key, inputText.value);
+  // 只有真正落盘后才提示“已自动保存”；输入期间显示“保存中”。
   draftSaved.value = Boolean(inputText.value.trim());
+  draftSaving.value = false;
+}
+
+// 逐字输入时不必每次都写草稿：节流后再落盘，切换会话或离开页面时强制 flush。
+const DRAFT_SAVE_DEBOUNCE_MS = 400;
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let draftSavePending = false;
+
+function scheduleSaveCurrentDraft() {
+  draftSavePending = true;
+  if (draftSaveTimer !== null) return;
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    void flushPendingDraftSave();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+async function flushPendingDraftSave() {
+  if (draftSaveTimer !== null) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  if (!draftSavePending) return;
+  // 先清标记再保存，避免保存过程中触发新的输入重复排队。
+  draftSavePending = false;
+  await saveCurrentDraft();
 }
 
 async function restoreDraft(session: any) {
@@ -804,18 +857,14 @@ async function restoreDraft(session: any) {
   if (initialText && routeTargetUid && sessionPartnerUid === routeTargetUid && !savedDraft) {
     // 仅在当前会话是路由目标会话且没有历史草稿时，填入预设模版
     inputText.value = initialText;
-    // 消费后立即清理 URL query 中的 initialText，防止切换会话或清空后反复注入
-    const cleanQuery = { ...route.query };
-    delete cleanQuery.initialText;
-    delete cleanQuery.text;
-    delete cleanQuery.open;
-    void router.replace({ path: '/messages', query: cleanQuery });
+    consumeRouteInitialText();
   } else {
     // 读取当前会话专属草稿，没有则为空
     inputText.value = savedDraft || '';
   }
 
   draftSaved.value = Boolean(inputText.value.trim());
+  draftSaving.value = false;
   syncTextToEditor(inputText.value);
 
   // 手机恢复草稿或分享链接时不抢焦点，避免 WebView 为显示光标上移整个页面并挤掉顶部安全区。
@@ -836,9 +885,42 @@ async function restoreDraft(session: any) {
   }
 }
 
+/** 预填文本只在地址栏出现一次：消费后立即清理，防止切换会话或清空后反复注入。 */
+function consumeRouteInitialText() {
+  if (!String(route.query.initialText || route.query.text || '')) return;
+  const cleanQuery = { ...route.query };
+  delete cleanQuery.initialText;
+  delete cleanQuery.text;
+  delete cleanQuery.open;
+  void router.replace({ path: '/messages', query: cleanQuery });
+}
+
+/**
+ * 地址栏预填文本（如一键反馈分享链接）在同一实例内变化时也要生效：
+ * 目标会话已打开且用户没有正在编辑的内容时才注入，绝不覆盖用户草稿。
+ */
+watch(
+  () => String(route.query.initialText || route.query.text || ''),
+  () => {
+    const initialText = String(route.query.initialText || route.query.text || '').trim();
+    if (!initialText) return;
+    const targetUid = getRouteTargetUid();
+    const partnerUid = String(getSessionPartnerUid(currentSession.value) || '').trim();
+    // 目标会话还没打开时交给 openTargetConversation / restoreDraft 流程消费预填文本。
+    if (!targetUid || !partnerUid || partnerUid !== targetUid) return;
+    if (inputText.value.trim()) return;
+    inputText.value = initialText;
+    draftSaved.value = true;
+    syncTextToEditor(initialText);
+    consumeRouteInitialText();
+  },
+);
+
 watch(inputText, () => {
-  draftSaved.value = Boolean(inputText.value.trim());
-  void saveCurrentDraft();
+  // 输入首字符只进入“保存中”状态，防抖落盘成功后才显示“已自动保存”。
+  draftSaved.value = false;
+  draftSaving.value = true;
+  scheduleSaveCurrentDraft();
 });
 
 function sessionsCacheKey() {
@@ -949,6 +1031,23 @@ const markSessionRead = (session: any) => {
   const wasUnread = Array.from(relatedSessions).some((item) => isSessionUnread(item));
   relatedSessions.forEach(clearSessionUnreadState);
   return wasUnread;
+};
+
+/**
+ * 置读成功后按会话实际未读数扣减全局私信角标：整会话未读可能 >1，固定 -1 会少扣。
+ * 同一会话可能同时存在接口对象、currentSession 与列表多份副本且未读数不同步，
+ * 扣减值取所有同会话副本中的最大未读：只看传入副本会少扣，固定 1 会把
+ * 「副本已清零但列表仍有 2 条未读」的场景从 2 错减到 1。
+ */
+const markSessionAndViewBadge = (session: any) => {
+  if (!session) return;
+  const related = [session];
+  if (currentSession.value && currentSession.value !== session && isSameSession(session, currentSession.value)) related.push(currentSession.value);
+  for (const item of sessions.value) {
+    if (item !== session && !related.includes(item) && isSameSession(session, item)) related.push(item);
+  }
+  const unread = related.reduce((max, item) => Math.max(max, getSessionUnreadCount(item)), 0);
+  if (markSessionRead(session)) notificationStore.markMessagesViewed(unread);
 };
 
 const getRouteTargetUid = () => String(route.query.uid || route.query.targetUid || '').trim();
@@ -1281,7 +1380,7 @@ async function loadMoreHistory() {
       pagination.firstItem = getOldestChatHistoryCursor(chatHistory.value);
       pagination.hasMore = true;
       hasMoreHistory.value = true;
-      chatHistoryCache.set(sessionKey, [...chatHistory.value]);
+      setChatHistoryCache(sessionKey, [...chatHistory.value]);
     }
 
     await nextTick();
@@ -1342,10 +1441,12 @@ const loadSessions = async () => {
     );
     if (res?.data && Array.isArray(res.data)) {
       const rawServerSessions: any[] = res.data;
-      // 只抵消列表中明确标记为自己发送的未读数量，不影响未识别发送者的真实未读。
-      notificationStore.suppressMessageCount(
-        getSelfMessageUnreadCount(rawServerSessions, currentUserUid.value),
-      );
+      // 只抵消列表中明确标记为自己发送的未读数量，且按会话键幂等：
+      // 轮询每轮拿到同一份服务端数据时不再重复扣减，未读增加才补扣差值。
+      notificationStore.suppressMessageCounts(rawServerSessions.map((item) => ({
+        key: String(item?.ukey || item?.id || getSessionPartnerUid(item) || ''),
+        count: isMessageSentByCurrentUser(item, currentUserUid.value) ? getRawMessageUnreadCount(item) : 0,
+      })));
       const serverSessions: any[] = rawServerSessions.map(normalizeSessionUnreadState);
       const hadSessions = sessions.value.length > 0;
       if (!hadSessions) hasMoreSessions.value = serverSessions.length > 0;
@@ -1490,7 +1591,7 @@ async function refreshCurrentChatHistory() {
     // 基于响应到达时的记录合并，避免覆盖同步期间发出的消息或加载的历史。
     const list = sortChatHistory(mergeChatHistory(chatHistory.value, res.data));
     chatHistory.value = list;
-    chatHistoryCache.set(sessionKey, list);
+    setChatHistoryCache(sessionKey, list);
     historyError.value = '';
     const pagination = getChatHistoryPagination(sessionKey);
     if (!pagination.firstItem && list.length) {
@@ -1508,7 +1609,7 @@ async function refreshCurrentChatHistory() {
     if (hasUnread) {
       const readResult = await withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时');
       if (!isCurrentRequest()) return;
-      if (markSessionRead(session)) notificationStore.markViewed('message');
+      markSessionAndViewBadge(session);
       if (readResult?.data && typeof readResult.data === 'object') notificationStore.applyServerResponse(readResult);
       persistSessionsCache();
     }
@@ -1574,8 +1675,29 @@ useAndroidBackButton(
   showMobileSessionList,
 );
 
+/**
+ * 聊天记录成功加载并渲染后再置为已读。
+ * 加载失败/超时不能清角标，否则用户没看到的新消息会永久失去未读提示。
+ */
+async function markConversationRead(session: any, requestSequence: number) {
+  const sessionKey = String(session?.ukey || session?.id || '');
+  if (!sessionKey || requestSequence !== historyRequestSequence) return;
+  try {
+    const readResult = await withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时');
+    if (requestSequence !== historyRequestSequence) return;
+    // 与 refreshCurrentChatHistory 同一口径：整会话未读可能 >1，固定 -1 会把角标留在 2、3 上。
+    markSessionAndViewBadge(session);
+    if (readResult?.data && typeof readResult.data === 'object') notificationStore.applyServerResponse(readResult);
+    persistSessionsCache();
+  } catch (err) {
+    // 置读失败不影响阅读，下一轮同步或轮询会继续尝试。
+    console.error('标记会话已读失败', err);
+  }
+}
+
 const selectSession = async (session: any) => {
-  await saveCurrentDraft();
+  // 先把上一个会话的延迟草稿落盘，再切换会话，避免草稿写到新会话上。
+  await flushPendingDraftSave();
   clearPendingImages();
   const requestSequence = ++historyRequestSequence;
   currentSession.value = session;
@@ -1584,8 +1706,7 @@ const selectSession = async (session: any) => {
   loadingMoreHistory.value = false;
   historyLoadMoreError.value = '';
   hasMoreHistory.value = false;
-  // 进入会话即先清理本地角标，不等待聊天记录和下一轮轮询返回。
-  if (markSessionRead(session)) notificationStore.markViewed('message');
+  // 进入会话立刻显示聊天区域（体验不变），但置读推迟到聊天记录成功加载之后。
   await restoreDraft(session);
   historyError.value = '';
   const partnerUid = getSessionPartnerUid(session);
@@ -1613,18 +1734,6 @@ const selectSession = async (session: any) => {
   }
   const sessionKey = String(ukey);
 
-  // APK 在打开具体会话后调用 message/read；请求与聊天记录加载并行，避免已读状态延迟到下一次轮询。
-  void withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时')
-    .then((readResult: any) => {
-      markSessionRead(session);
-      if (readResult?.data && typeof readResult.data === 'object') {
-        notificationStore.applyServerResponse(readResult);
-      }
-    })
-    .catch((err) => {
-      console.error('标记会话已读失败', err);
-    });
-
   // 1. 如果缓存中已存在历史记录，直接使用，实现 0 延迟秒切无转圈
   const cachedHistory = chatHistoryCache.get(sessionKey) || [];
   const hasCachedHistory = cachedHistory.length > 0;
@@ -1642,6 +1751,7 @@ const selectSession = async (session: any) => {
   }
 
   // 2. 静默发送 API 请求抓取最新记录并同步更新缓存
+  let historyLoaded = false;
   try {
     const refreshLastItem = hasCachedHistory ? getNewestChatHistoryCursor(cachedHistory) : '';
     const res = await withTimeout(
@@ -1655,7 +1765,7 @@ const selectSession = async (session: any) => {
       const existingHistory = hasCachedHistory ? chatHistory.value : [];
       const list = hasCachedHistory ? sortChatHistory(mergeChatHistory(existingHistory, incoming)) : incoming;
       chatHistory.value = list;
-      chatHistoryCache.set(sessionKey, list);
+      setChatHistoryCache(sessionKey, list);
       const cachedPagination = hasCachedHistory ? chatHistoryPagination.get(sessionKey) : null;
       const pagination = cachedPagination
         ? { ...cachedPagination, firstItem: getOldestChatHistoryCursor(list), lastItem: '' }
@@ -1663,6 +1773,7 @@ const selectSession = async (session: any) => {
       chatHistoryPagination.set(sessionKey, pagination);
       hasMoreHistory.value = pagination.hasMore;
       historyLoadMoreError.value = '';
+      historyLoaded = true;
     } else {
       throw new Error('聊天记录返回格式不正确');
     }
@@ -1674,6 +1785,8 @@ const selectSession = async (session: any) => {
     if (requestSequence === historyRequestSequence) {
       loadingHistory.value = false;
       await scrollToBottom();
+      // 记录渲染完成后再置读；加载失败的会话保留未读角标，等待重试。
+      if (historyLoaded) await markConversationRead(session, requestSequence);
     }
   }
 };
@@ -1697,6 +1810,10 @@ async function deleteSession(detail: { ukey?: string; id?: string; isNew?: boole
     danger: true,
   });
   if (!confirmed) return;
+
+  // 删除后立刻递增请求序号：让在途的 selectSession/refreshCurrentChatHistory 响应失效，
+  // 避免把已删会话的聊天缓存写回，或对已删会话调用置读（markConversationRead 会校验序号）。
+  historyRequestSequence += 1;
 
   const sessionKey = String(session.ukey || session.id || detail.ukey || '').trim();
   try {
@@ -1745,6 +1862,42 @@ watch(
   },
 );
 
+/**
+ * 切号防线：chatHistoryCache / chatHistoryPagination / chatScrollMap 都是
+ * 以会话 ukey 为 key 的页面级 Map，不含账号维度；authStore 的全局清理够不到这里。
+ * uid 变化时必须清空三份 Map、作废在途聊天记录请求、清掉待发图片与发送态，
+ * 并重置当前会话后重新加载会话列表，否则 A 账号的私信数据会呈现给 B 账号。
+ */
+function resetMessagesPageForAccountSwitch() {
+  chatHistoryCache.clear();
+  chatHistoryPagination.clear();
+  chatScrollMap.clear();
+  // 递增序号后，isCurrentRequest() 对所有在途聊天记录响应返回 false，直接丢弃。
+  historyRequestSequence += 1;
+  refreshingHistoryRequests.clear();
+  clearPendingImages();
+  sending.value = false;
+  sendingImage.value = false;
+  currentSession.value = null;
+  mobileChatActive.value = false;
+  chatHistory.value = [];
+  loadingHistory.value = false;
+  historyError.value = '';
+  loadingMoreHistory.value = false;
+  historyLoadMoreError.value = '';
+  hasMoreHistory.value = true;
+  isChatPositionReady.value = false;
+  sessionsError.value = '';
+}
+
+watch(currentUserUid, (uid, previousUid) => {
+  if (uid === previousUid) return;
+  resetMessagesPageForAccountSwitch();
+  // loadSessions 内部对未登录（清空列表）与已登录（重新拉取）都有对应路径；
+  // keep-alive 的 onActivated 行为不受影响，重新激活时仍按原逻辑恢复。
+  void loadSessions();
+});
+
 onActivated(() => {
   messagePageActive = true;
   bindGlobalListeners();
@@ -1758,6 +1911,8 @@ onDeactivated(() => {
   clearPendingImages();
   unbindGlobalListeners();
   stopMessagePolling();
+  // 离开页面时立即落盘未保存的草稿，避免防抖窗口内的输入丢失。
+  void flushPendingDraftSave();
 });
 
 // --- 交互事件 ---
@@ -1783,10 +1938,10 @@ const handleKeydown = (e: KeyboardEvent) => {
 function removeFollowTipFromSession(sessionKey: string) {
   if (!sessionKey) return;
   const cachedHistory = chatHistoryCache.get(sessionKey);
-  if (cachedHistory) chatHistoryCache.set(sessionKey, cachedHistory.filter((item) => !isFollowTipEntity(item)));
+  if (cachedHistory) setChatHistoryCache(sessionKey, cachedHistory.filter((item) => !isFollowTipEntity(item)));
   if (getSessionKey(currentSession.value) === sessionKey) {
     chatHistory.value = chatHistory.value.filter((item) => !isFollowTipEntity(item));
-    chatHistoryCache.set(sessionKey, [...chatHistory.value]);
+    setChatHistoryCache(sessionKey, [...chatHistory.value]);
   }
 }
 
@@ -1813,12 +1968,13 @@ const handleFollowPartner = async () => {
 
   followingPartner.value = true;
   try {
-    await CoolapkTauriAPI.followUser(partnerUid);
+    // 关注关系统一走 userRelations store：并发去重、乐观更新与失败回滚提示都由 store 负责。
+    // 该提示只在未关注时出现，点击语义恒为「关注」，因此当前状态按 false 传入 toggle。
+    const followed = await userRelations.toggle(partnerUid, false);
+    if (!followed) return;
     // APK 关注成功后只移除当前会话的顶部提示，不改写历史消息，也不查询用户资料。
     removeFollowTipFromSession(sessionKey);
     showToast('关注成功', 'success');
-  } catch (err: any) {
-    showToast(err?.message || '关注操作失败，请稍后重试', 'error');
   } finally {
     followingPartner.value = false;
   }
@@ -1886,7 +2042,7 @@ const handleImageSelected = async (e: Event) => {
   }
 };
 
-const sendImageFile = async (file?: File, existingUrl?: string): Promise<boolean> => {
+const sendImageFile = async (file?: File, existingUrl?: string, pendingItem?: PendingImageItem): Promise<boolean> => {
   if (!currentSession.value) {
     alert('请先选择一个会话再发送图片');
     return false;
@@ -1896,10 +2052,21 @@ const sendImageFile = async (file?: File, existingUrl?: string): Promise<boolean
     alert('未识别到对方的合法酷安账号 UID');
     return false;
   }
+  // owner 快照：上传/发送是两次 await，期间用户可能切换会话；与文本路径一致，
+  // 不校验的话乐观气泡、摘要与会话置顶会写到切换后的新会话上。
+  const ownerUid = String(currentUserUid.value);
+  const ownerSession = currentSession.value;
+  const cacheKey = String(ownerSession.ukey || ownerSession.id || '');
+  const isOwnerSession = () => (
+    currentSession.value === ownerSession
+    && String(currentUserUid.value) === ownerUid
+    && getConversationKey(currentSession.value) === getConversationKey(ownerSession)
+  );
 
   sendingImage.value = true;
+  // picPath 提到 try 外：发送失败但已上传时，catch 里把地址回写待发送项以便重试复用。
+  let picPath = existingUrl || '';
   try {
-    let picPath = existingUrl || '';
     if (!picPath) {
       if (!file) throw new Error('图片尚未准备好');
       // 本地图片才上传，收藏表情直接使用已有 URL。
@@ -1920,55 +2087,75 @@ const sendImageFile = async (file?: File, existingUrl?: string): Promise<boolean
     if (!picPath) {
       throw new Error('图片上传成功但未获取到图片地址');
     }
+    // 上传期间已切换会话：尚未发送，中断并把图片退回待发送状态（catch 里回写已上传地址）。
+    if (!isOwnerSession()) {
+      throw new Error('会话已切换，图片已退回待发送列表，请在目标会话重新发送');
+    }
 
     // 发送图片私信（返回的真实消息带服务端 id，图片显示依赖真实 id）
     const sendRes = await CoolapkTauriAPI.sendPrivateImage(String(targetUid), picPath);
     const realMsg = sendRes?.data && Array.isArray(sendRes.data) ? sendRes.data[0] : null;
 
     const nowTimestamp = Math.floor(Date.now() / 1000);
-    if (realMsg && getChatHistoryItemId(realMsg)) {
-      chatHistory.value = mergeChatHistory(chatHistory.value, [{ ...realMsg, fromuid: currentUserUid.value, uid: targetUid }]);
+    // 与酷安 API 字段一致：uid=接收者，fromuid=发送者
+    const newMsg = {
+      ...(realMsg && getChatHistoryItemId(realMsg) ? realMsg : { id: Date.now(), __localPending: true }),
+      uid: targetUid,
+      fromuid: ownerUid,
+      message_pic: picPath,
+      dateline: realMsg?.dateline || nowTimestamp
+    };
+
+    if (isOwnerSession()) {
+      // 乐观更新当前会话 UI；与文本路径一致先排序再合并，避免本地时钟偏差导致乱序。
+      chatHistory.value = sortChatHistory(mergeChatHistory(chatHistory.value, [newMsg]));
     } else {
-      // 乐观更新 UI（与酷安 API 字段一致：uid=接收者，fromuid=发送者）
-      chatHistory.value.push({
-        id: Date.now(),
-        __localPending: true,
-        uid: targetUid,
-        fromuid: currentUserUid.value,
-        message_pic: picPath,
-        dateline: nowTimestamp
-      });
+      // 发送期间切换了会话：消息已发出，不能写新会话视图，只更新原会话的缓存。
+      const cached = cacheKey ? chatHistoryCache.get(cacheKey) : null;
+      if (cached) setChatHistoryCache(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
     }
 
     // 同步写入缓存
-    const ukey = currentSession.value.ukey || currentSession.value.id;
-    if (ukey) {
-      chatHistoryCache.set(ukey, [...chatHistory.value]);
+    if (cacheKey && isOwnerSession()) {
+      setChatHistoryCache(cacheKey, [...chatHistory.value]);
     }
 
-    // 更新左侧列表摘要与时间
-    const sess = currentSession.value;
-    if (markSessionRead(sess)) notificationStore.markViewed('message');
-    sess.message = '[图片]';
-    sess.lastMessage = '[图片]';
-    sess.summary = '[图片]';
-    sess.last_message = '[图片]';
-    sess.dateline = nowTimestamp;
-    sess.lastupdate = nowTimestamp;
+    // 更新左侧列表摘要与时间（始终写原会话快照，避免写错切换后的会话）。
+    // 发送不是阅读：不动会话未读态与全局私信角标，服务端未置读的未读数
+    // 交由下一次快照 reconcile，避免角标被永久压低。
+    ownerSession.message = '[图片]';
+    ownerSession.lastMessage = '[图片]';
+    ownerSession.summary = '[图片]';
+    ownerSession.last_message = '[图片]';
+    ownerSession.dateline = nowTimestamp;
+    ownerSession.lastupdate = nowTimestamp;
 
-    // 将当前会话置顶
-    const idx = sessions.value.findIndex(s => (s.ukey && s.ukey === currentSession.value.ukey) || s.id === currentSession.value.id);
+    // 将原会话置顶
+    const idx = sessions.value.findIndex(s => s === ownerSession || (s.ukey && s.ukey === ownerSession.ukey) || s.id === ownerSession.id);
     if (idx > 0) {
       const [s] = sessions.value.splice(idx, 1);
       sessions.value.unshift(s);
     }
 
-    if (ukey) {
-      chatScrollMap.delete(String(ukey));
+    if (cacheKey) {
+      chatScrollMap.delete(cacheKey);
     }
-    scrollToBottom();
+    if (isOwnerSession()) scrollToBottom();
     return true;
   } catch (err: any) {
+    // 发送失败但图片已上传：把已上传地址回写待发送项，重试时直接复用，不必重新上传。
+    if (picPath && !existingUrl) {
+      if (pendingItem) {
+        if (!pendingItem.url) pendingItem.url = picPath;
+      } else if (file) {
+        pendingImages.value.push({
+          id: `requeued_${Date.now()}`,
+          file,
+          url: picPath,
+          previewUrl: URL.createObjectURL(file)
+        });
+      }
+    }
     console.error('发送图片失败', err);
     const errMsg = typeof err === 'string'
       ? err
@@ -1990,10 +2177,20 @@ const openMessageImage = (msg: any) => {
 
 const sendTextMessage = async (text: string): Promise<boolean> => {
   if (!currentSession.value) return false;
-  const targetUid = getSessionPartnerUid(currentSession.value);
+  // 发送期间用户可能切到另一个会话：先快照 owner 会话与账号，写回前逐一校验，
+  // 保证乐观气泡、摘要/置顶、草稿清除都只作用于发起发送的原会话。
+  const ownerSession = currentSession.value;
+  const ownerUid = String(currentUserUid.value);
+  const targetUid = getSessionPartnerUid(ownerSession);
   if (!targetUid) {
     throw new Error('未识别到对方的合法酷安账号 UID');
   }
+  const cacheKey = String(ownerSession.ukey || ownerSession.id || '');
+  const isOwnerSession = () => (
+    currentSession.value === ownerSession
+    && String(currentUserUid.value) === ownerUid
+    && getConversationKey(currentSession.value) === getConversationKey(ownerSession)
+  );
 
   // 调用后台原生 API 发送
   const sendRes = await CoolapkTauriAPI.sendPrivateMessage(String(targetUid), text);
@@ -2004,44 +2201,50 @@ const sendTextMessage = async (text: string): Promise<boolean> => {
   const newMsg = {
     ...(realMsg && getChatHistoryItemId(realMsg) ? realMsg : { id: Date.now(), __localPending: true }),
     uid: targetUid,
-    fromuid: currentUserUid.value,
+    fromuid: ownerUid,
     message: text,
     dateline: realMsg?.dateline || nowTimestamp
   };
 
-  chatHistory.value = mergeChatHistory(chatHistory.value, [newMsg]);
-
-  // 同步写入缓存
-  const ukey = currentSession.value.ukey || currentSession.value.id;
-  if (ukey) {
-    chatHistoryCache.set(ukey, [...chatHistory.value]);
+  if (isOwnerSession()) {
+    chatHistory.value = mergeChatHistory(chatHistory.value, [newMsg]);
+    // 同步写入缓存
+    if (cacheKey) setChatHistoryCache(cacheKey, [...chatHistory.value]);
+  } else {
+    // 发送期间已切换会话：消息已发出，不能写新会话视图，只更新原会话的缓存。
+    const cached = cacheKey ? chatHistoryCache.get(cacheKey) : null;
+    if (cached) setChatHistoryCache(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
   }
 
-  // 更新左侧列表的摘要和时间（列表渲染优先读 message 字段）
-  const sess = currentSession.value;
-  if (markSessionRead(sess)) notificationStore.markViewed('message');
-  sess.message = text;
-  sess.lastMessage = text;
-  sess.summary = text;
-  sess.last_message = text;
-  sess.dateline = nowTimestamp;
-  sess.lastupdate = nowTimestamp;
+  // 更新左侧列表的摘要和时间（始终写原会话快照，避免写错切换后的会话）。
+  // 发送不是阅读：不动会话未读态与全局私信角标，服务端未置读的未读数
+  // 交由下一次快照 reconcile，避免角标被永久压低。
+  ownerSession.message = text;
+  ownerSession.lastMessage = text;
+  ownerSession.summary = text;
+  ownerSession.last_message = text;
+  ownerSession.dateline = nowTimestamp;
+  ownerSession.lastupdate = nowTimestamp;
 
-  // 将当前会话置顶
-  const idx = sessions.value.findIndex(s => (s.ukey && s.ukey === currentSession.value.ukey) || s.id === currentSession.value.id);
+  // 将原会话置顶
+  const idx = sessions.value.findIndex(s => s === ownerSession || (s.ukey && s.ukey === ownerSession.ukey) || s.id === ownerSession.id);
   if (idx > 0) {
     const [s] = sessions.value.splice(idx, 1);
     sessions.value.unshift(s);
   }
 
-  if (ukey) {
-    chatScrollMap.delete(String(ukey));
+  if (cacheKey) {
+    chatScrollMap.delete(cacheKey);
   }
-  inputText.value = '';
-  if (editorRef.value) editorRef.value.innerHTML = '';
-  await clearMessageDraft(currentUserUid.value, getConversationKey(currentSession.value));
-  draftSaved.value = false;
-  scrollToBottom();
+  // 消息已发出，原会话的草稿必须清除（即使当前视图已是别的会话）。
+  await clearMessageDraft(ownerUid, getConversationKey(ownerSession));
+  if (isOwnerSession()) {
+    inputText.value = '';
+    if (editorRef.value) editorRef.value.innerHTML = '';
+    draftSaved.value = false;
+    draftSaving.value = false;
+    scrollToBottom();
+  }
   return true;
 };
 
@@ -2058,7 +2261,8 @@ const sendMessage = async () => {
     // 1. 发送待发送列表中的所有图片
     while (pendingImages.value.length > 0) {
       const item = pendingImages.value[0];
-      const success = await sendImageFile(item.file, item.url);
+      // 传入待发送项：发送失败但已上传时，可直接把 picPath 回写到该项供重试复用。
+      const success = await sendImageFile(item.file, item.url, item);
       if (success) {
         removePendingImage(0, true);
       } else {
@@ -2111,7 +2315,7 @@ onUnmounted(() => {
   if (isDraggingSidebar) stopResizeSidebar();
   if (isDraggingInput) stopResizeInput();
   stopMessagePolling();
-  saveCurrentDraft();
+  void flushPendingDraftSave();
 });
 
 // 下拉仅刷新当前栏目，不切换筛选、路由或页面实例。

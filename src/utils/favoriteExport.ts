@@ -9,6 +9,10 @@ import { renderCoolapkRichText } from './richText';
 import { readTauriStoreValue, writeTauriStoreValue } from './tauriStore';
 
 const SNAPSHOT_FILE = 'favorite_export_snapshots.json';
+/** 缺失项（已不在收藏中）在快照里的最长保留期，超期后不再保留。 */
+const SNAPSHOT_MISSING_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+/** 快照条目总数上限（当前导出条目之外的历史缺失项按 lastSeenAt 淘汰最旧的）。 */
+const SNAPSHOT_MAX_ENTRIES = 2000;
 const DETAIL_CONCURRENCY = 3;
 
 export class FavoriteExportCancelledError extends Error {
@@ -55,7 +59,6 @@ type FavoriteSnapshotEntry = {
   author: string;
   contentHash: string;
   lastSeenAt: string;
-  feed: any;
 };
 
 type FavoriteSnapshot = {
@@ -234,7 +237,6 @@ function snapshotEntry(entry: FavoriteExportEntry, exportedAt: string): Favorite
     author: feedAuthor(entry.feed),
     contentHash: hash(message),
     lastSeenAt: exportedAt,
-    feed: entry.feed,
   };
 }
 
@@ -272,10 +274,31 @@ export async function saveFavoriteExportSnapshot(bundle: FavoriteExportBundle): 
   const key = snapshotKey(bundle.accountId, bundle.source);
   const previous = await readTauriStoreValue<FavoriteSnapshot>(SNAPSHOT_FILE, key);
   const currentEntries = Object.fromEntries(bundle.items.map(entry => [entry.id, snapshotEntry(entry, bundle.exportedAt)]));
+  const exportedAtMs = Date.parse(bundle.exportedAt) || 0;
+  // 缺失项只限期保留（差异对比仅用 id/title/author/contentHash/lastSeenAt），
+  // 搬运时剔除旧实现遗留的完整 feed 字段，快照不再随导出内容线性膨胀。
+  const retainedMissing: Record<string, FavoriteSnapshotEntry> = {};
+  for (const [id, entry] of Object.entries(previous?.entries || {})) {
+    if (id in currentEntries) continue;
+    const lastSeenMs = Date.parse(entry.lastSeenAt) || 0;
+    if (exportedAtMs - lastSeenMs >= SNAPSHOT_MISSING_RETENTION_MS) continue;
+    retainedMissing[id] = {
+      id: entry.id,
+      title: entry.title,
+      author: entry.author,
+      contentHash: entry.contentHash,
+      lastSeenAt: entry.lastSeenAt,
+    };
+  }
+  const missingIds = Object.keys(retainedMissing);
+  if (missingIds.length + Object.keys(currentEntries).length > SNAPSHOT_MAX_ENTRIES) {
+    missingIds.sort((left, right) => (Date.parse(retainedMissing[left].lastSeenAt) || 0) - (Date.parse(retainedMissing[right].lastSeenAt) || 0));
+    const overflow = missingIds.length + Object.keys(currentEntries).length - SNAPSHOT_MAX_ENTRIES;
+    for (const id of missingIds.slice(0, overflow)) delete retainedMissing[id];
+  }
   await writeTauriStoreValue(SNAPSHOT_FILE, key, {
     exportedAt: bundle.exportedAt,
-    // 历史缺失项继续保留，后续仍可读取其最后一次成功保存的正文并重新检查状态。
-    entries: { ...(previous?.entries || {}), ...currentEntries },
+    entries: { ...retainedMissing, ...currentEntries },
   });
 }
 

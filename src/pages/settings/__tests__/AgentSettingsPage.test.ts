@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   savePreferences: vi.fn(),
   usageGuide: vi.fn(),
   toast: vi.fn(),
+  confirm: vi.fn(),
 }));
 
 vi.mock('../../../api/coolapk', () => ({
@@ -24,6 +25,7 @@ vi.mock('../../../api/coolapk', () => ({
   },
 }));
 vi.mock('../../../utils/toast', () => ({ showToast: mocks.toast }));
+vi.mock('../../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
 vi.mock('../../../utils/platform', () => ({ getPlatformInfo: () => Promise.resolve({ os: 'linux', arch: 'x86_64' }) }));
 
 import AgentSettingsPage from '../AgentSettingsPage.vue';
@@ -57,7 +59,22 @@ describe('AgentSettingsPage', () => {
     });
     mocks.savePreferences.mockResolvedValue(enabledStatus);
     mocks.usageGuide.mockResolvedValue({ code: 200, data: '# 酷安接入说明\n- token：abc123\n- MCP：http://127.0.0.1:45678/mcp' });
+    mocks.confirm.mockResolvedValue(true);
   });
+
+  const disabledStatus = { code: 200, data: { enabled: false } };
+
+  function toastMessages(): string[] {
+    return mocks.toast.mock.calls.map((call) => String(call[0]));
+  }
+
+  function presetValue(wrapper: ReturnType<typeof mount>): string {
+    return (wrapper.find('select[aria-label="Agent 授权预设"]').element as HTMLSelectElement).value;
+  }
+
+  function writeModeValue(wrapper: ReturnType<typeof mount>): string {
+    return (wrapper.find('select[aria-label="Agent 写操作模式"]').element as HTMLSelectElement).value;
+  }
 
   it('关闭状态不展示 token 与接入地址', async () => {
     const wrapper = mount(AgentSettingsPage);
@@ -113,6 +130,82 @@ describe('AgentSettingsPage', () => {
       writeMode: 'confirm',
       allowedAccounts: [],
     });
+  });
+
+  it('重新生成 token 失败后按服务端状态刷新为已停止', async () => {
+    mocks.status.mockResolvedValue(enabledStatus);
+    mocks.rotate.mockRejectedValue('token 生成失败');
+    const wrapper = mount(AgentSettingsPage);
+    await flushPromises();
+    expect(wrapper.text()).toContain('运行中');
+    expect(wrapper.text()).toContain('/tmp/agent-bridge.sock');
+
+    // 换 token 走 start_with_config：第一步就停旧实例，失败后服务不再监听。
+    mocks.status.mockResolvedValue(disabledStatus);
+    const rotate = wrapper.findAll('button').find((button) => button.text() === '重新生成');
+    expect(rotate).toBeTruthy();
+    await rotate!.trigger('click');
+    await flushPromises();
+
+    expect(mocks.rotate).toHaveBeenCalledTimes(1);
+    expect(mocks.status).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain('当前已关闭');
+    expect(wrapper.text()).not.toContain('/tmp/agent-bridge.sock');
+    expect(wrapper.text()).not.toContain('运行中');
+    const messages = toastMessages();
+    expect(messages.some((message) => message.includes('token 生成失败') && message.includes('服务已停止'))).toBe(true);
+  });
+
+  it('保存偏好失败后回滚本地设置并按服务端状态刷新', async () => {
+    mocks.status.mockResolvedValue(enabledStatus);
+    mocks.savePreferences.mockRejectedValue('写配置文件失败');
+    const wrapper = mount(AgentSettingsPage);
+    await flushPromises();
+
+    mocks.status.mockResolvedValue(disabledStatus);
+    await wrapper.find('select[aria-label="Agent 授权预设"]').setValue('confirm-writes');
+    await flushPromises();
+
+    expect(mocks.savePreferences).toHaveBeenCalledTimes(1);
+    expect(mocks.status).toHaveBeenCalledTimes(2);
+    // 本地草稿回到上一次有效设置：不会停在没生效的 confirm-writes。
+    expect(presetValue(wrapper)).toBe('read-only');
+    expect(writeModeValue(wrapper)).toBe('disabled');
+    expect(wrapper.text()).toContain('当前已关闭');
+    const messages = toastMessages();
+    expect(messages.some((message) => message.includes('写配置文件失败') && message.includes('服务已停止'))).toBe(true);
+  });
+
+  it('选择「完全放开」需要二次确认，取消后不落库', async () => {
+    mocks.confirm.mockResolvedValue(false);
+    const wrapper = mount(AgentSettingsPage);
+    await flushPromises();
+
+    await wrapper.find('select[aria-label="Agent 授权预设"]').setValue('auto-writes');
+    await flushPromises();
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    const options = mocks.confirm.mock.calls[0][0] as { message: string; danger?: boolean };
+    expect(options.danger).toBe(true);
+    // 弹窗必须写清「当前 → 目标」的差异，而不是一句笼统的提示。
+    expect(options.message).toContain('当前：');
+    expect(options.message).toContain('目标：');
+    expect(options.message).toContain('直接执行');
+    expect(mocks.savePreferences).not.toHaveBeenCalled();
+    expect(presetValue(wrapper)).toBe('read-only');
+    expect(writeModeValue(wrapper)).toBe('disabled');
+  });
+
+  it('选择「自定义」不留假状态，回退到服务端生效的预设', async () => {
+    const wrapper = mount(AgentSettingsPage);
+    await flushPromises();
+
+    await wrapper.find('select[aria-label="Agent 授权预设"]').setValue('custom');
+    await flushPromises();
+
+    expect(mocks.savePreferences).not.toHaveBeenCalled();
+    expect(presetValue(wrapper)).toBe('read-only');
+    expect(toastMessages().some((message) => message.includes('自定义'))).toBe(true);
   });
 
   it('token 默认打码，可手动展开', async () => {

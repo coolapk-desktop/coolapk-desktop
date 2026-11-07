@@ -98,6 +98,19 @@ export const useTopicHubStore = defineStore('topicHub', () => {
     isTransitioning.value = false;
   }
 
+  /**
+   * 清空与账号相关的话题数据：话题流缓存（feed 实体带 userAction/收藏计数，
+   * 是按当前账号视角返回的）与选中的 feed。切号/登出时由 auth 的
+   * clearFrontendAuthState() 调用，避免残留上一个账号视角的实体态。
+   * 不清账号无关的状态：categories/activeCategoryUrl（全局分类）、
+   * activeTopicTag/activeTopic（话题本身与账号无关）、viewMode（用户偏好）、
+   * transitionMeta/isTransitioning（瞬时过渡态）。
+   */
+  function clearAccountData() {
+    rawTopicItems.value = [];
+    activeFeed.value = null;
+  }
+
   return {
     categories,
     activeCategoryUrl,
@@ -115,5 +128,6 @@ export const useTopicHubStore = defineStore('topicHub', () => {
     closeTopicSplit,
     selectFeed,
     clearTransition,
+    clearAccountData,
   };
 });

@@ -70,7 +70,7 @@ const StartupSettingsPage = () => import('../pages/settings/StartupSettingsPage.
 const DeviceSettingsPage = () => import('../pages/settings/DeviceSettingsPage.vue');
 const DiagnosticsSettingsPage = () => import('../pages/settings/DiagnosticsSettingsPage.vue');
 const AgentSettingsPage = () => import('../pages/settings/AgentSettingsPage.vue');
-import { restoreRouteScrollPosition, routeNavigationIsHistory, saveRouteScrollPosition } from '../utils/routeScroll';
+import { getRouteScrollKey, restoreRouteScrollPosition, routeNavigationIsHistory, saveRouteScrollPosition } from '../utils/routeScroll';
 import { logDiagnostic, setDiagnosticPage, summarizeDiagnosticError } from '../utils/diagnosticLogger';
 
 const AuthCallbackView = () => import('../pages/AuthCallbackView.vue');
@@ -183,7 +183,8 @@ router.options.history.listen(() => { pendingHistoryNavigation = true; });
 router.beforeEach((_to, from) => {
   routeNavigationIsHistory.value = pendingHistoryNavigation;
   pendingHistoryNavigation = false;
-  saveRouteScrollPosition(from.fullPath);
+  // 位置按页面实例身份记录，与 App.vue 的 keep-alive key 一致；实例被淘汰重建后仍能恢复。
+  saveRouteScrollPosition(getRouteScrollKey(from));
 });
 
 router.onError(error => logDiagnostic('error', 'navigation', 'failed', summarizeDiagnosticError(error)));
@@ -198,5 +199,5 @@ router.afterEach((to, from, failure) => {
   logDiagnostic('info', 'navigation', 'route_changed', `from=${previousPage} to=${page}`);
   // 主动打开通知显示最新消息；评论入口和目标回复自行定位，不能被旧阅读位置覆盖。
   if (!routeNavigationIsHistory.value && (to.name === 'Notifications' || (to.name === 'FeedDetail' && (['top', 'comments'].includes(String(to.query.scrollTo || '')) || /^[1-9]\d*$/.test(String(to.query.replyId || '')))))) return;
-  void restoreRouteScrollPosition(to.fullPath);
+  void restoreRouteScrollPosition(getRouteScrollKey(to));
 });

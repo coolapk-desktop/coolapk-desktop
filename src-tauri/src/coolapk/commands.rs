@@ -1837,14 +1837,14 @@ fn paths_equivalent(left: &Path, right: &Path) -> bool {
     }
 }
 
-fn path_is_direct_child_of(path: &Path, target_dir: &Path) -> Result<bool, String> {
+pub(crate) fn path_is_direct_child_of(path: &Path, target_dir: &Path) -> Result<bool, String> {
     let parent = path.parent().ok_or_else(|| "下载文件路径不合法".to_string())?;
     let canonical_dir = std::fs::canonicalize(target_dir).map_err(|_| "下载目录不存在或无法访问".to_string())?;
     let canonical_parent = std::fs::canonicalize(parent).map_err(|_| "下载文件所在目录不存在或无法访问".to_string())?;
     Ok(paths_equivalent(&canonical_dir, &canonical_parent))
 }
 
-fn reject_download_symlink(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_download_symlink(path: &Path) -> Result<(), String> {
     if let Ok(metadata) = std::fs::symlink_metadata(path) {
         if metadata.file_type().is_symlink() {
             return Err("拒绝操作符号链接下载文件".to_string());
@@ -2067,6 +2067,9 @@ async fn run_apk_download(
             .map_err(|error| format!("创建临时文件失败：{error}"))?
     };
     let mut downloaded = initial_downloaded;
+    // 速度只统计「本次会话新增字节」：续传时 downloaded 从历史断点起算，
+    // 若直接用它除以会话耗时，恢复后首秒速度会虚高到断点总量级，ETA 同步失真。
+    let session_start_downloaded = initial_downloaded;
     let started_at = Instant::now();
     loop {
         match download_control(control) {
@@ -2108,7 +2111,8 @@ async fn run_apk_download(
         file.write_all(&chunk)
             .await
             .map_err(|error| format!("写入临时文件失败：{error}"))?;
-        let speed = downloaded / started_at.elapsed().as_secs().max(1);
+        let session_bytes = downloaded.saturating_sub(session_start_downloaded);
+        let speed = session_bytes / started_at.elapsed().as_secs().max(1);
         let _ = app.emit(
             "apk-download-progress",
             download_event_payload(task_id, "downloading", downloaded, total, speed, &target, &partial, None),
@@ -2135,7 +2139,8 @@ async fn run_apk_download(
         None
         }
     };
-    let speed = downloaded / started_at.elapsed().as_secs().max(1);
+    let session_bytes = downloaded.saturating_sub(session_start_downloaded);
+    let speed = session_bytes / started_at.elapsed().as_secs().max(1);
     let mut completed = download_event_payload(task_id, "completed", downloaded, total, speed, &target, &partial, None);
     completed["publicPath"] = json!(published_path);
     let _ = app.emit(
@@ -2198,7 +2203,7 @@ pub fn cancel_apk_download(state: State<'_, AppState>, task_id: String) -> Resul
     state.downloads.request(&task_id, DownloadControl::Cancel)
 }
 
-fn validate_download_path_for_file_operation(raw_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn validate_download_path_for_file_operation(raw_path: &str) -> Result<PathBuf, String> {
     let path = validate_custom_dir(raw_path.trim(), "下载文件路径")?;
     let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
     let lower_name = name.to_ascii_lowercase();
@@ -2597,7 +2602,7 @@ fn validate_custom_dir(value: &str, label: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn user_save_dir(app: &tauri::AppHandle, custom_dir: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn user_save_dir(app: &tauri::AppHandle, custom_dir: Option<&str>) -> Result<PathBuf, String> {
     // Android 先在应用目录落盘，再通过 MediaStore/系统保存器导出；跨设备导入的桌面路径不适用。
     #[cfg(target_os = "android")]
     {

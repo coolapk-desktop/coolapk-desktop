@@ -100,6 +100,8 @@ import LoadingState from '../components/common/LoadingState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import { useAuthStore } from '../stores/auth';
+import { getErrorMessage } from '../utils/errors';
+import { showToast } from '../utils/toast';
 import type { DyhEntity } from '../types/content';
 
 const router = useRouter();
@@ -153,8 +155,13 @@ function isFollowed(dyh: DyhEntity): boolean {
   return !!(dyh.isFollow ?? dyh.isFollowed ?? dyh.is_follow ?? dyh.follow ?? false);
 }
 
+// 请求序号：切 Tab 的重置请求不被 loading 短路，旧 Tab 在途响应因序号过期整体丢弃。
+let listSeq = 0;
+
 async function fetchList(isLoadMore = false) {
-  if (!authStore.isLoggedIn || loading.value || noMore.value) return;
+  if (!authStore.isLoggedIn || noMore.value) return;
+  if (isLoadMore && loading.value) return;
+  const seq = ++listSeq;
   loading.value = true;
   if (!isLoadMore) error.value = false;
   try {
@@ -167,6 +174,7 @@ async function fetchList(isLoadMore = false) {
       res = await CoolapkTauriAPI.getMyDyhEditorList(page.value);
     }
     const newList = (res && res.data && Array.isArray(res.data)) ? res.data : [];
+    if (seq !== listSeq) return;
     if (newList.length === 0) {
       noMore.value = true;
     } else {
@@ -178,10 +186,11 @@ async function fetchList(isLoadMore = false) {
       page.value++;
     }
   } catch (err) {
+    if (seq !== listSeq) return;
     error.value = true;
     console.warn('获取动态号列表失败', err);
   } finally {
-    loading.value = false;
+    if (seq === listSeq) loading.value = false;
   }
 }
 
@@ -221,7 +230,7 @@ async function toggleUnfollow(dyh: DyhEntity) {
     await CoolapkTauriAPI.unfollowDyh(id);
     list.value = list.value.filter((item: DyhEntity) => String(item.id || item.entityId) !== id);
   } catch (err) {
-    console.warn('取消关注动态号失败', err);
+    showToast(getErrorMessage(err, '取消关注动态号失败'), 'error');
   } finally {
     unfollowingId.value = '';
   }

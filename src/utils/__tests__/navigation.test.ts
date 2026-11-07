@@ -5,10 +5,12 @@ import {
   canNavigateForward,
   navigateBack,
   navigateForward,
+  resolveBackFallback,
 } from '../navigation';
 
-function createRouterState(back: unknown, forward: unknown) {
+function createRouterState(back: unknown, forward: unknown, path = '/') {
   return {
+    currentRoute: { value: { path } },
     options: {
       history: {
         state: { back, forward },
@@ -48,5 +50,36 @@ describe('全局页面导航', () => {
 
     expect(router.replace).toHaveBeenCalledWith('/discover');
     expect(router.forward).not.toHaveBeenCalled();
+  });
+});
+
+describe('深链返回兜底页面', () => {
+  it.each([
+    ['/user/12345', '/user/12345'],
+    ['/user/12345/feeds', '/user/12345'],
+    ['/topic/摄影', '/topics'],
+    ['/live/88', '/discover'],
+    ['/settings/network', '/settings'],
+    ['/feed/42', '/'],
+    ['/', '/'],
+  ])('%s 的语义上级栏目是 %s', (path, expected) => {
+    expect(resolveBackFallback(path)).toBe(expected);
+  });
+
+  it('没有应用内上一页时按当前路由选择语义兜底，而不是一律回首页', () => {
+    const detail = createRouterState(null, null, '/user/12345');
+    navigateBack(detail);
+    expect(detail.back).not.toHaveBeenCalled();
+    expect(detail.replace).toHaveBeenCalledWith('/user/12345');
+
+    const topic = createRouterState(null, null, '/topic/摄影');
+    navigateBack(topic);
+    expect(topic.replace).toHaveBeenCalledWith('/topics');
+  });
+
+  it('显式传入的兜底页面优先于语义兜底', () => {
+    const router = createRouterState(null, null, '/user/12345');
+    navigateBack(router, '/me');
+    expect(router.replace).toHaveBeenCalledWith('/me');
   });
 });

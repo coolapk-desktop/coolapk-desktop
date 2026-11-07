@@ -98,7 +98,7 @@
       <!-- 底部加载状态 -->
       <div class="pagination-footer">
         <LoadingState v-if="loading && page > 1" text="正在加载更多专辑..." />
-        <button v-else-if="error" class="retry-inline" @click="fetchAlbums(true)">加载失败，点击重试</button>
+        <button v-else-if="error" class="retry-inline" @click="retryPagination">加载失败，点击重试</button>
         <div v-else-if="noMore" class="no-more">已加载全部专辑</div>
       </div>
     </template>
@@ -203,8 +203,16 @@ function clearSearch() {
   void fetchAlbums(false);
 }
 
+// 请求序号：切分类/搜索发出的新请求会让在途旧请求整体失效，
+// 慢的旧响应返回后不得覆盖新关键词/新分类的列表（R3-2.1）。
+let fetchSequence = 0;
+
 async function fetchAlbums(isLoadMore = false) {
-  if (loading.value || noMore.value) return;
+  // 只有「加载更多」仍受 loading/noMore 守卫，避免滚动重复触发；
+  // 刷新类请求（首载/切分类/搜索）不被在途 loading 拦截，用序号作废旧响应。
+  if (isLoadMore && (loading.value || noMore.value)) return;
+  if (!isLoadMore) fetchSequence += 1;
+  const sequence = fetchSequence;
   loading.value = true;
   if (!isLoadMore) error.value = '';
 
@@ -212,6 +220,7 @@ async function fetchAlbums(isLoadMore = false) {
     const res = isSearching.value
       ? await CoolapkTauriAPI.searchAlbums(searchQuery.value.trim(), page.value)
       : await CoolapkTauriAPI.getAlbumList(activeTab.value, page.value);
+    if (sequence !== fetchSequence) return;
     const list = (res && Array.isArray(res.data)) ? res.data : [];
 
     if (list.length === 0) {
@@ -226,10 +235,17 @@ async function fetchAlbums(isLoadMore = false) {
       page.value++;
     }
   } catch (err: any) {
-    error.value = err?.message || '加载失败，请检查网络';
+    if (sequence === fetchSequence) error.value = err?.message || '加载失败，请检查网络';
   } finally {
-    loading.value = false;
+    if (sequence === fetchSequence) loading.value = false;
   }
+}
+
+// footer 重试语义：页码只在成功后前进，上次「加载更多」失败时页码未前进，
+// 因此重试仍以当前页码走 fetchAlbums(true) 的「加载更多」分支补齐该页，
+// 不清空已加载内容，也不重置回首页。
+function retryPagination() {
+  void fetchAlbums(true);
 }
 
 function handleScroll(e: Event) {

@@ -188,7 +188,8 @@ function reloadProducts() {
 }
 
 function openProduct(entity: DiscoveryEntity) {
-  const routeInfo = resolveDiscoveryRoute({ ...entity, brandId: entity.brandId ?? selectedBrandId.value });
+  // 与卡片渲染走同一套 normalizeProduct 归一化，保证跳转口径与展示口径一致。
+  const routeInfo = resolveDiscoveryRoute(normalizeProduct(entity));
   if (!routeInfo) return;
   if (routeInfo.kind === 'web') {
     void CoolapkTauriAPI.openUrl(routeInfo.target, 'internal');

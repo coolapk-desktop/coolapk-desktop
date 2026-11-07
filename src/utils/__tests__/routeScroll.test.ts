@@ -92,18 +92,68 @@ describe('route scroll restoration', () => {
     expect(getComputedStyleSpy).not.toHaveBeenCalled();
   });
 
-  it('按节点身份恢复，已销毁页面的位置不会写入同路由的新实例', async () => {
+  it('页面实例被 keep-alive 淘汰重建后，仍按容器槽位恢复原位置', async () => {
     document.body.innerHTML = '<main class="app-main-content"><section data-route-scroll></section></main>';
     const oldPage = document.querySelector<HTMLElement>('section')!;
     oldPage.scrollTop = 240;
     saveRouteScrollPosition('/recreated-page');
+    // 模拟超出 keep-alive 上限后实例被销毁、重新创建同结构的页面。
     const newPage = document.createElement('section');
     newPage.setAttribute('data-route-scroll', '');
     oldPage.replaceWith(newPage);
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
     await restoreRouteScrollPosition('/recreated-page');
-    expect(newPage.scrollTop).toBe(0);
+    expect(newPage.scrollTop).toBe(240);
+  });
+
+  it('重建页面首帧内容高度不足时补一次重试', async () => {
+    vi.useFakeTimers();
+    try {
+      document.body.innerHTML = '<main class="app-main-content"><section data-route-scroll></section></main>';
+      const oldPage = document.querySelector<HTMLElement>('section')!;
+      let stored = 0;
+      oldPage.scrollTop = 300;
+      saveRouteScrollPosition('/slow-restore-page');
+
+      // 新实例的分页数据还没回来：首次写入会被内容高度截断。
+      const newPage = document.createElement('section');
+      newPage.setAttribute('data-route-scroll', '');
+      let limit = 120;
+      Object.defineProperty(newPage, 'scrollTop', {
+        configurable: true,
+        get: () => stored,
+        set: (value: number) => { stored = Math.min(value, limit); },
+      });
+      oldPage.replaceWith(newPage);
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
+      vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+      await restoreRouteScrollPosition('/slow-restore-page');
+      expect(stored).toBe(120);
+      // 异步分页回填后重试一次，补齐到保存的位置。
+      limit = 2000;
+      vi.advanceTimersByTime(200);
+      expect(stored).toBe(300);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('位置记录有数量上限，最旧的记录会被清理', async () => {
+    document.body.innerHTML = '<main class="app-main-content"><section data-route-scroll></section></main>';
+    const page = document.querySelector<HTMLElement>('section')!;
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    for (let index = 0; index < 100; index += 1) {
+      page.scrollTop = index;
+      saveRouteScrollPosition(`/capped-page-${index}`);
+    }
+    page.scrollTop = 0;
+    await restoreRouteScrollPosition('/capped-page-0');
+    expect(page.scrollTop).toBe(0);
+    await restoreRouteScrollPosition('/capped-page-99');
+    expect(page.scrollTop).toBe(99);
   });
 
   it('缓存列表暂时没有溢出时仍恢复位置，共用外框按路由分别记录', async () => {

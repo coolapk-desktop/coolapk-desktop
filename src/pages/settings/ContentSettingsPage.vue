@@ -144,6 +144,13 @@
       </div>
     </div>
 
+    <!-- 分类列表拉取失败时始终可见的降级提示（放在 details 外，收起时也不被隐藏）：
+         此时排序基于协议默认分类，联网后可刷新。 -->
+    <div v-if="tabConfigFailed" class="tab-config-fallback" role="alert">
+      <span class="tab-config-fallback-text">暂时无法获取酷安分类列表，当前展示为默认分类；联网后可刷新。</span>
+      <AppButton variant="secondary" size="sm" :disabled="tabConfigLoading" @click="loadSearchTabs">{{ tabConfigLoading ? '刷新中…' : '重试' }}</AppButton>
+    </div>
+
     <details class="search-order-group" @toggle="toggleSearchOrder">
       <summary class="search-order-trigger">
         <span><i class="fas fa-arrow-down-short-wide" aria-hidden="true"></i>搜索分类排序</span>
@@ -164,7 +171,7 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">屏蔽关键词</span>
-          <span class="row-sub">正文或标题包含任一关键词的动态，将不在时间线中显示</span>
+          <span class="row-sub">正文或标题包含任一关键词的动态，将不在时间线中显示；单条最多 50 字符，最多 200 条</span>
         </div>
       </div>
       <div class="keyword-input-row">
@@ -173,6 +180,7 @@
           type="text"
           class="text-input"
           placeholder="输入要屏蔽的关键词，回车或点击添加"
+          maxlength="50"
           @keydown.enter.prevent="addKeyword"
         />
         <AppButton variant="secondary" size="sm" @click="addKeyword">添加</AppButton>
@@ -214,6 +222,7 @@ import AppSwitch from '../../components/common/AppSwitch.vue';
 import AppButton from '../../components/common/AppButton.vue';
 import SearchTabOrderList from '../../components/search/SearchTabOrderList.vue';
 import { isTouchMobilePlatform } from '../../utils/platform';
+import { showToast } from '../../utils/toast';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { DEFAULT_SEARCH_TABS } from '../../types/search';
 import { extractSearchTabs } from '../../utils/searchEntities';
@@ -225,6 +234,8 @@ const supportsSystemViewer = !isTouchMobilePlatform();
 const keywordInput = ref('');
 const searchOrderOpen = ref(false);
 const configuredSearchTabs = ref(DEFAULT_SEARCH_TABS);
+const tabConfigFailed = ref(false);
+const tabConfigLoading = ref(false);
 const orderedSearchTabs = computed(() => orderSearchTabs(configuredSearchTabs.value, settingsStore.settings.searchTabOrder).filter(tab => tab.searchType !== 'all'));
 const searchOrderMessage = ref('调整后自动保存；恢复默认将沿用酷安提供的分类顺序。');
 
@@ -243,20 +254,41 @@ function resetSearchOrder() {
   searchOrderMessage.value = '已恢复默认分类顺序。';
 }
 
-onMounted(async () => {
+// 拉取搜索分类：失败时降级到协议默认分类并给出可见提示，成功后清除提示。
+async function loadSearchTabs() {
+  if (tabConfigLoading.value) return;
+  tabConfigLoading.value = true;
   try {
     configuredSearchTabs.value = extractSearchTabs(await CoolapkTauriAPI.getTabConfig());
+    tabConfigFailed.value = false;
   } catch {
-    // 离线时仍可调整协议默认分类，下次搜索按已保存的顺序应用。
+    // 离线或后端失败时仍可调整协议默认分类，但要让用户知道顺序基于默认值，联网后部分可能失效。
+    tabConfigFailed.value = true;
+  } finally {
+    tabConfigLoading.value = false;
   }
-});
+}
+
+onMounted(loadSearchTabs);
 
 const blockedKeywords = computed(() => settingsStore.settings.blockedKeywords);
+
+// 与 settings.ts normalizeSettings 的过滤阈值保持一致，超限给出可见提示而非静默丢弃。
+const KEYWORD_MAX_LENGTH = 50;
+const KEYWORD_MAX_COUNT = 200;
 
 function addKeyword() {
   const kw = keywordInput.value.trim();
   if (!kw) return;
+  if (kw.length > KEYWORD_MAX_LENGTH) {
+    showToast(`关键词过长，单条最多 ${KEYWORD_MAX_LENGTH} 个字符`, 'warning');
+    return;
+  }
   if (!settingsStore.settings.blockedKeywords.includes(kw)) {
+    if (settingsStore.settings.blockedKeywords.length >= KEYWORD_MAX_COUNT) {
+      showToast(`屏蔽关键词已达上限（${KEYWORD_MAX_COUNT} 条），请先移除部分再添加`, 'warning');
+      return;
+    }
     settingsStore.settings.blockedKeywords = [...settingsStore.settings.blockedKeywords, kw];
   }
   keywordInput.value = '';
@@ -270,6 +302,8 @@ function removeKeyword(kw: string) {
 </script>
 
 <style scoped>
+.tab-config-fallback { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--warning, var(--border)); border-radius: var(--radius-md); background: var(--warning-soft, var(--surface)); color: var(--text-primary); font-size: var(--font-size-caption); }
+.tab-config-fallback-text { min-width: 0; overflow-wrap: anywhere; }
 .search-order-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .search-order-heading > p { flex: 1 1 220px; }
 .search-order-group { min-width: 0; }

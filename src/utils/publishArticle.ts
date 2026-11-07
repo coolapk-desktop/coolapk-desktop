@@ -46,6 +46,25 @@ function requiredImageUrl(url: string | undefined, label: string): string {
   return url;
 }
 
+/**
+ * 合并连续的空文本段落，并保证正文至少有一个文字段落。
+ * 老草稿/老编辑器在段落末尾插图会留下多个空段落，加载时先收敛一次。
+ */
+export function normalizePublishArticleBlocks(blocks: PublishArticleBlock[]): PublishArticleBlock[] {
+  const normalized: PublishArticleBlock[] = [];
+  let previousEmpty = false;
+  for (const block of blocks) {
+    const isEmptyText = block.type === 'text' && !block.text.trim();
+    if (isEmptyText && previousEmpty) continue;
+    normalized.push(block);
+    previousEmpty = isEmptyText;
+  }
+  if (!normalized.some((block) => block.type === 'text')) {
+    normalized.push({ id: makeArticleBlockId('text'), type: 'text', text: '' });
+  }
+  return normalized;
+}
+
 function articleBlocksForSubmission(blocks: PublishArticleBlock[]): PublishArticleBlock[] {
   let end = blocks.length;
   while (end > 0) {
@@ -156,7 +175,7 @@ export function parsePublishArticleMessage(
   return {
     title,
     cover: coverUrl ? { url: coverUrl, preview: coverUrl } : null,
-    blocks,
+    blocks: normalizePublishArticleBlocks(blocks),
   };
 }
 

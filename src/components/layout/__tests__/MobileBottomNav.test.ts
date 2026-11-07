@@ -115,6 +115,29 @@ describe('MobileBottomNav 首页手势', () => {
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 
+  it.each([['数码', '/digital'], ['发现', '/discover'], ['我的', '/me']])(
+    '已在%s栏目时单击回到顶部，不重复导航',
+    async (label, path) => {
+      routerMock.currentRoute.value.path = path;
+      const main = document.createElement('div');
+      main.className = 'app-main-content';
+      const scroller = document.createElement('div');
+      scroller.scrollTop = 640;
+      main.appendChild(scroller);
+      document.body.appendChild(main);
+      const wrapper = mountNav();
+      try {
+        await navButton(wrapper, label).trigger('click');
+        expect(routerMock.push).not.toHaveBeenCalled();
+        expect(scrollTopSpy).toHaveBeenCalledTimes(1);
+        expect(scroller.scrollTop).toBe(0);
+      } finally {
+        wrapper.unmount();
+        main.remove();
+      }
+    }
+  );
+
   it('其他底栏按钮只负责导航，不触发首页手势', async () => {
     const wrapper = mountNav();
     await navButton(wrapper, '发现').trigger('click');

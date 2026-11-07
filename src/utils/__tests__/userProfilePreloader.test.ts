@@ -1,9 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CoolapkTauriAPI } from '../../api/coolapk';
-import { getUserProfileCached, preloadUserProfile, getCachedUserProfileSync, reactiveUserProfileMap } from '../userProfilePreloader';
+import { clearUserProfileCache, getProfileViewerUid, getUserProfileCached, preloadUserProfile, getCachedUserProfileSync, reactiveUserProfileMap } from '../userProfilePreloader';
 import * as diagnostics from '../diagnosticLogger';
 
 describe('userProfilePreloader', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    clearUserProfileCache();
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -65,5 +70,44 @@ describe('userProfilePreloader', () => {
     expect(call[4]).toBe(60_000);
     expect(JSON.stringify(log.mock.calls)).not.toContain('private-profile-id');
     expect(JSON.stringify(log.mock.calls)).not.toContain('private-token');
+  });
+
+  it('缓存按 uid@viewerUid 区分账号，切号后不命中上一个账号的资料', async () => {
+    const request = vi.spyOn(CoolapkTauriAPI, 'getPublicUserSpace').mockImplementation(async uid => ({ data: { uid, viewer: getProfileViewerUid() } }));
+
+    localStorage.setItem('coolapk_user', JSON.stringify({ uid: 'viewer-a' }));
+    await getUserProfileCached('target-user');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(getProfileViewerUid()).toBe('viewer-a');
+
+    // 同账号重复读取命中缓存
+    await getUserProfileCached('target-user');
+    expect(request).toHaveBeenCalledTimes(1);
+
+    // 换账号：同一 uid 必须重新请求，不能复用上个账号视角的资料
+    localStorage.setItem('coolapk_user', JSON.stringify({ uid: 'viewer-b' }));
+    const profile = await getUserProfileCached('target-user');
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(profile.viewer).toBe('viewer-b');
+  });
+
+  it('未登录时使用 guest 维度', async () => {
+    const request = vi.spyOn(CoolapkTauriAPI, 'getPublicUserSpace').mockResolvedValue({ data: { uid: 'guest-user' } });
+    expect(getProfileViewerUid()).toBe('guest');
+    await getUserProfileCached('guest-user');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(getCachedUserProfileSync('guest-user')).toBeTruthy();
+  });
+
+  it('clearUserProfileCache 清空资料缓存与响应式映射', async () => {
+    vi.spyOn(CoolapkTauriAPI, 'getPublicUserSpace').mockResolvedValue({ data: { uid: 'cleared-user' } });
+    await getUserProfileCached('cleared-user');
+    expect(getCachedUserProfileSync('cleared-user')).toBeTruthy();
+    expect(reactiveUserProfileMap['cleared-user']).toBeTruthy();
+
+    clearUserProfileCache();
+
+    expect(getCachedUserProfileSync('cleared-user')).toBeNull();
+    expect(reactiveUserProfileMap['cleared-user']).toBeUndefined();
   });
 });

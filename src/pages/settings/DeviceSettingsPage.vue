@@ -46,6 +46,10 @@
         <p class="card-desc">
           自动生成会联网向数盟获取 DUID，不会发送酷安账号或 Cookie。生成值保存在本机，登录后按账号分别保存，重启及同账号重新登录后继续复用；切换账号时使用各自保存的值，不覆盖手动配置。
         </p>
+        <p class="card-desc save-timing-note">
+          <i class="fas fa-circle-info"></i>
+          <span>保存时机：本区域的设备 ID <strong>需点击【保存】按钮</strong>后才会写入配置并生效，未保存就离开会丢失；下方「机型模板」「应用与系统信息」区域的字段修改后会<strong>自动同步</strong>，无需点击保存。</span>
+        </p>
 
         <div class="device-id-input-row">
           <div class="input-wrapper">
@@ -209,7 +213,7 @@
             <p v-if="catalogSelectionPath" class="catalog-selection" aria-live="polite">已选择：{{ catalogSelectionPath }}</p>
             <p v-else-if="presetSearch && !catalogGroups.length && !catalogError" class="row-sub">没有匹配的设备，可更换搜索词或在下方手动填写型号。</p>
             <p class="row-sub">{{ catalogError || `共 ${devicePresets.length.toLocaleString()} 条记录，完整保留匹配结果；系列按名称归类。` }}</p>
-            <p class="row-sub">Android、SDK 和 Build 请按实际系统填写。</p>
+            <p class="row-sub">Android、SDK 和 Build 请按实际系统填写；本区域字段修改后自动同步到请求头，无需点击保存。</p>
           </div>
         </div>
 
@@ -392,6 +396,8 @@ import { useAuthStore } from '../../stores/auth';
 import type { DeviceFingerprintSettings } from '../../types/settings';
 import { parseOrExtractDeviceId, isValidShuzlmDeviceId } from '../../utils/shuzilmDeviceGuide';
 import { showToast } from '../../utils/toast';
+import { requestConfirmation } from '../../utils/confirm';
+import { useUnsavedChangesGuard } from '../../utils/useUnsavedChangesGuard';
 
 defineProps<{ editorOnly?: boolean }>();
 const emit = defineEmits<{ deviceIdSaved: [] }>();
@@ -462,7 +468,8 @@ async function useSavedDeviceId() {
 
 async function refreshDeviceProfile() {
   await nextTick();
-  if (await settingsStore.syncDeviceProfile(settingsStore.settings)) await loadDeviceInfo();
+  // 表单 change 走带反馈的同步：失败时弹可见提示，不再只 console.warn。
+  if (await settingsStore.syncDeviceProfileChecked(settingsStore.settings)) await loadDeviceInfo();
 }
 
 const currentDeviceId = computed(() => settingsStore.settings.deviceFingerprint?.deviceId || '');
@@ -478,6 +485,27 @@ watch(
   },
   { immediate: true }
 );
+
+// 设备 ID 是本页唯一的「本地暂存 + 手动保存」草稿：接入统一撤离守卫，覆盖路由离开与页签关闭。
+// 脏判断要精确：空输入不算脏；输入解析出的 ID 与已保存值一致也不算脏（例如粘贴的是包含已保存 ID 的完整日志）。
+function hasUnsavedDeviceIdDraft(): boolean {
+  const input = deviceIdInput.value.trim();
+  if (!input) return false;
+  if (parsedDeviceId.value && parsedDeviceId.value === currentDeviceId.value) return false;
+  return input !== currentDeviceId.value.trim();
+}
+
+function discardDeviceIdDraft() {
+  deviceIdInput.value = currentDeviceId.value;
+  parsedDeviceId.value = isValidShuzlmDeviceId(currentDeviceId.value) ? currentDeviceId.value : '';
+}
+
+useUnsavedChangesGuard({
+  hasUnsavedChanges: hasUnsavedDeviceIdDraft,
+  title: '放弃未保存的设备 ID？',
+  message: '手动输入的设备 ID 尚未保存，离开后本次输入将丢失。',
+  onDiscard: discardDeviceIdDraft,
+});
 
 function onDeviceIdInputChange() {
   const parsed = parseOrExtractDeviceId(deviceIdInput.value);
@@ -619,7 +647,14 @@ const versionWarning = computed(() => {
   return '';
 });
 
-function resetToDefault() {
+async function resetToDefault() {
+  const confirmed = await requestConfirmation({
+    title: '恢复默认设备指纹？',
+    message: '将把机型、品牌、版本等自定义指纹字段重置为默认值并立即同步到请求头，原有配置不可恢复；已保存的数盟设备 ID 会保留。',
+    confirmText: '恢复默认',
+    danger: true,
+  });
+  if (!confirmed) return;
   const defaults: DeviceFingerprintSettings = {
     customFingerprint: true,
     deviceId: fingerprint.value.deviceId,
@@ -899,6 +934,18 @@ function resetToDefault() {
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0;
+}
+
+.save-timing-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-primary);
+}
+
+.save-timing-note i {
+  margin-top: 3px;
+  color: var(--brand-primary);
 }
 
 .device-id-input-row {

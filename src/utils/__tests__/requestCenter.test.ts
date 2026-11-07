@@ -6,7 +6,7 @@ vi.mock('../diagnosticLogger', async (original) => ({
   logDiagnosticLimited: logging.log,
   summarizeDiagnosticError: (error: Error) => error.message,
 }));
-import { requestWithPolicy, shouldRetryRequest } from '../requestCenter';
+import { isRateLimitedRequest, requestWithPolicy, shouldRetryRequest } from '../requestCenter';
 
 describe('requestCenter', () => {
   beforeEach(() => logging.log.mockClear());
@@ -14,6 +14,77 @@ describe('requestCenter', () => {
     expect(shouldRetryRequest(new Error('请求超时'))).toBe(true);
     expect(shouldRetryRequest(new Error('HTTP 503'))).toBe(true);
     expect(shouldRetryRequest(new Error('账号权限不足'))).toBe(false);
+  });
+
+  it('限流 429 不算普通可重试错误，由独立的退避分支处理', () => {
+    expect(shouldRetryRequest(new Error('HTTP 429 Too Many Requests'))).toBe(false);
+    expect(isRateLimitedRequest(new Error('HTTP 429 Too Many Requests'))).toBe(true);
+    expect(isRateLimitedRequest(new Error('请求过于频繁，请稍后再试'))).toBe(true);
+    expect(isRateLimitedRequest(new Error('网络连接失败'))).toBe(false);
+  });
+
+  it('写操作（mutation）默认不重试，只执行一次', async () => {
+    let attempts = 0;
+    await expect(requestWithPolicy('reply_feed', async () => {
+      attempts += 1;
+      throw new Error('请求超时');
+    }, { mutation: true, timeoutMs: 100 })).rejects.toThrow('请求超时');
+    expect(attempts).toBe(1);
+    expect(logging.log.mock.calls.map(entry => entry[2])).toEqual(['started', 'failed']);
+    expect(logging.log.mock.calls[0][3]).toContain('mutation=true');
+    expect(logging.log.mock.calls[0][3]).toContain('max_attempts=1');
+  });
+
+  it('写操作显式 retry: true 时仍可按策略重试', async () => {
+    let attempts = 0;
+    const result = await requestWithPolicy('update_feed', async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('网络连接失败');
+      return 'ok';
+    }, { mutation: true, retry: true, retryDelayMs: 0, timeoutMs: 100 });
+    expect(result).toBe('ok');
+    expect(attempts).toBe(2);
+  });
+
+  it('读操作不传 retry 时保持默认的 3 次尝试', async () => {
+    let attempts = 0;
+    await expect(requestWithPolicy('get_feed_detail', async () => {
+      attempts += 1;
+      throw new Error('网络连接失败');
+    }, { retryDelayMs: 0, timeoutMs: 0 })).rejects.toThrow('网络连接失败');
+    expect(attempts).toBe(3);
+    expect(logging.log.mock.calls[0][3]).toContain('mutation=false');
+  });
+
+  it('限流 429 在读操作上最多重试一次，且退避不少于 2s', async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const request = requestWithPolicy('get_hot_feeds', async () => {
+        attempts += 1;
+        throw new Error('HTTP 429 Too Many Requests');
+      }, { retry: true, maxAttempts: 3, timeoutMs: 0 });
+      const failure = expect(request).rejects.toThrow('429');
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(attempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await failure;
+      expect(attempts).toBe(2);
+      const scheduled = logging.log.mock.calls.find(entry => entry[2] === 'retry_scheduled')!;
+      expect(scheduled[3]).toContain('retry_delay_ms=2000');
+      expect(scheduled[3]).toContain('rate_limited=true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('写操作遇到限流 429 也不重试，避免重复提交', async () => {
+    let attempts = 0;
+    await expect(requestWithPolicy('create_feed', async () => {
+      attempts += 1;
+      throw new Error('HTTP 429 Too Many Requests');
+    }, { mutation: true, retry: true, timeoutMs: 0 })).rejects.toThrow('429');
+    expect(attempts).toBe(1);
   });
 
   it('请求失败后按策略重试并返回成功结果', async () => {

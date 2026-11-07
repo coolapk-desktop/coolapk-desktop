@@ -12,6 +12,7 @@ import {
   getCommentUserLevel,
   getCommentVerifyTitle,
   getExpectedCommentCount,
+  getReplyEntityId,
   getReplyPageCursor,
   hasMoreReplyPages,
   mergeReplies,
@@ -28,6 +29,26 @@ describe('评论列表处理', () => {
   it('合并热门和普通评论时保留普通评论并按编号去重', () => {
     const result = mergeReplies([comments[2]], comments);
     expect(result.map((item) => item.id)).toEqual(['103', '101', '102']);
+  });
+
+  it('按 entityId 去重，避免 id 与 entityId 分列产生重复评论', () => {
+    // 热门接口只给 entityId，普通接口同时给 entityId 和 id：应视为同一条评论。
+    const result = mergeReplies(
+      [{ entityId: '500', message: '热门版', likenum: 9, infoHtml: '回复' }],
+      [{ id: '500', entityId: '500', message: '完整版', dateline: 100, infoHtml: '10分钟前' }],
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ entityId: '500', likenum: 9, dateline: 100, infoHtml: '10分钟前' });
+
+    // entityId 优先于 id：两者指向同一条时只保留首条。
+    const mixed = mergeReplies(
+      [{ entityId: '7', id: '70', message: '首条' }],
+      [{ entityId: '7', id: '77', message: '重复条' }, { entityId: '8', id: '80', message: '另一条' }],
+    );
+    expect(mixed.map((item) => item.message)).toEqual(['首条', '另一条']);
+    expect(getReplyEntityId({ entityId: ' 102 ', id: 999 })).toBe('102');
+    expect(getReplyEntityId({ id: 999 })).toBe('999');
+    expect(getReplyEntityId({})).toBe('');
   });
 
   it('短页但总数未知时仍继续分页，避免提前截断评论', () => {

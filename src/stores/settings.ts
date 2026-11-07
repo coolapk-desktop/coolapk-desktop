@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+import { defineStore, getActivePinia } from 'pinia';
 import { listenMediaQuery } from '../utils/mediaQuery';
 import { ref, watch, onScopeDispose } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
@@ -9,6 +9,7 @@ import { normalizeSearchTabOrder } from '../utils/searchTabOrder';
 import { normalizeLightBackground, buildLightBackground } from '../utils/lightBackground';
 import { isLinuxDesktopRuntime, observeLinuxSystemTheme, type SystemTheme } from '../utils/linuxSystemTheme';
 import { isTouchMobilePlatform } from '../utils/platform';
+import { showToast } from '../utils/toast';
 import type {
   AppSettings,
   ThemeMode,
@@ -351,7 +352,10 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.androidBackgroundNotifications = readBoolean(source.androidBackgroundNotifications, result.androidBackgroundNotifications);
   result.notificationSound = readBoolean(source.notificationSound, result.notificationSound);
   result.notificationPollInterval = [1, 5, 10, 30].includes(Number(source.notificationPollInterval)) ? Number(source.notificationPollInterval) : result.notificationPollInterval;
-  result.blockedKeywords = Array.isArray(source.blockedKeywords) ? [...new Set(source.blockedKeywords.filter((item): item is string => typeof item === 'string' && item.trim().length > 0))] : result.blockedKeywords;
+  // 关键词屏蔽限制单条长度与总数，防止异常数据无限增长拖慢时间线过滤。
+  result.blockedKeywords = Array.isArray(source.blockedKeywords)
+    ? [...new Set(source.blockedKeywords.filter((item): item is string => typeof item === 'string' && item.trim().length > 0 && item.length <= 50))].slice(0, 200)
+    : result.blockedKeywords;
   result.publishDeviceSignature = readBoolean(source.publishDeviceSignature, result.publishDeviceSignature);
   result.deviceSignature = readString(source.deviceSignature, result.deviceSignature).slice(0, 40);
   result.updateSpeedLimitKBps = [0, 500, 1024, 2048, 5120].includes(Number(source.updateSpeedLimitKBps)) ? Number(source.updateSpeedLimitKBps) : result.updateSpeedLimitKBps;
@@ -411,6 +415,17 @@ const ACCENT_PALETTES: Record<AccentColor, { light: AccentPalette; dark: AccentP
   },
 };
 
+/** 持久化失败去重标记：同一失败周期只提示一次，写盘恢复成功后复位。 */
+let persistenceFailureNotified = false;
+
+/** 桌面原生行为（托盘/置顶/启动参数）同步失败的一次性告警闸门，同步成功后复位。 */
+const nativeSyncFailureNotified = { tray: false, alwaysOnTop: false, startupFlags: false };
+function notifyPersistenceFailure() {
+  if (persistenceFailureNotified) return;
+  persistenceFailureNotified = true;
+  showToast('设置保存失败，本次更改在重启后可能不会保留', 'error', 4000);
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<AppSettings>(cloneDefaultSettings());
   const resolvedTheme = ref<'dark' | 'light'>('light');
@@ -418,6 +433,16 @@ export const useSettingsStore = defineStore('settings', () => {
   const androidProfileBackground = ref(false);
   const androidSystemBarDimOwners = new Set<symbol>();
   const profileToolbarCompact = ref(false);
+  // 代理是否真实同步到后端（set_network_proxy 成功与否）。保存的地址与“是否
+  // 生效”是两个语义：失败时不回滚用户已保存的地址，只把失败暴露给页面显示告警，
+  // 避免 store 仍显示“已应用”而用户无从发现代理没生效。
+  const proxySyncFailed = ref(false);
+  // 桌面原生行为（托盘/置顶/启动参数）是否真实同步到后端，口径同 proxySyncFailed：
+  // 保存的开关值与「是否生效」是两个语义，失败时不回滚开关，只暴露失败状态供页面
+  // 展示告警，避免 store 仍显示“已应用”而用户无从发现功能没生效。
+  const traySyncFailed = ref(false);
+  const alwaysOnTopSyncFailed = ref(false);
+  const startupFlagsSyncFailed = ref(false);
   const isTauriRuntime = typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
   let fileStore: SettingsFileStore | null = null;
   let persistenceReady = !isTauriRuntime;
@@ -452,9 +477,14 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function queueFileSave(snapshot: AppSettings) {
     const copy = JSON.parse(JSON.stringify(snapshot)) as AppSettings;
-    saveQueue = saveQueue.then(() => saveSettingsFile(copy)).catch((err) => {
-      console.error('保存 settings.json 失败', err);
-    });
+    saveQueue = saveQueue
+      .then(() => saveSettingsFile(copy))
+      // 写盘恢复成功后复位去重标记，下一次失败仍会提示。
+      .then(() => { persistenceFailureNotified = false; })
+      .catch((err) => {
+        console.error('保存 settings.json 失败', err);
+        notifyPersistenceFailure();
+      });
     return saveQueue;
   }
 
@@ -493,6 +523,19 @@ export const useSettingsStore = defineStore('settings', () => {
     return saveQueue;
   }
 
+  // 应用退出或切到后台前把队列里未落盘的设置写完：此前 flushSettings 只在更新
+  // 安装前被 await，普通关闭/隐藏窗口时队列中的改动可能丢失，重启后回退旧值。
+  function flushPendingSettings() { void flushSettings(); }
+  if (typeof document !== 'undefined') {
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') flushPendingSettings(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', flushPendingSettings);
+    onScopeDispose(() => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', flushPendingSettings);
+    });
+  }
+
   // 持久化只负责写盘。视觉和原生副作用使用字段级 watcher，避免修改任意
   // 一个设置时重复调用所有系统 API。
   watch(
@@ -504,8 +547,10 @@ export const useSettingsStore = defineStore('settings', () => {
         } else {
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(newVal));
+            persistenceFailureNotified = false;
           } catch (err) {
             console.error('保存本地设置失败', err);
+            notifyPersistenceFailure();
           }
         }
       }
@@ -551,11 +596,29 @@ export const useSettingsStore = defineStore('settings', () => {
     },
     { flush: 'sync' },
   );
+  // 输入过程中逐键推送半成品 UA / 空型号会污染 Rust 侧请求头，防抖后只同步最终值。
+  const DEVICE_SYNC_DEBOUNCE_MS = 400;
+  let deviceSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let deviceSyncFailureNotified = false;
+  const boundPinia = getActivePinia();
   watch(() => settings.value.deviceFingerprint, () => {
-    if (nativeSyncReady) syncDeviceProfile(settings.value);
+    if (!nativeSyncReady) return;
+    if (deviceSyncTimer) clearTimeout(deviceSyncTimer);
+    deviceSyncTimer = setTimeout(() => {
+      deviceSyncTimer = null;
+      // 测试或热替换中旧 store 的未决定时器不得作用于新的 pinia 实例。
+      if (getActivePinia() !== boundPinia) return;
+      void syncDeviceProfileChecked(settings.value);
+    }, DEVICE_SYNC_DEBOUNCE_MS);
   }, { deep: true, flush: 'sync' });
+  onScopeDispose(() => { if (deviceSyncTimer) clearTimeout(deviceSyncTimer); });
+  // 关闭实验性功能会连带把 beta 渠道翻回 stable（beta 属于实验能力）。
+  // 这是跨字段隐式副作用，必须给用户一次性可见提示；渠道本来就是 stable 时不提示。
   watch(() => settings.value.experimentalFeatures, (enabled) => {
-    if (!enabled && settings.value.updateChannel === 'beta') settings.value.updateChannel = 'stable';
+    if (!enabled && settings.value.updateChannel === 'beta') {
+      settings.value.updateChannel = 'stable';
+      showToast('已关闭实验性功能，更新渠道已同时切回稳定版', 'info', 4000);
+    }
   }, { flush: 'sync' });
   // 动态磁贴开关变更后立即同步给后端：开启时立即刷新磁贴，关闭时清空磁贴队列。
   watch(() => settings.value.liveTileEnabled, (enabled) => {
@@ -741,8 +804,22 @@ export const useSettingsStore = defineStore('settings', () => {
     applyNoImageMode(settings.value.noImageMode);
   }
 
+  /** 同一次失败只提示一次；同步成功后重置，下次再失败可以重新提示（同 proxySyncFailureNotified 范式）。 */
+  function notifyNativeSyncFailure(kind: keyof typeof nativeSyncFailureNotified, message: string) {
+    if (nativeSyncFailureNotified[kind]) return;
+    nativeSyncFailureNotified[kind] = true;
+    showToast(message, 'warning', 6000);
+  }
+
   function syncCloseToTray(enabled: boolean) {
-    invoke('set_close_to_tray', { enabled }).catch((err) => {
+    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) { traySyncFailed.value = false; nativeSyncFailureNotified.tray = false; return; }
+    invoke('set_close_to_tray', { enabled }).then(() => {
+      traySyncFailed.value = false;
+      nativeSyncFailureNotified.tray = false;
+    }).catch((err) => {
+      // 开关已落库且界面显示已开启，但原生行为没生效，必须让用户看见（同代理同步范式）。
+      traySyncFailed.value = true;
+      notifyNativeSyncFailure('tray', '「关闭到托盘」设置未生效，请重新切换开关或重启应用');
       console.warn('同步关闭到托盘设置失败:', err);
     });
   }
@@ -752,7 +829,12 @@ export const useSettingsStore = defineStore('settings', () => {
     // Android/iOS 不提供桌面窗口置顶接口，初始化与设置同步都应跳过。
     if (isTouchMobilePlatform()) return;
     if ((window as any).__TAURI_INTERNALS__?.metadata) {
-      void getCurrentWindow().setAlwaysOnTop(enabled).catch((err) => {
+      void getCurrentWindow().setAlwaysOnTop(enabled).then(() => {
+        alwaysOnTopSyncFailed.value = false;
+        nativeSyncFailureNotified.alwaysOnTop = false;
+      }).catch((err) => {
+        alwaysOnTopSyncFailed.value = true;
+        notifyNativeSyncFailure('alwaysOnTop', '窗口置顶设置未生效，请重新切换开关');
         console.warn('设置窗口置顶失败:', err);
       });
     }
@@ -764,7 +846,12 @@ export const useSettingsStore = defineStore('settings', () => {
       startMinimized: s.startMinimized,
       rememberWindowState: s.rememberWindowState,
       alwaysOnTop: s.alwaysOnTop,
+    }).then(() => {
+      startupFlagsSyncFailed.value = false;
+      nativeSyncFailureNotified.startupFlags = false;
     }).catch((err) => {
+      startupFlagsSyncFailed.value = true;
+      notifyNativeSyncFailure('startupFlags', '启动参数设置未同步，重启后可能不按预期生效');
       console.warn('同步启动参数失败:', err);
     });
   }
@@ -801,6 +888,20 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /** 带可见反馈的设备信息同步：跳过空型号等半成品输入，失败时去重提示不静默丢弃。 */
+  async function syncDeviceProfileChecked(s: AppSettings): Promise<boolean> {
+    const f = s.deviceFingerprint;
+    if (f.customFingerprint && !f.model.trim()) return true;
+    const ok = await syncDeviceProfile(s);
+    if (ok) {
+      deviceSyncFailureNotified = false;
+    } else if (!deviceSyncFailureNotified) {
+      deviceSyncFailureNotified = true;
+      showToast('设备信息同步失败，请求可能仍使用旧配置，请重试', 'error', 4000);
+    }
+    return ok;
+  }
+
   async function syncNativeSettings(s: AppSettings) {
     syncCloseToTray(s.closeToTray);
     syncAlwaysOnTop(s.alwaysOnTop);
@@ -809,10 +910,33 @@ export const useSettingsStore = defineStore('settings', () => {
     await syncNetworkProxy(s.networkProxyUrl);
   }
 
+  /** 同一次失败只提示一次；同步成功后重置，下次再失败可以重新提示。 */
+  let proxySyncFailureNotified = false;
+
   async function syncNetworkProxy(proxyUrl: string): Promise<boolean> {
-    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return true;
-    try { await invoke('set_network_proxy', { proxyUrl: proxyUrl.trim() || null }); return true; }
-    catch (err) { console.warn('同步网络代理设置失败:', err); return false; }
+    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) { proxySyncFailed.value = false; proxySyncFailureNotified = false; return true; }
+    try {
+      await invoke('set_network_proxy', { proxyUrl: proxyUrl.trim() || null });
+      proxySyncFailed.value = false;
+      proxySyncFailureNotified = false;
+      return true;
+    } catch (err) {
+      // 只记录失败状态供页面告警，不抛出、不改动已保存的代理地址。
+      proxySyncFailed.value = true;
+      // 页面级告警只有用户主动打开网络设置才看得到；启动同步失败必须全局可见一次，
+      // 否则用户会在「设置里显示已启用代理，但请求没走代理」的状态下长期不自知。
+      if (!proxySyncFailureNotified) {
+        proxySyncFailureNotified = true;
+        showToast('网络代理未生效：请求可能未走代理，请到「设置 → 网络」点击重新应用', 'warning', 6000);
+      }
+      console.warn('同步网络代理设置失败:', err);
+      return false;
+    }
+  }
+
+  /** 页面「重新应用」入口：用当前已保存的地址重试同步，不改写任何设置值。 */
+  async function reapplyNetworkProxy(): Promise<boolean> {
+    return syncNetworkProxy(settings.value.networkProxyUrl);
   }
 
   async function setNetworkProxyUrl(proxyUrl: string): Promise<boolean> {
@@ -896,7 +1020,13 @@ export const useSettingsStore = defineStore('settings', () => {
     initializeSettings,
     flushSettings,
     syncDeviceProfile,
+    syncDeviceProfileChecked,
     setNetworkProxyUrl,
+    reapplyNetworkProxy,
+    proxySyncFailed,
+    traySyncFailed,
+    alwaysOnTopSyncFailed,
+    startupFlagsSyncFailed,
     applyAppearance,
     setAutostart,
     setTheme,

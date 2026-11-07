@@ -19,17 +19,18 @@
             </button>
           </div>
           <div class="topbar-actions">
-            <button class="viewer-btn" title="缩小" @click="zoomOut"><i class="fas fa-search-minus"></i></button>
+            <button class="viewer-btn" :disabled="!imageReady" title="缩小" @click="zoomOut"><i class="fas fa-search-minus"></i></button>
             <span class="zoom-text">{{ Math.round(scale * 100) }}%</span>
-            <button class="viewer-btn" title="放大" @click="zoomIn"><i class="fas fa-search-plus"></i></button>
-            <button class="viewer-btn" title="向左旋转 90°" @click="rotateLeft"><i class="fas fa-undo"></i></button>
-            <button class="viewer-btn" title="向右旋转 90°" @click="rotateRight"><i class="fas fa-redo"></i></button>
-            <button class="viewer-btn" title="重置" @click="resetTransform"><i class="fas fa-compress-arrows-alt"></i></button>
+            <button class="viewer-btn" :disabled="!imageReady" title="放大" @click="zoomIn"><i class="fas fa-search-plus"></i></button>
+            <button class="viewer-btn" :disabled="!imageReady" title="向左旋转 90°" @click="rotateLeft"><i class="fas fa-undo"></i></button>
+            <button class="viewer-btn" :disabled="!imageReady" title="向右旋转 90°" @click="rotateRight"><i class="fas fa-redo"></i></button>
+            <button class="viewer-btn" :disabled="!imageReady" title="重置" @click="resetTransform"><i class="fas fa-compress-arrows-alt"></i></button>
             <button class="viewer-btn" title="复制链接" @click="copyLink"><i class="fas fa-link"></i></button>
             <button
               class="viewer-btn"
-              :disabled="savingOriginal"
-              :title="savingOriginal ? '正在保存原图' : '保存原图'"
+              :class="{ 'is-busy': savingOriginal }"
+              :disabled="savingOriginal || !canSaveOriginal"
+              :title="saveOriginalTitle"
               @click.stop="saveOriginal"
             >
               <i :class="savingOriginal ? 'fas fa-circle-notch fa-spin' : 'fas fa-download'"></i>
@@ -67,7 +68,7 @@
           @wheel.prevent="handleWheel"
         >
           <img
-            v-if="displaySrc"
+            v-if="displaySrc && !loadFailed"
             ref="imageRef"
             :src="displaySrc"
             :data-original-url="originalUrl || undefined"
@@ -78,6 +79,7 @@
             :class="{ 'is-touch-dragging': touchDragging || mediaTransition === 'none', 'is-sliding': mediaTransition === 'smooth' }"
             @dragstart.prevent
             @load="measureImage"
+            @error="handleImageError"
           />
           <video
             v-if="currentItem?.isLivePhoto && liveVideoUrl"
@@ -99,6 +101,15 @@
           <div v-if="!displaySrc" class="viewer-loading">
             <i class="fas fa-spinner fa-spin"></i>
             <span>正在载入高清大图...</span>
+          </div>
+          <!-- 加载失败兜底：与实况视频的 liveVideoError 同一套提示口径（说明 + 重试）。 -->
+          <div v-else-if="loadFailed" class="viewer-load-error">
+            <i class="fas fa-triangle-exclamation"></i>
+            <span>图片加载失败</span>
+            <button type="button" class="viewer-retry-btn" @click.stop="retryLoadCurrentImage">
+              <i class="fas fa-redo"></i>
+              <span>重试</span>
+            </button>
           </div>
           <!-- 切图过渡：旧画面留在这层继续滑出，避免换图瞬间变成硬切。 -->
           <img
@@ -234,6 +245,22 @@ const SLIDE_DURATION_MS = 280;
 let transitionTimer: ReturnType<typeof setTimeout> | null = null;
 
 const displaySrc = ref<string>('');
+/**
+ * 图片节点是否处于显式失败态（<img> 的 error 事件置位）：
+ * 解析失败时仍先回退到原始地址重试一次，只有 <img> 真的加载不出来才进入失败态，
+ * 避免原本可直接访问的地址因为资源缓存层异常被误判成加载失败。
+ */
+const loadFailed = ref(false);
+/** 失败时交给 <img> 的地址，重试时优先重试同一地址。 */
+const failedSrc = ref('');
+/**
+ * 加载超时兜底：网络挂住或解码卡住时 <img> 既不触发 load 也不触发 error，
+ * 界面会永远停在「正在载入」。超时后走与 @error 一致的失败态，可重试。
+ */
+const IMAGE_LOAD_TIMEOUT_MS = 12000;
+let loadTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+/** 画面可用（有图且没有失败）时才允许缩放/旋转/保存等依赖图片的操作。 */
+const imageReady = computed(() => Boolean(displaySrc.value) && !loadFailed.value);
 useResourceUrlLifetime(displaySrc);
 useResourceUrlLifetime(computed(() => slideGhost.value?.src));
 let resolveSequence = 0;
@@ -294,7 +321,17 @@ function imagePanBounds(size: ImageSize, zoom: number) {
 }
 
 function clampMobilePan() {
-  if (!mobileLayout.value || !imageSize.value) return;
+  if (!imageSize.value) return;
+  if (!mobileLayout.value) {
+    // 桌面端：未放大且未旋转时图片正好贴合舞台，任何位移都只会把图拖出可视区（R3-3.3），
+    // 因此强制归零；放大/旋转后保持既有自由平移交互（已有手势用例锁定该行为）。
+    const untouched = scale.value <= 1.0001 && Math.abs(rotation.value % 360) < 0.0001;
+    if (untouched) {
+      translateX.value = 0;
+      translateY.value = 0;
+    }
+    return;
+  }
   const { x, y, originY } = imagePanBounds(imageSize.value, scale.value);
   translateX.value = Math.min(x, Math.max(-x, translateX.value));
   translateY.value = Math.min(y - originY, Math.max(-y - originY, translateY.value));
@@ -324,6 +361,8 @@ function scaledImageSize(size: ImageSize | null, zoom: number) {
 }
 
 function measureImage() {
+  // 图片真正出画面才算加载成功，这里解除超时兜底。
+  clearLoadTimeout();
   const image = imageRef.value;
   if (image?.naturalWidth && image.naturalHeight) {
     imageSize.value = { width: image.naturalWidth, height: image.naturalHeight };
@@ -409,6 +448,10 @@ const showOriginalControl = computed(() => !isCurrentOriginalLoaded.value);
 
 async function resolveImageData(url: string): Promise<boolean> {
   const sequence = ++resolveSequence;
+  // 每次重新解析都清掉上一张/上一次的失败态，避免一次失败影响之后的图片。
+  loadFailed.value = false;
+  failedSrc.value = '';
+  clearLoadTimeout();
   if (noImageMode.value) {
     displaySrc.value = '';
     return false;
@@ -419,12 +462,15 @@ async function resolveImageData(url: string): Promise<boolean> {
   }
   if (url.startsWith('data:') || url.startsWith('blob:')) {
     displaySrc.value = url;
+    // data:/blob: 也要等浏览器解码，解码卡住同样只能靠超时兜底。
+    startLoadTimeout(sequence);
     return true;
   }
   // 命中内存缓存时同步贴回，切图不用闪一帧「正在载入高清大图」。
   const cached = getMemoryCachedResourceSync(url);
   if (cached) {
     displaySrc.value = cached;
+    startLoadTimeout(sequence);
     return true;
   }
   displaySrc.value = '';
@@ -432,11 +478,13 @@ async function resolveImageData(url: string): Promise<boolean> {
     const dataUrl = await loadImageResource(url, CoolapkTauriAPI.getImageDataUrl);
     if (sequence !== resolveSequence) return false;
     displaySrc.value = dataUrl;
+    startLoadTimeout(sequence);
     return true;
   } catch (err) {
     if (sequence !== resolveSequence) return false;
     console.warn('看图器加载图片失败:', err);
     displaySrc.value = url; // 备用回退直接使用原 url
+    startLoadTimeout(sequence);
     return false;
   }
 }
@@ -574,6 +622,63 @@ async function resolveCurrentLiveVideo(force = false) {
   }
 }
 
+function clearLoadTimeout() {
+  if (loadTimeoutTimer !== null) {
+    clearTimeout(loadTimeoutTimer);
+    loadTimeoutTimer = null;
+  }
+}
+
+/**
+ * 挂上加载超时：被更新的解析（sequence 前进）或失败态顶掉时不命中，
+ * 避免旧定时器把切换后的新图片误判成超时。
+ */
+function startLoadTimeout(sequence: number) {
+  clearLoadTimeout();
+  loadTimeoutTimer = setTimeout(() => {
+    loadTimeoutTimer = null;
+    if (sequence !== resolveSequence || loadFailed.value || noImageMode.value || !viewerData.value) return;
+    const failed = displaySrc.value || currentUrl.value;
+    if (!failed) return;
+    failedSrc.value = failed;
+    loadFailed.value = true;
+    imageSize.value = null;
+    console.warn('看图器图片加载超时:', failed);
+  }, IMAGE_LOAD_TIMEOUT_MS);
+}
+
+/** <img> 加载失败：进入显式失败态并给出重试入口，不再把坏图留在画面上。 */
+function handleImageError(event: Event) {
+  const image = imageRef.value;
+  // 换图或重试时旧节点可能晚到一步派发 error，不能覆盖新的结果。
+  if (!image || event.target !== image) return;
+  // 无图模式下查看器整体隐藏，失败态与它互不覆盖。
+  if (noImageMode.value) return;
+  clearLoadTimeout();
+  failedSrc.value = displaySrc.value;
+  loadFailed.value = true;
+  imageSize.value = null;
+  console.warn('看图器图片加载失败:', failedSrc.value);
+}
+
+/**
+ * 失败态重试：当前变体是显示地址（HD/封面后缀）且与原图地址不同时，
+ * 改试原图地址做变体回退，不再反复请求同一个死链（R3-3.1）。
+ * 回退后仍失败时保持失败态，重试按钮可继续点击（再次尝试当前候选）。
+ */
+async function retryLoadCurrentImage() {
+  const failed = failedSrc.value || currentUrl.value;
+  loadFailed.value = false;
+  failedSrc.value = '';
+  imageSize.value = null;
+  displaySrc.value = '';
+  if (!failed) return;
+  const original = originalUrl.value;
+  const isDataOrBlob = /^(?:data:|blob:)/.test(failed);
+  const url = !isDataOrBlob && original && original !== failed ? original : failed;
+  await resolveImageData(url);
+}
+
 function handleLiveCanPlay() {
   void playLiveVideo();
 }
@@ -652,6 +757,8 @@ watch(viewerData, (val) => {
     currentIndex.value = Math.min(Math.max(val.currentIndex, 0), Math.max(imageItems.value.length - 1, 0));
     originalLoadedMap.value = {};
     originalLoadingMap.value = {};
+    loadFailed.value = false;
+    failedSrc.value = '';
     resetTransform();
   } else {
     clearMediaForNoImageMode();
@@ -660,9 +767,12 @@ watch(viewerData, (val) => {
 
 function clearMediaForNoImageMode() {
   resolveSequence += 1;
+  clearLoadTimeout();
   liveResolveSequence += 1;
   livePlaybackSequence += 1;
   displaySrc.value = '';
+  loadFailed.value = false;
+  failedSrc.value = '';
   originalLoadedMap.value = {};
   originalLoadingMap.value = {};
   liveResolving.value = false;
@@ -715,6 +825,9 @@ function prefetchAdjacentImages() {
 }
 
 watch(currentItem, () => {
+  // 失败态按图片索引重置：一张失败不能影响其它图片。
+  loadFailed.value = false;
+  failedSrc.value = '';
   resetTransform();
   if (!currentItem.value) {
     clearMediaForNoImageMode();
@@ -770,10 +883,12 @@ function resetTransform() {
 }
 
 function rotateRight() {
+  if (!imageReady.value) return;
   rotation.value = (rotation.value + 90) % 360;
 }
 
 function rotateLeft() {
+  if (!imageReady.value) return;
   rotation.value = (rotation.value - 90 + 360) % 360;
 }
 
@@ -861,7 +976,8 @@ function slideTo(direction: 1 | -1, fromOffsetX = 0): boolean {
   if (atEdge) return false;
 
   const distance = slideDistance();
-  const ghostSrc = displaySrc.value;
+  // 加载失败的画面没有内容可滑出，不做幽灵层过渡。
+  const ghostSrc = loadFailed.value ? '' : displaySrc.value;
   clearTransitionTimer();
   slideGhost.value = ghostSrc
     ? { src: ghostSrc, offsetX: fromOffsetX, scale: scale.value, rotation: rotation.value, imageStyle: scaledImageSize(imageSize.value, scale.value) }
@@ -889,15 +1005,18 @@ function slideTo(direction: 1 | -1, fromOffsetX = 0): boolean {
 }
 
 function zoomIn() {
+  if (!imageReady.value) return;
   // 全平台不设最大倍数，避免超长图或高分辨率图片无法继续放大。
   scale.value = Number((scale.value + 0.25).toFixed(2));
 }
 
 function zoomOut() {
+  if (!imageReady.value) return;
   scale.value = Math.max(Number((scale.value - 0.25).toFixed(2)), mobileLayout.value ? 1 : 0.3);
 }
 
 function handleWheel(e: WheelEvent) {
+  if (!imageReady.value) return;
   const delta = e.deltaY < 0 ? 0.15 : -0.15;
   const mobile = mobileLayout.value;
   const newScale = Math.max(scale.value + delta, mobile ? 1 : 0.3);
@@ -905,6 +1024,7 @@ function handleWheel(e: WheelEvent) {
 }
 
 function toggleZoom() {
+  if (!imageReady.value) return;
   if (scale.value === 1) {
     scale.value = mobileLayout.value ? mobileDoubleTapScale.value : 1.8;
   } else {
@@ -1199,14 +1319,32 @@ function handleBackdropClick(e: MouseEvent) {
   close();
 }
 
-function copyLink() {
-  if (currentUrl.value) {
-    navigator.clipboard.writeText(currentUrl.value);
+async function copyLink() {
+  // 复制图片原始链接（原图地址或接口给的 sourceUrl），不外传带尺寸后缀的显示地址（R3-3.2）。
+  const url = originalUrl.value || rawUrl.value || currentUrl.value;
+  if (!url) {
+    showToast('该图没有可复制的链接', 'warning');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast('已复制链接', 'success');
+  } catch {
+    showToast('复制失败，请检查剪贴板权限', 'error');
   }
 }
 
+/** 保存原图入口的可用性与提示，避免点击后静默返回。 */
+const canSaveOriginal = computed(() => Boolean(originalUrl.value) && !loadFailed.value);
+const saveOriginalTitle = computed(() => {
+  if (!originalUrl.value) return '该图没有原图';
+  if (savingOriginal.value) return '正在保存…';
+  if (loadFailed.value) return '图片加载失败，无法保存';
+  return '保存原图';
+});
+
 async function saveOriginal() {
-  if (!originalUrl.value || savingOriginal.value) return;
+  if (!originalUrl.value || savingOriginal.value || loadFailed.value) return;
   savingOriginal.value = true;
   try {
     const path = await CoolapkTauriAPI.saveImage(
@@ -1238,6 +1376,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('resize', updateViewportSize);
   clearTransitionTimer();
+  clearLoadTimeout();
   clearMediaForNoImageMode();
 });
 </script>
@@ -1342,6 +1481,12 @@ onUnmounted(() => {
 }
 
 .viewer-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 保存进行中：保持等待手势，与「画面不可用」的禁用态区分开。 */
+.viewer-btn.is-busy:disabled {
   opacity: 0.55;
   cursor: wait;
 }
@@ -1544,6 +1689,48 @@ onUnmounted(() => {
 .viewer-loading i {
   font-size: 32px;
   color: var(--brand-primary, #10b966);
+}
+
+/* 图片加载失败兜底：与实况视频失败提示保持同一套「说明 + 重试」样式。 */
+.viewer-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 24px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  border-radius: var(--radius-control, 8px);
+}
+
+.viewer-load-error > i {
+  font-size: 32px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.viewer-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.viewer-retry-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.viewer-retry-btn i {
+  font-size: 11px;
 }
 
 .viewer-bottombar {

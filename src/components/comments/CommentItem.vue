@@ -84,6 +84,8 @@ import { handleAnchorClick } from '../../utils/anchorClick';
 import { showToast } from '../../utils/toast';
 import { requestConfirmation } from '../../utils/confirm';
 import { getErrorMessage } from '../../utils/errors';
+// 楼中楼去重用与主列表一致的标识：帖子类数据常 id 为空而 entityId 有值，只看 i.id 会漏判重复。
+import { getReplyEntityId } from '../../utils/commentList';
 
 const authStore = useAuthStore();
 
@@ -296,8 +298,8 @@ async function loadSubReplies(reset: boolean) {
     if (reset) {
       fetchedSubs.value = list;
     } else {
-      const existing = new Set(fetchedSubs.value.map((i: any) => i.id));
-      fetchedSubs.value.push(...list.filter((i: any) => !existing.has(i.id)));
+      const existing = new Set(fetchedSubs.value.map(getReplyEntityId));
+      fetchedSubs.value.push(...list.filter((i: any) => !existing.has(getReplyEntityId(i))));
     }
     if (list.length < 20) {
       subNoMore.value = true;

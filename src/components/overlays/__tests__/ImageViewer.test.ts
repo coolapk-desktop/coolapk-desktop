@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAppStore } from '../../../stores/app';
 import { useSettingsStore } from '../../../stores/settings';
 import { getMemoryCachedResourceSync, loadImageResource } from '../../../utils/resourceCache';
+import { showToast } from '../../../utils/toast';
 import ImageViewer from '../ImageViewer.vue';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -21,8 +22,17 @@ vi.mock('../../../utils/resourceCache', async importOriginal => ({
   getMemoryCachedResourceSync: vi.fn(() => null),
 }));
 
+// 保留真实的图片工具实现，只让「没有原图」的地址返回空原图 URL，用于验证保存按钮的禁用态。
+vi.mock('../../../utils/image', async importOriginal => ({
+  ...await importOriginal<typeof import('../../../utils/image')>(),
+  getOriginalImageUrl: (url: string) => (url.includes('no-original') ? '' : url),
+}));
+
+vi.mock('../../../utils/toast', () => ({ showToast: vi.fn() }));
+
 const loadResourceMock = vi.mocked(loadImageResource);
 const memoryCacheMock = vi.mocked(getMemoryCachedResourceSync);
+const toastMock = vi.mocked(showToast);
 
 describe('原图加载成功后隐藏入口', () => {
   it('无图模式允许详情来源的大图，关闭详情开关后隐藏查看器', async () => {
@@ -736,5 +746,84 @@ describe('图片查看器触摸手势', () => {
     expect(wrapper.find('.viewer-loading').exists()).toBe(false);
     expect(wrapper.get('.viewer-img').attributes('src')).toBe('data:image/png;base64,CACHED');
     wrapper.unmount();
+  });
+});
+
+describe('加载失败兜底与操作反馈', () => {
+  beforeEach(() => {
+    loadResourceMock.mockImplementation(async (url: string) => dataOf(String(url)));
+    memoryCacheMock.mockReturnValue(null);
+    toastMock.mockClear();
+    useSettingsStore().settings.autoLoadOriginalImage = false;
+    useSettingsStore().settings.imageQuality = 'hd';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('加载失败显示失败占位与重试，重试成功后恢复图片并解除禁用', async () => {
+    loadResourceMock.mockRejectedValueOnce(new Error('boom'));
+    const { wrapper } = await mountViewer(1, 0);
+    // 解析失败时仍回退到原始地址再交给 <img> 试一次。
+    expect(wrapper.get('.viewer-img').attributes('src')).toBe('https://img.example/0.jpg');
+
+    await wrapper.get('.viewer-img').trigger('error');
+    expect(wrapper.find('.viewer-img').exists()).toBe(false);
+    expect(wrapper.get('.viewer-load-error').text()).toContain('图片加载失败');
+    // 失败态下禁用依赖画面的操作。
+    expect(wrapper.get('[title="放大"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[title="缩小"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[title="向右旋转 90°"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[title="重置"]').attributes('disabled')).toBeDefined();
+
+    await wrapper.get('.viewer-retry-btn').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.viewer-load-error').exists()).toBe(false);
+    expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf('https://img.example/0.jpg'));
+    expect(wrapper.get('[title="放大"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('切图后失败态按索引重置，不影响其它图片', async () => {
+    loadResourceMock.mockRejectedValueOnce(new Error('boom'));
+    const { wrapper } = await mountViewer(2, 0);
+    await wrapper.get('.viewer-img').trigger('error');
+    expect(wrapper.find('.viewer-load-error').exists()).toBe(true);
+
+    await wrapper.get('.nav-next').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.viewer-load-error').exists()).toBe(false);
+    expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf('https://img.example/1.jpg'));
+    wrapper.unmount();
+  });
+
+  it('没有原图地址时保存按钮置灰并提示', async () => {
+    const { wrapper, store } = await mountViewer(1, 0);
+    expect(wrapper.get('[title="保存原图"]').attributes('disabled')).toBeUndefined();
+
+    store.openImageViewer(['https://img.example/no-original.jpg']);
+    await flushPromises();
+    const button = wrapper.get('[title="该图没有原图"]');
+    expect(button.attributes('disabled')).toBeDefined();
+    wrapper.unmount();
+  });
+
+  it('复制链接成功与失败都有 toast 提示', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      const { wrapper } = await mountViewer(1, 0);
+      await wrapper.get('[title="复制链接"]').trigger('click');
+      await flushPromises();
+      expect(writeText).toHaveBeenCalledWith('https://img.example/0.jpg');
+      expect(toastMock).toHaveBeenCalledWith('已复制链接', 'success');
+
+      writeText.mockRejectedValueOnce(new Error('denied'));
+      await wrapper.get('[title="复制链接"]').trigger('click');
+      await flushPromises();
+      expect(toastMock).toHaveBeenLastCalledWith(expect.stringContaining('复制失败'), 'error');
+      wrapper.unmount();
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard');
+    }
   });
 });

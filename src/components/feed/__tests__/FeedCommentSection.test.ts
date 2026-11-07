@@ -14,8 +14,14 @@ const mocks = vi.hoisted(() => ({
   replyFeed: vi.fn(),
   getDeviceInfo: vi.fn(),
   uploadImage: vi.fn(),
+  likeReply: vi.fn(),
+  unlikeReply: vi.fn(),
   logDiagnostic: vi.fn(),
   routerPush: vi.fn(),
+  showToast: vi.fn(),
+  loadCommentDraft: vi.fn(),
+  saveCommentDraft: vi.fn(),
+  clearCommentDraft: vi.fn(),
 }));
 vi.mock('vue-router', async original => ({
   ...await original<typeof import('vue-router')>(),
@@ -40,7 +46,21 @@ vi.mock('../../../api/coolapk', () => ({
     replyFeed: mocks.replyFeed,
     getDeviceInfo: mocks.getDeviceInfo,
     uploadImage: mocks.uploadImage,
+    likeReply: mocks.likeReply,
+    unlikeReply: mocks.unlikeReply,
   },
+}));
+
+// 草稿与提示都走模块级副作用，单测里替换掉以便断言写盘次数与提示内容。
+vi.mock('../../../utils/commentDrafts', async (original) => ({
+  ...await original<typeof import('../../../utils/commentDrafts')>(),
+  loadCommentDraft: mocks.loadCommentDraft,
+  saveCommentDraft: mocks.saveCommentDraft,
+  clearCommentDraft: mocks.clearCommentDraft,
+}));
+vi.mock('../../../utils/toast', async (original) => ({
+  ...await original<typeof import('../../../utils/toast')>(),
+  showToast: mocks.showToast,
 }));
 
 import FeedCommentSection from '../FeedCommentSection.vue';
@@ -221,9 +241,14 @@ describe('评论完整信息展示', () => {
     shuzilmGuideState.visible = false;
   });
 
-  function mountSection(commentOverrides: Record<string, any> = {}, extraProps: Record<string, any> = {}) {
+  function mountSection(
+    commentOverrides: Record<string, any> = {},
+    extraProps: Record<string, any> = {},
+    mountOptions: Record<string, any> = {},
+  ) {
     const timestamp = new Date(2026, 7, 9, 10, 20, 30).getTime() / 1000;
     return mount(FeedCommentSection, {
+      ...mountOptions,
       props: {
         feedId: 'feed-1',
         comments: [{
@@ -1047,6 +1072,151 @@ describe('评论完整信息展示', () => {
     await hidden.find('.comment-textarea').trigger('keydown', { key: 'Escape' });
     expect(hidden.emitted('collapse')).toBeUndefined();
     hidden.unmount();
+  });
+
+  it('主评论发表成功后把新评论交给宿主插入，不再触发整页重拉', async () => {
+    const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: 12345, username: '发布者' } as any;
+    useSettingsStore().settings.deviceFingerprint.deviceId = 'DU-MOCK-SAMPLE-DEVICE-ID-12345';
+    mocks.loadCommentDraft.mockResolvedValue('');
+    const created = { id: 'new-reply', username: '发布者', message: '新评论' };
+    mocks.replyFeed.mockResolvedValue({ code: 200, data: created });
+    // FeedCard 这类新宿主会监听 comment-created；老宿主没有监听者时回退到 retry-comments。
+    const wrapper = mountSection({}, {}, { attrs: { onCommentCreated: () => {} } });
+    try {
+      const editor = wrapper.find('.comment-textarea');
+      editor.element.textContent = '新评论';
+      await editor.trigger('input');
+      await wrapper.find('.stub-button').trigger('click');
+      await flushPromises();
+
+      // 不再整页重拉：既有列表保留，改为带出新评论给宿主就地插入。
+      expect(wrapper.emitted('retry-comments')).toBeUndefined();
+      expect(wrapper.emitted('comment-created')?.[0]).toEqual([{ comment: created }]);
+      expect(wrapper.text()).toContain('带图片的评论');
+      expect(wrapper.emitted('send-comment')?.[0]).toEqual(['新评论']);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('没有 comment-created 监听者的老宿主仍回退到 retry-comments 刷新', async () => {
+    const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: 12345, username: '发布者' } as any;
+    useSettingsStore().settings.deviceFingerprint.deviceId = 'DU-MOCK-SAMPLE-DEVICE-ID-12345';
+    mocks.loadCommentDraft.mockResolvedValue('');
+    mocks.replyFeed.mockResolvedValue({ code: 200, data: { id: 'legacy-reply', message: '新评论' } });
+    const wrapper = mountSection();
+    try {
+      const editor = wrapper.find('.comment-textarea');
+      editor.element.textContent = '新评论';
+      await editor.trigger('input');
+      await wrapper.find('.stub-button').trigger('click');
+      await flushPromises();
+      expect(wrapper.emitted('retry-comments')).toHaveLength(1);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('楼中楼回复只带出 replyId 交给宿主更新计数，不插入主评论列表', async () => {
+    const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: 12345, username: '发布者' } as any;
+    useSettingsStore().settings.deviceFingerprint.deviceId = 'DU-MOCK-SAMPLE-DEVICE-ID-12345';
+    mocks.loadCommentDraft.mockResolvedValue('');
+    const created = { id: 'new-sub', username: '发布者', message: '新回复', rid: 'reply-1' };
+    mocks.replyFeed.mockResolvedValue({ code: 200, data: created });
+    const wrapper = mountSection({ replyRows: [{ id: 'old-sub', username: '原回复者', message: '原楼中楼' }] });
+    try {
+      await wrapper.get('.sub-reply-row').trigger('click');
+      await flushPromises();
+      const composer = new DOMWrapper(document.body.querySelector('.desktop-reply-composer')!);
+      const floatingEditor = composer.get('.comment-rich-editor');
+      floatingEditor.element.textContent = '新回复';
+      await floatingEditor.trigger('input');
+      await composer.get('.stub-button').trigger('click');
+      await flushPromises();
+
+      expect(wrapper.emitted('retry-comments')).toBeUndefined();
+      // replyId 是被回复的那条楼中楼，宿主据此只更新计数、不插入主评论列表。
+      expect(wrapper.emitted('comment-created')?.[0]).toEqual([{ comment: created, replyId: 'old-sub' }]);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('评论点赞失败时回滚状态并提示错误，不再静默', async () => {
+    const auth = useAuthStore(); auth.isLoggedIn = true; auth.user = { uid: 12345, username: '发布者' } as any;
+    mocks.loadCommentDraft.mockResolvedValue('');
+    mocks.likeReply.mockRejectedValue(new Error('网络异常'));
+    const wrapper = mountSection();
+    try {
+      await wrapper.get('.comment-like-btn').trigger('click');
+      await flushPromises();
+
+      expect(mocks.likeReply).toHaveBeenCalledWith('reply-1');
+      expect(mocks.showToast).toHaveBeenCalledWith('网络异常', 'error');
+      expect(wrapper.get('.comment-like-btn').classes()).not.toContain('is-liked');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('草稿异步恢复不覆盖用户已输入的内容', async () => {
+    let resolveDraft!: (value: string) => void;
+    mocks.loadCommentDraft.mockReturnValue(new Promise<string>(resolve => { resolveDraft = resolve; }));
+    const wrapper = mountSection({}, { feedId: 'draft-guard-feed' });
+    try {
+      const editor = wrapper.find('.comment-textarea');
+      editor.element.textContent = '用户刚输入的内容';
+      await editor.trigger('input');
+
+      resolveDraft('很久以前的草稿');
+      await flushPromises();
+
+      expect(wrapper.find('.comment-textarea').element.textContent).toBe('用户刚输入的内容');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('编辑器为空时仍然恢复草稿', async () => {
+    mocks.loadCommentDraft.mockResolvedValue('上次没发完的草稿');
+    const wrapper = mountSection({}, { feedId: 'draft-restore-feed' });
+    try {
+      await flushPromises();
+      expect(wrapper.find('.comment-textarea').element.textContent).toBe('上次没发完的草稿');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('草稿写盘走防抖，只落最后一段输入', async () => {
+    vi.useFakeTimers();
+    mocks.loadCommentDraft.mockResolvedValue('');
+    const wrapper = mountSection({}, { feedId: 'draft-debounce-feed' });
+    try {
+      const editor = wrapper.find('.comment-textarea');
+      editor.element.textContent = '第';
+      await editor.trigger('input');
+      editor.element.textContent = '第一版';
+      await editor.trigger('input');
+      editor.element.textContent = '最终版';
+      await editor.trigger('input');
+
+      // 逐字落盘会写 3 次；防抖后停止输入才写唯一一次。
+      expect(mocks.saveCommentDraft).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(399);
+      expect(mocks.saveCommentDraft).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(mocks.saveCommentDraft).toHaveBeenCalledTimes(1);
+      expect(mocks.saveCommentDraft).toHaveBeenCalledWith(expect.any(String), 'draft-debounce-feed', undefined, '最终版');
+    } finally { wrapper.unmount(); vi.useRealTimers(); }
+  });
+
+  it('收起评论时立即落盘防抖窗口内的草稿', async () => {
+    vi.useFakeTimers();
+    mocks.loadCommentDraft.mockResolvedValue('');
+    const wrapper = mountSection({}, { feedId: 'draft-flush-feed' });
+    try {
+      const editor = wrapper.find('.comment-textarea');
+      editor.element.textContent = '还没写完';
+      await editor.trigger('input');
+      expect(mocks.saveCommentDraft).not.toHaveBeenCalled();
+
+      await wrapper.get('.comment-toolbar-collapse-btn').trigger('click');
+      expect(mocks.saveCommentDraft).toHaveBeenCalledWith(expect.any(String), 'draft-flush-feed', undefined, '还没写完');
+      expect(wrapper.emitted('collapse')).toHaveLength(1);
+
+      // flush 后防抖定时器已取消，不会重复写盘。
+      vi.advanceTimersByTime(600);
+      expect(mocks.saveCommentDraft).toHaveBeenCalledTimes(1);
+    } finally { wrapper.unmount(); vi.useRealTimers(); }
   });
 
 });

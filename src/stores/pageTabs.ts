@@ -9,6 +9,9 @@ export interface PageTab extends PageTabDescriptor {
   favorite: boolean;
 }
 
+/** 关闭页签前的拦截函数：返回 false（或抛错）即取消本次关闭。 */
+export type TabCloseGuard = () => boolean | Promise<boolean>;
+
 export interface SavedPageTab {
   id: string;
   route: string;
@@ -53,6 +56,8 @@ export const usePageTabsStore = defineStore('pageTabs', () => {
   const activeId = ref('home');
   const generations = ref<Record<string, number>>({});
   const activationHistory = ref<string[]>(['home']);
+  // 关闭页签守卫按标签 id 注册，页面卸载时自行注销；没有守卫时关闭行为完全不变。
+  const closeGuards = new Map<string, TabCloseGuard>();
 
   const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeId.value) || tabs.value[0]);
   const favoritePages = computed(() => savedPages.value.filter((page) => page.favorite).sort((a, b) => a.order - b.order));
@@ -157,6 +162,58 @@ export const usePageTabsStore = defineStore('pageTabs', () => {
     return tabs.value.find((tab) => tab.id === id)?.route || '/';
   }
 
+  /** 注册关闭前拦截（如未保存修改确认）。同一个标签重复注册时后者覆盖前者。 */
+  function registerTabCloseGuard(id: string, guard: TabCloseGuard) {
+    closeGuards.set(id, guard);
+  }
+
+  function unregisterTabCloseGuard(id: string) {
+    closeGuards.delete(id);
+  }
+
+  /**
+   * 依次询问待关闭标签的守卫；任一拒绝或抛错即整体取消，
+   * 已通过的守卫随标签一起注销，取消时保留守卫以便下次重新确认。
+   */
+  async function confirmTabClose(ids: string[]): Promise<boolean> {
+    for (const id of ids) {
+      const guard = closeGuards.get(id);
+      if (!guard) continue;
+      let allowed = false;
+      try {
+        allowed = await guard();
+      } catch (error) {
+        console.warn('页签关闭前确认失败:', error);
+      }
+      if (!allowed) return false;
+      closeGuards.delete(id);
+    }
+    return true;
+  }
+
+  /** 带守卫的关闭入口：页签栏、右键菜单与 Ctrl+W 都走这里。 */
+  async function closeTab(id: string): Promise<string | null> {
+    const tab = tabs.value.find((item) => item.id === id);
+    if (!tab || !tab.closable) return null;
+    if (!await confirmTabClose([id])) return null;
+    return close(id);
+  }
+
+  async function closeOtherTabs(id: string): Promise<string | null> {
+    if (!tabs.value.some((tab) => tab.id === id)) return null;
+    const closing = tabs.value.filter((tab) => tab.closable && tab.id !== id).map((tab) => tab.id);
+    if (!await confirmTabClose(closing)) return null;
+    return closeOthers(id);
+  }
+
+  async function closeRightTabs(id: string): Promise<string | null> {
+    const index = tabs.value.findIndex((tab) => tab.id === id);
+    if (index < 0) return null;
+    const closing = tabs.value.slice(index + 1).filter((tab) => tab.closable).map((tab) => tab.id);
+    if (!await confirmTabClose(closing)) return null;
+    return closeRight(id);
+  }
+
   function cycle(direction: 1 | -1): string | null {
     if (tabs.value.length < 2) return null;
     const index = tabs.value.findIndex((tab) => tab.id === activeId.value);
@@ -227,5 +284,5 @@ export const usePageTabsStore = defineStore('pageTabs', () => {
     return tabs.value.find((tab) => tab.id === id)?.generation || generations.value[id] || 0;
   }
 
-  return { tabs, activeId, activeTab, favoritePages, syncRoute, activate, openSaved, close, closeOthers, closeRight, cycle, move, toggleFavorite, removeFavorite, togglePin, updateTitle, getGeneration };
+  return { tabs, activeId, activeTab, favoritePages, syncRoute, activate, openSaved, close, closeOthers, closeRight, closeTab, closeOtherTabs, closeRightTabs, registerTabCloseGuard, unregisterTabCloseGuard, cycle, move, toggleFavorite, removeFavorite, togglePin, updateTitle, getGeneration };
 });

@@ -1,7 +1,36 @@
-import { mount } from '@vue/test-utils';
+import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import FavoriteExportDialog from '../FavoriteExportDialog.vue';
+
+const apiMocks = vi.hoisted(() => ({
+  createExportDirectory: vi.fn(),
+  exportJsonFile: vi.fn(),
+  openApkDownloadDirectory: vi.fn(),
+  getImageDataUrl: vi.fn(),
+  saveImageDataUrl: vi.fn(),
+  buildFavoriteExport: vi.fn(),
+  saveFavoriteExportSnapshot: vi.fn(),
+  showToast: vi.fn(),
+}));
+
+vi.mock('../../../api/coolapk', () => ({
+  CoolapkTauriAPI: {
+    createExportDirectory: apiMocks.createExportDirectory,
+    exportJsonFile: apiMocks.exportJsonFile,
+    openApkDownloadDirectory: apiMocks.openApkDownloadDirectory,
+    getImageDataUrl: apiMocks.getImageDataUrl,
+    saveImageDataUrl: apiMocks.saveImageDataUrl,
+  },
+}));
+
+vi.mock('../../../utils/favoriteExport', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  buildFavoriteExport: apiMocks.buildFavoriteExport,
+  saveFavoriteExportSnapshot: apiMocks.saveFavoriteExportSnapshot,
+}));
+
+vi.mock('../../../utils/toast', () => ({ showToast: apiMocks.showToast }));
 
 describe('FavoriteExportDialog', () => {
   it('默认选择 JSON，并只提供所有评论开关', async () => {
@@ -185,5 +214,67 @@ describe('FavoriteExportDialog', () => {
 
     const exportBtn = wrapper.findAll('button').find(btn => btn.text().includes('开始导出'));
     expect(exportBtn?.attributes('disabled')).toBeUndefined();
+  });
+
+  it('多收藏单导出中途失败：完成页展示已导出部分并提供仅重试剩余项', async () => {
+    apiMocks.createExportDirectory.mockResolvedValue('/tmp/export');
+    apiMocks.exportJsonFile.mockResolvedValue('/tmp/export/x.json');
+    apiMocks.saveFavoriteExportSnapshot.mockResolvedValue(undefined);
+    const bundleFor = (source: { id: string; title: string }) => ({
+      exportedAt: new Date().toISOString(),
+      accountId: '12345',
+      source,
+      complete: true,
+      options: { includeAllComments: false, includeAuthorComments: false, includePinnedComments: false, includeAuthorReplies: false },
+      summary: { total: 2, contentComplete: 2, contentFailed: 0, commentFailed: 0 },
+      diff: {},
+      items: [],
+    });
+    apiMocks.buildFavoriteExport.mockImplementation(async (_accountId: string, _options: unknown, _onProgress: unknown, source: { id: string; title: string }) => {
+      if (source.id === '11') return bundleFor(source);
+      throw new Error('网络错误');
+    });
+
+    const pinia = createPinia();
+    const wrapper = mount(FavoriteExportDialog, {
+      props: {
+        isOpen: true,
+        mode: 'collections',
+        collections: [
+          { id: '11', title: '摄影', itemNum: 2 },
+          { id: '22', title: '旅行', itemNum: 2 },
+        ],
+      },
+      global: { plugins: [pinia], stubs: { Teleport: true, Transition: false } },
+    });
+    const { useAuthStore } = await import('../../../stores/auth');
+    const authStore = useAuthStore(pinia);
+    authStore.isLoggedIn = true;
+    authStore.user = { uid: 12345, username: 'tester' } as any;
+
+    const cardInputs = wrapper.findAll('.collection-picker-card input');
+    await cardInputs[0].setValue(true);
+    await cardInputs[1].setValue(true);
+    await wrapper.findAll('button').find(btn => btn.text().includes('开始导出'))!.trigger('click');
+    await flushPromises();
+    await flushPromises();
+
+    // 第 2 个收藏单失败：不回退到配置页，而是进入完成页展示已完成部分。
+    expect(wrapper.find('.dialog-step-completed').exists()).toBe(true);
+    expect(wrapper.text()).toContain('已导出 1 个收藏单');
+    expect(wrapper.text()).toContain('后续导出失败：网络错误');
+    const retryBtn = wrapper.findAll('button').find(btn => btn.text().includes('重试失败的 1 个'));
+    expect(retryBtn).toBeDefined();
+
+    // 重试只重新导出失败的那个收藏单，成功后显示完整成功文案。
+    apiMocks.buildFavoriteExport.mockImplementation(async (_a: unknown, _o: unknown, _p: unknown, source: { id: string; title: string }) => bundleFor(source));
+    await retryBtn!.trigger('click');
+    await flushPromises();
+    await flushPromises();
+
+    const lastCall = apiMocks.buildFavoriteExport.mock.calls.at(-1)!;
+    expect((lastCall[3] as { id: string }).id).toBe('22');
+    expect(wrapper.text()).toContain('成功备份 1 个收藏单');
+    expect(wrapper.text()).not.toContain('后续导出失败');
   });
 });

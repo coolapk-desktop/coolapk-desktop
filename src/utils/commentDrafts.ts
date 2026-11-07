@@ -46,6 +46,9 @@ export async function loadCommentDraft(userUid: string | number | null | undefin
 export async function saveCommentDraft(userUid: string | number | null | undefined, feedId: string | number, replyId: string | number | null | undefined, text: string): Promise<void> {
   await ensureReady();
   const key = draftKey(userUid, feedId, replyId);
+  const current = drafts[key]?.text || '';
+  // 内容没变就不整份重写草稿文件（调用方已做防抖，这里再兜一次重复 flush）。
+  if (current === text && (text.trim() || !drafts[key])) return;
   if (!text.trim()) delete drafts[key];
   else drafts[key] = { text, updatedAt: Date.now() };
   await updateTauriStoreValue(STORE_FILE, STORE_KEY, {}, () => ({ ...drafts }));

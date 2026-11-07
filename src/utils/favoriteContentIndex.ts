@@ -41,6 +41,8 @@ export type FavoriteContentIndexSyncResult = {
 };
 
 const loadedIndexes = new Map<string, Promise<FavoriteContentIndexData>>();
+/** 上次读盘失败的账号：此时内存里的索引不可信，禁止用它回写磁盘。 */
+const untrustedAccounts = new Set<string>();
 const accountQueues = new Map<string, Promise<unknown>>();
 const activeSyncs = new Map<string, Promise<FavoriteContentIndexSyncResult>>();
 
@@ -120,17 +122,56 @@ function normalizeIndex(value: unknown): FavoriteContentIndexData {
   return { version: INDEX_VERSION, lastSyncAt: Number(source.lastSyncAt) || 0, entries };
 }
 
+function readIndexFromDisk(accountId: string): Promise<FavoriteContentIndexData> {
+  return readTauriStoreValue<unknown>(STORE_FILE, `${STORE_KEY_PREFIX}${accountId}`).then(normalizeIndex);
+}
+
+/**
+ * 读盘失败时不得缓存空索引：缓存下来之后任何一次 saveIndex 都会把磁盘上的真实索引
+ * 整体覆盖成空（历史缺陷：一次瞬时读失败 = 该账号收藏正文索引被清空）。
+ */
 async function loadIndex(accountId: string): Promise<FavoriteContentIndexData> {
   const existing = loadedIndexes.get(accountId);
   if (existing) return existing;
-  const pending = readTauriStoreValue<unknown>(STORE_FILE, `${STORE_KEY_PREFIX}${accountId}`)
-    .then(normalizeIndex)
+  let failed = false;
+  const pending = readIndexFromDisk(accountId)
     .catch((error) => {
+      failed = true;
       console.warn('读取收藏正文索引失败，将使用空索引:', error);
       return emptyIndex();
+    })
+    .then((index) => {
+      if (failed) {
+        untrustedAccounts.add(accountId);
+        loadedIndexes.delete(accountId);
+      }
+      return index;
     });
   loadedIndexes.set(accountId, pending);
   return pending;
+}
+
+/**
+ * 写入前的取数：缓存缺失或上次读盘失败时必须重新读盘。
+ * 读盘仍失败时返回 trusted:false，调用方必须放弃本次写入，不能拿空索引写回磁盘。
+ */
+async function loadIndexForWrite(accountId: string): Promise<{ index: FavoriteContentIndexData; trusted: boolean }> {
+  const cached = loadedIndexes.get(accountId);
+  if (cached && !untrustedAccounts.has(accountId)) {
+    return { index: await cached, trusted: true };
+  }
+  loadedIndexes.delete(accountId);
+  try {
+    const index = await readIndexFromDisk(accountId);
+    untrustedAccounts.delete(accountId);
+    loadedIndexes.set(accountId, Promise.resolve(index));
+    return { index, trusted: true };
+  } catch (error) {
+    console.warn('读取收藏正文索引失败，已跳过本次写入以免覆盖磁盘数据:', error);
+    untrustedAccounts.add(accountId);
+    loadedIndexes.delete(accountId);
+    return { index: emptyIndex(), trusted: false };
+  }
 }
 
 async function saveIndex(accountId: string, index: FavoriteContentIndexData): Promise<void> {
@@ -204,7 +245,8 @@ export async function syncFavoriteContentIndex(accountIdValue: string | number):
   const running = activeSyncs.get(accountId);
   if (running) return running;
   const sync = enqueueAccountTask(accountId, async () => {
-    const index = await loadIndex(accountId);
+    const { index, trusted } = await loadIndexForWrite(accountId);
+    if (!trusted) return { total: 0, indexed: 0, updated: 0, revalidated: 0, removed: 0, complete: false };
     const now = Date.now();
     const { feeds, complete } = await loadAllFavoriteFeeds();
     const seenIds = new Set(feeds.map(feedIdOf).filter(Boolean));
@@ -249,12 +291,29 @@ export async function syncFavoriteContentIndex(accountIdValue: string | number):
   return sync;
 }
 
+/**
+ * 带门控的同步入口（收藏页挂载时接线）：距上次同步不足 minIntervalMs 时直接跳过，
+ * 避免每次进入收藏页都触发收藏列表/详情请求。内部仍由 activeSyncs 去重 + 仅补齐
+ * 不完整/过期条目（每次最多 16 条重验证）保证幂等与请求有界。
+ */
+export async function syncFavoriteContentIndexIfNeeded(
+  accountIdValue: string | number,
+  minIntervalMs = 24 * 60 * 60 * 1000,
+): Promise<FavoriteContentIndexSyncResult | null> {
+  const accountId = accountKey(accountIdValue);
+  if (!accountId) return null;
+  const index = await loadIndex(accountId);
+  if (index.lastSyncAt && Date.now() - index.lastSyncAt < minIntervalMs) return null;
+  return syncFavoriteContentIndex(accountIdValue);
+}
+
 export async function queueFavoriteContentIndexEntry(accountIdValue: string | number, feed: any): Promise<void> {
   const accountId = accountKey(accountIdValue);
   const feedId = feedIdOf(feed);
   if (!accountId || !feedId) return;
   await enqueueAccountTask(accountId, async () => {
-    const index = await loadIndex(accountId);
+    const { index, trusted } = await loadIndexForWrite(accountId);
+    if (!trusted) return;
     const entry = await fetchDetailEntry(feed, Date.now());
     if (!entry) return;
     index.entries[feedId] = entry;
@@ -267,7 +326,8 @@ export async function removeFavoriteContentIndexEntry(accountIdValue: string | n
   const feedId = String(feedIdValue || '').trim();
   if (!accountId || !feedId) return;
   await enqueueAccountTask(accountId, async () => {
-    const index = await loadIndex(accountId);
+    const { index, trusted } = await loadIndexForWrite(accountId);
+    if (!trusted) return;
     if (!(feedId in index.entries)) return;
     delete index.entries[feedId];
     await saveIndex(accountId, index);
@@ -293,6 +353,7 @@ export async function getFavoriteContentIndexCount(accountIdValue: string | numb
 }
 
 export function clearFavoriteContentIndexMemoryCache(): void {
+  untrustedAccounts.clear();
   loadedIndexes.clear();
   accountQueues.clear();
   activeSyncs.clear();

@@ -65,8 +65,8 @@ use coolapk::commands::{
     unfollow_user, unlike_collection, unlike_feed, unlike_reply, update_device_profile, upload_image,
     vote_goods_list_item,
 };
-use download_manager::DownloadManager;
-use diagnostics::{get_diagnostic_logs, clear_diagnostic_logs, get_diagnostic_verbose, set_diagnostic_verbose};
+use download_manager::{DownloadManager, apk_download_partial_exists};
+use diagnostics::{get_diagnostic_logs, get_diagnostic_logs_tail, clear_diagnostic_logs, get_diagnostic_verbose, set_diagnostic_verbose};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::Manager;
@@ -1576,6 +1576,7 @@ pub fn run() {
             clean_expired_cache,
             open_cache_directory,
             get_diagnostic_logs,
+            get_diagnostic_logs_tail,
             clear_diagnostic_logs,
             get_diagnostic_verbose,
             set_diagnostic_verbose,
@@ -1666,6 +1667,7 @@ pub fn run() {
             pause_apk_download,
             cancel_apk_download,
             delete_apk_download_file,
+            apk_download_partial_exists,
             open_apk_download_directory,
             install_apk_download,
             coolapk::android_notifications::configure_android_background_notifications,

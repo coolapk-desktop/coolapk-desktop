@@ -790,7 +790,12 @@ function parseLegacyProducts(response: unknown, page: number): DiscoveryPageResu
   const parsed = parseDiscoveryPage(response, page);
   if (response && typeof response === 'object' && !Array.isArray(response) && Array.isArray((response as { data?: unknown }).data)) return parsed;
   const items = asResponseList(response) as DiscoveryEntity[];
-  return { items, page, hasMore: items.length >= 20, firstItem: String(items[0]?.entityId ?? items[0]?.id ?? ''), lastItem: String(items[items.length - 1]?.entityId ?? items[items.length - 1]?.id ?? ''), raw: response };
+  // 优先以响应中的分页字段（hasMore/has_more，含 pagination 元信息）为准；
+  // 仅当响应缺失分页字段时才退回「页大小 ≥ 20」启发式（服务端页大小不是 20 时可能误判）。
+  const root = response && typeof response === 'object' && !Array.isArray(response) ? (response as Record<string, unknown>) : {};
+  const meta = (root.pagination ?? root.pageInfo ?? root.page_info) as Record<string, unknown> | undefined;
+  const explicitMore = root.hasMore ?? root.has_more ?? meta?.hasMore ?? meta?.has_more;
+  return { items, page, hasMore: typeof explicitMore === 'boolean' ? explicitMore : items.length >= 20, firstItem: String(items[0]?.entityId ?? items[0]?.id ?? ''), lastItem: String(items[items.length - 1]?.entityId ?? items[items.length - 1]?.id ?? ''), raw: response };
 }
 
 async function loadProducts(isLoadMore = false, expectedSelectionVersion = selectionVersion.value) {

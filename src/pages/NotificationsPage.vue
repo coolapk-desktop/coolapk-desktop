@@ -50,7 +50,7 @@
       </div>
 
       <div v-else class="notification-list">
-        <div v-for="{ item, target, actionKey } in notificationCards" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
+        <div v-for="({ item, target, actionKey }, cardIndex) in notificationCards" :key="getNotificationKey(item, cardIndex)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
           <button type="button" class="notify-avatar-wrap notify-profile" :disabled="!getActorUid(item)" :aria-label="`查看${getUsername(item)}的主页`" @click.stop="openActor(item)">
             <AppAvatar :src="getAvatar(item)" :size="40" />
           </button>
@@ -86,7 +86,7 @@
         </div>
 
         <div class="load-more-wrapper" v-if="items.length > 0">
-          <div v-if="notificationError" class="notification-inline-error">{{ notificationError }} <button type="button" @click="refreshNotifications">重试</button></div>
+          <div v-if="notificationError" class="notification-inline-error">{{ notificationError }} <button type="button" @click="retryFailedLoad">重试</button></div>
           <button 
             v-if="hasMore" 
             class="load-more-btn" 
@@ -108,7 +108,7 @@
       :official-detail="mobileReplyComposer"
       :comments="[]"
       @close-composer="closeReplyComposer"
-      @send-comment="closeReplyComposer"
+      @send-comment="handleReplySent"
     />
   </div>
 </template>
@@ -133,7 +133,7 @@ import { isCoarsePointer, isTouchMobilePlatform } from '../utils/platform';
 import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { openFeedDetail } from '../utils/feedNavigation';
-import { getNotificationExternalUrl, getNotificationFeedId, getNotificationReplyId, getNotificationProductName, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
+import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, getNotificationTargetRoute, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
 import { markNotificationRead } from '../utils/notificationRead';
 import { requestConfirmation } from '../utils/confirm';
 import { showToast } from '../utils/toast';
@@ -174,15 +174,28 @@ const deletingNotifications = ref(false);
 let notificationRequestId = 0;
 const items = ref<any[]>([]);
 const feedSummaries = ref(new Map<string, string>());
+// 动态标题摘要缓存上限：通知列表单页几十条，500 条足够覆盖多页浏览。
+const FEED_SUMMARY_LIMIT = 500;
 const page = ref(1);
 const hasMore = ref(true);
 const notificationError = ref('');
+// 区分「首屏加载失败」与「翻页失败」：翻页失败不能清空已加载的 2+ 页内容。
+const loadMoreFailed = ref(false);
 const desktopActions = ref<HTMLDetailsElement | null>(null);
 type NotificationActionTarget = NonNullable<ReturnType<typeof getNotificationActionTarget>>;
 const likedTargets = ref(new Map<string, boolean>());
 const pendingLikes = ref(new Set<string>());
+
+/**
+ * 列表被重新拉取/切分类时清空乐观点赞覆盖层：服务端才是唯一真相，
+ * 否则刷新后仍显示旧高亮，且点击会按错误基准再发一次反向请求。
+ */
+function resetTargetLikeState() {
+  likedTargets.value = new Map();
+  pendingLikes.value = new Set();
+}
 const pendingReply = ref<symbol>();
-const replyComposer = ref<{ feedId: string; rid?: string; username: string }>();
+const replyComposer = ref<{ feedId: string; rid?: string; username: string; item?: any }>();
 const mobileReplyComposer = isTouchMobilePlatform() || isCoarsePointer();
 const notificationCards = computed(() => items.value.map(item => {
   const target = currentTab.value === 'list' ? getNotificationActionTarget(item) : null;
@@ -225,7 +238,8 @@ async function openReplyComposer(item: any, target: NotificationActionTarget) {
     }
     if (pendingReply.value !== request) return;
     if (!/^[1-9]\d*$/.test(feedId)) throw new Error('无法找到评论所属的动态');
-    replyComposer.value = { feedId, rid, username: getUsername(item) };
+    // 带上来源通知：发送成功后据此置读并刷新列表，否则用户无法确认回复已生效。
+    replyComposer.value = { feedId, rid, username: getUsername(item), item };
   } catch (error) {
     if (pendingReply.value === request) {
       showToast(`打开回复失败：${error instanceof Error ? error.message : String(error)}`, 'error');
@@ -268,6 +282,7 @@ function goBack() {
 
 async function closeNotificationGroup() {
   subNoteType.value = '';
+  resetTargetLikeState();
   page.value = 1;
   items.value = [];
   hasMore.value = true;
@@ -280,6 +295,7 @@ async function switchTab(tabValue: string) {
     return;
   }
   closeReplyComposer();
+  resetTargetLikeState();
   currentTab.value = tabValue;
   if (pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
   subNoteType.value = '';
@@ -312,8 +328,9 @@ function loadMoreWhenNearBottom(container = pageContainerRef.value) {
 }
 
 // 获取数据
-async function fetchNotifications(): Promise<boolean> {
+async function fetchNotifications(options: { mergeFirstPage?: boolean } = {}): Promise<boolean> {
   const requestId = ++notificationRequestId;
+  loadMoreFailed.value = false;
   const requestedTab = currentTab.value;
   const requestedPage = page.value;
   const requestedUid = authStore.user?.uid;
@@ -349,7 +366,14 @@ async function fetchNotifications(): Promise<boolean> {
         hasMore.value = false;
       } else {
         if (page.value === 1) {
-          items.value = data;
+          // 自动刷新（角标增长/回复成功）走增量合并：已有条目保留本地对象
+          // （含本地已读态与滚动锚点），仅把服务端新通知插入头部。
+          // 用户主动下拉刷新仍整表替换，以服务端为准并允许回到顶部。
+          if (options.mergeFirstPage && items.value.length > 0) {
+            items.value = mergeNotificationRows(data, items.value);
+          } else {
+            items.value = data;
+          }
         } else {
           items.value = [...items.value, ...data];
         }
@@ -366,9 +390,16 @@ async function fetchNotifications(): Promise<boolean> {
     if (requestId !== notificationRequestId) return false;
     console.warn('Notifications fetch warning', err);
     notificationError.value = err instanceof Error ? err.message : String(err);
-    // 请求失败时禁止 finally 里的自动 loadMore，否则会在无登录/网络错误时无限重试。
-    hasMore.value = false;
-    if (page.value > 1) page.value -= 1;
+    if (requestedPage > 1) {
+      // 翻页失败不等于「没有更多」：保留已加载的 2+ 页内容和 hasMore，
+      // 回滚页码让「重试/加载更多」只重发当前页，而不是回第 1 页整表刷新。
+      loadMoreFailed.value = true;
+      if (page.value === requestedPage) page.value = requestedPage - 1;
+    } else {
+      // 首屏失败时没有已加载内容可保留；禁止 finally 里的自动 loadMore，
+      // 否则会在无登录/网络错误时无限重试。
+      hasMore.value = false;
+    }
   } finally {
     if (requestId === notificationRequestId) loading.value = false;
     if (fetchSucceeded && requestId === notificationRequestId) {
@@ -383,13 +414,76 @@ async function fetchNotifications(): Promise<boolean> {
 
 async function refreshNotifications(): Promise<boolean> {
   if (loading.value) return false;
+  resetTargetLikeState();
   page.value = 1;
   hasMore.value = true;
   return await fetchNotifications();
 }
 
+/** 与 getNotificationKey 同源的去重键，但不带行号，供增量合并识别已有条目。 */
+function getNotificationDedupeKey(item: any): string {
+  const stableId = item?.id ?? item?.entityId ?? item?.targetId;
+  if (stableId !== undefined && stableId !== null && String(stableId).trim()) return String(stableId).trim();
+  const actor = item?.fromuid ?? item?.uid ?? item?.likeUid ?? '';
+  const timestamp = item?.dateline ?? item?.likeTime ?? item?.lastUpdate ?? '';
+  const content = String(item?.note || item?.message || item?.targetTitle || '').slice(0, 80);
+  return [actor, timestamp, content].join(':');
+}
+
+/** 服务端第 1 页与已加载列表按稳定 key 去重合并：新通知插入头部，已有条目原样保留。 */
+function mergeNotificationRows(incoming: any[], existing: any[]): any[] {
+  const existingKeys = new Set(existing.map(item => getNotificationDedupeKey(item)));
+  const fresh = incoming.filter(item => !existingKeys.has(getNotificationDedupeKey(item)));
+  return [...fresh, ...existing];
+}
+
+/**
+ * 自动刷新（角标增长/回复成功）：增量合并第 1 页，保留已有条目的已读态，
+ * 并用插入前后的 scrollHeight 差值补偿 scrollTop，阅读位置不跳。
+ * 只有用户主动下拉刷新（refreshNotifications）才整表替换、允许回顶。
+ */
+async function mergeRefreshFirstPage(): Promise<void> {
+  if (loading.value) return;
+  const container = pageContainerRef.value;
+  const previousHeight = container?.scrollHeight || 0;
+  const previousTop = container?.scrollTop || 0;
+  resetTargetLikeState();
+  page.value = 1;
+  await fetchNotifications({ mergeFirstPage: true });
+  if (!container || previousTop <= 0) return;
+  await nextTick();
+  const delta = container.scrollHeight - previousHeight;
+  if (delta > 0 && container.scrollTop === previousTop) container.scrollTop = previousTop + delta;
+}
+
+/**
+ * 回复发送成功：关掉 composer，把来源通知置读，并在首屏时刷新列表，
+ * 让用户立刻看到「已回复」后的通知状态（翻页后不整表重置，与角标增长同口径）。
+ */
+function handleReplySent() {
+  const sourceNotification = replyComposer.value?.item;
+  closeReplyComposer();
+  if (sourceNotification) markNotificationRead(sourceNotification, getCurrentCategory(), authStore.user?.uid);
+  if (page.value === 1) void mergeRefreshFirstPage();
+}
+
 function handleNotificationCountIncrease() {
-  void refreshNotifications();
+  // 角标计数已由事件派发方（TopBar）先行写入 store；第 1 页用增量合并，
+  // 保留滚动位置与已读态，不整表替换。用户已翻到第 2+ 页时同样不重置，
+  // 只保留角标更新，等用户回到首屏（下拉刷新/切分类）时再拉取最新列表。
+  // 移动端下拉与桌面端刷新按钮仍走 refreshNotifications（整表替换，允许回顶）。
+  if (page.value > 1) return;
+  void mergeRefreshFirstPage();
+}
+
+/** 内联重试入口：翻页失败只重发当前页；首屏失败才整表回到第 1 页。 */
+async function retryFailedLoad() {
+  if (loadMoreFailed.value) {
+    notificationError.value = '';
+    await loadMore();
+    return;
+  }
+  await refreshNotifications();
 }
 
 // 数据提取工具函数，容错处理（兼容不同通知类型字段：
@@ -401,10 +495,19 @@ function getAvatar(item: any): string {
 }
 
 function getUsername(item: any): string {
-  const actor = getNotificationActor(item, getCurrentCategory());
-  return actor.username === '酷友'
-    ? item.messageUserInfo?.username || '匿名用户'
-    : actor.username;
+  // 「酷友」既是官方占位昵称，也可能是真实昵称：只有原始字段为空才算缺失，
+  // 否则昵称真叫「酷友」的用户会被显示成「匿名用户」。
+  const raw = getCurrentCategory() === 'like'
+    ? (item?.likeUsername || item?.likeUserInfo?.username || '')
+    : (item?.fromusername
+      || item?.fromUserInfo?.username
+      || item?.username
+      || item?.userInfo?.username
+      || item?.title
+      || '');
+  const name = String(raw || '').trim();
+  if (name) return name;
+  return item.messageUserInfo?.username || '匿名用户';
 }
 
 /** 人物入口使用发起通知的用户，系统通知不生成无效主页。 */
@@ -413,7 +516,11 @@ function getActorUid(item: any): string {
     ? item.likeUid || item.like_uid || item.likeUserInfo?.uid
     : item.fromuid || item.from_uid || item.fromUserInfo?.uid || item.uid || item.userInfo?.uid || item.messageUserInfo?.uid;
   const uid = String(value || '');
-  return /^[1-9]\d*$/.test(uid) && getUsername(item) !== '系统消息' ? uid : '';
+  // 部分 system/notice 通知的 item.uid / userInfo.uid 是接收者本人 ID，
+  // 兜底到它会让点头像跳到自己的主页；排除当前登录用户与系统消息。
+  return /^[1-9]\d*$/.test(uid)
+    && uid !== String(authStore.user?.uid || '')
+    && getUsername(item) !== '系统消息' ? uid : '';
 }
 
 function openActor(item: any) {
@@ -458,8 +565,18 @@ function renderNotificationText(text: string): string {
 
 function loadNotificationFeedSummaries(rows: any[]) {
   const summaries = feedSummaries.value;
+  // 长会话中下拉刷新/新通知刷新会反复带来新 feedId，Map 只增不减会无限增长；
+  // 超过上限时按插入序（Map 保序）淘汰最早条目，等效一个简易 LRU。
+  const trimSummaries = () => {
+    while (summaries.size >= FEED_SUMMARY_LIMIT) {
+      const oldest = summaries.keys().next().value;
+      if (oldest === undefined) break;
+      summaries.delete(oldest);
+    }
+  };
   const requestSummary = (feedId: string) => {
     if (!summaries.has(feedId)) {
+      trimSummaries();
       // 同一列表只解析一次，失败时保留可点击的「【动态】」。
       summaries.set(feedId, '');
       void loadFeedFullText(feedId).then((message) => {
@@ -495,7 +612,27 @@ async function openNotificationComment(item: any, href?: string): Promise<boolea
     }
   }
   if (!/^\d+$/.test(feedId)) return false;
-  openFeedDetail(router, feedId, item, replyId);
+  return await openFeedAfterProbe(feedId, item, replyId);
+}
+
+/** 目标动态探活：被删除/屏蔽的动态在详情页只会得到加载失败，
+ * 因此打开与置读前先确认能取到完整正文（复用带缓存与网页兜底的正文加载）。 */
+async function ensureFeedOpenable(feedId: string): Promise<boolean> {
+  try {
+    await loadFeedFullText(feedId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 打开动态前先探活；探活失败返回 false，由调用方保留未读并给出可行动提示。 */
+async function openFeedAfterProbe(feedId: string, context?: any, replyId?: string): Promise<boolean> {
+  if (!(await ensureFeedOpenable(feedId))) return false;
+  // 按调用方参数转发，保持 openFeedDetail 的既有上下文缓存行为。
+  if (replyId !== undefined) openFeedDetail(router, feedId, context, replyId);
+  else if (context !== undefined) openFeedDetail(router, feedId, context);
+  else openFeedDetail(router, feedId);
   return true;
 }
 
@@ -507,16 +644,81 @@ async function openNotificationTarget(item: any): Promise<boolean> {
   }
   if (await openNotificationComment(item)) return true;
   const feedId = getNotificationFeedId(item);
-  if (feedId) {
-    openFeedDetail(router, feedId, item);
+  // 已知动态 ID 时以探活结果为准：目标已删除不得回落到其它入口置读。
+  if (feedId) return await openFeedAfterProbe(feedId, item);
+  const targetRoute = await resolveNotificationTarget(item);
+  if (targetRoute) {
+    void router.push(targetRoute);
     return true;
   }
-  const targetRoute = await resolveNotificationTarget(item);
-  if (!targetRoute) {
+  // 活动/系统通知有时只在正文富文本里带唯一目标链接，可安全映射时才跳转。
+  const bodyRoute = resolveNotificationBodyRoute(item);
+  if (bodyRoute) {
+    void router.push(bodyRoute);
+    return true;
+  }
+  return false;
+}
+
+/** 正文只含一个站内链接时返回其路由；多个链接无法判断意图，保持不跳转。 */
+function resolveNotificationBodyRoute(item: any): string | null {
+  const links = new Set<string>();
+  for (const value of [item?.addition_info, item?.additionInfo, item?.note, item?.message, item?.message_title, item?.targetTitle, item?.infoHtml]) {
+    if (typeof value !== 'string') continue;
+    // 正文可能是实体编码的富文本，先还原 &amp; 再提取链接。
+    const text = value.replace(/&amp;/g, '&');
+    for (const match of text.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) links.add(match[1]);
+    for (const match of text.matchAll(/https?:\/\/[^\s"'<>]+/gi)) links.add(match[0]);
+  }
+  if (links.size !== 1) return null;
+  const link = [...links][0];
+  // 复用统一解析，账号安全等无本地目标的链接仍按原规则过滤。
+  return link ? getNotificationTargetRoute({ ...item, targetUrl: link }) : null;
+}
+
+/** 打开通知目标；只有确实打开成功才置读，失败时保留未读并给出反馈。 */
+async function openNotificationTargetWithFeedback(item: any, href?: string): Promise<boolean> {
+  const opened = await openNotificationTarget(item).catch(() => false);
+  if (!opened) {
+    reportNotificationUnopenable(item, href);
     return false;
   }
-  void router.push(targetRoute);
+  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
   return true;
+}
+
+/** 解析失败或没有目标时保留未读，并给出明确反馈；通知带链接时可一键复制。 */
+function reportNotificationUnopenable(item: any, href?: string) {
+  const link = getNotificationCopyableLink(item, href);
+  if (!link) {
+    showToast('该通知暂无法在客户端打开', 'info');
+    return;
+  }
+  showToast('该通知暂无法在客户端打开，可复制其中的链接查看', 'info', 4000, {
+    label: '复制链接',
+    onClick: () => { void copyNotificationLink(link); },
+  });
+}
+
+async function copyNotificationLink(link: string) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('当前环境不支持剪贴板');
+    await navigator.clipboard.writeText(link);
+    showToast('链接已复制', 'success');
+  } catch {
+    showToast('复制失败，请手动选择通知中的链接复制', 'warning');
+  }
+}
+
+function getNotificationCopyableLink(item: any, href?: string): string {
+  for (const value of [href, item?.targetUrl, item?.target_url, item?.webUrl, item?.web_url, item?.url]) {
+    const text = String(value || '').replace(/&amp;/g, '&').trim();
+    if (!text || text === '#' || /^javascript:/i.test(text)) continue;
+    if (/^https?:\/\//i.test(text)) return text;
+    // 相对路径只在用户实际点击的链接上提供，避免复制通知自身的已读参数地址。
+    if (value === href && /^\/(?!\/)/.test(text)) return `https://www.coolapk.com${text}`;
+  }
+  return '';
 }
 
 function formatTime(value: number | string | undefined): string {
@@ -527,7 +729,7 @@ function getCurrentCategory(): NotificationCategory {
   return tabs.find((tab) => tab.value === currentTab.value)?.countKey || 'notification';
 }
 
-function getNotificationKey(item: any): string {
+function getNotificationKey(item: any, index = 0): string {
   const category = currentTab.value;
   const stableId = item?.id ?? item?.entityId ?? item?.targetId;
   if (stableId !== undefined && stableId !== null && String(stableId).trim()) {
@@ -535,8 +737,10 @@ function getNotificationKey(item: any): string {
   }
   const actor = item?.fromuid ?? item?.uid ?? item?.likeUid ?? '';
   const timestamp = item?.dateline ?? item?.likeTime ?? item?.lastUpdate ?? '';
+  // 无稳定 id 的系统/活动通知可能内容完全相同（同一条群发），此时只有行号能区分，
+  // 否则 Vue 会复用错节点并在控制台告警。
   const content = String(item?.note || item?.message || item?.targetTitle || '').slice(0, 80);
-  return `${category}:${actor}:${timestamp}:${content}`;
+  return `${category}:${actor}:${timestamp}:${content}:${index}`;
 }
 
 function getNotificationUnreadCount(item: any): number {
@@ -570,8 +774,10 @@ async function markAllViewed(): Promise<void> {
   try {
     if (!await requestConfirmation({ title: '设为全部已读', message: '将点赞、关注、私信、回复、@、系统消息、活动消息的未读通知设为已读，该操作不可恢复，确定要操作吗？' })) return;
     if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
-    notificationStore.beginNotificationClear();
+    // 服务端清零成功后才推进 clearVersion：失败路径版本号与本地未读态原样保留，
+    // 在途置读的 NotifyCount 回包也不会被版本闸作废，仅以 toast 提示失败。
     await CoolapkTauriAPI.clearNotificationCount('all');
+    notificationStore.beginNotificationClear();
     if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
     // 清除前发出的列表响应不能再把旧未读标记写回页面。
     notificationRequestId += 1;
@@ -616,7 +822,6 @@ function renderSafeHtml(text: string): string {
 
 // 通知内链接点击：动态链接携带通知上下文进入完整动态页，其余走统一处理。
 async function handleNotifyClick(e: Event, item: any) {
-  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
   const anchor = (e.target as HTMLElement).closest('a');
   const href = anchor?.getAttribute('href') || '';
   // 正文链接始终由应用处理，危险协议不得继续触发浏览器默认导航。
@@ -632,19 +837,30 @@ async function handleNotifyClick(e: Event, item: any) {
     return;
   }
   // 正文链接只打开其自身；空白正文点击才进入通知所属动态和评论。
+  // 置读必须发生在确认能打开目标之后，无法打开的通知保留未读。
   if (!anchor?.href || !href || href === '#' || /^javascript:/i.test(href.trim())) {
-    await openNotificationTarget(item);
+    await openNotificationTargetWithFeedback(item);
     return;
   }
   // 使用链接自身的动态 ID，避免把所属通知的评论定位带到分享链接上。
   const feedRoute = normalizeCoolapkRoute(href);
   const linkedFeedId = feedRoute?.match(/^\/feed\/(\d+)(?:\?|$)/)?.[1];
   if (linkedFeedId) {
-    openFeedDetail(router, linkedFeedId);
+    // 先探活再置读：动态被删/被屏蔽时保留未读，并复用「可复制链接」提示范式。
+    if (await openFeedAfterProbe(linkedFeedId)) {
+      markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
+    } else {
+      reportNotificationUnopenable(item, href);
+    }
     return;
   }
   if (/(?:\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
-    handleAnchorClick(e);
+    // 评论链接同样先解析并确认目标动态存在，才上报服务端已读。
+    if (await openNotificationComment(item, href)) {
+      markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
+    } else {
+      reportNotificationUnopenable(item, href);
+    }
     return;
   }
   const notification = {
@@ -657,15 +873,23 @@ async function handleNotifyClick(e: Event, item: any) {
   // 不能让该链接先走用户页路由，否则会落到“用户资料加载失败”。
   const externalUrl = getNotificationExternalUrl(notification);
   if (externalUrl) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
     void CoolapkTauriAPI.openUrl(externalUrl);
     return;
   }
   const targetRoute = await resolveNotificationTarget(notification);
   if (targetRoute) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
     void router.push(targetRoute);
     return;
   }
-  if (!getNotificationProductName(notification)) handleAnchorClick(e);
+  // 链接能交给统一入口处理时才算打开了目标。
+  if (!getNotificationProductName(notification)) {
+    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
+    handleAnchorClick(e);
+    return;
+  }
+  reportNotificationUnopenable(notification, href);
 }
 
 onActivated(() => {
@@ -711,8 +935,7 @@ watch(
   () => [authStore.isLoggedIn, authStore.user?.uid] as const,
   ([isLoggedIn]) => {
     closeReplyComposer();
-    likedTargets.value = new Map();
-    pendingLikes.value = new Set();
+    resetTargetLikeState();
     feedSummaries.value = new Map();
     notificationRequestId += 1;
     loading.value = false;

@@ -315,6 +315,9 @@
             返回配置
           </AppButton>
           <div class="completed-footer-right">
+            <AppButton v-if="retrySourceIds.length" variant="primary" icon="fas fa-rotate-right" @click="retryFailedExport">
+              重试失败的 {{ retrySourceIds.length }} 个
+            </AppButton>
             <AppButton variant="ghost" @click="close">关闭</AppButton>
             <AppButton variant="primary" icon="fas fa-folder-open" @click="openExportDirectory">
               打开所在文件夹
@@ -329,6 +332,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { showToast } from '../../utils/toast';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
 import {
@@ -361,6 +365,8 @@ const settingsStore = useSettingsStore();
 const currentStep = ref<ExportStep>('config');
 const completedIsCancelled = ref(false);
 const completedSummaryText = ref('');
+/** 中途失败时仍未导出的收藏单（或 'all'），供完成页的「重试失败」按钮复用。 */
+const retrySourceIds = ref<string[]>([]);
 
 const exporting = ref(false);
 const cancelRequested = ref(false);
@@ -503,6 +509,7 @@ watch(() => props.isOpen, (open) => {
   progress.value = '';
   results.value = [];
   cancelRequested.value = false;
+  retrySourceIds.value = [];
   selectedCollectionIds.value = new Set<string>();
   collectionSearchQuery.value = '';
   refreshDownloadPath();
@@ -549,6 +556,14 @@ function backToConfig() {
   lastExportDirectory.value = '';
 }
 
+function retryFailedExport() {
+  if (exporting.value || retrySourceIds.value.length === 0) return;
+  if (props.mode === 'collections') {
+    selectedCollectionIds.value = new Set(retrySourceIds.value);
+  }
+  void startExport();
+}
+
 function cancelExport() {
   if (!exporting.value || !abortController.value) return;
   cancelRequested.value = true;
@@ -568,7 +583,7 @@ function fileNameFromPath(path: string): string {
 async function startExport() {
   if (exporting.value) return;
   if (!authStore.isLoggedIn) {
-    alert('请先登录酷安账号后再导出收藏');
+    showToast('请先登录酷安账号后再导出收藏', 'warning');
     return;
   }
   const selectedFormats = (Object.keys(formats) as FavoriteExportFormat[]).filter(format => formats[format]);
@@ -590,13 +605,15 @@ async function startExport() {
   results.value = [];
   lastExportDirectory.value = '';
 
+  const sources = props.mode === 'collections'
+    ? collections.value
+      .filter(collection => selectedCollectionIds.value.has(collectionId(collection)))
+      .map(collection => ({ type: 'collection' as const, id: collectionId(collection), title: collectionTitle(collection) }))
+    : [{ type: 'all' as const, id: 'all' as const, title: '全部收藏' as const }];
+  let exportedSources = 0;
+  let exportedItems = 0;
   try {
     const stamp = dateStamp();
-    const sources = props.mode === 'collections'
-      ? collections.value
-        .filter(collection => selectedCollectionIds.value.has(collectionId(collection)))
-        .map(collection => ({ type: 'collection' as const, id: collectionId(collection), title: collectionTitle(collection) }))
-      : [{ type: 'all' as const, id: 'all' as const, title: '全部收藏' as const }];
     let totalItems = 0;
     let totalFailed = 0;
     for (const source of sources) {
@@ -648,6 +665,8 @@ async function startExport() {
       }
       controller.signal.throwIfAborted();
       await saveFavoriteExportSnapshot(bundle);
+      exportedSources += 1;
+      exportedItems += bundle.summary.total;
       totalItems += bundle.summary.total;
       totalFailed += bundle.summary.contentFailed;
     }
@@ -655,6 +674,7 @@ async function startExport() {
     // 状态迁移到 completed
     currentStep.value = 'completed';
     completedIsCancelled.value = false;
+    retrySourceIds.value = [];
     completedSummaryText.value = `成功备份 ${sources.length} 个${props.mode === 'collections' ? '收藏单' : '导出任务'}，共 ${totalItems} 条收藏内容${totalFailed ? `（正文失败 ${totalFailed} 条）` : ''}`;
   } catch (error) {
     if (controller.signal.aborted) {
@@ -667,8 +687,18 @@ async function startExport() {
         progress.value = '导出已取消';
       }
     } else {
-      currentStep.value = 'config';
-      alert(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (exportedSources > 0) {
+        // 中途失败：已完成部分不丢弃，进入完成页明确告知已导出内容，并提供仅重试剩余部分。
+        const remaining = sources.slice(exportedSources);
+        retrySourceIds.value = remaining.map(source => source.id);
+        currentStep.value = 'completed';
+        completedIsCancelled.value = true;
+        completedSummaryText.value = `已导出 ${exportedSources} 个${props.mode === 'collections' ? '收藏单' : '导出任务'}（${exportedItems} 条，文件已安全保存），后续导出失败：${message}`;
+      } else {
+        currentStep.value = 'config';
+        showToast(`导出失败：${message}`, 'error', 5000);
+      }
     }
   } finally {
     exporting.value = false;

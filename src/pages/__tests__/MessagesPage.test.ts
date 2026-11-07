@@ -5,12 +5,13 @@ import { createPinia, setActivePinia } from 'pinia';
 
 const mocks = vi.hoisted(() => ({
   router: { push: vi.fn(), replace: vi.fn() },
-  route: { query: { uid: '20002' } as Record<string, string> },
+  query: { uid: '20002' } as Record<string, string>,
   listMessages: vi.fn(),
   listChatHistory: vi.fn(),
   sendPrivateMessage: vi.fn(),
   sendPrivateImage: vi.fn(),
   followUser: vi.fn(),
+  unfollowUser: vi.fn(),
   uploadImage: vi.fn(),
   readMessage: vi.fn(),
   getPublicUserProfile: vi.fn(),
@@ -22,10 +23,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<any>();
+  const { reactive } = await import('vue');
+  // query 必须是响应式的：私信预填文本改由 watch(query) 在同一实例内生效。
+  mocks.query = reactive({ uid: '20002' } as Record<string, string>);
   return {
     ...actual,
     useRouter: () => mocks.router,
-    useRoute: () => mocks.route,
+    useRoute: () => ({ get query() { return mocks.query; } }),
   };
 });
 
@@ -48,6 +52,7 @@ vi.mock('../../api/coolapk', () => ({
     sendPrivateMessage: mocks.sendPrivateMessage,
     sendPrivateImage: mocks.sendPrivateImage,
     followUser: mocks.followUser,
+    unfollowUser: mocks.unfollowUser,
     uploadImage: mocks.uploadImage,
     readMessage: mocks.readMessage,
     getPublicUserProfile: mocks.getPublicUserProfile,
@@ -61,7 +66,8 @@ window.URL.revokeObjectURL = mocks.revokeObjectURL;
 import MessagesPage from '../MessagesPage.vue';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
-import { clearMessageDraft, saveMessageDraft } from '../../utils/messageDrafts';
+import { useUserRelationsStore } from '../../stores/userRelations';
+import { clearMessageDraft, loadMessageDraft, saveMessageDraft } from '../../utils/messageDrafts';
 
 describe('MessagesPage 粘贴图片发送功能', () => {
   let wrapper: any;
@@ -94,7 +100,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    delete mocks.route.query.feedback;
+    delete mocks.query.feedback;
     const pinia = createPinia();
     setActivePinia(pinia);
 
@@ -124,6 +130,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     mocks.sendPrivateImage.mockResolvedValue({ data: [{ id: 999, message_pic: '/message/2026/09/test_image.jpg' }] });
     mocks.sendPrivateMessage.mockResolvedValue({ data: [{ id: 1000, message: '测试文本' }] });
     mocks.followUser.mockResolvedValue({ code: 200 });
+    mocks.unfollowUser.mockResolvedValue({ code: 200 });
     mocks.getPublicUserProfile.mockResolvedValue({ data: { isFollow: 0 } });
     mocks.requestConfirmation.mockResolvedValue(true);
     mocks.readMessage.mockResolvedValue({ code: 200 });
@@ -131,7 +138,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    delete mocks.route.query.initialText;
+    delete mocks.query.initialText;
     if (wrapper) {
       wrapper.unmount();
       wrapper = null;
@@ -175,7 +182,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 16)');
     const focus = vi.spyOn(HTMLElement.prototype, 'focus');
     const text = 'https://www.coolapk.com/feed/123';
-    if (source === 'share') mocks.route.query.initialText = text;
+    if (source === 'share') mocks.query.initialText = text;
     else await saveMessageDraft('10001', '10001_20002', text);
     const w = await mountMessagesPage();
     expect(w.get('.message-rich-editor').text()).toBe(text);
@@ -219,7 +226,7 @@ describe('MessagesPage 粘贴图片发送功能', () => {
   });
 
   it('旧版反馈查询参数不会在私信中上传诊断日志', async () => {
-    mocks.route.query.feedback = '1';
+    mocks.query.feedback = '1';
     const w = await mountMessagesPage();
     expect(w.find('.feedback-log-option').exists()).toBe(false);
     const editor = w.find('.message-rich-editor');
@@ -278,6 +285,68 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     expect(mocks.followUser).toHaveBeenCalledWith('20002');
     expect(mocks.showToast).toHaveBeenCalledWith('关注成功', 'success');
     expect(w.find('.follow-action-btn').exists()).toBe(false);
+  });
+
+  it('私信关注提示走 userRelations store：成功后写入关注关系并移除提示', async () => {
+    const relations = useUserRelationsStore();
+    expect(relations.getRelation('20002')).toBeUndefined();
+    const historySession = {
+      ukey: '10001_20002',
+      id: '10001_20002',
+      uid: 20002,
+      fromuid: 20002,
+      entityId: 20002,
+      messageUid: 20002,
+      messageUsername: '好友酷友',
+      username: '好友酷友',
+      message: '你好',
+      dateline: 1700000000,
+      isNewConversation: false,
+    };
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([historySession]));
+    mocks.listMessages.mockResolvedValue({ data: [historySession] });
+    mocks.listChatHistory.mockResolvedValue({
+      data: [{ id: 'follow-tip-1', entityId: 'follow-tip-1', entityType: 'messageExtra', entityTemplate: 'float', title: '关注对方即可让TA与你无限制聊天' }],
+    });
+
+    const w = await mountMessagesPage();
+    await w.find('.follow-action-btn').trigger('click');
+    await flushPromises();
+
+    // 关注接口仍由 store 统一发起，页面不再直连 CoolapkTauriAPI.followUser。
+    expect(mocks.followUser).toHaveBeenCalledWith('20002');
+    expect(relations.getRelation('20002')?.isFollow).toBe(true);
+    expect(w.find('.follow-action-btn').exists()).toBe(false);
+  });
+
+  it('关注失败时由 store 回滚关注关系', async () => {
+    const relations = useUserRelationsStore();
+    mocks.followUser.mockRejectedValueOnce(new Error('关注失败'));
+    const historySession = {
+      ukey: '10001_20002',
+      id: '10001_20002',
+      uid: 20002,
+      fromuid: 20002,
+      entityId: 20002,
+      messageUid: 20002,
+      messageUsername: '好友酷友',
+      username: '好友酷友',
+      message: '你好',
+      dateline: 1700000000,
+      isNewConversation: false,
+    };
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([historySession]));
+    mocks.listMessages.mockResolvedValue({ data: [historySession] });
+    mocks.listChatHistory.mockResolvedValue({
+      data: [{ id: 'follow-tip-1', entityId: 'follow-tip-1', entityType: 'messageExtra', entityTemplate: 'float', title: '关注对方即可让TA与你无限制聊天' }],
+    });
+
+    const w = await mountMessagesPage();
+    await w.find('.follow-action-btn').trigger('click');
+    await flushPromises();
+
+    expect(relations.getRelation('20002')).toBeUndefined();
+    expect(w.find('.follow-action-btn').exists()).toBe(true);
   });
 
   it('普通 messageExtra 即使文本包含关注也不显示关注按钮', async () => {
@@ -883,5 +952,94 @@ describe('MessagesPage 粘贴图片发送功能', () => {
     expect(w.findAll('.message-item')).toHaveLength(3);
     expect(w.findAll('.msg-text').map((item: any) => item.text())).toEqual(['最早消息', '中间消息', '最新消息']);
     expect(chatAreaElement.scrollTop).toBe(100);
+  });
+
+  const unreadSession = {
+    ukey: '10001_20002',
+    id: '10001_20002',
+    uid: 10001,
+    fromuid: 20002,
+    entityId: 20002,
+    messageUid: 20002,
+    messageUsername: '好友酷友',
+    username: '好友酷友',
+    message: '未读消息',
+    dateline: 1700000000,
+    isNewConversation: false,
+    isnew: 1,
+    unreadNum: 3,
+  };
+
+  it('聊天记录加载失败时不置为已读，保留未读角标', async () => {
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([unreadSession]));
+    mocks.listMessages.mockResolvedValue({ data: [unreadSession] });
+    mocks.listChatHistory.mockRejectedValue(new Error('网络错误'));
+    mocks.readMessage.mockClear();
+
+    const w = await mountMessagesPage();
+    await flushPromises();
+
+    expect(mocks.readMessage).not.toHaveBeenCalled();
+    expect(w.find('.session-unread-badge').exists()).toBe(true);
+  });
+
+  it('聊天记录成功加载并渲染后才置为已读', async () => {
+    sessionStorage.setItem('coolapk_message_sessions_10001', JSON.stringify([unreadSession]));
+    mocks.listMessages.mockResolvedValue({ data: [unreadSession] });
+    let resolveHistory!: (value: any) => void;
+    mocks.listChatHistory.mockImplementationOnce(() => new Promise(resolve => { resolveHistory = resolve; }));
+    mocks.readMessage.mockClear();
+
+    const w = await mountMessagesPage();
+
+    // 记录还没回来：不请求置读，角标也还在。
+    expect(mocks.readMessage).not.toHaveBeenCalled();
+    expect(w.find('.session-unread-badge').exists()).toBe(true);
+
+    resolveHistory({ data: [{ id: 'm1', message: '未读消息', dateline: 1700000000, fromuid: 20002 }] });
+    await flushPromises();
+
+    expect(mocks.readMessage).toHaveBeenCalledWith('10001_20002');
+    expect(w.find('.session-unread-badge').exists()).toBe(false);
+  });
+
+  it('输入草稿防抖，卸载时立即落盘不丢字', async () => {
+    const w = await mountMessagesPage();
+    const editor = w.get('.message-rich-editor');
+    editor.element.textContent = '未发送的草稿';
+    await editor.trigger('input');
+    // 防抖窗口内还没有落盘。
+    expect(await loadMessageDraft('10001', '10001_20002')).not.toBe('未发送的草稿');
+
+    wrapper.unmount();
+    wrapper = null;
+    await flushPromises();
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    expect(await loadMessageDraft('10001', '10001_20002')).toBe('未发送的草稿');
+  });
+  it('同一实例内地址栏预填文本变化也能注入，且不覆盖正在编辑的草稿', async () => {
+    const w = await mountMessagesPage();
+    expect(w.get('.message-rich-editor').text()).toBe('');
+
+    // 用户已有输入时，新的预填文本不能覆盖草稿。
+    const editor = w.get('.message-rich-editor');
+    editor.element.textContent = '正在写的草稿';
+    await editor.trigger('input');
+    mocks.query.initialText = 'https://www.coolapk.com/feed/999';
+    await flushPromises();
+    expect(w.get('.message-rich-editor').text()).toBe('正在写的草稿');
+    // 未被消费：query 里的预填文本保持原样，等用户清空输入后再注入。
+    expect(mocks.query.initialText).toBe('https://www.coolapk.com/feed/999');
+
+    // 清空输入后再来预填文本，同一实例内直接注入并消费该 query。
+    editor.element.textContent = '';
+    await editor.trigger('input');
+    await saveMessageDraft('10001', '10001_20002', '');
+    await flushPromises();
+    mocks.query.initialText = 'https://www.coolapk.com/feed/1000';
+    await flushPromises();
+    expect(w.get('.message-rich-editor').text()).toBe('https://www.coolapk.com/feed/1000');
+    expect(mocks.router.replace).toHaveBeenCalledWith({ path: '/messages', query: { uid: '20002' } });
   });
 });

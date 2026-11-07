@@ -60,7 +60,7 @@
 
       <div class="pagination-footer">
         <LoadingState v-if="loading && page > 1" text="加载更多中..." />
-        <button v-else-if="error && events.length > 0" class="retry-inline" @click="loadEvents(true)">加载失败，点击重试</button>
+        <button v-else-if="error && events.length > 0" class="retry-inline" @click="retryPagination">加载失败，点击重试</button>
         <div v-else-if="noMore" class="no-more">没有更多活动了</div>
       </div>
     </div>
@@ -148,6 +148,12 @@ async function loadEvents(isRefresh = false) {
   }
 }
 
+function retryPagination() {
+  // 翻页失败时只重试当前页，不能像刷新一样清空已有列表。
+  error.value = false;
+  void loadEvents(false);
+}
+
 function openEvent(event: CoolEvent) {
   router.push({ path: `/event/${event.id}` });
 }
@@ -156,7 +162,8 @@ function handleScroll(e: Event) {
   const target = e.target as HTMLElement;
   const { scrollTop, clientHeight, scrollHeight } = target;
   if (scrollTop + clientHeight >= scrollHeight - 120) {
-    if (!loading.value && !noMore.value) {
+    // 分页失败后不再因滚动自动重试，统一走 footer 重试按钮。
+    if (!loading.value && !noMore.value && !error.value) {
       void loadEvents(false);
     }
   }

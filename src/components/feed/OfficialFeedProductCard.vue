@@ -5,29 +5,30 @@
   </section>
 </template>
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed } from 'vue';
 import AppImage from '../common/AppImage.vue';
 import { getFeedRelationImage, getFeedRelationTitle, getFeedRelationSubtitle } from '../../utils/feedRelations';
 import { getDigitalProductRating } from '../../utils/digitalProduct';
-import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useAuthStore } from '../../stores/auth';
 import { useAppStore } from '../../stores/app';
-import { showToast } from '../../utils/toast';
-import { getErrorMessage } from '../../utils/errors';
+import { productRelationKey, useUserRelationsStore } from '../../stores/userRelations';
 const props = defineProps<{ target: Record<string, any> }>();
 defineEmits<{ open: [target: Record<string, any>] }>();
-const auth = useAuthStore(); const app = useAppStore();
+const auth = useAuthStore(); const app = useAppStore(); const userRelations = useUserRelationsStore();
 const score = computed(() => getDigitalProductRating(props.target));
-const following = ref(Number(props.target.isFollow || props.target.userAction?.follow) === 1);
-const pending = ref(false);
-watch(() => [props.target.id, props.target.isFollow, props.target.userAction?.follow], () => { following.value = Number(props.target.isFollow || props.target.userAction?.follow) === 1; });
+const targetId = computed(() => String(props.target.id || props.target.entityId || '').trim());
+// 数码产品关注与用户关注共用同一份关系缓存，商店缓存优先、接口字段兜底。
+const relationKey = computed(() => productRelationKey(targetId.value));
+const following = computed(() => {
+  const relation = userRelations.getRelation(relationKey.value);
+  if (relation) return relation.isFollow;
+  return Number(props.target.isFollow || props.target.userAction?.follow) === 1;
+});
+const pending = computed(() => userRelations.isPending(relationKey.value));
 async function toggleFollow() {
   if (!auth.isLoggedIn) { auth.openLoginModal(); return; }
-  if (pending.value) return;
-  pending.value = true;
-  try { await CoolapkTauriAPI.changeProductFollowStatus(String(props.target.id || props.target.entityId), following.value ? 0 : 1); following.value = !following.value; }
-  catch (error) { showToast(getErrorMessage(error, '关注数码失败'), 'error'); }
-  finally { pending.value = false; }
+  if (pending.value || !targetId.value) return;
+  await userRelations.toggleProduct(targetId.value, following.value);
 }
 function publish() { if (!auth.isLoggedIn) { auth.openLoginModal(); return; } app.openPublish(`#${getFeedRelationTitle(props.target)}# `); }
 </script>

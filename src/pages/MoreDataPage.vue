@@ -22,7 +22,11 @@
 
       <div v-else-if="isFeedMode" class="feed-list">
         <FeedCard v-for="item in items" :key="item.id || item.entityId" :feed="item" />
-        <div class="pagination-footer"><LoadingState v-if="loadingMore" text="正在加载更多..." /><span v-else-if="noMore">已加载全部内容</span></div>
+        <div class="pagination-footer">
+          <LoadingState v-if="loadingMore" text="正在加载更多..." />
+          <button v-else-if="error" class="retry-inline" type="button" @click="retryLoadMore">加载失败，点击重试</button>
+          <span v-else-if="noMore">已加载全部内容</span>
+        </div>
       </div>
 
       <div v-else class="entity-list">
@@ -32,7 +36,11 @@
           <button v-if="canUnfollow" class="row-action" type="button" :disabled="unfollowPendingKey === entityKey(item, index)" @click.stop="unfollowItem(item, index)">{{ unfollowPendingKey === entityKey(item, index) ? '处理中...' : '取消关注' }}</button>
           <i v-else class="fas fa-chevron-right row-arrow"></i>
         </div>
-        <div class="pagination-footer"><LoadingState v-if="loadingMore" text="正在加载更多..." /><span v-else-if="noMore">已加载全部内容</span></div>
+        <div class="pagination-footer">
+          <LoadingState v-if="loadingMore" text="正在加载更多..." />
+          <button v-else-if="error" class="retry-inline" type="button" @click="retryLoadMore">加载失败，点击重试</button>
+          <span v-else-if="noMore">已加载全部内容</span>
+        </div>
       </div>
     </template>
   </div>
@@ -107,7 +115,7 @@ function extractList(response: any): any[] {
 async function load(refresh = false) {
   if (loading.value || loadingMore.value || isPlaceholder.value) return;
   if (refresh) { page.value = 1; items.value = []; noMore.value = false; error.value = ''; loading.value = true; }
-  else { if (noMore.value) return; loadingMore.value = true; }
+  else { if (noMore.value) return; loadingMore.value = true; error.value = ''; }
   try {
     let res: any;
     if (mode.value === 'nodes') {
@@ -183,12 +191,21 @@ function openEntity(item: any) {
 
 function handleScroll(event: Event) {
   const target = event.target as HTMLElement;
+  // 失败后停在错误态等用户点 footer 的重试，避免滚动一次打一次接口。
+  if (error.value) return;
   if (target.scrollTop + target.clientHeight >= target.scrollHeight - 180) void load(false);
 }
 
 onMounted(() => { if (requiresLogin.value ? authStore.isLoggedIn : true) void load(true); });
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
+/** 翻页失败后的重试入口：清掉错误态再补当前页，不清空已加载内容。 */
+function retryLoadMore() {
+  if (loading.value || loadingMore.value) return;
+  error.value = '';
+  void load(false);
+}
+
 const mobileRefreshBusy = computed(() => loading.value || loadingMore.value);
 async function refreshMobilePage() { await load(true); }
 </script>
@@ -216,4 +233,5 @@ async function refreshMobilePage() { await load(true); }
 .row-action:disabled { opacity: 0.6; cursor: wait; }
 .feed-list { width: min(100%, var(--feed-max-width)); margin: 0 auto; }
 .pagination-footer { padding: var(--space-5); text-align: center; color: var(--text-tertiary); font-size: var(--font-size-caption); }
+.retry-inline { border: 0; background: transparent; color: var(--brand-primary); cursor: pointer; font-size: var(--font-size-caption); }
 </style>

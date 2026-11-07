@@ -1,10 +1,11 @@
 <template>
   <AppShell>
     <router-view v-slot="{ Component, route }">
-      <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面以 route.fullPath 独立入栈 -->
+      <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面按「页面实例身份」入栈（见 getPageComponentKey） -->
       <div class="route-transition-stage" :style="{ '--feed-detail-native-easing': feedDetailEasing }">
       <Transition :name="feedDetailTransition">
-      <keep-alive :max="15">
+      <!-- 缓存槽位随已开页签增长：长浏览不会把仍在使用的列表挤出缓存，返回时位置与分页都还在 -->
+      <keep-alive :max="keepAliveMax">
         <component
           :is="Component"
           :key="getRouteKey(route)"
@@ -74,7 +75,7 @@
             <button
               v-if="updateInfo.hasNew && updateInfo.installerUrl && canInstallInApp"
               class="startup-update-button"
-              @click="startBackgroundDownload(updateInfo)"
+              @click="startBackgroundDownload(updateInfo, true)"
             >
               <i class="fas fa-download"></i> 后台下载更新
             </button>
@@ -163,7 +164,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import EquipmentProductPicker from './components/profile/EquipmentProductPicker.vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { listen } from '@tauri-apps/api/event';
 import AppShell from './components/layout/AppShell.vue';
 import PublishDialog from './components/overlays/PublishDialog.vue';
@@ -176,7 +177,7 @@ import AppContextMenu from './components/common/AppContextMenu.vue';
 import AppDialog from './components/common/AppDialog.vue';
 import { useAuthStore } from './stores/auth';
 import { useSettingsStore } from './stores/settings';
-import { useDownloadStore } from './stores/downloads';
+import { isUpdateTask, useDownloadStore } from './stores/downloads';
 import {
   APP_VERSION,
   checkLatestRelease,
@@ -204,6 +205,7 @@ import { useOfficialMobileFeedDetail } from './composables/useOfficialMobileFeed
 import { registerGlobalSelectionClear } from './utils/selection';
 import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
+import { getKeepAliveMax, getPageComponentKey } from './utils/pageTabs';
 import { logDiagnostic } from './utils/diagnosticLogger';
 import { setupKeyboardScrollAssist, setupViewportHeight } from './utils/viewport';
 import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
@@ -211,11 +213,10 @@ import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
 const { isSidebarTransitionActive, resetSidebarTransition } = useSidebarTransition();
 
 function getRouteKey(route: any): string {
-  // /topics 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁
-  if (route.path === '/topics') {
-    return `/topics:${pageTabsStore.getGeneration(route)}`;
-  }
-  return `${route.fullPath}:${pageTabsStore.getGeneration(route)}`;
+  // 组件 key 与「页面身份」对齐：同一实体的临时 query（排序、筛选、定位、标题）不再各自占用
+  // keep-alive 槽位，否则长浏览后缓存被挤出，返回时滚动位置与已加载分页一起丢失。
+  // /topics 仍单实例常驻，/search 仍按「搜索词 + 搜索范围」复用实例，Ctrl+R 代数仍生效。
+  return getPageComponentKey(route, pageTabsStore.getGeneration(route));
 }
 
 const PENDING_UPDATE_KEY = 'coolapk_pending_update';
@@ -231,6 +232,7 @@ type DownloadNotice = { version: string; releaseNotes?: string };
 
 type DownloadProgress = { downloaded: number; total: number; percent: number };
 
+const router = useRouter();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const downloadStore = useDownloadStore();
@@ -248,6 +250,8 @@ watch(() => route.fullPath, (_next, _previous) => {
   routeHistoryPosition = nextPosition;
 }, { flush: 'sync' });
 const pageTabsStore = usePageTabsStore();
+// 至少保留 15 个缓存页，并随已开页签数增长（页签数 + 5），页面重建导致的列表分页丢失随之消除。
+const keepAliveMax = computed(() => getKeepAliveMax(pageTabsStore.tabs.length));
 const updateInfo = ref<UpdateInfo | null>(null);
 const downloadNotice = ref<DownloadNotice | null>(null);
 const readyInfo = ref<ReadyInfo | null>(null);
@@ -270,6 +274,37 @@ let unregisterViewport: (() => void) | null = null;
 let unregisterKeyboardAssist: (() => void) | null = null;
 let updateDownloadInFlight = false;
 let updateChannelEpoch = 0;
+// 下载中心重试入口需要的最近一次更新信息；store 只存展示字段，重发下载必须回到这里。
+const lastUpdateAttempt = ref<UpdateInfo | null>(null);
+// 当前更新任务在下载中心 store 里的镜像 id；下载本体仍由本组件驱动。
+let updateTaskId = '';
+// 本次运行内是否已经用应用内提示替代过桌面通知，保证每会话只打扰一次。
+let downloadToastHintShown = false;
+
+// 下载中心里更新包镜像记录是「用户还想要这个更新包」的单一真值：
+// 记录被用户删除（单条删除 / 批量删除记录）时，更新器必须同步放弃，
+// 不能等下载完成后再弹安装窗或写入待安装键（下次启动又会弹）。
+// 注意 restorePendingUpdate 从待安装键恢复时不经过镜像记录，不设置该跟踪值。
+const trackedUpdateMirrorVersion = ref('');
+// 「被跟踪版本的镜像记录是否仍存在」写成一个 computed，由一个常驻 watcher 观察：
+// 若在 watcher 回调里再新建 watcher，每次版本变化都会留下一个不会销毁的监听器。
+const trackedUpdateMirrorStillExists = computed(() => {
+  const version = trackedUpdateMirrorVersion.value;
+  if (!version) return true;
+  return downloadStore.tasks.some((task) => isUpdateTask(task) && task.versionName === version);
+});
+watch(trackedUpdateMirrorStillExists, (stillExists) => {
+  if (stillExists || !trackedUpdateMirrorVersion.value) return;
+  // 镜像记录已不存在：更新器放弃该包。下载仍在途时无法中止原生下载，
+  // 完成回调会再次校验并清理包文件；此时若已就绪则立即撤下弹窗与待安装键。
+  trackedUpdateMirrorVersion.value = '';
+  localStorage.removeItem(PENDING_UPDATE_KEY);
+  readyInfo.value = null;
+  readyUpdateVisible.value = false;
+  if (!updateDownloadInFlight) {
+    void CoolapkTauriAPI.cleanupUpdatePackages().catch(() => undefined);
+  }
+});
 
 watch(() => settingsStore.settings.updateChannel, () => {
   updateChannelEpoch += 1;
@@ -279,8 +314,22 @@ watch(() => settingsStore.settings.updateChannel, () => {
     readyInfo.value = null;
     readyUpdateVisible.value = false;
   }
+  // 下载中心的更新任务只是镜像：渠道切换后，渠道不再提供的版本同步移除记录，
+  // 避免列表仍显示「安装」，引导用户安装渠道已不提供的版本。
+  removeDisallowedUpdateRecords((version) => isVersionAllowedInChannel(version, settingsStore.settings.updateChannel));
   void checkForUpdate();
 });
+
+// 按给定规则清理下载中心里不再可安装的更新任务镜像。
+// 这里属于策略性清理（渠道切换/忽略版本/版本已不需要），不能写删除标记：
+// 否则用户切回原渠道后，自动检查会认为「用户删除过」而永远不再提示该版本。
+function removeDisallowedUpdateRecords(allowed: (version: string) => boolean) {
+  for (const task of downloadStore.tasks) {
+    if (isUpdateTask(task) && !allowed(task.versionName || '')) {
+      void downloadStore.removeUpdateTask(task.id, false);
+    }
+  }
+}
 
 // 所有路由入口（侧边栏、内容卡片、深链和快捷键）统一在这里登记为可见标签页。
 watch(() => route.fullPath, () => pageTabsStore.syncRoute(route), { immediate: true });
@@ -330,6 +379,8 @@ async function checkForUpdate(manual = false) {
       localStorage.removeItem(PENDING_UPDATE_KEY);
       readyInfo.value = null;
       readyUpdateVisible.value = false;
+      // 切换到最新版本后，旧版本的更新任务镜像一并移除，避免残留「安装」旧包的入口。
+      removeDisallowedUpdateRecords((version) => normalizeVersion(version) === latestVersion);
       try {
         await CoolapkTauriAPI.cleanupUpdatePackages();
       } catch (cleanupError) {
@@ -386,10 +437,14 @@ async function refreshUpdatePlatform() {
   }
 }
 
-async function startBackgroundDownload(info: UpdateInfo) {
+async function startBackgroundDownload(info: UpdateInfo, manual = false) {
   const url = info.installerUrl;
   const epoch = updateChannelEpoch;
   if (!isVersionAllowedInChannel(info.latestVersion || '', settingsStore.settings.updateChannel)) return;
+  // 用户删除过该版本的更新记录时，自动检查不再静默重下/复活镜像；
+  // 手动「后台下载更新」代表用户明确再次需要，解除删除标记后照常下载。
+  if (manual) downloadStore.clearDeletedUpdateVersion(info.latestVersion || '');
+  else if (downloadStore.isUpdateVersionDeleted(info.latestVersion || '')) return;
   // 自动检查、手动检查和按钮点击可能在同一时间触发；同一应用只允许一个下载任务，
   // 否则多个任务会同时写同一个安装包并让进度事件互相覆盖。
   if (readyInfo.value) {
@@ -398,6 +453,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
     return;
   }
   if (!canInstallInApp.value || !url || updateDownloadInFlight || downloading.value) return;
+  lastUpdateAttempt.value = info;
   updateDownloadInFlight = true;
   logDiagnostic('info', 'update', 'download_started');
   updateInfo.value = null;
@@ -407,6 +463,15 @@ async function startBackgroundDownload(info: UpdateInfo) {
     releaseNotes: info.releaseNotes || '',
   };
   downloading.value = { downloaded: 0, total: 0, percent: 0 };
+  // 在下载中心登记镜像任务（仅展示与入口），不改变本组件驱动下载的既有流程。
+  const updateTask = downloadStore.appendUpdate({
+    version: info.latestVersion || '新版本',
+    fileName: info.installerName,
+    total: 0,
+    packageType: info.packageType || updatePackageType.value,
+    url,
+  });
+  updateTaskId = updateTask.id;
   let unlisten: (() => void) | null = null;
   let lastDownloaded = 0;
   try {
@@ -420,6 +485,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
         total,
         percent: total ? Math.min(100, Math.round((downloaded / total) * 100)) : 0,
       };
+      downloadStore.updateUpdateProgress(updateTaskId, downloaded, total);
     });
     const path = await CoolapkTauriAPI.downloadUpdate(url, {
       speedLimitKbps: settingsStore.settings.updateSpeedLimitKBps,
@@ -429,6 +495,7 @@ async function startBackgroundDownload(info: UpdateInfo) {
     if (!isVersionAllowedInChannel(downloadedVersion, settingsStore.settings.updateChannel)) {
       downloading.value = null;
       downloadNotice.value = null;
+      downloadStore.removeUpdateTask(updateTaskId, false); // 渠道已不提供该版本，镜像记录一并移除（不算用户删除）。
       await CoolapkTauriAPI.cleanupUpdatePackages();
       return;
     }
@@ -439,7 +506,24 @@ async function startBackgroundDownload(info: UpdateInfo) {
     }
     downloading.value = null;
     downloadNotice.value = null;
-    if (!isVersionAllowedInChannel(downloadedVersion, settingsStore.settings.updateChannel)) return;
+    if (!isVersionAllowedInChannel(downloadedVersion, settingsStore.settings.updateChannel)) {
+      downloadStore.removeUpdateTask(updateTaskId, false);
+      return;
+    }
+    // 用户可能在下载期间删除了更新包镜像记录（意图：不要这个更新包）。
+    // 此时不得弹安装窗、不得写待安装键，直接清理刚下载的包文件。
+    const mirrorStillExists = downloadStore.tasks.some((task) => isUpdateTask(task) && task.id === updateTaskId);
+    if (!mirrorStillExists) {
+      logDiagnostic('info', 'update', 'download_abandoned_mirror_removed');
+      try {
+        await CoolapkTauriAPI.cleanupUpdatePackages();
+      } catch (cleanupError) {
+        console.warn('清理已放弃的更新包失败:', cleanupError);
+      }
+      return;
+    }
+    // 与 appendUpdate 登记镜像时的 version 完全一致（未做 normalizeVersion），保证能按 versionName 对上。
+    trackedUpdateMirrorVersion.value = info.latestVersion || '新版本';
     readyInfo.value = {
       version: downloadedVersion,
       path,
@@ -448,20 +532,34 @@ async function startBackgroundDownload(info: UpdateInfo) {
       releaseNotes: info.releaseNotes || '',
     };
     readyUpdateVisible.value = true;
+    downloadStore.markUpdateReady(updateTaskId, path);
     localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify(readyInfo.value));
-    if (settingsStore.settings.desktopNotifications && settingsStore.settings.notifyDownloadComplete) {
-      void desktopNotify(
-        {
-          title: '更新包下载完成',
-          body: `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成，点击安装即可升级。`,
-        },
-        settingsStore.settings.notificationSound
-      );
+    if (settingsStore.settings.notifyDownloadComplete) {
+      if (settingsStore.settings.desktopNotifications) {
+        void desktopNotify(
+          {
+            title: '更新包下载完成',
+            body: `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成，点击安装即可升级。`,
+          },
+          settingsStore.settings.notificationSound
+        );
+      } else if (!downloadToastHintShown) {
+        // 用户要下载提示但关掉了系统桌面通知时，系统气泡不会出现；
+        // 改为每会话最多一次的轻量提示，并给出通知设置入口。
+        downloadToastHintShown = true;
+        showToast(
+          `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成。系统桌面通知已关闭，可在通知设置中开启提醒。`,
+          'info',
+          6000,
+          { label: '去设置', onClick: () => { void router.push('/settings/notifications'); } }
+        );
+      }
     }
   } catch (err) {
     logDiagnostic('error', 'update', 'download_failed');
     downloading.value = null;
     downloadNotice.value = null;
+    downloadStore.markUpdateFailed(updateTaskId, `更新包下载失败：${String(err)}`);
     downloadError.value = `更新包下载失败，请检查网络连接后重试。(${String(err)})`;
   } finally {
     if (unlisten) await unlisten();
@@ -479,6 +577,8 @@ function installNow() {
     localStorage.removeItem(PENDING_UPDATE_KEY);
     readyInfo.value = null;
     readyUpdateVisible.value = false;
+    // 该版本已不可安装（本地已不低于它，或渠道不再允许），镜像记录一并移除。
+    removeDisallowedUpdateRecords((version) => isVersionAllowedInChannel(version, settingsStore.settings.updateChannel));
     void CoolapkTauriAPI.cleanupUpdatePackages().catch(() => undefined);
     return;
   }
@@ -510,9 +610,39 @@ function installNow() {
   })();
 }
 
+// 下载中心只发 window 事件、不依赖更新器内部状态：
+// - coolapk:install-update（detail: { version?: string }）→ 打开待安装弹窗并走现有 installNow；
+// - coolapk:retry-update（无载荷）→ 用最近一次更新信息重新发起下载，退化到手动手检查。
+function handleDownloadCenterInstall(event: Event) {
+  const version = (event as CustomEvent<{ version?: string }>).detail?.version || '';
+  logDiagnostic('info', 'update', 'download_center_install', version);
+  if (!readyInfo.value || installingUpdate.value) return;
+  readyUpdateVisible.value = true;
+  installNow();
+}
+
+function handleDownloadCenterRetry() {
+  if (updateDownloadInFlight || downloading.value) return;
+  if (readyInfo.value) {
+    readyUpdateVisible.value = true;
+    return;
+  }
+  if (lastUpdateAttempt.value) {
+    // 下载中心的重试是用户明确发起，解除删除标记，允许重新下载并重建镜像。
+    void startBackgroundDownload(lastUpdateAttempt.value, true);
+    return;
+  }
+  void checkForUpdate(true);
+}
+
 function ignoreThisVersion() {
   const version = updateInfo.value?.latestVersion;
-  if (version) settingsStore.ignoreUpdateVersion(version);
+  if (version) {
+    settingsStore.ignoreUpdateVersion(version);
+    // 忽略该版本后其更新镜像也不再可装，同步清理下载中心记录。
+    const normalized = normalizeVersion(version) || version;
+    removeDisallowedUpdateRecords((taskVersion) => normalizeVersion(taskVersion) !== normalized);
+  }
   updateInfo.value = null;
 }
 
@@ -599,6 +729,23 @@ async function restorePendingUpdate(): Promise<boolean> {
 const handleCheckForUpdate = () => void checkForUpdate(true);
 let unregisterAndroidBackground: (() => void) | null = null;
 let unregisterAndroidCounts: (() => void) | null = null;
+// 后台计数事件由 Rust 侧轮询发出，payload 不携带账号信息：
+// 注册时快照当前 uid，回调里校验；切号后旧监听丢弃事件，由 uid watcher 重新注册。
+let androidCountsUidSnapshot = '';
+async function registerAndroidCountsListener() {
+  if (unregisterAndroidCounts) {
+    unregisterAndroidCounts();
+    unregisterAndroidCounts = null;
+  }
+  if (!/android/i.test(navigator.userAgent)) return;
+  androidCountsUidSnapshot = String(authStore.user?.uid || '');
+  if (!androidCountsUidSnapshot) return;
+  unregisterAndroidCounts = await listen('android-background-notification-count', event => {
+    if (String(authStore.user?.uid || '') !== androidCountsUidSnapshot) return;
+    useNotificationStore().applyServerResponse(event.payload);
+  });
+}
+watch(() => String(authStore.user?.uid || ''), () => { void registerAndroidCountsListener(); });
 let unregisterAndroidError: (() => void) | null = null;
 let unregisterAgentBridgeConfirm: (() => void) | null = null;
 
@@ -607,9 +754,7 @@ onMounted(() => {
   authStore.initAuth();
   unregisterAndroidBackground = setupAndroidBackgroundNotifications(() => settingsStore.settings, () => String(authStore.user?.uid || ''));
   if (/android/i.test(navigator.userAgent)) {
-    void listen('android-background-notification-count', event => {
-      useNotificationStore().applyServerResponse(event.payload);
-    }).then(unlisten => { unregisterAndroidCounts = unlisten; });
+    void registerAndroidCountsListener();
     void listen<string>('android-background-notification-error', event => {
       showToast(event.payload, 'info', 6000);
     }).then(unlisten => { unregisterAndroidError = unlisten; });
@@ -630,12 +775,18 @@ onMounted(() => {
       const installError = await CoolapkTauriAPI.takeUpdateInstallError();
       if (installError) downloadError.value = installError;
     }
-    if (canInstallInApp.value) await restorePendingUpdate();
+    if (canInstallInApp.value) {
+      await restorePendingUpdate();
+      // 启动时以当前渠道为准清理不可安装的更新镜像（覆盖跨会话的渠道/版本残留）。
+      removeDisallowedUpdateRecords((version) => isVersionAllowedInChannel(version, settingsStore.settings.updateChannel));
+    }
     if (!import.meta.env.DEV && settingsStore.settings.checkUpdateOnStartup) {
       void checkForUpdate();
     }
   })();
   window.addEventListener('check-for-update', handleCheckForUpdate);
+  window.addEventListener('coolapk:install-update', handleDownloadCenterInstall);
+  window.addEventListener('coolapk:retry-update', handleDownloadCenterRetry);
 
   // 启动时先清理过期图片，再按总占用阈值决定是否清理全部缓存。
   if (settingsStore.settings.autoCleanCache) {
@@ -666,6 +817,8 @@ onUnmounted(() => {
   unregisterAndroidError?.();
   unregisterAgentBridgeConfirm?.();
   window.removeEventListener('check-for-update', handleCheckForUpdate);
+  window.removeEventListener('coolapk:install-update', handleDownloadCenterInstall);
+  window.removeEventListener('coolapk:retry-update', handleDownloadCenterRetry);
   window.removeEventListener('resize', settingsStore.refreshAutoZoom);
   unregisterHotkeys?.();
   unregisterSelectionClear?.();

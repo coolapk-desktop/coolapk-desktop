@@ -29,6 +29,9 @@
           <DiscoveryEntityCard v-else :entity="item" @open="openEntity" />
         </template>
         <div v-if="loadingMore" class="loading-more"><LoadingState text="加载更多..." /></div>
+        <div v-else-if="error" class="loading-more">
+          <button class="retry-inline" type="button" @click="retryDynamicMore">加载失败，点击重试</button>
+        </div>
       </div>
     </template>
     <template v-else>
@@ -49,6 +52,9 @@
           @deleted="handleFeedDeleted"
         />
         <div v-if="loadingMore" class="loading-more"><LoadingState text="加载更多..." /></div>
+        <div v-else-if="error" class="loading-more">
+          <button class="retry-inline" type="button" @click="retryFeedsMore">加载失败，点击重试</button>
+        </div>
       </div>
     </template>
   </div>
@@ -169,6 +175,20 @@ async function loadFeeds(isRefresh = false) {
     loading.value = false;
     loadingMore.value = false;
   }
+}
+
+/** 分页失败后的重试入口（动态页）：只补当前页，不清空已加载内容。 */
+function retryDynamicMore() {
+  if (loading.value || loadingMore.value) return;
+  error.value = '';
+  void loadDynamicPage(false);
+}
+
+/** 分页失败后的重试入口（动态流）：同上。 */
+function retryFeedsMore() {
+  if (loading.value || loadingMore.value) return;
+  error.value = '';
+  void loadFeeds(false);
 }
 
 async function loadDynamicPage(isRefresh = false) {
@@ -337,6 +357,7 @@ async function refreshMobilePage() { if (isDynamicPage.value) await loadDynamicP
 .page-container { width: 100%; max-width: 100%; flex: 1 1 auto; min-width: 0; height: 100%; min-height: 0; box-sizing: border-box; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .page-data-header { display: flex; align-items: center; padding-bottom: 18px; }
 .loading-more { padding: 16px; text-align: center; }
+.retry-inline { border: 0; background: transparent; color: var(--brand-primary); cursor: pointer; font-size: var(--font-size-caption); }
 .discovery-page-list.topic-list-layout { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; align-content: start; padding: 16px; }
 .discovery-page-list.topic-list-layout > .loading-more { grid-column: 1 / -1; }
 

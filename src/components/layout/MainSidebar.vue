@@ -35,7 +35,7 @@
           class="nav-item"
           active-class="is-active"
           :title="item.label"
-          @click="handlePrimaryNavClick($event, item.path)"
+          @click="handleRootNavClick($event, item.path)"
         >
           <OfficialNavIcon class="nav-icon" :route="item.path" :active="isNavIconActive(item.path)" />
           <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
@@ -85,7 +85,7 @@
         :class="{ 'is-active': isMyActive }"
         active-class="is-active"
         title="我的"
-        @click="handleNavSelection"
+        @click="handleRootNavClick($event, '/my')"
       >
         <OfficialNavIcon class="nav-icon" route="/my" :active="isMyActive" />
         <span v-if="!isCollapsed || mobileOpen" class="nav-label">我的</span>
@@ -145,7 +145,7 @@ import { useDownloadStore } from '../../stores/downloads';
 import { APP_VERSION } from '../../constants/version';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { triggerSidebarTransition } from '../../utils/routeTransition';
-import { activateHomeTab } from '../../utils/homeTab';
+import { activateRootTab } from '../../utils/homeTab';
 import { createFeedbackIssueUrl } from '../../utils/feedback';
 
 const route = useRoute();
@@ -178,16 +178,17 @@ function handleNavSelection() {
 }
 
 /**
- * 一级导航点击。
+ * 一级导航（首页 / 数码 / 发现 / 我的等根栏目）点击。
  *
- * 「首页」再点一次时 router-link 的重复导航会被 vue-router 中止，页面停留原地；
+ * 已经在该栏目时 router-link 的重复导航会被 vue-router 中止，页面停留原地；
  * 这里接管成「单击回到顶部、双击回到顶部并刷新当前栏目」，与移动端底栏一致。
+ * 不在该栏目时仍交给 router-link 正常跳转。
  */
-function handlePrimaryNavClick(event: MouseEvent, path: string) {
+function handleRootNavClick(event: MouseEvent, path: string) {
   handleNavSelection();
-  if (path !== '/') return;
+  if (router.currentRoute.value.path !== path) return;
   event.preventDefault();
-  activateHomeTab(router);
+  activateRootTab(router, path);
 }
 
 function handleFeedback() {
