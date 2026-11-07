@@ -620,3 +620,62 @@ describe('通知卡片：昵称占位、乐观点赞清理与回复后刷新', (
     } finally { wrapper.unmount(); }
   });
 });
+
+describe('通知页自动刷新增量合并（角标增长不丢阅读位置）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    setActivePinia(createPinia());
+    mocks.clear.mockResolvedValue({});
+    mocks.report.mockResolvedValue({});
+    mocks.confirm.mockResolvedValue(false);
+    mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 0, dateline: 101 } } });
+    mocks.feedFullText.mockResolvedValue('动态正文');
+  });
+
+  function mountList(rows: any[]) {
+    mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? rows : [] }));
+    return mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
+      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true, FeedCommentSection: true } },
+    });
+  }
+
+  it('角标增长触发自动刷新：新通知追加在顶部，已有条目的已读态与滚动位置不变', async () => {
+    const readRow: any = { id: 'a1', feedId: '333', message: '被赞通知', url: '/feed/333?notificationV18Id=9001&notificationV18Type=like&reportSubItemId=77' };
+    const unreadRow: any = { id: 'a2', fromuid: '12345', message: '普通通知二', isnew: 1 };
+    const firstPage = [readRow, unreadRow];
+    const wrapper = mountList(firstPage);
+    try {
+      // jsdom 没有布局，scrollHeight 恒 0 会立刻触发「贴近底部自动翻页」把 page 推到 2；
+      // stub 出正常布局比例，保持第 1 页场景（自动翻页归 batch9 覆盖）。
+      const container = wrapper.get('.page-container').element as HTMLElement;
+      Object.defineProperty(container, 'scrollHeight', { configurable: true, value: 10000 });
+      Object.defineProperty(container, 'clientHeight', { configurable: true, value: 500 });
+      await flushPromises();
+      expect(wrapper.findAll('.notify-card')).toHaveLength(2);
+
+      // 用户点开第一条：卡片本地置读（未读角标消失）
+      await wrapper.get('.notify-card .notify-message').trigger('click');
+      await flushPromises();
+      const readCard = wrapper.get('.notify-card');
+      expect(readCard.classes()).not.toContain('unread');
+
+      // 用户滚动到列表中部后，TopBar 推送角标增长事件，服务端返回一条新通知
+      container.scrollTop = 500;
+      firstPage.unshift({ id: 'a3', fromuid: '67890', message: '新到达的通知', isnew: 1 });
+      window.dispatchEvent(new CustomEvent('coolapk-notification-count-increased'));
+      await flushPromises();
+      await flushPromises();
+
+      const cards = wrapper.findAll('.notify-card');
+      // 新通知去重合并后插入顶部，旧条目不重复、不消失
+      expect(cards).toHaveLength(3);
+      expect(cards[0]!.text()).toContain('新到达的通知');
+      // 已读态保留：第二条（刚点开过的）不闪回未读，第三条仍是未读
+      expect(cards[1]!.classes()).not.toContain('unread');
+      expect(cards[2]!.classes()).toContain('unread');
+      // 滚动锚点保留：自动刷新不把用户拉回顶部
+      expect(container.scrollTop).toBe(500);
+    } finally { wrapper.unmount(); }
+  });
+});

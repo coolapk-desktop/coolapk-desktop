@@ -328,7 +328,7 @@ function loadMoreWhenNearBottom(container = pageContainerRef.value) {
 }
 
 // 获取数据
-async function fetchNotifications(): Promise<boolean> {
+async function fetchNotifications(options: { mergeFirstPage?: boolean } = {}): Promise<boolean> {
   const requestId = ++notificationRequestId;
   loadMoreFailed.value = false;
   const requestedTab = currentTab.value;
@@ -366,7 +366,14 @@ async function fetchNotifications(): Promise<boolean> {
         hasMore.value = false;
       } else {
         if (page.value === 1) {
-          items.value = data;
+          // 自动刷新（角标增长/回复成功）走增量合并：已有条目保留本地对象
+          // （含本地已读态与滚动锚点），仅把服务端新通知插入头部。
+          // 用户主动下拉刷新仍整表替换，以服务端为准并允许回到顶部。
+          if (options.mergeFirstPage && items.value.length > 0) {
+            items.value = mergeNotificationRows(data, items.value);
+          } else {
+            items.value = data;
+          }
         } else {
           items.value = [...items.value, ...data];
         }
@@ -413,6 +420,42 @@ async function refreshNotifications(): Promise<boolean> {
   return await fetchNotifications();
 }
 
+/** 与 getNotificationKey 同源的去重键，但不带行号，供增量合并识别已有条目。 */
+function getNotificationDedupeKey(item: any): string {
+  const stableId = item?.id ?? item?.entityId ?? item?.targetId;
+  if (stableId !== undefined && stableId !== null && String(stableId).trim()) return String(stableId).trim();
+  const actor = item?.fromuid ?? item?.uid ?? item?.likeUid ?? '';
+  const timestamp = item?.dateline ?? item?.likeTime ?? item?.lastUpdate ?? '';
+  const content = String(item?.note || item?.message || item?.targetTitle || '').slice(0, 80);
+  return [actor, timestamp, content].join(':');
+}
+
+/** 服务端第 1 页与已加载列表按稳定 key 去重合并：新通知插入头部，已有条目原样保留。 */
+function mergeNotificationRows(incoming: any[], existing: any[]): any[] {
+  const existingKeys = new Set(existing.map(item => getNotificationDedupeKey(item)));
+  const fresh = incoming.filter(item => !existingKeys.has(getNotificationDedupeKey(item)));
+  return [...fresh, ...existing];
+}
+
+/**
+ * 自动刷新（角标增长/回复成功）：增量合并第 1 页，保留已有条目的已读态，
+ * 并用插入前后的 scrollHeight 差值补偿 scrollTop，阅读位置不跳。
+ * 只有用户主动下拉刷新（refreshNotifications）才整表替换、允许回顶。
+ */
+async function mergeRefreshFirstPage(): Promise<void> {
+  if (loading.value) return;
+  const container = pageContainerRef.value;
+  const previousHeight = container?.scrollHeight || 0;
+  const previousTop = container?.scrollTop || 0;
+  resetTargetLikeState();
+  page.value = 1;
+  await fetchNotifications({ mergeFirstPage: true });
+  if (!container || previousTop <= 0) return;
+  await nextTick();
+  const delta = container.scrollHeight - previousHeight;
+  if (delta > 0 && container.scrollTop === previousTop) container.scrollTop = previousTop + delta;
+}
+
 /**
  * 回复发送成功：关掉 composer，把来源通知置读，并在首屏时刷新列表，
  * 让用户立刻看到「已回复」后的通知状态（翻页后不整表重置，与角标增长同口径）。
@@ -421,16 +464,16 @@ function handleReplySent() {
   const sourceNotification = replyComposer.value?.item;
   closeReplyComposer();
   if (sourceNotification) markNotificationRead(sourceNotification, getCurrentCategory(), authStore.user?.uid);
-  if (page.value === 1) void refreshNotifications();
+  if (page.value === 1) void mergeRefreshFirstPage();
 }
 
 function handleNotificationCountIncrease() {
-  // 角标计数已由事件派发方（TopBar）先行写入 store；用户已翻到第 2+ 页时
-  // 不能整表重置回第 1 页（会丢失浏览位置），只保留角标更新，等用户回到
-  // 首屏（下拉刷新/切分类）时再拉取最新列表。移动端下拉与桌面端刷新按钮
-  // 均走 refreshNotifications，行为一致。
+  // 角标计数已由事件派发方（TopBar）先行写入 store；第 1 页用增量合并，
+  // 保留滚动位置与已读态，不整表替换。用户已翻到第 2+ 页时同样不重置，
+  // 只保留角标更新，等用户回到首屏（下拉刷新/切分类）时再拉取最新列表。
+  // 移动端下拉与桌面端刷新按钮仍走 refreshNotifications（整表替换，允许回顶）。
   if (page.value > 1) return;
-  void refreshNotifications();
+  void mergeRefreshFirstPage();
 }
 
 /** 内联重试入口：翻页失败只重发当前页；首屏失败才整表回到第 1 页。 */

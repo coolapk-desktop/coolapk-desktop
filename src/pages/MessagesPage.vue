@@ -1033,10 +1033,21 @@ const markSessionRead = (session: any) => {
   return wasUnread;
 };
 
-/** 置读成功后按会话实际未读数扣减全局私信角标：整会话未读可能 >1，固定 -1 会少扣。 */
+/**
+ * 置读成功后按会话实际未读数扣减全局私信角标：整会话未读可能 >1，固定 -1 会少扣。
+ * 同一会话可能同时存在接口对象、currentSession 与列表多份副本且未读数不同步，
+ * 扣减值取所有同会话副本中的最大未读：只看传入副本会少扣，固定 1 会把
+ * 「副本已清零但列表仍有 2 条未读」的场景从 2 错减到 1。
+ */
 const markSessionAndViewBadge = (session: any) => {
-  const unread = getSessionUnreadCount(session);
-  if (markSessionRead(session)) notificationStore.markMessagesViewed(Math.max(1, unread));
+  if (!session) return;
+  const related = [session];
+  if (currentSession.value && currentSession.value !== session && isSameSession(session, currentSession.value)) related.push(currentSession.value);
+  for (const item of sessions.value) {
+    if (item !== session && !related.includes(item) && isSameSession(session, item)) related.push(item);
+  }
+  const unread = related.reduce((max, item) => Math.max(max, getSessionUnreadCount(item)), 0);
+  if (markSessionRead(session)) notificationStore.markMessagesViewed(unread);
 };
 
 const getRouteTargetUid = () => String(route.query.uid || route.query.targetUid || '').trim();
@@ -2109,8 +2120,9 @@ const sendImageFile = async (file?: File, existingUrl?: string, pendingItem?: Pe
       setChatHistoryCache(cacheKey, [...chatHistory.value]);
     }
 
-    // 更新左侧列表摘要与时间（始终写原会话快照，避免写错切换后的会话）
-    markSessionAndViewBadge(ownerSession);
+    // 更新左侧列表摘要与时间（始终写原会话快照，避免写错切换后的会话）。
+    // 发送不是阅读：不动会话未读态与全局私信角标，服务端未置读的未读数
+    // 交由下一次快照 reconcile，避免角标被永久压低。
     ownerSession.message = '[图片]';
     ownerSession.lastMessage = '[图片]';
     ownerSession.summary = '[图片]';
@@ -2204,8 +2216,9 @@ const sendTextMessage = async (text: string): Promise<boolean> => {
     if (cached) setChatHistoryCache(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
   }
 
-  // 更新左侧列表的摘要和时间（始终写原会话快照，避免写错切换后的会话）
-  markSessionAndViewBadge(ownerSession);
+  // 更新左侧列表的摘要和时间（始终写原会话快照，避免写错切换后的会话）。
+  // 发送不是阅读：不动会话未读态与全局私信角标，服务端未置读的未读数
+  // 交由下一次快照 reconcile，避免角标被永久压低。
   ownerSession.message = text;
   ownerSession.lastMessage = text;
   ownerSession.summary = text;
