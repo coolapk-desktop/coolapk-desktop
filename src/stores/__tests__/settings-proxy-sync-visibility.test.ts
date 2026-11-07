@@ -28,6 +28,9 @@ vi.mock('@tauri-apps/api/core', () => ({
   isTauri: vi.fn(() => true),
 }));
 
+const toastMocks = vi.hoisted(() => ({ showToast: vi.fn() }));
+vi.mock('../../utils/toast', () => ({ showToast: toastMocks.showToast }));
+
 const invokeMock = vi.mocked(invoke);
 
 /** 让 invoke 对指定命令失败，其余命令保持成功，模拟后端 set_network_proxy 异常。 */
@@ -42,6 +45,7 @@ describe('settings store 代理同步失败可见性', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     fileStoreState.values.clear();
+    toastMocks.showToast.mockReset();
     invokeMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     (window as any).__TAURI_INTERNALS__ = { metadata: {} };
@@ -78,6 +82,29 @@ describe('settings store 代理同步失败可见性', () => {
     // 重新应用使用的是已保存地址。
     const proxyCall = invokeMock.mock.calls.find(([cmd]) => cmd === 'set_network_proxy');
     expect(proxyCall?.[1]).toMatchObject({ proxyUrl: 'http://127.0.0.1:7890' });
+  });
+
+  it('代理同步失败时全局提示一次，连续失败不重复刷屏，恢复后再次失败可重新提示', async () => {
+    fileStoreState.values.set('networkProxyUrl', 'http://127.0.0.1:7890');
+    failCommands(['set_network_proxy']);
+    const store = useSettingsStore();
+    await store.initializeSettings();
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(1);
+    expect(String(toastMocks.showToast.mock.calls[0]![0])).toContain('网络代理未生效');
+    expect(toastMocks.showToast.mock.calls[0]![1]).toBe('warning');
+
+    // 同一轮失败里再重试一次：页面级告警已足够，不再重复弹全局提示
+    await expect(store.reapplyNetworkProxy()).resolves.toBe(false);
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(1);
+
+    // 恢复成功后失败标记与提示闸门一起复位
+    failCommands([]);
+    await expect(store.reapplyNetworkProxy()).resolves.toBe(true);
+    expect(store.proxySyncFailed).toBe(false);
+
+    failCommands(['set_network_proxy']);
+    await expect(store.reapplyNetworkProxy()).resolves.toBe(false);
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(2);
   });
 
   it('重新应用仍失败时保持未生效标记', async () => {

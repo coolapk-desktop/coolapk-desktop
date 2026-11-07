@@ -872,15 +872,25 @@ export const useSettingsStore = defineStore('settings', () => {
     await syncNetworkProxy(s.networkProxyUrl);
   }
 
+  /** 同一次失败只提示一次；同步成功后重置，下次再失败可以重新提示。 */
+  let proxySyncFailureNotified = false;
+
   async function syncNetworkProxy(proxyUrl: string): Promise<boolean> {
-    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) { proxySyncFailed.value = false; return true; }
+    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) { proxySyncFailed.value = false; proxySyncFailureNotified = false; return true; }
     try {
       await invoke('set_network_proxy', { proxyUrl: proxyUrl.trim() || null });
       proxySyncFailed.value = false;
+      proxySyncFailureNotified = false;
       return true;
     } catch (err) {
       // 只记录失败状态供页面告警，不抛出、不改动已保存的代理地址。
       proxySyncFailed.value = true;
+      // 页面级告警只有用户主动打开网络设置才看得到；启动同步失败必须全局可见一次，
+      // 否则用户会在「设置里显示已启用代理，但请求没走代理」的状态下长期不自知。
+      if (!proxySyncFailureNotified) {
+        proxySyncFailureNotified = true;
+        showToast('网络代理未生效：请求可能未走代理，请到「设置 → 网络」点击重新应用', 'warning', 6000);
+      }
       console.warn('同步网络代理设置失败:', err);
       return false;
     }
