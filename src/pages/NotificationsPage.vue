@@ -86,7 +86,7 @@
         </div>
 
         <div class="load-more-wrapper" v-if="items.length > 0">
-          <div v-if="notificationError" class="notification-inline-error">{{ notificationError }} <button type="button" @click="refreshNotifications">重试</button></div>
+          <div v-if="notificationError" class="notification-inline-error">{{ notificationError }} <button type="button" @click="retryFailedLoad">重试</button></div>
           <button 
             v-if="hasMore" 
             class="load-more-btn" 
@@ -174,9 +174,13 @@ const deletingNotifications = ref(false);
 let notificationRequestId = 0;
 const items = ref<any[]>([]);
 const feedSummaries = ref(new Map<string, string>());
+// 动态标题摘要缓存上限：通知列表单页几十条，500 条足够覆盖多页浏览。
+const FEED_SUMMARY_LIMIT = 500;
 const page = ref(1);
 const hasMore = ref(true);
 const notificationError = ref('');
+// 区分「首屏加载失败」与「翻页失败」：翻页失败不能清空已加载的 2+ 页内容。
+const loadMoreFailed = ref(false);
 const desktopActions = ref<HTMLDetailsElement | null>(null);
 type NotificationActionTarget = NonNullable<ReturnType<typeof getNotificationActionTarget>>;
 const likedTargets = ref(new Map<string, boolean>());
@@ -314,6 +318,7 @@ function loadMoreWhenNearBottom(container = pageContainerRef.value) {
 // 获取数据
 async function fetchNotifications(): Promise<boolean> {
   const requestId = ++notificationRequestId;
+  loadMoreFailed.value = false;
   const requestedTab = currentTab.value;
   const requestedPage = page.value;
   const requestedUid = authStore.user?.uid;
@@ -366,9 +371,16 @@ async function fetchNotifications(): Promise<boolean> {
     if (requestId !== notificationRequestId) return false;
     console.warn('Notifications fetch warning', err);
     notificationError.value = err instanceof Error ? err.message : String(err);
-    // 请求失败时禁止 finally 里的自动 loadMore，否则会在无登录/网络错误时无限重试。
-    hasMore.value = false;
-    if (page.value > 1) page.value -= 1;
+    if (requestedPage > 1) {
+      // 翻页失败不等于「没有更多」：保留已加载的 2+ 页内容和 hasMore，
+      // 回滚页码让「重试/加载更多」只重发当前页，而不是回第 1 页整表刷新。
+      loadMoreFailed.value = true;
+      if (page.value === requestedPage) page.value = requestedPage - 1;
+    } else {
+      // 首屏失败时没有已加载内容可保留；禁止 finally 里的自动 loadMore，
+      // 否则会在无登录/网络错误时无限重试。
+      hasMore.value = false;
+    }
   } finally {
     if (requestId === notificationRequestId) loading.value = false;
     if (fetchSucceeded && requestId === notificationRequestId) {
@@ -389,7 +401,22 @@ async function refreshNotifications(): Promise<boolean> {
 }
 
 function handleNotificationCountIncrease() {
+  // 角标计数已由事件派发方（TopBar）先行写入 store；用户已翻到第 2+ 页时
+  // 不能整表重置回第 1 页（会丢失浏览位置），只保留角标更新，等用户回到
+  // 首屏（下拉刷新/切分类）时再拉取最新列表。移动端下拉与桌面端刷新按钮
+  // 均走 refreshNotifications，行为一致。
+  if (page.value > 1) return;
   void refreshNotifications();
+}
+
+/** 内联重试入口：翻页失败只重发当前页；首屏失败才整表回到第 1 页。 */
+async function retryFailedLoad() {
+  if (loadMoreFailed.value) {
+    notificationError.value = '';
+    await loadMore();
+    return;
+  }
+  await refreshNotifications();
 }
 
 // 数据提取工具函数，容错处理（兼容不同通知类型字段：
@@ -413,7 +440,11 @@ function getActorUid(item: any): string {
     ? item.likeUid || item.like_uid || item.likeUserInfo?.uid
     : item.fromuid || item.from_uid || item.fromUserInfo?.uid || item.uid || item.userInfo?.uid || item.messageUserInfo?.uid;
   const uid = String(value || '');
-  return /^[1-9]\d*$/.test(uid) && getUsername(item) !== '系统消息' ? uid : '';
+  // 部分 system/notice 通知的 item.uid / userInfo.uid 是接收者本人 ID，
+  // 兜底到它会让点头像跳到自己的主页；排除当前登录用户与系统消息。
+  return /^[1-9]\d*$/.test(uid)
+    && uid !== String(authStore.user?.uid || '')
+    && getUsername(item) !== '系统消息' ? uid : '';
 }
 
 function openActor(item: any) {
@@ -458,8 +489,18 @@ function renderNotificationText(text: string): string {
 
 function loadNotificationFeedSummaries(rows: any[]) {
   const summaries = feedSummaries.value;
+  // 长会话中下拉刷新/新通知刷新会反复带来新 feedId，Map 只增不减会无限增长；
+  // 超过上限时按插入序（Map 保序）淘汰最早条目，等效一个简易 LRU。
+  const trimSummaries = () => {
+    while (summaries.size >= FEED_SUMMARY_LIMIT) {
+      const oldest = summaries.keys().next().value;
+      if (oldest === undefined) break;
+      summaries.delete(oldest);
+    }
+  };
   const requestSummary = (feedId: string) => {
     if (!summaries.has(feedId)) {
+      trimSummaries();
       // 同一列表只解析一次，失败时保留可点击的「【动态】」。
       summaries.set(feedId, '');
       void loadFeedFullText(feedId).then((message) => {

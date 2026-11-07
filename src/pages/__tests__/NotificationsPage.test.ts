@@ -384,6 +384,97 @@ describe('通知评论点击入口', () => {
     } finally { wrapper.unmount(); }
   });
 
+  describe('分页与刷新稳定性', () => {
+    async function mountPagedPage(pages: Array<any[] | Error>, realErrorState = false) {
+      const states = [...pages];
+      mocks.notifications.mockImplementation(async (_tab: string, page: number) => {
+        const value = states[page - 1];
+        if (value instanceof Error) throw value;
+        return { data: value ?? [] };
+      });
+      const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
+        // vue-test-utils 约定：stubs 值为 false 才渲染真实组件。
+        global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: realErrorState ? false : true, EmptyState: true, FeedCommentSection: true } },
+      });
+      await flushPromises();
+      return { wrapper, states };
+    }
+
+    it('第 3 页浏览时收到新通知事件不重置列表，只保留角标更新', async () => {
+      const a = { id: 'p1-1', message: '第一页通知' };
+      const b = { id: 'p2-1', message: '第二页通知' };
+      const c = { id: 'p3-1', message: '第三页通知' };
+      const { wrapper } = await mountPagedPage([[a], [b], [c], []]);
+      try {
+        expect(wrapper.text()).toContain('第一页通知');
+        expect(wrapper.text()).toContain('第二页通知');
+        expect(wrapper.text()).toContain('第三页通知');
+        const callsAfterLoad = mocks.notifications.mock.calls.length;
+        window.dispatchEvent(new CustomEvent('coolapk-notification-count-increased', { detail: { increasedCategories: ['notification'] } }));
+        await flushPromises();
+        // 非首屏时事件不得触发整表刷新：列表保持原样，也不发新请求。
+        expect(mocks.notifications.mock.calls.length).toBe(callsAfterLoad);
+        expect(wrapper.text()).toContain('第一页通知');
+        expect(wrapper.text()).toContain('第三页通知');
+        expect(wrapper.find('.notification-inline-error').exists()).toBe(false);
+      } finally { wrapper.unmount(); }
+    });
+
+    it('分页失败保留 hasMore 与已加载列表，重试只重发当前页且不重复首屏', async () => {
+      const a = { id: 'keep-1', message: '已加载通知' };
+      const b = { id: 'more-1', message: '重试补上的通知' };
+      const { wrapper, states } = await mountPagedPage([[a], new Error('网络失败')]);
+      try {
+        // 自动预加载第二页失败：已加载内容保留，仍有「加载更多」入口。
+        expect(wrapper.text()).toContain('已加载通知');
+        expect(wrapper.get('.notification-inline-error').text()).toContain('网络失败');
+        expect(wrapper.find('.load-more-btn').exists()).toBe(true);
+        expect(mocks.notifications).toHaveBeenLastCalledWith('list', 2, 'keep-1', 'keep-1', '');
+
+        mocks.notifications.mockClear();
+        states[1] = [b];
+        await wrapper.get('.notification-inline-error button').trigger('click');
+        await flushPromises();
+        // 重试只重发当前页（第 2 页），追加而不重置：首屏内容不重复。
+        // 成功后自动预取会继续请求第 3 页，因此用 toHaveBeenCalledWith 断言当前页重发。
+        expect(mocks.notifications).toHaveBeenCalledWith('list', 2, 'keep-1', 'keep-1', '');
+        expect(wrapper.text()).toContain('已加载通知');
+        expect(wrapper.text()).toContain('重试补上的通知');
+        expect(wrapper.findAll('.notify-card').length).toBe(2);
+        expect(wrapper.find('.notification-inline-error').exists()).toBe(false);
+      } finally { wrapper.unmount(); }
+    });
+
+    it('首屏加载失败仍回到第 1 页重试，保留原有行为', async () => {
+      const a = { id: 'first-1', message: '首屏通知' };
+      const { wrapper, states } = await mountPagedPage([new Error('首屏失败')], true);
+      try {
+        expect(wrapper.text()).not.toContain('首屏通知');
+        expect(wrapper.find('.load-more-btn').exists()).toBe(false);
+        mocks.notifications.mockClear();
+        states[0] = [a];
+        // 首屏失败走 ErrorState 的 retry 事件（非内联错误条）。
+        const retryButton = wrapper.findAll('button').find(b => b.text().includes('重试'));
+        expect(retryButton).toBeTruthy();
+        await retryButton!.trigger('click');
+        await flushPromises();
+        expect(mocks.notifications).toHaveBeenCalledWith('list', 1, '', '', '');
+        expect(wrapper.text()).toContain('首屏通知');
+      } finally { wrapper.unmount(); }
+    });
+
+    it('人物入口兜底不落到当前登录用户自己的 uid', async () => {
+      // 认证 mock 的登录 uid 是 notification-test；部分系统通知会把接收者
+      // uid 放在 item.uid，兜底到它会导致点头像打开自己的主页。
+      const { wrapper } = await mountPagedPage([[{ id: 'self-1', uid: 'notification-test', fromusername: '系统消息', message: '系统通知内容' }]]);
+      try {
+        expect(wrapper.find('.notify-avatar-wrap:disabled').exists()).toBe(true);
+        await wrapper.get('.notify-avatar-wrap').trigger('click');
+        expect(mocks.push).not.toHaveBeenCalled();
+      } finally { wrapper.unmount(); }
+    });
+  });
+
   it('通知正文打开所属评论，正文分享链接仅打开链接自身，人物入口独立导航', async () => {
     const item = { id: '99', fromuid: '555', fromusername: '回复者', feedId: '333', replyId: '222', message: 'https://www.coolapk.com/feed/72357393?s=share 111' };
     mocks.feedFullText.mockResolvedValueOnce('<a href="/t/topic">#抖音#</a> 有没有P版驻守的？');
