@@ -444,3 +444,101 @@ describe('下载管理队列', () => {
     expect(task.downloaded).toBe(0);
   });
 });
+
+describe('batch6：pause 回滚 / 启动断点提示 / 清空失败记录', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    mocks.startApkDownload.mockReset();
+    mocks.pauseApkDownload.mockResolvedValue(undefined);
+    mocks.showToast.mockClear();
+  });
+
+  it('原生暂停失败且不在批量暂停期间时回滚为下载中，并提示错误', async () => {
+    mocks.startApkDownload.mockImplementation(() => new Promise(() => {}));
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '回滚应用', packageName: 'com.demo.rollback', versionName: '1.0.0' });
+    await settlePump();
+    expect(task.status).toBe('downloading');
+
+    mocks.pauseApkDownload.mockRejectedValueOnce(new Error('通道未就绪'));
+    await store.pause(task.id);
+
+    expect(task.status).toBe('downloading');
+    expect(task.error).toBe('');
+    expect(mocks.showToast).toHaveBeenCalledWith(expect.stringContaining('暂停失败'), 'error');
+  });
+
+  it('批量暂停期间原生暂停失败时保持 paused，不再回滚成无人调度的 downloading', async () => {
+    mocks.startApkDownload.mockImplementation(() => new Promise(() => {}));
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '闸门应用', packageName: 'com.demo.gate', versionName: '1.0.0' });
+    await settlePump();
+    store.applyNativeEvent({ taskId: task.id, status: 'downloading', downloaded: 10, total: 100 });
+
+    mocks.pauseApkDownload.mockRejectedValue(new Error('暂停失败'));
+    await store.pauseAll();
+
+    expect(task.status).toBe('paused');
+    expect(task.error).toContain('暂停失败');
+    // 放开闸门后用户可继续，任务能被重新调度
+    mocks.pauseApkDownload.mockResolvedValue(undefined);
+    await store.resume(task.id);
+    await settlePump();
+    // 闸门已放开：任务重新排队（此刻 runTask 的旧 Promise 仍占用 runningIds，
+    // 等它返回后 pump 会再次调度，这里只验证不再卡死在 paused）。
+    expect(['queued', 'downloading']).toContain(task.status);
+    expect(task.error).toBe('');
+  });
+
+  it('事件已把任务推进到完成态时，暂停失败不再把任务硬拉回 downloading', async () => {
+    let resolveDownload!: (value: any) => void;
+    mocks.startApkDownload.mockImplementation(() => new Promise((resolve) => { resolveDownload = resolve; }));
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '竞态应用', packageName: 'com.demo.race', versionName: '1.0.0' });
+    await settlePump();
+
+    // 不等待原生暂停返回，先让原生下载完成并广播事件
+    mocks.pauseApkDownload.mockImplementation(() => {
+      resolveDownload({ status: 'completed', downloaded: 100, total: 100, path: '/x.apk' });
+      return Promise.reject(new Error('已完成无法暂停'));
+    });
+    await store.pause(task.id);
+
+    expect(task.status).toBe('completed');
+  });
+
+  it('启动恢复时对有进度但缺断点路径的任务给出保守提示，并保留进度数字', async () => {
+    const seeded = [{
+      id: 'seed-1', kind: 'apk', title: '断点应用', packageName: 'com.demo.stale', versionName: '1.0.0',
+      versionCode: '1', apkId: '1', logoUrl: '', fileName: 'a.apk', extraAnalysisData: '',
+      downloadDir: '', targetPath: '', partialPath: '', publicPath: '',
+      status: 'downloading', downloaded: 4096, total: 8192, speed: 0, retryCount: 0,
+      error: '', createdAt: 1, updatedAt: 1, completedAt: 0,
+    }];
+    localStorage.setItem('coolapk_desktop_downloads_v1', JSON.stringify(seeded));
+    setActivePinia(createPinia());
+    const store = useDownloadStore();
+    await store.initialize();
+
+    const task = store.tasks.find((item) => item.id === 'seed-1')!;
+    expect(task.status).toBe('paused');
+    expect(task.error).toContain('断点文件可能已失效');
+    expect(task.downloaded).toBe(4096);
+  });
+
+  it('clearFailed 只清空失败记录，可按需删除文件', async () => {
+    const store = useDownloadStore();
+    const failed = store.enqueue({ title: '失败应用', packageName: 'com.demo.fail', versionName: '1.0.0' });
+    const done = store.enqueue({ title: '完成应用', packageName: 'com.demo.done', versionName: '1.0.0' });
+    store.applyNativeEvent({ taskId: failed.task.id, status: 'failed', error: '网络中断' });
+    store.applyNativeEvent({ taskId: done.task.id, status: 'completed', downloaded: 1, total: 1 });
+
+    await store.clearFailed(true);
+
+    expect(store.tasks.some((item) => item.id === failed.task.id)).toBe(false);
+    expect(store.tasks.some((item) => item.id === done.task.id)).toBe(true);
+    expect(mocks.deleteApkDownloadFile).toHaveBeenCalledTimes(1);
+  });
+});

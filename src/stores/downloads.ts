@@ -305,6 +305,12 @@ export const useDownloadStore = defineStore('downloads', () => {
     // 应用重启后原生下载通道已经不存在，恢复成暂停状态，保留 .part 文件供继续下载。
     for (const task of tasks.value) {
       if (ACTIVE_STATUSES.includes(task.status)) task.status = 'paused';
+      // 前端无法直接探测 .part 是否还在（fs 插件未授予 exists 权限，见 batch6 报告）；
+      // 有进度却没有断点路径，说明断点大概率已随换设备/清目录丢失，给出保守提示，
+      // 不清空进度数字，用户可用「重新开始」自行决定重下。
+      if (task.status === 'paused' && task.downloaded > 0 && !task.partialPath && !task.error) {
+        task.error = '断点文件可能已失效，可重新开始';
+      }
     }
     persist();
     try {
@@ -442,7 +448,20 @@ export const useDownloadStore = defineStore('downloads', () => {
     try {
       await CoolapkTauriAPI.pauseApkDownload(taskId);
     } catch (error) {
-      patchTask(taskId, { status: 'downloading', error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      const current = findTask(taskId);
+      // 等待原生暂停期间，进度事件可能已把任务推进到完成/失败/取消；
+      // 此时不能再硬拉回 downloading，否则会造出「下载中但无速度、无人调度」的假状态。
+      if (!current || current.status !== 'paused') return;
+      if (pausedAll.value) {
+        // 批量暂停闸门开启时 pump() 不工作，回滚成 downloading 会永久卡住任务；
+        // 保持 paused 并把失败原因暴露出来，由用户点「继续」重新调度。
+        patchTask(taskId, { error: `暂停失败：${message}，可点击继续重试` });
+        showToast(`「${current.title}」暂停失败：${message}`, 'error');
+        return;
+      }
+      patchTask(taskId, { status: 'downloading', speed: 0, error: '' });
+      showToast(`「${current.title}」暂停失败：${message}`, 'error');
     }
   }
 
@@ -555,6 +574,14 @@ export const useDownloadStore = defineStore('downloads', () => {
     await pump();
   }
 
+  /** 一键清空失败记录：只移除 failed 任务，不触碰进行中/已完成的历史。 */
+  async function clearFailed(deleteFiles = false) {
+    const targets = tasks.value.filter((task) => task.status === 'failed');
+    for (const task of targets) {
+      await remove(task.id, deleteFiles);
+    }
+  }
+
   async function clearHistory(deleteFiles = false) {
     const targets = [...historyTasks.value];
     for (const task of targets) {
@@ -590,6 +617,7 @@ export const useDownloadStore = defineStore('downloads', () => {
     pauseAll,
     resumeAll,
     clearHistory,
+    clearFailed,
     applyNativeEvent,
     get eventUnlisten() { return eventUnlisten; },
   };

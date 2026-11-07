@@ -131,6 +131,15 @@
         </template>
         <template v-else-if="selectedTab === 'history' && downloadStore.historyTasks.length > 0">
           <AppButton
+            v-if="failedHistoryCount > 0"
+            variant="ghost"
+            size="sm"
+            icon="fas fa-circle-exclamation"
+            @click="handleClearFailed"
+          >
+            清空失败记录
+          </AppButton>
+          <AppButton
             variant="ghost"
             size="sm"
             icon="fas fa-trash-can"
@@ -338,6 +347,7 @@ const allActiveCount = computed(() => downloadStore.activeCount);
 const allTransferSpeed = computed(() => downloadStore.totalSpeed);
 const currentActiveCount = computed(() => downloadStore.activeCount);
 const currentHistoryCount = computed(() => downloadStore.historyTasks.length);
+const failedHistoryCount = computed(() => downloadStore.historyTasks.filter((task) => task.status === 'failed').length);
 const downloadDirTooltip = computed(() => settingsStore.settings.downloadPath || '保存至系统默认下载目录');
 
 const hasActiveDownloading = computed(() =>
@@ -446,6 +456,19 @@ async function handleClearHistory() {
   });
   if (confirmed) {
     await downloadStore.clearHistory(false);
+  }
+}
+
+async function handleClearFailed() {
+  if (failedHistoryCount.value === 0) return;
+  const confirmed = await requestConfirmation({
+    title: '清空失败记录',
+    message: '确定要清空全部下载失败的记录吗？（已下载的断点文件不会被删除）',
+    confirmText: '清空记录',
+    danger: true,
+  });
+  if (confirmed) {
+    await downloadStore.clearFailed(false);
   }
 }
 
