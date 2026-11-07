@@ -235,6 +235,18 @@
               <span>编辑</span>
             </button>
 
+            <!-- 多选操作：仅对当前有管理权限的收藏单展示（官方 APK 的批量移除入口） -->
+            <button
+              v-if="canManageCollection(collectionDetail) && !collectionMultiSelectMode"
+              type="button"
+              class="toolbar-btn btn-multi-select"
+              title="批量选择内容"
+              @click="enterCollectionMultiSelect"
+            >
+              <i class="fas fa-check-double"></i>
+              <span>多选</span>
+            </button>
+
             <!-- 方案 B：更多操作下拉菜单 (···) -->
             <div v-if="hasCollectionMoreActions" class="hero-more-menu-wrap">
               <button
@@ -264,6 +276,15 @@
                   >
                     <i class="fas fa-share-nodes"></i>
                     <span>分享收藏单</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="dropdown-menu-item"
+                    @click="handleMenuExportCollection"
+                  >
+                    <i class="fas fa-file-export"></i>
+                    <span>导出此收藏单</span>
                   </button>
 
                   <template v-if="isOwnerCollection(collectionDetail)">
@@ -313,6 +334,19 @@
           </span>
         </div>
 
+        <div v-if="collectionMultiSelectMode" class="collection-multi-select-bar">
+          <button
+            type="button"
+            class="multi-select-toggle-all"
+            :disabled="collectionMultiSelectTotal === 0"
+            @click="toggleAllCollectionItems"
+          >
+            <i :class="allCollectionItemsSelected ? 'fas fa-times-circle' : 'fas fa-check-circle'"></i>
+            <span>{{ allCollectionItemsSelected ? '取消全选' : ('全选 ' + collectionMultiSelectTotal + ' 条') }}</span>
+          </button>
+          <span class="multi-select-bar-count">已加载 {{ collectionMultiSelectTotal }} 条</span>
+        </div>
+
         <div v-if="collectionItemsLoading && collectionItems.length === 0" class="loading-wrapper">
           <LoadingState text="正在获取收藏单内容..." />
         </div>
@@ -331,6 +365,18 @@
 
         <div v-else class="feed-list">
           <div v-for="item in filteredCollectionItems" :key="item.id" class="collection-feed-item">
+            <!-- 多选模式：遮罩整张卡片，点击即勾选/取消，且不会触发卡片自身跳转 -->
+            <div
+              v-if="collectionMultiSelectMode && collectionItemId(item)"
+              class="multi-select-hitbox"
+              role="checkbox"
+              :aria-checked="collectionSelectedIds.has(collectionItemId(item))"
+              :class="{ 'is-selected': collectionSelectedIds.has(collectionItemId(item)) }"
+              @click.stop="toggleCollectionItemSelect(item)"
+            >
+              <i class="multi-select-checkbox" :class="collectionSelectedIds.has(collectionItemId(item)) ? 'fas fa-check-square' : 'far fa-square'"></i>
+              <span>{{ collectionSelectedIds.has(collectionItemId(item)) ? '已选' : '未选' }}</span>
+            </div>
             <RatingCard
               v-if="isRatingFeedEntity(item)"
               :feed="item"
@@ -346,7 +392,7 @@
               @deleted="handleFeedDeleted"
               @favorite-changed="handleFavoriteChanged"
             />
-            <div v-if="collectionItemId(item)" class="collection-item-quick-action">
+            <div v-if="collectionItemId(item) && !collectionMultiSelectMode" class="collection-item-quick-action">
               <button
                 type="button"
                 class="btn-remove-collection-item"
@@ -364,6 +410,29 @@
             <LoadingState v-if="collectionItemsLoadingMore" text="加载更多中..." />
             <div v-else-if="collectionItemsNoMore" class="no-more">没有更多内容了</div>
           </div>
+        </div>
+
+        <!-- 多选模式：底部固定操作条 -->
+        <div v-if="collectionMultiSelectMode" class="collection-multi-select-actionbar">
+          <span class="multi-select-selected-count">已选 {{ collectionSelectedIds.size }} 项</span>
+          <button
+            type="button"
+            class="btn-batch-remove"
+            :disabled="collectionSelectedIds.size === 0 || collectionBatchRemoving"
+            @click="removeSelectedCollectionItems"
+          >
+            <i v-if="collectionBatchRemoving" class="fas fa-spinner fa-spin"></i>
+            <i v-else class="fas fa-folder-minus"></i>
+            <span>移出收藏单</span>
+          </button>
+          <button
+            type="button"
+            class="btn-batch-cancel"
+            :disabled="collectionBatchRemoving"
+            @click="exitCollectionMultiSelect"
+          >
+            取消
+          </button>
         </div>
       </div>
 
@@ -563,7 +632,7 @@
     <FavoriteExportDialog
       :is-open="favoriteExportOpen"
       mode="collections"
-      :collections="collections"
+      :collections="favoriteExportSourceCollections"
       @close="favoriteExportOpen = false"
     />
   </div>
@@ -605,8 +674,22 @@ const route = useRoute();
 const router = useRouter();
 
 const favoriteExportOpen = ref(false);
+// 本次导出来源列表：列表页「导出收藏」传全部，详情页「导出此收藏单」只传当前收藏单，二者互不污染。
+const favoriteExportSourceCollections = ref<any[]>([]);
 
 function openFavoriteExport() {
+  favoriteExportSourceCollections.value = collections.value;
+  favoriteExportOpen.value = true;
+}
+
+function handleMenuExportCollection() {
+  collectionMoreMenuOpen.value = false;
+  const detail = collectionDetail.value || {};
+  favoriteExportSourceCollections.value = [{
+    id: collectionId(detail) || activeCollectionId.value,
+    title: detail.title || activeCollectionTitle.value || '收藏单',
+    itemNum: collectionItemNum.value,
+  }];
   favoriteExportOpen.value = true;
 }
 
@@ -856,6 +939,9 @@ const collectionActionLoading = ref(false);
 const collectionCoverUploading = ref(false);
 const collectionCleanupPending = ref(false);
 const collectionItemActionId = ref('');
+const collectionMultiSelectMode = ref(false);
+const collectionSelectedIds = ref<Set<string>>(new Set());
+const collectionBatchRemoving = ref(false);
 const collectionActionError = ref('');
 const collectionMoreMenuOpen = ref(false);
 const collectionForm = ref({ title: '', description: '', cover: '', isOpen: true });
@@ -972,6 +1058,48 @@ function handleMenuDelete() {
   collectionMoreMenuOpen.value = false;
   void deleteCollection(collectionDetail.value);
 }
+// 全选只作用于当前可见（含搜索过滤后）的条目：隐藏条目被静默选中会让用户误删。
+const collectionMultiSelectTotal = computed(() => filteredCollectionItems.value.filter((item: any) => collectionItemId(item)).length);
+const allCollectionItemsSelected = computed(() => collectionMultiSelectTotal.value > 0 && collectionSelectedIds.value.size >= collectionMultiSelectTotal.value);
+
+/** 清空多选状态（含选择集合），切换单、刷新、退出详情时必须调用，避免选择跨收藏单残留。 */
+function clearCollectionMultiSelect() {
+  collectionMultiSelectMode.value = false;
+  collectionSelectedIds.value = new Set();
+  collectionBatchRemoving.value = false;
+}
+
+function enterCollectionMultiSelect() {
+  collectionMoreMenuOpen.value = false;
+  collectionMultiSelectMode.value = true;
+}
+
+function exitCollectionMultiSelect() {
+  collectionMultiSelectMode.value = false;
+  collectionSelectedIds.value = new Set();
+}
+
+function toggleCollectionItemSelect(item: any) {
+  const id = collectionItemId(item);
+  if (!id) return;
+  const next = new Set(collectionSelectedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collectionSelectedIds.value = next;
+}
+
+function toggleAllCollectionItems() {
+  if (allCollectionItemsSelected.value) {
+    collectionSelectedIds.value = new Set();
+    return;
+  }
+  collectionSelectedIds.value = new Set(
+    filteredCollectionItems.value
+      .map((item: any) => collectionItemId(item))
+      .filter((id: string) => Boolean(id))
+  );
+}
+
 function collectionItemId(item: any): string {
   return String(
     item?.collectionItem?.id ||
@@ -1130,27 +1258,58 @@ async function clearInvalidCollectionItems() {
   }
 }
 
+/** 单条移除核心：列表移除、计数同步与正文索引清理的唯一口径，单条与批量路径共用。 */
+async function removeCollectionItemCore(item: any): Promise<{ ok: boolean; error?: unknown }> {
+  const itemId = collectionItemId(item);
+  if (!itemId) return { ok: false, error: new Error('收藏内容缺少条目标识') };
+  try {
+    await CoolapkTauriAPI.removeCollectionItem(itemId);
+    collectionItems.value = collectionItems.value.filter(current => collectionItemId(current) !== itemId);
+    // 与取消收藏/删除动态共用同一条计数口径，避免三处各写一份。
+    syncCollectionItemCount(1);
+    // 与取消收藏/删除动态路径一致：移除条目后同步清理正文索引，避免搜索命中已移除内容。
+    const feedKey = favoriteFeedId(item) || itemId;
+    void removeFavoriteContentIndexEntry(favoriteAccountId(), feedKey).catch((error) => console.warn('移除收藏内容的正文索引失败:', error));
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err };
+  }
+}
+
 async function removeCollectionItem(item: any) {
   const itemId = collectionItemId(item);
   if (!itemId || collectionItemActionId.value) return;
   const confirmed = await requestConfirmation({ title: '移除收藏内容', message: '确定只从当前收藏单移除这条内容吗？原内容不会被删除。', confirmText: '移除', danger: true });
   if (!confirmed) return;
   collectionItemActionId.value = itemId;
-  try {
-    await CoolapkTauriAPI.removeCollectionItem(itemId);
-    collectionItems.value = collectionItems.value.filter(current => collectionItemId(current) !== itemId);
-    collectionItemNum.value = Math.max(0, collectionItemNum.value - 1);
-    const current = collections.value.find(collection => collectionId(collection) === activeCollectionId.value);
-    if (current) current.itemNum = collectionItemNum.value;
-    // 与取消收藏/删除动态路径一致：移除条目后同步清理正文索引，避免搜索命中已移除内容。
-    const feedKey = favoriteFeedId(item) || itemId;
-    void removeFavoriteContentIndexEntry(favoriteAccountId(), feedKey).catch((error) => console.warn('移除收藏内容的正文索引失败:', error));
-    showToast('已从收藏单移除', 'success');
-  } catch (err) {
-    showToast(getErrorMessage(err, '移除收藏内容失败'), 'error');
-  } finally {
-    collectionItemActionId.value = '';
+  const result = await removeCollectionItemCore(item);
+  if (result.ok) showToast('已从收藏单移除', 'success');
+  else showToast(getErrorMessage(result.error, '移除收藏内容失败'), 'error');
+  collectionItemActionId.value = '';
+}
+
+/** 批量移除：串行逐条复用单条核心逻辑，单条失败不中断，结束后统一汇报并退出多选。 */
+async function removeSelectedCollectionItems() {
+  if (collectionBatchRemoving.value || collectionSelectedIds.value.size === 0) return;
+  collectionBatchRemoving.value = true;
+  const targetIds = Array.from(collectionSelectedIds.value);
+  let removed = 0;
+  let failed = 0;
+  for (const itemId of targetIds) {
+    const item = collectionItems.value.find(current => collectionItemId(current) === itemId);
+    if (!item) {
+      failed += 1;
+      collectionSelectedIds.value.delete(itemId);
+      continue;
+    }
+    const result = await removeCollectionItemCore(item);
+    collectionSelectedIds.value.delete(itemId);
+    if (result.ok) removed += 1;
+    else failed += 1;
   }
+  if (failed === 0) showToast('已移除 ' + removed + ' 条', 'success');
+  else showToast('已移除 ' + removed + ' 条，失败 ' + failed + ' 条', 'error');
+  clearCollectionMultiSelect();
 }
 
 function openCollection(collection: any) {
@@ -1188,6 +1347,7 @@ function activateCollection(collection: any) {
   collectionItemsLoading.value = false;
   collectionItemsLoadingMore.value = false;
   collectionItemActionId.value = '';
+  clearCollectionMultiSelect();
   void fetchCollectionDetail();
   void fetchCollectionItems(true);
 }
@@ -1209,6 +1369,7 @@ function resetCollectionState() {
   collectionContentSearchKeyword.value = '';
   collectionContentSearchIds.value = new Set();
   collectionMoreMenuOpen.value = false;
+  clearCollectionMultiSelect();
 }
 
 watch(
@@ -1342,6 +1503,8 @@ async function fetchCollectionItems(isRefresh = false) {
 
   if (isRefresh) {
     // 刷新（含切换收藏单）不再被进行中的旧请求阻塞，旧请求的响应会因序号过期被丢弃。
+    // 刷新后列表会被替换，多选状态必须同步清空，避免残留选择指向新列表的条目。
+    clearCollectionMultiSelect();
     collectionItemsPage.value = 1;
     collectionItemsNoMore.value = false;
     collectionItemsFirstItem.value = '';
@@ -2756,5 +2919,118 @@ async function refreshMobilePage() { if (activeCollectionId.value) { await fetch
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+/* 收藏单多选：顶部条 + 卡片勾选遮罩 + 底部操作条 */
+.collection-multi-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary, var(--color-bg));
+}
+
+.multi-select-toggle-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+}
+
+.multi-select-toggle-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.multi-select-bar-count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.collection-feed-item {
+  position: relative;
+}
+
+.multi-select-hitbox {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-3);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.multi-select-hitbox.is-selected {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.multi-select-checkbox {
+  font-size: 20px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.collection-multi-select-actionbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  margin-top: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.multi-select-selected-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-right: auto;
+}
+
+.btn-batch-remove,
+.btn-batch-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-4);
+  min-height: 40px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-batch-remove {
+  background: var(--color-danger, #e5484d);
+  color: #fff;
+}
+
+.btn-batch-cancel {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn-batch-remove:disabled,
+.btn-batch-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
