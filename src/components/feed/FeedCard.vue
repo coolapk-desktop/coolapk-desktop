@@ -422,6 +422,7 @@ import { getFeedInteractionType } from '../../utils/feedInteractions';
 import { hasActiveTextSelection } from '../../utils/selection';
 import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from '../../utils/favoriteContentIndex';
 import { syncFavoriteToFeed as writeFavoriteToFeed } from '../../utils/feedFavorite';
+import { getFeedFavoriteState } from '../../stores/feedFavorites';
 
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
@@ -1150,20 +1151,49 @@ function handleCommentCreated(payload: { comment?: any; replyId?: string } = {})
   // 第 1 页还没取过时保持 commentsPage 为 0，展开评论区照常取第 1 页再合并本地评论。
 }
 
-const isFav = ref(
-  props.cloudFavorite === true ||
-  props.feed.userAction?.collect === 1 ||
-  props.feed.userAction?.favorite === 1
-);
-const favnum = ref(props.feed.favnum || 0);
-watch(() => props.feed.favnum, value => { if (value !== undefined) favnum.value = Number(value) || 0; });
+// 收藏态读取优先级：cloudFavorite（收藏单入口语义强制已收藏）>
+// 全局注册表（任何宿主收藏动作经 syncFavoriteToFeed 广播的跨副本覆盖）>
+// feed 实体字段（既有真源）。只做浅层读取，不深 watch props.feed。
+function resolveInitialFavorited(): boolean {
+  if (props.cloudFavorite === true) return true;
+  const override = getFeedFavoriteState(props.feed.id)?.favorited;
+  if (override !== undefined) return override;
+  return props.feed.userAction?.collect === 1 || props.feed.userAction?.favorite === 1;
+}
+function resolveInitialFavnum(): number {
+  const override = getFeedFavoriteState(props.feed.id)?.favnum;
+  if (override !== undefined) return override;
+  return Number(props.feed.favnum) || 0;
+}
+const isFav = ref(resolveInitialFavorited());
+const favnum = ref(resolveInitialFavnum());
+// feed 对象被父级换成另一份副本（如收藏页切换收藏单）时，按优先级重新取值。
+watch(() => props.feed.id, () => {
+  isFav.value = resolveInitialFavorited();
+  favnum.value = resolveInitialFavnum();
+});
+// 实体字段变化只在注册表没有覆盖时生效，避免旧副本把新收藏态冲回去。
+watch(() => props.feed.favnum, value => {
+  if (value === undefined || getFeedFavoriteState(props.feed.id)?.favnum !== undefined) return;
+  favnum.value = Number(value) || 0;
+});
 // 收藏态回写到 feed 实体后，同一个 feed 对象在收藏页/详情页/列表里的其它卡片
 // 也要跟着变（避免一处已收藏、另一处显示未收藏）。
 watch(
   () => props.feed.userAction?.collect ?? props.feed.userAction?.favorite,
   (value) => {
     if (value === undefined || value === null) return;
+    if (props.cloudFavorite === true || getFeedFavoriteState(props.feed.id)?.favorited !== undefined) return;
     isFav.value = Number(value) === 1;
+  },
+);
+// 注册表被其它宿主的收藏动作更新时（跨副本广播），覆盖本地显示值。
+watch(
+  () => getFeedFavoriteState(props.feed.id),
+  (state) => {
+    if (!state) return;
+    if (state.favorited !== undefined && props.cloudFavorite !== true) isFav.value = state.favorited;
+    if (state.favnum !== undefined) favnum.value = state.favnum;
   },
 );
 const favoritePending = ref(false);
