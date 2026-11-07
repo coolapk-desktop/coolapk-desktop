@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading }" class="page-container custom-scrollbar">
+  <div ref="pageRef" v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading }" class="page-container custom-scrollbar">
     <div class="page-header">
       <div class="header-main">
         <h2 class="page-title"><i :class="[icon, 'icon']"></i> {{ title }}</h2>
@@ -299,7 +299,12 @@ function handleCreated() {
   void load(true);
 }
 
+const pageRef = ref<HTMLElement | null>(null);
+
 function onScrollEvent(e: Event) {
+  // window 捕获监听会收到所有滚动元素的事件：横向滚动条（分类 chips 等）的
+  // scrollHeight - clientHeight ≈ 0，会被误判成「到底了」而白白消耗一页分页。
+  if (pageRef.value && e.target !== pageRef.value) return;
   const el = e.target as HTMLElement;
   const scrollDiff = el && el.scrollHeight
     ? el.scrollHeight - el.scrollTop - el.clientHeight
@@ -333,7 +338,11 @@ async function refreshOnActivated() {
     if (list.length === 0) return;
     applyGoodsRows(list);
     const byId = new Map(list.map((row: any) => [listKey(row), row]));
-    allItems.value = allItems.value.map((row) => byId.get(listKey(row)) || row);
+    const known = new Set(allItems.value.map(listKey));
+    // 旧行按 id 原地覆盖；同时把服务端新出现、本地还没有的行插到头部，
+    // 否则别人新建的清单在返回列表后看不到，必须手动下拉才会出现。
+    const fresh = list.filter((row: any) => !known.has(listKey(row)));
+    allItems.value = [...fresh, ...allItems.value.map((row) => byId.get(listKey(row)) || row)];
   } catch {
     // 静默刷新失败不打扰用户；用户仍可下拉或翻页重试。
   }

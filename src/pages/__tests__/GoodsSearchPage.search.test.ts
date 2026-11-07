@@ -142,3 +142,74 @@ describe('好物搜索：请求竞态与地址栏状态', () => {
     }
   });
 });
+
+describe('好物搜索：翻页失败退避与搜索历史口径', () => {
+  function setScrollable(wrapper: any, values: { scrollHeight: number; clientHeight: number; scrollTop: number }) {
+    const page = wrapper.get('.page-container').element as HTMLElement;
+    Object.defineProperty(page, 'scrollHeight', { value: values.scrollHeight, configurable: true });
+    Object.defineProperty(page, 'clientHeight', { value: values.clientHeight, configurable: true });
+    Object.defineProperty(page, 'scrollTop', { value: values.scrollTop, configurable: true });
+    return page;
+  }
+
+  it('翻页失败后滚动不再自动重发，只有点重试才发一次', async () => {
+    mocks.searchGoods.mockReset();
+    mocks.getGoodsSearchHotWords.mockResolvedValue({ data: [] });
+    mocks.searchGoods.mockResolvedValueOnce({ data: [goods('g1', '第一页好物')] });
+    const { wrapper } = await mountPage();
+    try {
+      const input = wrapper.get('.search-input');
+      await input.setValue('耳机');
+      await input.trigger('keyup.enter');
+      await flushPromises();
+      expect(mocks.searchGoods).toHaveBeenCalledTimes(1);
+
+      mocks.searchGoods.mockRejectedValueOnce(new Error('网络失败'));
+      setScrollable(wrapper, { scrollHeight: 1000, clientHeight: 800, scrollTop: 150 });
+      await wrapper.get('.page-container').trigger('scroll');
+      await flushPromises();
+      expect(mocks.searchGoods).toHaveBeenCalledTimes(2);
+      const retry = wrapper.findAll('button').find((b) => b.text().includes('加载失败，点击重试'));
+      expect(retry, '翻页失败后必须出现重试入口').toBeDefined();
+
+      // 失败态下继续滚动：不能再发请求（旧实现滚动一次发一次）
+      await wrapper.get('.page-container').trigger('scroll');
+      await flushPromises();
+      expect(mocks.searchGoods).toHaveBeenCalledTimes(2);
+
+      // 点重试才重发一次，成功后恢复滚动加载
+      mocks.searchGoods.mockResolvedValueOnce({ data: [goods('g2', '第二页好物')] });
+      await retry!.trigger('click');
+      await flushPromises();
+      expect(mocks.searchGoods).toHaveBeenCalledTimes(3);
+      expect(wrapper.text()).toContain('第二页好物');
+      expect(wrapper.findAll('button').some((b) => b.text().includes('加载失败，点击重试'))).toBe(false);
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
+  it('搜索失败不写入搜索历史，成功才记录', async () => {
+    mocks.searchGoods.mockReset();
+    mocks.getGoodsSearchHotWords.mockResolvedValue({ data: [] });
+    localStorage.removeItem('coolapk_goods_search_history');
+    const { wrapper } = await mountPage();
+    try {
+      const input = wrapper.get('.search-input');
+      mocks.searchGoods.mockRejectedValueOnce(new Error('接口失败'));
+      await input.setValue('会失败的词');
+      await input.trigger('keyup.enter');
+      await flushPromises();
+      expect(JSON.parse(localStorage.getItem('coolapk_goods_search_history') || '[]')).toEqual([]);
+
+      mocks.searchGoods.mockResolvedValueOnce({ data: [goods('g3', '正常结果')] });
+      await input.setValue('正常词');
+      await input.trigger('keyup.enter');
+      await flushPromises();
+      expect(JSON.parse(localStorage.getItem('coolapk_goods_search_history') || '[]')).toEqual(['正常词']);
+    } finally {
+      localStorage.removeItem('coolapk_goods_search_history');
+      wrapper.unmount();
+    }
+  });
+});

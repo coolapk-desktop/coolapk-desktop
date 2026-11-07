@@ -489,6 +489,12 @@ function handleCommentSortChange(selection: CommentSortSelection) {
   void loadComments(true);
 }
 
+// 同一组件复用于 /goods/lists/:feedId：路由参数变化时 Vue 会复用实例，
+// 不监听 feedId 会让页面继续显示上一个清单的内容而地址栏已变成新清单。
+watch(() => props.feedId, () => {
+  loadAll(true);
+});
+
 watch(() => settingsStore.settings.commentDefaultSortMode, (sortMode) => {
   commentsSortMode.value = sortMode;
   commentsAuthorOnly.value = false;
@@ -519,6 +525,14 @@ async function removeItem(item: any) {
   try {
     await CoolapkTauriAPI.deleteGoodsListItems(cancelFeedId, goodsId);
     items.value = items.value.filter((i) => itemKey(i) !== itemKey(item));
+    // 顶部「N 件好物」读的是 goodsListInfo.item_num，列表卡片读的是行注册表：
+    // 只改本地 items 会让两处都停在移除前的数字，直到下一次静默刷新。
+    const nextCount = Math.max(0, itemNum.value - 1);
+    if (feed.value) {
+      const stats: any = feed.value.goodsListInfo || feed.value;
+      if (stats && typeof stats === 'object') stats.item_num = nextCount;
+    }
+    setGoodsRowState(String(props.feedId), { itemNum: nextCount });
     showToast('已移除该好物', 'success');
   } catch (err) {
     showToast(getErrorMessage(err, '移除失败'), 'error');

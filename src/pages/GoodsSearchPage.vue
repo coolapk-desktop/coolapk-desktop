@@ -125,6 +125,7 @@
 
       <div class="pagination-footer">
         <LoadingState v-if="searching && goods.length > 0" text="加载更多中..." />
+        <button v-else-if="loadMoreFailed" class="retry-inline" @click="retryLoadMore">加载失败，点击重试</button>
         <button v-else-if="searchError && goods.length > 0" class="retry-inline" @click="searchFromUi">加载失败，点击重试</button>
         <div v-else-if="noMore" class="no-more">没有更多好物了</div>
       </div>
@@ -178,6 +179,9 @@ const hasSearched = ref(Boolean(initialRouteState.keyword));
 const searchError = ref('');
 const noMore = ref(false);
 const page = ref(1);
+// 翻页失败必须停在错误态等用户点重试：失败后 searching/noMore 都恢复 false，
+// 若继续让 handleScroll 反复触发 loadMore，滚动一次就发一次请求。
+const loadMoreFailed = ref(false);
 
 const hotWords = ref<string[]>([]);
 const history = ref<string[]>([]);
@@ -322,10 +326,10 @@ async function doSearch(options?: { syncRoute?: boolean }) {
   const sortKey = activeSort.value;
   const coupon = couponOnly.value;
   if (options?.syncRoute !== false) syncRouteQuery(kw, sortKey, coupon);
-  recordHistory(kw);
   page.value = 1;
   noMore.value = false;
   searchError.value = '';
+  loadMoreFailed.value = false;
   goods.value = [];
   hasSearched.value = true;
   searching.value = true;
@@ -345,6 +349,8 @@ async function doSearch(options?: { syncRoute?: boolean }) {
       goods.value = list;
       page.value = 2;
     }
+    // 只有真正搜到结果才记入搜索历史：失败的词进历史，用户回头点它只会再撞一次失败。
+    recordHistory(kw);
   } catch (err: any) {
     if (token !== requestVersion) return;
     searchError.value = err?.message || '搜索失败';
@@ -355,7 +361,7 @@ async function doSearch(options?: { syncRoute?: boolean }) {
 
 async function loadMore() {
   const kw = keyword.value.trim();
-  if (!kw || searching.value || noMore.value) return;
+  if (!kw || searching.value || noMore.value || loadMoreFailed.value) return;
   // 加载更多沿用当前请求代数（不自增），一旦发起新搜索就整体作废，避免新旧分页拼接。
   const token = requestVersion;
   const opt = activeSortOption.value;
@@ -370,6 +376,7 @@ async function loadMore() {
       page: page.value,
     });
     if (token !== requestVersion) return;
+    loadMoreFailed.value = false;
     const list = (res?.data && Array.isArray(res.data)) ? res.data : [];
     if (list.length === 0) {
       noMore.value = true;
@@ -381,6 +388,7 @@ async function loadMore() {
   } catch (err: any) {
     if (token !== requestVersion) return;
     searchError.value = err?.message || '加载更多失败';
+    loadMoreFailed.value = true;
   } finally {
     if (token === requestVersion) searching.value = false;
   }
@@ -444,12 +452,20 @@ watch(
   },
 );
 
+/** 翻页失败后的唯一重试入口：清掉失败态再发一次，成功即恢复滚动加载。 */
+async function retryLoadMore() {
+  if (searching.value) return;
+  loadMoreFailed.value = false;
+  searchError.value = '';
+  await loadMore();
+}
+
 function handleScroll(e: Event) {
   const el = e.target as HTMLElement;
   const scrollDiff = el && el.scrollHeight
     ? el.scrollHeight - el.scrollTop - el.clientHeight
     : 999;
-  if (scrollDiff < 260 && hasSearched.value) {
+  if (scrollDiff < 260 && hasSearched.value && !loadMoreFailed.value) {
     void loadMore();
   }
 }
