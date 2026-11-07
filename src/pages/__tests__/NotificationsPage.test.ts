@@ -6,11 +6,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useNotificationStore } from '../../stores/notifications';
 import { useAppStore } from '../../stores/app';
 
-const mocks = vi.hoisted(() => ({ notifications: vi.fn(), feedFullText: vi.fn(), reply: vi.fn(), likeReply: vi.fn(), unlikeReply: vi.fn(), unlikeFeed: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), deleteAll: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn(), toast: vi.fn() }));
+const mocks = vi.hoisted(() => ({ notifications: vi.fn(), feedFullText: vi.fn(), reply: vi.fn(), likeReply: vi.fn(), unlikeReply: vi.fn(), unlikeFeed: vi.fn(), likeFeed: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), deleteAll: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn(), toast: vi.fn() }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: {
   getNotifications: mocks.notifications, getReplyDetail: mocks.reply, clearNotificationCount: mocks.clear, deleteAllNotifications: mocks.deleteAll, reportNotificationClick: mocks.report, readNotification: mocks.read, getNotificationCount: mocks.count,
-  likeReply: mocks.likeReply, unlikeReply: mocks.unlikeReply, unlikeFeed: mocks.unlikeFeed,
+  likeFeed: mocks.likeFeed, likeReply: mocks.likeReply, unlikeReply: mocks.unlikeReply, unlikeFeed: mocks.unlikeFeed,
 } }));
 vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: true, user: { uid: 'notification-test' } }) }));
 vi.mock('../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
@@ -496,4 +496,79 @@ describe('通知评论点击入口', () => {
     wrapper.unmount();
   });
 
+});
+
+describe('通知卡片：昵称占位、乐观点赞清理与回复后刷新', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    setActivePinia(createPinia());
+    mocks.feedFullText.mockRejectedValue(new Error('动态不可用'));
+    mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 0, dateline: 101 } } });
+    mocks.report.mockResolvedValue({});
+    mocks.likeFeed.mockResolvedValue({});
+    mocks.likeReply.mockResolvedValue({});
+  });
+
+  async function mountPage(item: any) {
+    mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({ data: page === 1 ? [item] : [] }));
+    const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
+      global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true, FeedCommentSection: true } },
+    });
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('真实昵称就是「酷友」的用户照原样显示，只有缺字段才显示匿名用户', async () => {
+    const named = await mountPage({ id: '1', fromuid: '12345', fromusername: '酷友', target_type: 'feed', target_id: '222', userAction: { like: 0 } });
+    try {
+      expect(named.get('.notify-user').text()).toBe('酷友');
+    } finally { named.unmount(); }
+
+    const missing = await mountPage({ id: '2', fromuid: '12346', target_type: 'feed', target_id: '333', userAction: { like: 0 } });
+    try {
+      expect(missing.get('.notify-user').text()).toBe('匿名用户');
+    } finally { missing.unmount(); }
+  });
+
+  it('列表刷新后清空乐观点赞覆盖层，按服务端真实状态显示', async () => {
+    const wrapper = await mountPage({ id: '99', fromuid: '12345', fromusername: '甲', target_type: 'feed', target_id: '222', userAction: { like: 0 } });
+    try {
+      const button = wrapper.get('.notify-row-action[aria-pressed]');
+      expect(button.attributes('aria-pressed')).toBe('false');
+
+      await button.trigger('click');
+      await flushPromises();
+      expect(mocks.likeFeed).toHaveBeenCalledWith('222');
+      expect(button.attributes('aria-pressed')).toBe('true');
+
+      // 切到别的分类再回来：列表被重新拉取，服务端仍是未点赞，本地覆盖层必须被丢弃
+      await wrapper.get('.quick-nav-btn.like').trigger('click');
+      await flushPromises();
+      await wrapper.get('.notification-list-tab').trigger('click');
+      await flushPromises();
+
+      expect(mocks.notifications.mock.calls.length).toBeGreaterThan(1);
+      expect(wrapper.get('.notify-row-action[aria-pressed]').attributes('aria-pressed')).toBe('false');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('回复发送成功后把来源通知置读并刷新列表', async () => {
+    mocks.reply.mockResolvedValue({ data: { feedId: '333' } });
+    const item: any = { id: '99', fromuid: '12345', fromusername: '甲', target_type: 'feed_reply', target_id: '222', userAction: { like: 1 }, isnew: 1, url: '/feed/333' };
+    const wrapper = await mountPage(item);
+    try {
+      expect(wrapper.find('.notify-unread-badge').exists()).toBe(true);
+      await wrapper.get('.notify-row-action[aria-label="回复"]').trigger('click');
+      await flushPromises();
+
+      wrapper.getComponent({ name: 'FeedCommentSection' }).vm.$emit('send-comment', { id: 'c1' });
+      await flushPromises();
+      await flushPromises();
+
+      // 置读：本地未读标记清除，卡片不再显示未读角标；列表被刷新一次以上
+      expect(wrapper.find('.notify-unread-badge').exists()).toBe(false);
+      expect(mocks.notifications.mock.calls.length).toBeGreaterThan(1);
+    } finally { wrapper.unmount(); }
+  });
 });

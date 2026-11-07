@@ -50,7 +50,7 @@
       </div>
 
       <div v-else class="notification-list">
-        <div v-for="{ item, target, actionKey } in notificationCards" :key="getNotificationKey(item)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
+        <div v-for="({ item, target, actionKey }, cardIndex) in notificationCards" :key="getNotificationKey(item, cardIndex)" :class="['notify-card', { unread: isNotificationUnread(item) }]" @click="handleNotifyClick($event, item)">
           <button type="button" class="notify-avatar-wrap notify-profile" :disabled="!getActorUid(item)" :aria-label="`查看${getUsername(item)}的主页`" @click.stop="openActor(item)">
             <AppAvatar :src="getAvatar(item)" :size="40" />
           </button>
@@ -108,7 +108,7 @@
       :official-detail="mobileReplyComposer"
       :comments="[]"
       @close-composer="closeReplyComposer"
-      @send-comment="closeReplyComposer"
+      @send-comment="handleReplySent"
     />
   </div>
 </template>
@@ -185,8 +185,17 @@ const desktopActions = ref<HTMLDetailsElement | null>(null);
 type NotificationActionTarget = NonNullable<ReturnType<typeof getNotificationActionTarget>>;
 const likedTargets = ref(new Map<string, boolean>());
 const pendingLikes = ref(new Set<string>());
+
+/**
+ * 列表被重新拉取/切分类时清空乐观点赞覆盖层：服务端才是唯一真相，
+ * 否则刷新后仍显示旧高亮，且点击会按错误基准再发一次反向请求。
+ */
+function resetTargetLikeState() {
+  likedTargets.value = new Map();
+  pendingLikes.value = new Set();
+}
 const pendingReply = ref<symbol>();
-const replyComposer = ref<{ feedId: string; rid?: string; username: string }>();
+const replyComposer = ref<{ feedId: string; rid?: string; username: string; item?: any }>();
 const mobileReplyComposer = isTouchMobilePlatform() || isCoarsePointer();
 const notificationCards = computed(() => items.value.map(item => {
   const target = currentTab.value === 'list' ? getNotificationActionTarget(item) : null;
@@ -229,7 +238,8 @@ async function openReplyComposer(item: any, target: NotificationActionTarget) {
     }
     if (pendingReply.value !== request) return;
     if (!/^[1-9]\d*$/.test(feedId)) throw new Error('无法找到评论所属的动态');
-    replyComposer.value = { feedId, rid, username: getUsername(item) };
+    // 带上来源通知：发送成功后据此置读并刷新列表，否则用户无法确认回复已生效。
+    replyComposer.value = { feedId, rid, username: getUsername(item), item };
   } catch (error) {
     if (pendingReply.value === request) {
       showToast(`打开回复失败：${error instanceof Error ? error.message : String(error)}`, 'error');
@@ -272,6 +282,7 @@ function goBack() {
 
 async function closeNotificationGroup() {
   subNoteType.value = '';
+  resetTargetLikeState();
   page.value = 1;
   items.value = [];
   hasMore.value = true;
@@ -284,6 +295,7 @@ async function switchTab(tabValue: string) {
     return;
   }
   closeReplyComposer();
+  resetTargetLikeState();
   currentTab.value = tabValue;
   if (pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
   subNoteType.value = '';
@@ -395,9 +407,21 @@ async function fetchNotifications(): Promise<boolean> {
 
 async function refreshNotifications(): Promise<boolean> {
   if (loading.value) return false;
+  resetTargetLikeState();
   page.value = 1;
   hasMore.value = true;
   return await fetchNotifications();
+}
+
+/**
+ * 回复发送成功：关掉 composer，把来源通知置读，并在首屏时刷新列表，
+ * 让用户立刻看到「已回复」后的通知状态（翻页后不整表重置，与角标增长同口径）。
+ */
+function handleReplySent() {
+  const sourceNotification = replyComposer.value?.item;
+  closeReplyComposer();
+  if (sourceNotification) markNotificationRead(sourceNotification, getCurrentCategory(), authStore.user?.uid);
+  if (page.value === 1) void refreshNotifications();
 }
 
 function handleNotificationCountIncrease() {
@@ -428,10 +452,19 @@ function getAvatar(item: any): string {
 }
 
 function getUsername(item: any): string {
-  const actor = getNotificationActor(item, getCurrentCategory());
-  return actor.username === '酷友'
-    ? item.messageUserInfo?.username || '匿名用户'
-    : actor.username;
+  // 「酷友」既是官方占位昵称，也可能是真实昵称：只有原始字段为空才算缺失，
+  // 否则昵称真叫「酷友」的用户会被显示成「匿名用户」。
+  const raw = getCurrentCategory() === 'like'
+    ? (item?.likeUsername || item?.likeUserInfo?.username || '')
+    : (item?.fromusername
+      || item?.fromUserInfo?.username
+      || item?.username
+      || item?.userInfo?.username
+      || item?.title
+      || '');
+  const name = String(raw || '').trim();
+  if (name) return name;
+  return item.messageUserInfo?.username || '匿名用户';
 }
 
 /** 人物入口使用发起通知的用户，系统通知不生成无效主页。 */
@@ -635,7 +668,7 @@ function getCurrentCategory(): NotificationCategory {
   return tabs.find((tab) => tab.value === currentTab.value)?.countKey || 'notification';
 }
 
-function getNotificationKey(item: any): string {
+function getNotificationKey(item: any, index = 0): string {
   const category = currentTab.value;
   const stableId = item?.id ?? item?.entityId ?? item?.targetId;
   if (stableId !== undefined && stableId !== null && String(stableId).trim()) {
@@ -643,8 +676,10 @@ function getNotificationKey(item: any): string {
   }
   const actor = item?.fromuid ?? item?.uid ?? item?.likeUid ?? '';
   const timestamp = item?.dateline ?? item?.likeTime ?? item?.lastUpdate ?? '';
+  // 无稳定 id 的系统/活动通知可能内容完全相同（同一条群发），此时只有行号能区分，
+  // 否则 Vue 会复用错节点并在控制台告警。
   const content = String(item?.note || item?.message || item?.targetTitle || '').slice(0, 80);
-  return `${category}:${actor}:${timestamp}:${content}`;
+  return `${category}:${actor}:${timestamp}:${content}:${index}`;
 }
 
 function getNotificationUnreadCount(item: any): number {
@@ -829,8 +864,7 @@ watch(
   () => [authStore.isLoggedIn, authStore.user?.uid] as const,
   ([isLoggedIn]) => {
     closeReplyComposer();
-    likedTargets.value = new Map();
-    pendingLikes.value = new Set();
+    resetTargetLikeState();
     feedSummaries.value = new Map();
     notificationRequestId += 1;
     loading.value = false;
