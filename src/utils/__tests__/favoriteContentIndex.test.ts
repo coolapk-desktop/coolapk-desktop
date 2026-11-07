@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
+  /** 前 N 次读盘强制失败，用于复现「瞬时读失败」场景。 */
+  failReads: 0,
   getCollectionList: vi.fn(),
   getCollectionItemList: vi.fn(),
   getPublicFeedDetail: vi.fn(),
@@ -16,12 +18,19 @@ vi.mock('../../api/coolapk', () => ({
 }));
 
 vi.mock('../tauriStore', () => ({
-  readTauriStoreValue: vi.fn(async (_fileName: string, key: string) => mocks.values.get(key)),
+  readTauriStoreValue: vi.fn(async (_fileName: string, key: string) => {
+    if (mocks.failReads > 0) {
+      mocks.failReads -= 1;
+      throw new Error('store 读取失败');
+    }
+    return mocks.values.get(key);
+  }),
   writeTauriStoreValue: vi.fn(async (_fileName: string, key: string, value: unknown) => { mocks.values.set(key, value); }),
 }));
 
 import {
   clearFavoriteContentIndexMemoryCache,
+  removeFavoriteContentIndexEntry,
   searchFavoriteContentIndex,
   syncFavoriteContentIndex,
 } from '../favoriteContentIndex';
@@ -29,6 +38,7 @@ import {
 describe('favorite content index', () => {
   beforeEach(() => {
     mocks.values.clear();
+    mocks.failReads = 0;
     mocks.getCollectionList.mockReset();
     mocks.getCollectionItemList.mockReset();
     mocks.getPublicFeedDetail.mockReset();
@@ -58,6 +68,48 @@ describe('favorite content index', () => {
     expect(await searchFavoriteContentIndex('42', '编辑后的正文')).toHaveLength(1);
     expect(await searchFavoriteContentIndex('42', '初版正文')).toHaveLength(0);
     expect(mocks.getPublicFeedDetail).toHaveBeenCalledTimes(2);
+  });
+
+  function seedIndexWithDiskEntry() {
+    mocks.values.set('account:42', {
+      version: 1,
+      lastSyncAt: 1,
+      entries: {
+        '100': {
+          feedId: '100',
+          title: '旧收藏',
+          message: '磁盘上的正文',
+          searchText: '磁盘上的正文',
+          contentHash: 'hash',
+          updatedMarker: '',
+          indexedAt: 1,
+          checkedAt: 1,
+          contentComplete: true,
+          feed: { id: '100', message: '磁盘上的正文' },
+        },
+      },
+    });
+  }
+
+  it('读盘失败时不得用空索引覆盖磁盘上已有的正文索引', async () => {
+    seedIndexWithDiskEntry();
+    mocks.failReads = 1;
+
+    await removeFavoriteContentIndexEntry('42', '999');
+
+    const onDisk = mocks.values.get('account:42') as any;
+    expect(Object.keys(onDisk.entries)).toEqual(['100']);
+    expect(onDisk.entries['100'].message).toBe('磁盘上的正文');
+  });
+
+  it('读盘恢复后写入路径继续生效，且仍以磁盘数据为基准', async () => {
+    seedIndexWithDiskEntry();
+    mocks.failReads = 1;
+    await removeFavoriteContentIndexEntry('42', '999');
+    expect(Object.keys((mocks.values.get('account:42') as any).entries)).toEqual(['100']);
+
+    await removeFavoriteContentIndexEntry('42', '100');
+    expect(Object.keys((mocks.values.get('account:42') as any).entries)).toEqual([]);
   });
 
   it('多页同步时收藏单分页始终使用第一页首项作为 firstItem', async () => {
