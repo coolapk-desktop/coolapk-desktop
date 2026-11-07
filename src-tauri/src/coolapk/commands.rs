@@ -18,9 +18,42 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{Emitter, Manager, State};
 
 pub struct AppState {
-    pub client: CoolapkClient,
+    pub client: std::sync::Arc<CoolapkClient>,
     pub downloads: DownloadManager,
     pub login_session: Mutex<Option<std::sync::Arc<LoginSession>>>,
+}
+
+#[derive(Default)]
+pub struct DesktopWebAccess {
+    #[cfg(desktop)]
+    server: tokio::sync::Mutex<Option<(String, tokio::task::JoinHandle<()>)>>,
+}
+
+#[tauri::command]
+pub async fn desktop_web_access(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    access: State<'_, DesktopWebAccess>,
+    enabled: Option<bool>,
+) -> Result<Option<String>, String> {
+    #[cfg(desktop)]
+    {
+        let mut server = access.server.lock().await;
+        if server.as_ref().is_some_and(|(_, task)| task.is_finished()) {
+            *server = None;
+        }
+        if enabled == Some(false) {
+            if let Some((_, task)) = server.take() { task.abort(); }
+        } else if enabled == Some(true) && server.is_none() {
+            *server = Some(crate::web::start_desktop(app, state.client.clone()).await?);
+        }
+        Ok(server.as_ref().map(|(url, _)| url.clone()))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, state, access, enabled);
+        Ok(None)
+    }
 }
 
 #[derive(Default)]
@@ -647,16 +680,6 @@ pub async fn test_network_proxy(proxy_url: String) -> Result<super::network_prox
 #[tauri::command]
 pub async fn initialize_device_identity(state: State<'_, AppState>) -> Result<Value, String> {
     state.client.initialize_device_identity().await
-}
-
-#[tauri::command]
-pub async fn generate_device_identity(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.generate_device_identity().await
-}
-
-#[tauri::command]
-pub fn use_saved_device_identity(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.use_saved_device_identity()
 }
 
 #[tauri::command]

@@ -1438,6 +1438,14 @@ sync fn get_device_info(state) -> Value {
     state.client.get_device_info()
 }
 
+async fn generate_device_identity(state) -> Value {
+    state.client.generate_device_identity().await
+}
+
+sync fn use_saved_device_identity(state) -> Value {
+    state.client.use_saved_device_identity()
+}
+
 async fn check_login_status(state) -> Value {
     log::info!("login.status_check");
     let result = state.client.check_login_status().await;

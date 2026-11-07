@@ -1,6 +1,10 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
-export const isWebBuild = import.meta.env.MODE === 'web';
+export const isDesktopWeb = typeof document !== 'undefined'
+  && document.querySelector('meta[name="coolapk-desktop-web"]') !== null;
+export const isWebBuild = import.meta.env.MODE === 'web' || isDesktopWeb;
+const desktopAccessKey = isDesktopWeb && new URLSearchParams(location.hash.slice(3)).get('web-access');
+if (desktopAccessKey) history.replaceState(null, '', location.pathname + '#/');
 
 let sessionReady: Promise<void> | undefined;
 
@@ -11,7 +15,11 @@ async function checkResponse(response: Response) {
 }
 
 export function initializeSession(): Promise<void> {
-  sessionReady ??= fetch('/api/session', { method: 'POST', credentials: 'same-origin' })
+  sessionReady ??= fetch('/api/session', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: desktopAccessKey ? { 'X-Coolapk-Web-Access': desktopAccessKey } : undefined,
+  })
     .then(checkResponse)
     .catch(error => {
       sessionReady = undefined;
@@ -42,13 +50,16 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
     body = JSON.stringify(args);
     path = 'command';
   }
+  return requestJson<T>(`/api/${path}/${encodeURIComponent(command)}`, { headers, body });
+}
+
+export async function requestJson<T>(path: string, options: Pick<RequestInit, 'headers' | 'body'>): Promise<T> {
   const session = initializeSession();
   await session;
-  const request = () => fetch(`/api/${path}/${encodeURIComponent(command)}`, {
+  const request = () => fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
-    headers,
-    body,
+    ...options,
   });
   let response = await request();
   if (response.status === 401) {

@@ -44,7 +44,8 @@
           粘贴官方 Android 酷安复制的完整日志或设备 ID，保存后用于应用请求的设备标识。iOS 官方酷安没有下述获取入口，可在电脑上的安卓虚拟机中安装官方 Android 酷安，获取设备 ID 后传到 iPhone / iPad，手动粘贴到此处并保存。
         </p>
         <p class="card-desc">
-          自动生成会联网向数盟获取 DUID，不会发送酷安账号或 Cookie。生成值保存在本机，登录后按账号分别保存，重启及同账号重新登录后继续复用；切换账号时使用各自保存的值，不覆盖手动配置。
+          自动生成会联网向数盟获取 DUID，不会发送酷安账号或 Cookie。
+          {{ isWebBuild ? '生成值保存在当前 Web 会话，登录后按账号分别保存，不覆盖手动配置。' : '生成值保存在本机，登录后按账号分别保存，重启及同账号重新登录后继续复用；切换账号时使用各自保存的值，不覆盖手动配置。' }}
         </p>
 
         <div class="device-id-input-row">
@@ -387,7 +388,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useSettingsStore, buildDeviceUserAgent } from '../../stores/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { loadDevicePresets, searchDevicePresets, groupDevicePresets, getDeviceSeries, getAndroidSdkWarning, resolveDeviceIdentity, type DevicePreset } from '../../utils/devicePresets';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isWebBuild } from '../../api/runtime';
 import { useAuthStore } from '../../stores/auth';
 import type { DeviceFingerprintSettings } from '../../types/settings';
 import { parseOrExtractDeviceId, isValidShuzlmDeviceId } from '../../utils/shuzilmDeviceGuide';
@@ -439,7 +440,7 @@ async function generateDeviceId() {
     const res = await invoke<any>('generate_device_identity');
     if (res?.code !== 200 || !res.data?.deviceId) throw new Error('未获取到有效设备 ID');
     deviceInfo.value = res.data;
-    showToast('设备 ID 已生成并保存，后续请求及重启后将继续复用', 'success');
+    showToast(isWebBuild ? '设备 ID 已生成，当前 Web 会话的后续请求会继续使用' : '设备 ID 已生成并保存，后续请求及重启后将继续复用', 'success');
     emit('deviceIdSaved');
   } catch (error) {
     // 原生层只返回受控错误，不展示服务端原始响应或生成请求中的标识。

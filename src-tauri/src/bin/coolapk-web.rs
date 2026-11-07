@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 #[path = "../coolapk/core_modules.rs"]
 mod coolapk;
+#[allow(dead_code)]
 #[path = "../web.rs"]
 mod web;
 #[path = "../coolapk/web_commands.rs"]

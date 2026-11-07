@@ -7,6 +7,11 @@ mod performance_diagnostics;
 pub mod download_manager;
 mod windows_tile;
 mod system_theme;
+#[cfg(desktop)]
+mod web;
+#[cfg(desktop)]
+#[path = "coolapk/web_commands.rs"]
+mod web_commands;
 
 use coolapk::client::CoolapkClient;
 use coolapk::commands::{get_user_plugins, save_user_plugins, claim_user_plugin};
@@ -971,7 +976,7 @@ pub fn run() {
     diagnostics::install_panic_hook();
     let client = CoolapkClient::new();
     let state = AppState {
-        client,
+        client: std::sync::Arc::new(client),
         downloads: DownloadManager::new(),
         login_session: std::sync::Mutex::new(None),
     };
@@ -1084,6 +1089,7 @@ pub fn run() {
             }
         })
         .manage(state)
+        .manage(crate::coolapk::commands::DesktopWebAccess::default())
         .manage(agent_bridge::AgentBridgeRuntime::default())
         .setup(|app| {
             diagnostics::begin_session(app.handle());
@@ -1526,6 +1532,7 @@ pub fn run() {
             coolapk::commands::initialize_device_identity,
             coolapk::commands::generate_device_identity,
             coolapk::commands::use_saved_device_identity,
+            coolapk::commands::desktop_web_access,
             list_accounts,
             login_as,
             save_account,

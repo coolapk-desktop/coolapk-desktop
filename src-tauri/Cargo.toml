@@ -107,6 +107,7 @@ zbus = { version = "5.18", optional = true }
 default = ["custom-protocol"]
 custom-protocol = ["native", "tauri/custom-protocol"]
 native = [
+    "web",
     "dep:tauri-build", "dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-notification",
     "dep:tauri-plugin-deep-link", "dep:tauri-plugin-http", "dep:tauri-plugin-store", "dep:semver",
     "dep:tracing", "dep:opener", "dep:tauri-plugin-log", "dep:tauri-plugin-fs",

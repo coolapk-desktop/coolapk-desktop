@@ -2,6 +2,18 @@
   <div class="settings-section">
     <h3 class="section-title">启动与行为设置</h3>
 
+    <div v-if="showDesktopLayoutSwitch" class="setting-group">
+      <h4 class="group-title">Web 访问</h4>
+      <div class="setting-row">
+        <div class="row-info">
+          <span class="row-label">启用 Web 访问</span>
+          <span class="row-sub">{{ webAccessError || '在本机浏览器使用当前桌面账号，退出应用时关闭' }}</span>
+        </div>
+        <button v-if="webAccessUrl" class="select-control" type="button" @click="openWebAccess">在浏览器打开</button>
+        <AppSwitch :model-value="!!webAccessUrl" @update:model-value="setWebAccess" />
+      </div>
+    </div>
+
     <div class="setting-group">
       <h4 class="group-title">启动</h4>
       <div class="setting-row">
@@ -234,10 +246,30 @@ import { computed, onMounted, ref } from 'vue';
 import { useSettingsStore } from '../../stores/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { getPlatformInfo, isTouchMobilePlatform } from '../../utils/platform';
+import { invoke } from '../../api/runtime';
 
 const settingsStore = useSettingsStore();
 // 桌面端语义的开关：手机上窗口永远窄，开了只会把移动外壳关掉，因此不展示。
 const showDesktopLayoutSwitch = !isTouchMobilePlatform();
+const webAccessUrl = ref<string | null>(null);
+const webAccessError = ref('');
+async function setWebAccess(enabled?: boolean) {
+  try {
+    webAccessUrl.value = await invoke<string | null>('desktop_web_access', { enabled });
+    webAccessError.value = '';
+  } catch {
+    if (enabled !== undefined) webAccessError.value = '无法切换 Web 访问，请重试';
+  }
+}
+async function openWebAccess() {
+  if (!webAccessUrl.value) return;
+  try {
+    await invoke('open_url', { url: webAccessUrl.value, mode: 'system' });
+  } catch {
+    webAccessError.value = '无法打开浏览器，请重试';
+  }
+}
+onMounted(() => { if (showDesktopLayoutSwitch) void setWebAccess(); });
 
 // 仅在 Windows 10 下展示动态磁贴设置与开发预览说明（Windows 11 已移除动态磁贴）。
 const showLiveTileSetting = ref(false);

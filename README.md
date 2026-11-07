@@ -139,7 +139,28 @@ npm run serve:web
 - `COOLAPK_WEB_ORIGIN` 填写浏览器访问的完整站点源，例如 `https://coolapk.example`。它用于校验 API 请求来源。
 - `COOLAPK_WEB_DIST` 默认读取当前目录下的 `dist-web`。它也可以指向独立部署的前端产物目录。
 
-浏览器使用 Cookie 导入登录，酷安凭据保存在服务进程内。会话闲置 12 小时或服务重启后，需要重新导入。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
+浏览器使用 Cookie 导入登录。会话闲置 12 小时后需要重新导入。未配置 `COOLAPK_WEB_DATA_DIR` 时，会话仅存在于服务进程内。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
+
+本机也可以通过 Docker 构建和运行。在仓库根目录执行：
+
+```powershell
+docker build -t coolapk-web .
+docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -e COOLAPK_WEB_ORIGIN=http://127.0.0.1:17521 -e COOLAPK_WEB_ALLOW_LOCAL_CONTAINER=1 -v coolapk-web-data:/var/lib/coolapk-web coolapk-web
+```
+
+访问 `http://127.0.0.1:17521`。本机 HTTP 模式只应将端口发布到 `127.0.0.1`。如果该端口已被占用，同时修改端口映射和 `COOLAPK_WEB_ORIGIN` 中的主机端口。
+
+桌面客户端可在「设置 → 启动与行为」启用 Web 访问，再点击「在浏览器打开」。浏览器使用桌面客户端的当前账号和草稿，界面偏好保存在各自客户端。服务仅监听本机。
+
+无头服务器可使用仓库的 `compose.yaml`。镜像发布到 GHCR 后运行 `docker compose up -d`。首次发布后，维护者需在 GitHub Packages 将镜像包设为公开，服务器即可匿名拉取。公网访问时，把 `COOLAPK_WEB_ORIGIN` 设为实际的 HTTPS 站点源，并将反向代理或隧道指向本机映射端口。命名卷保存浏览器会话、登录凭据和会话内的设备配置，请限制宿主机上的卷访问权限。
+
+正式 tag 发布对应版本镜像和 `latest`，测试版使用独立版本标签，main 构建发布 `sha-<提交号>`。服务器手动升级可运行 `docker compose pull && docker compose up -d`。需要自动跟随镜像标签时，可在宿主机 crontab 中添加以下任务，将路径换成 Compose 项目目录。
+
+```cron
+17 4 * * * cd /srv/coolapk-web && docker compose pull && docker compose up -d
+```
+
+要固定版本或回滚，在 Compose 的 `.env` 中将 `COOLAPK_WEB_IMAGE` 设为对应的 GHCR 版本标签，再执行升级命令。
 
 ### 原生客户端构建
 

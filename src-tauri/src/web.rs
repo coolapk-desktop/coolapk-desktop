@@ -39,7 +39,47 @@ const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_UPLOAD_BYTES: usize = 272 * 1024 * 1024;
 
 struct Session {
-    client: tokio::sync::Mutex<CoolapkClient>,
+    client: Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>,
+    persisted: Option<Mutex<(PathBuf, Value)>>,
+}
+
+impl Session {
+    fn refresh_expiry(&self) {
+        let Some(persisted) = &self.persisted else { return; };
+        let saved = persisted.lock().expect("web session snapshot lock");
+        if let Ok(file) = std::fs::File::open(&saved.0)
+            && file.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| {
+                time.elapsed().is_ok_and(|age| age >= Duration::from_secs(60))
+            })
+        {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
+    }
+
+    fn persist(&self, client: &CoolapkClient) -> Result<(), WebError> {
+        let Some(persisted) = &self.persisted else { return Ok(()); };
+        let mut saved = persisted.lock().expect("web session snapshot lock");
+        let snapshot = client.web_session_snapshot();
+        if saved.1 == snapshot {
+            return Ok(());
+        }
+        let temporary = saved.0.with_extension("tmp");
+        let write = || -> anyhow::Result<()> {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            serde_json::to_writer(options.open(&temporary)?, &snapshot)?;
+            std::fs::rename(&temporary, &saved.0)?;
+            Ok(())
+        };
+        write().map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法保存 Web 会话"))?;
+        saved.1 = snapshot;
+        Ok(())
+    }
 }
 
 struct SessionEntry {
@@ -51,6 +91,8 @@ struct WebState {
     origin: String,
     secure_cookie: bool,
     sessions: Mutex<HashMap<String, SessionEntry>>,
+    desktop: Option<(String, Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>)>,
+    session_dir: Option<PathBuf>,
     requests: tokio::sync::Semaphore,
     media_requests: tokio::sync::Semaphore,
     public_media: CoolapkClient,
@@ -98,11 +140,36 @@ impl WebState {
         for key in session_cookies(headers, self.cookie_name()) {
             if let Some(entry) = sessions.get_mut(key) {
                 entry.last_seen = now;
+                entry.session.refresh_expiry();
                 return Ok((Arc::clone(&entry.session), None));
+            }
+            if sessions.len() < MAX_SESSIONS
+                && let Some(dir) = &self.session_dir
+                && key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                let path = dir.join(format!("{key}.json"));
+                if let Ok(file) = std::fs::File::open(&path)
+                    && file.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| time.elapsed().is_ok_and(|age| age < SESSION_TTL))
+                    && let Ok(snapshot) = serde_json::from_reader::<_, Value>(file)
+                    && let Ok(client) = CoolapkClient::restore_web_session(&snapshot)
+                {
+                    let session = Arc::new(Session {
+                        client: Arc::new(tokio::sync::Mutex::new(Arc::new(client))),
+                        persisted: Some(Mutex::new((path, snapshot))),
+                    });
+                    session.refresh_expiry();
+                    sessions.insert(key.to_owned(), SessionEntry { session: Arc::clone(&session), last_seen: now });
+                    return Ok((session, None));
+                }
             }
         }
         if !create {
             return Err(error(StatusCode::UNAUTHORIZED, "浏览器会话已过期，请重试"));
+        }
+        if let Some((key, _)) = &self.desktop
+            && headers.get("x-coolapk-web-access").and_then(|value| value.to_str().ok()) != Some(key.as_str())
+        {
+            return Err(error(StatusCode::FORBIDDEN, "请从桌面客户端设置打开 Web 访问"));
         }
         if sessions.len() >= MAX_SESSIONS {
             return Err(error(
@@ -115,7 +182,9 @@ impl WebState {
             .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法创建浏览器会话"))?;
         let token = hex::encode(token);
         let session = Arc::new(Session {
-            client: tokio::sync::Mutex::new(CoolapkClient::new_web()),
+            client: self.desktop.as_ref().map(|(_, client)| Arc::clone(client))
+                .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(Arc::new(CoolapkClient::new_web())))),
+            persisted: self.session_dir.as_ref().map(|dir| Mutex::new((dir.join(format!("{token}.json")), Value::Null))),
         });
         sessions.insert(
             token.clone(),
@@ -172,7 +241,11 @@ async fn initialize_session(
     State(state): State<Arc<WebState>>,
     headers: HeaderMap,
 ) -> Result<Response, WebError> {
-    let (_, token) = state.session(&headers, true)?;
+    let (session, token) = state.session(&headers, true)?;
+    if session.persisted.is_some() {
+        let client = session.client.lock().await;
+        session.persist(&client)?;
+    }
     let mut response = StatusCode::NO_CONTENT.into_response();
     if let Some(token) = token {
         let secure = if state.secure_cookie { "; Secure" } else { "" };
@@ -259,8 +332,9 @@ async fn command(
             Err("请使用 Web 文件上传接口".into())
         }
         _ => dispatch_web_command(&client, &name, args).await,
-    }
-    .map_err(|message| error(StatusCode::BAD_REQUEST, &message))?;
+    };
+    session.persist(&client)?;
+    let result = result.map_err(|message| error(StatusCode::BAD_REQUEST, &message))?;
     Ok(Json(
         if matches!(
             name.as_str(),
@@ -655,7 +729,7 @@ fn static_cache_control(path: &str) -> Option<&'static str> {
     None
 }
 
-fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
+fn router_with_assets(state: Arc<WebState>, assets: Router, extra_api: Router<Arc<WebState>>) -> Router {
     let api = Router::new()
         .route("/session", post(initialize_session))
         .route("/download/apk", get(download_apk))
@@ -666,6 +740,7 @@ fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
             "/upload/{name}",
             post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
         )
+        .merge(extra_api)
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             check_request,
@@ -673,11 +748,7 @@ fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
         .with_state(state);
     Router::new()
         .nest("/api", api)
-        .fallback_service(
-            Router::new()
-                .fallback_service(ServeDir::new(dist))
-                .layer(CompressionLayer::new()),
-        )
+        .fallback_service(assets.layer(CompressionLayer::new()))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
                 let cache_control = static_cache_control(request.uri().path());
@@ -700,6 +771,115 @@ fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
         ))
 }
 
+#[cfg_attr(all(feature = "native", desktop), allow(dead_code))]
+fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
+    router_with_assets(state, Router::new().fallback_service(ServeDir::new(dist)), Router::new())
+}
+
+fn new_state(origin: String, secure_cookie: bool) -> WebState {
+    WebState {
+        origin,
+        secure_cookie,
+        sessions: Mutex::new(HashMap::new()),
+        desktop: None,
+        session_dir: None,
+        requests: tokio::sync::Semaphore::new(16),
+        media_requests: tokio::sync::Semaphore::new(8),
+        public_media: CoolapkClient::new(),
+        uploads: tokio::sync::Semaphore::new(2),
+        downloads: Arc::new(tokio::sync::Semaphore::new(4)),
+    }
+}
+
+#[cfg(all(feature = "native", desktop))]
+pub async fn start_desktop(
+    app: tauri::AppHandle,
+    client: Arc<CoolapkClient>,
+) -> Result<(String, tokio::task::JoinHandle<()>), String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
+    let address = listener.local_addr().map_err(|e| e.to_string())?;
+    let origin = format!("http://{address}");
+    let mut key = [0u8; 32];
+    getrandom::fill(&mut key).map_err(|_| "无法创建 Web 访问密钥")?;
+    let key = hex::encode(key);
+    let url = format!("{origin}/#/?web-access={key}");
+    let mut state = new_state(origin, false);
+    state.desktop = Some((key, Arc::new(tokio::sync::Mutex::new(client))));
+    let assets_app = app.clone();
+    let assets = Router::new().fallback(get(move |request: Request| {
+        let app = assets_app.clone();
+        async move {
+            let path = request.uri().path();
+            let asset_path = if path == "/" { "/index.html" } else { path };
+            let Some(asset) = app.asset_resolver().get(asset_path.to_owned()) else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            let bytes = if asset_path == "/index.html" {
+                let html = String::from_utf8_lossy(&asset.bytes);
+                html.replacen("<head>", "<head><meta name=\"coolapk-desktop-web\">", 1).into_bytes()
+            } else {
+                asset.bytes
+            };
+            ([(header::CONTENT_TYPE, asset.mime_type)], bytes).into_response()
+        }
+    }));
+    let drafts = Router::new().route(
+        "/desktop-drafts",
+        post(move |state, headers, request| desktop_drafts(app.clone(), state, headers, request))
+            .layer(DefaultBodyLimit::max(384 * 1024 * 1024)),
+    );
+    let router = router_with_assets(Arc::new(state), assets, drafts);
+    let task = tokio::spawn(async move {
+        if let Err(err) = axum::serve(listener, router).await {
+            log::warn!("Desktop Web stopped: {err}");
+        }
+    });
+    Ok((url, task))
+}
+
+#[cfg(all(feature = "native", desktop))]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopDraftRequest {
+    file_name: String,
+    key: String,
+    value: Option<Value>,
+}
+
+#[cfg(all(feature = "native", desktop))]
+async fn desktop_drafts(
+    app: tauri::AppHandle,
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+    request: Request,
+) -> Result<Json<Value>, WebError> {
+    use axum::extract::FromRequest;
+    use tauri_plugin_store::StoreExt;
+
+    state.session(&headers, false)?;
+    let _permit = state.uploads.try_acquire()
+        .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "草稿请求过多，请稍后重试"))?;
+    let Json(draft) = Json::<DesktopDraftRequest>::from_request(request, &state).await
+        .map_err(|_| error(StatusCode::BAD_REQUEST, "草稿参数无效或超出大小限制"))?;
+    if !matches!((draft.file_name.as_str(), draft.key.as_str()),
+        ("comment_drafts.json", "drafts") | ("publish_drafts.json", "drafts" | "fullDrafts"))
+    {
+        return Err(error(StatusCode::BAD_REQUEST, "草稿类型无效"));
+    }
+    let store = app.store(&draft.file_name)
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法打开桌面草稿"))?;
+    if let Some(value) = draft.value {
+        if !value.is_object() {
+            return Err(error(StatusCode::BAD_REQUEST, "草稿格式无效"));
+        }
+        store.set(&draft.key, value);
+        store.save().map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法保存桌面草稿"))?;
+        return Ok(Json(Value::Null));
+    }
+    Ok(Json(store.get(&draft.key).unwrap_or(Value::Null)))
+}
+
+#[cfg_attr(all(feature = "native", desktop), allow(dead_code))]
 pub async fn run() -> anyhow::Result<()> {
     let bind: SocketAddr = std::env::var("COOLAPK_WEB_BIND")
         .unwrap_or_else(|_| "127.0.0.1:17521".into())
@@ -715,8 +895,13 @@ pub async fn run() -> anyhow::Result<()> {
     let local_origin = url
         .host_str()
         .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
+    let allow_local_container =
+        std::env::var("COOLAPK_WEB_ALLOW_LOCAL_CONTAINER").as_deref() == Ok("1");
     ensure!(
-        secure_cookie || (url.scheme() == "http" && bind.ip().is_loopback() && local_origin),
+        secure_cookie
+            || (url.scheme() == "http"
+                && local_origin
+                && (bind.ip().is_loopback() || allow_local_container)),
         "非本机访问需要 HTTPS"
     );
     let dist =
@@ -725,16 +910,12 @@ pub async fn run() -> anyhow::Result<()> {
         dist.join("index.html").is_file(),
         "找不到 Web 构建产物，请先执行 npm run build:web"
     );
-    let state = Arc::new(WebState {
-        origin,
-        secure_cookie,
-        sessions: Mutex::new(HashMap::new()),
-        requests: tokio::sync::Semaphore::new(16),
-        media_requests: tokio::sync::Semaphore::new(8),
-        public_media: CoolapkClient::new(),
-        uploads: tokio::sync::Semaphore::new(2),
-        downloads: Arc::new(tokio::sync::Semaphore::new(4)),
-    });
+    let mut state = new_state(origin, secure_cookie);
+    if let Some(dir) = std::env::var_os("COOLAPK_WEB_DATA_DIR").map(PathBuf::from) {
+        std::fs::create_dir_all(&dir).context("无法创建 Web 会话目录")?;
+        state.session_dir = Some(dir);
+    }
+    let state = Arc::new(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     let cleanup_state = Arc::downgrade(&state);
     tokio::spawn(async move {
@@ -749,6 +930,23 @@ pub async fn run() -> anyhow::Result<()> {
                 .lock()
                 .expect("web sessions lock")
                 .retain(|_, entry| entry.last_seen.elapsed() < SESSION_TTL);
+            if let Some(dir) = &state.session_dir
+                && let Ok(entries) = std::fs::read_dir(dir)
+            {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "json")
+                        && path.file_stem().and_then(|name| name.to_str()).is_some_and(|key| {
+                            key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        })
+                        && entry.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| {
+                            time.elapsed().is_ok_and(|age| age >= SESSION_TTL + Duration::from_secs(60))
+                        })
+                    {
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+            }
         }
     });
     println!("Coolapk Web listening on {bind}");
@@ -766,6 +964,8 @@ mod tests {
             origin: "https://coolapk.example".into(),
             secure_cookie: true,
             sessions: Mutex::new(HashMap::new()),
+            desktop: None,
+            session_dir: None,
             requests: tokio::sync::Semaphore::new(16),
             media_requests: tokio::sync::Semaphore::new(8),
             public_media: CoolapkClient::new(),

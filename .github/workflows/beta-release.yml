@@ -59,6 +59,9 @@ jobs:
   build:
     name: 全平台构建与检查
     needs: prepare
+    permissions:
+      contents: write
+      packages: write
     uses: ./.github/workflows/build.yml
     with:
       build_version: ${{ needs.prepare.outputs.version }}

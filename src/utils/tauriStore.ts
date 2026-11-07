@@ -1,5 +1,5 @@
 import type { Store } from '@tauri-apps/plugin-store';
-import { isWebBuild } from '../api/runtime';
+import { isDesktopWeb, isWebBuild, requestJson } from '../api/runtime';
 
 interface StoreLike {
   get<T>(key: string): Promise<T | undefined>;
@@ -65,6 +65,17 @@ async function loadStore(fileName: string): Promise<StoreLike> {
   if (existing) return existing;
 
   const promise = (async () => {
+    if (isDesktopWeb && ['publish_drafts.json', 'comment_drafts.json'].includes(fileName)) {
+      const request = <T>(key: string, value?: unknown) => requestJson<T>('/api/desktop-drafts', {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName, key, value }),
+      });
+      return {
+        async get<T>(key: string) { return (await request<T | null>(key)) ?? undefined; },
+        async set(key: string, value: unknown) { await request(key, value); },
+        async save() {},
+      };
+    }
     if (isWebBuild) {
       try { return await openBrowserStore(fileName); }
       catch { return new MemoryStore(); }

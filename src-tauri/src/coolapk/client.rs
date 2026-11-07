@@ -537,7 +537,7 @@ fn build_forward_form(message: &str, pic: Option<&str>, forward_id: &str) -> Vec
 /// 设备信息覆盖配置（由设置页"设备信息"下发，作用于 API 请求头和设备身份）。
 /// 字段为 None 时使用客户端默认值；全部留空表示恢复默认。
 /// device_id 用于 X-App-Device；ddid 仅在服务端要求 DDI 的写接口中作为 Cookie 发送。
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceProfile {
     #[serde(default)]
@@ -1137,6 +1137,31 @@ impl CoolapkClient {
         client
     }
 
+    #[cfg(feature = "web")]
+    pub(crate) fn restore_web_session(snapshot: &Value) -> Result<Self, String> {
+        let client = Self::new_web();
+        if let Some(accounts) = snapshot.get("accounts").filter(|value| value.is_object()) {
+            client.save_accounts_root(accounts);
+            if let Some(id) = accounts["generatedGuestDeviceId"].as_str().filter(|id| super::shuzilm::valid_duid(id)) {
+                client.generated_identity.write().map_err(|_| "无法恢复设备 ID")?.guest_id = Some(id.to_owned());
+            }
+        }
+        if let Some(profile) = snapshot.get("deviceProfile") {
+            client.update_device_profile(serde_json::from_value(profile.clone()).map_err(|_| "无法恢复设备配置")?);
+        }
+        client.set_user_cookie(snapshot["cookie"].as_str().unwrap_or_default().to_owned())?;
+        Ok(client)
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) fn web_session_snapshot(&self) -> Value {
+        json!({
+            "accounts": self.load_accounts_root(),
+            "cookie": self.get_user_cookie(),
+            "deviceProfile": self.device_profile.read().expect("web device profile lock").clone(),
+        })
+    }
+
     fn api_client(&self) -> Result<Client, String> { self.client.read().map(|client| client.clone()).map_err(|_| "无法读取酷安 HTTP 客户端".to_string()) }
     fn api_redirect_client(&self) -> Result<Client, String> { self.redirect_client.read().map(|client| client.clone()).map_err(|_| "无法读取酷安重定向客户端".to_string()) }
 
@@ -1329,6 +1354,11 @@ impl CoolapkClient {
     }
 
     fn save_device_identity_root(&self, root: &Value) -> Result<(), String> {
+        #[cfg(feature = "web")]
+        if let Some(accounts) = &self.web_accounts {
+            *accounts.write().map_err(|_| "无法保存设备 ID")? = root.clone();
+            return Ok(());
+        }
         let path = self.accounts_file_path().ok_or("设备 ID 存储尚未初始化，请重启应用后重试")?;
         let text = serde_json::to_string_pretty(root).map_err(|_| "无法保存设备 ID")?;
         let temporary = path.with_extension("device-id.tmp");
