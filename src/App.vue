@@ -281,6 +281,31 @@ let updateTaskId = '';
 // 本次运行内是否已经用应用内提示替代过桌面通知，保证每会话只打扰一次。
 let downloadToastHintShown = false;
 
+// 下载中心里更新包镜像记录是「用户还想要这个更新包」的单一真值：
+// 记录被用户删除（单条删除 / 批量删除记录）时，更新器必须同步放弃，
+// 不能等下载完成后再弹安装窗或写入待安装键（下次启动又会弹）。
+// 注意 restorePendingUpdate 从待安装键恢复时不经过镜像记录，不设置该跟踪值。
+const trackedUpdateMirrorVersion = ref('');
+// 「被跟踪版本的镜像记录是否仍存在」写成一个 computed，由一个常驻 watcher 观察：
+// 若在 watcher 回调里再新建 watcher，每次版本变化都会留下一个不会销毁的监听器。
+const trackedUpdateMirrorStillExists = computed(() => {
+  const version = trackedUpdateMirrorVersion.value;
+  if (!version) return true;
+  return downloadStore.tasks.some((task) => isUpdateTask(task) && task.versionName === version);
+});
+watch(trackedUpdateMirrorStillExists, (stillExists) => {
+  if (stillExists || !trackedUpdateMirrorVersion.value) return;
+  // 镜像记录已不存在：更新器放弃该包。下载仍在途时无法中止原生下载，
+  // 完成回调会再次校验并清理包文件；此时若已就绪则立即撤下弹窗与待安装键。
+  trackedUpdateMirrorVersion.value = '';
+  localStorage.removeItem(PENDING_UPDATE_KEY);
+  readyInfo.value = null;
+  readyUpdateVisible.value = false;
+  if (!updateDownloadInFlight) {
+    void CoolapkTauriAPI.cleanupUpdatePackages().catch(() => undefined);
+  }
+});
+
 watch(() => settingsStore.settings.updateChannel, () => {
   updateChannelEpoch += 1;
   updateInfo.value = null;
@@ -485,6 +510,20 @@ async function startBackgroundDownload(info: UpdateInfo, manual = false) {
       downloadStore.removeUpdateTask(updateTaskId, false);
       return;
     }
+    // 用户可能在下载期间删除了更新包镜像记录（意图：不要这个更新包）。
+    // 此时不得弹安装窗、不得写待安装键，直接清理刚下载的包文件。
+    const mirrorStillExists = downloadStore.tasks.some((task) => isUpdateTask(task) && task.id === updateTaskId);
+    if (!mirrorStillExists) {
+      logDiagnostic('info', 'update', 'download_abandoned_mirror_removed');
+      try {
+        await CoolapkTauriAPI.cleanupUpdatePackages();
+      } catch (cleanupError) {
+        console.warn('清理已放弃的更新包失败:', cleanupError);
+      }
+      return;
+    }
+    // 与 appendUpdate 登记镜像时的 version 完全一致（未做 normalizeVersion），保证能按 versionName 对上。
+    trackedUpdateMirrorVersion.value = info.latestVersion || '新版本';
     readyInfo.value = {
       version: downloadedVersion,
       path,

@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
+import { reactive } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -50,8 +51,14 @@ vi.mock('../stores/downloads', () => ({
   isUpdateTask: (task: { kind?: string } | null | undefined) => task?.kind === 'update',
   useDownloadStore: () => ({
     initialize: vi.fn(),
-    tasks: mocks.storeTasks,
-    appendUpdate: vi.fn(() => ({ id: 'update-task' })),
+    // 用 getter 而非快照：用例内可替换成 reactive 数组来驱动镜像存在性 watcher。
+    get tasks() { return mocks.storeTasks; },
+    // 与真实 store 的 appendUpdate 一致：登记镜像时把记录推进任务列表。
+    appendUpdate: vi.fn((input: { version: string }) => {
+      const task = { id: 'update-task', kind: 'update', versionName: input.version };
+      mocks.storeTasks.push(task);
+      return task;
+    }),
     updateUpdateProgress: vi.fn(),
     markUpdateReady: vi.fn(),
     markUpdateFailed: vi.fn(),
@@ -281,6 +288,53 @@ describe('桌面自动更新交互', () => {
     await flushPromises();
     // 渠道切换属策略性清理：不写「用户删除」标记，切回原渠道后仍会自动提示。
     expect(mocks.removeUpdateTask).toHaveBeenCalledWith('update-task', false);
+  });
+
+  it('下载期间删除更新镜像记录后，完成时不弹安装窗、不写待安装键并清理包文件', async () => {
+    let finishDownload!: (path: string) => void;
+    mocks.downloadUpdate.mockImplementation(() => new Promise<string>((resolve) => { finishDownload = resolve; }));
+    mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9',
+      installerUrl: 'https://github.com/download/new.dmg', installerName: 'coolapk-desktop_9.9.9_aarch64.dmg',
+      packageType: 'installer', releaseNotes: '更新说明',
+    });
+    wrapper = mountApp();
+    await flushPromises();
+    window.dispatchEvent(new Event('check-for-update'));
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text().includes('后台下载更新'))!.trigger('click');
+    await flushPromises();
+    // 用户在下载期间从下载中心删除了该更新任务的镜像记录。
+    const index = mocks.storeTasks.findIndex((task) => task.id === 'update-task');
+    if (index >= 0) mocks.storeTasks.splice(index, 1);
+    finishDownload('/cache/coolapk-desktop_9.9.9_aarch64.dmg');
+    await flushPromises();
+    // 验收：不再弹「更新包已下载完成」，也不留下次启动会弹的待安装键；刚下载的包文件被清理。
+    expect(wrapper.text()).not.toContain('更新包已下载');
+    expect(localStorage.getItem('coolapk_pending_update')).toBeNull();
+    expect(mocks.desktopNotify).not.toHaveBeenCalled();
+    expect(mocks.showToast).not.toHaveBeenCalled();
+    expect(mocks.cleanup).toHaveBeenCalledWith();
+  });
+
+  it('删除已就绪更新记录后，安装弹窗撤下且待安装键被清除', async () => {
+    mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9',
+      installerUrl: 'https://github.com/download/new.dmg', installerName: 'coolapk-desktop_9.9.9_aarch64.dmg',
+      packageType: 'installer', releaseNotes: '更新说明',
+    });
+    mocks.storeTasks = reactive([]);
+    wrapper = mountApp();
+    await flushPromises();
+    window.dispatchEvent(new Event('check-for-update'));
+    await flushPromises();
+    await wrapper.findAll('button').find((button) => button.text().includes('后台下载更新'))!.trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('更新包已下载');
+    expect(localStorage.getItem('coolapk_pending_update')).not.toBeNull();
+    // 用户在下载中心删除这条更新记录 → 更新器同步放弃。
+    mocks.storeTasks.splice(0, mocks.storeTasks.length);
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('更新包已下载');
+    expect(localStorage.getItem('coolapk_pending_update')).toBeNull();
   });
 
   it('下载途中关闭测试渠道后，不保存测试包并重新检查正式版', async () => {

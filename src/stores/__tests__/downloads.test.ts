@@ -432,6 +432,25 @@ describe('下载管理队列', () => {
     }
   });
 
+  it('改全局下载目录后，旧任务继续下载仍使用入队时的目录快照', async () => {
+    let releaseFirst!: (value: unknown) => void;
+    mocks.startApkDownload.mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve; }));
+    const settings = useSettingsStore();
+    settings.settings.downloadPath = '/old/dir';
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '目录快照', packageName: 'com.demo.dir', versionName: '1.0.0' });
+    await settlePump();
+    // 验收口径：任务下载中更改全局下载目录，该任务完成/续传的文件仍落在加入队列时的目录。
+    settings.settings.downloadPath = '/new/dir';
+    releaseFirst({ status: 'paused', downloaded: 5, total: 100 });
+    await settlePump();
+    await store.resume(task.id);
+    await settlePump();
+    const dirs = mocks.startApkDownload.mock.calls.map((call) => call[0]!.dir);
+    expect(dirs.length).toBeGreaterThanOrEqual(2);
+    expect(dirs.every((dir) => dir === '/old/dir')).toBe(true);
+  });
+
   it('原生返回 downloaded: 0 时不会被旧进度覆盖', async () => {
     mocks.startApkDownload.mockImplementation(() => new Promise(() => {}));
     const store = useDownloadStore();
