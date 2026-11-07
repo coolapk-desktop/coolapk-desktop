@@ -1,7 +1,7 @@
 <template>
   <div class="settings-section">
     <h3 class="section-title">诊断日志</h3>
-    <p class="description">日志保存在本机，仅在你主动复制、导出或手动附加到 GitHub Issue 时离开应用。每个文件最多 2 MB，最多保留 4 个旧文件。</p>
+    <p class="description">日志保存在本机，仅在你主动复制、导出或手动附加到 GitHub Issue 时离开应用。每个文件最多 2 MB，最多保留 5 个日志文件（含当前文件）。</p>
 
     <div class="toolbar">
       <AppButton variant="secondary" size="sm" :loading="loading" :disabled="savingLogs" @click="loadLogs">刷新</AppButton>
@@ -19,7 +19,7 @@
         <option value="info">信息</option>
       </select>
       <input v-model="keyword" class="control search" type="search" placeholder="搜索日志内容" aria-label="搜索日志内容" />
-      <label v-if="canShowAll" class="verbose-toggle"><input v-model="showAll" type="checkbox" /> 显示全部行</label>
+      <label v-if="canShowAll" class="verbose-toggle"><input v-model="showAll" type="checkbox" @change="onShowAllChange(($event.target as HTMLInputElement).checked)" /> 显示全部行</label>
     </div>
 
     <p v-if="error" class="error-text">{{ error }}</p>
@@ -115,9 +115,13 @@ interface DiagnosticSnapshot {
   files: Array<{ name: string; size: number; modifiedAt: number }>;
   content: string;
   directory: string;
+  truncated?: boolean;
+  lineLimit?: number | null;
 }
 
 const snapshot = ref<DiagnosticSnapshot>({ files: [], content: '', directory: '' });
+/** 「显示全部行」时按需加载的完整日志；null 表示尚未加载。 */
+const fullContent = ref<string | null>(null);
 const loading = ref(false);
 const savingLogs = ref(false);
 const error = ref('');
@@ -128,23 +132,30 @@ const verbose = ref(false);
 const VIEW_LINE_LIMIT = 1000;
 const showAll = ref(false);
 
-/** 按级别/关键词过滤后的全部日志行（不做行数截断）。 */
+/** 当前用于展示与筛选的日志内容：显示全部且完整日志已加载时用完整日志，否则用快照（后端已按行截取）。 */
+const displayContent = computed(() => (showAll.value && fullContent.value !== null) ? fullContent.value : snapshot.value.content);
+
+/** 按级别/关键词过滤后的展示行（不做行数截断）。 */
 const filteredLines = computed(() => {
   const query = keyword.value.trim().toLowerCase();
-  return snapshot.value.content.split('\n').filter((line) => {
+  return displayContent.value.split('\n').filter((line) => {
     if (level.value !== 'all' && !line.toLowerCase().includes(`[${level.value}]`)) return false;
     return !query || line.toLowerCase().includes(query);
   });
 });
 
-/** 只有筛选后超过展示上限时才需要「显示全部」开关。 */
-const canShowAll = computed(() => filteredLines.value.length > VIEW_LINE_LIMIT);
+/** 后端已按行截取（truncated）或筛选后超过展示上限时，需要「显示全部」开关。 */
+const canShowAll = computed(() => !!snapshot.value.truncated || filteredLines.value.length > VIEW_LINE_LIMIT);
 
 const visibleLines = computed(() => showAll.value ? filteredLines.value : filteredLines.value.slice(-VIEW_LINE_LIMIT));
 
 /** 明确区分「屏幕显示的行」与「复制/导出内容」，两者不一致时必须标注。 */
 const linesSummary = computed(() => {
   const total = filteredLines.value.length;
+  if (showAll.value && fullContent.value !== null) return `已显示全部 ${total} 行（筛选后）`;
+  if (snapshot.value.truncated) {
+    return `仅显示最近 ${snapshot.value.lineLimit ?? VIEW_LINE_LIMIT} 行（复制/导出仍包含全部日志）`;
+  }
   if (total <= VIEW_LINE_LIMIT) return `${total} 行结果`;
   if (showAll.value) return `已显示全部 ${total} 行（筛选后）`;
   return `仅显示最近 ${VIEW_LINE_LIMIT} 行（共 ${total} 行；复制/导出仍包含全部日志）`;
@@ -153,19 +164,34 @@ const linesSummary = computed(() => {
 async function readLatestLogs(): Promise<string> {
   const latest = await invoke<DiagnosticSnapshot>('get_diagnostic_logs');
   snapshot.value = latest;
+  fullContent.value = null;
   return latest.content;
 }
 
+/** 页面展示走 Rust 侧按行截取的尾部快照，不再前端拉全量后裁剪。 */
 async function loadLogs() {
   if (loading.value) return;
   loading.value = true;
   error.value = '';
+  showAll.value = false;
+  fullContent.value = null;
   try {
-    await readLatestLogs();
+    snapshot.value = await invoke<DiagnosticSnapshot>('get_diagnostic_logs_tail', { lines: VIEW_LINE_LIMIT });
   } catch (cause) {
     error.value = `读取日志失败：${String(cause)}`;
   } finally {
     loading.value = false;
+  }
+}
+
+/** 勾选「显示全部行」且当前快照是后端截取的尾部时，按需加载完整日志。 */
+async function onShowAllChange(checked: boolean) {
+  if (!checked || !snapshot.value.truncated || fullContent.value !== null) return;
+  try {
+    fullContent.value = (await invoke<DiagnosticSnapshot>('get_diagnostic_logs')).content;
+  } catch (cause) {
+    showAll.value = false;
+    showToast(`读取完整日志失败：${String(cause)}`, 'error');
   }
 }
 

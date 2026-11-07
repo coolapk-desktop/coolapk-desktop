@@ -222,6 +222,12 @@ pub struct DiagnosticSnapshot {
     files: Vec<DiagnosticFile>,
     content: String,
     directory: String,
+    /// 本次快照是否发生过截断（按字节或按行）；导出全文时恒为 false。
+    #[serde(default)]
+    truncated: bool,
+    /// 按行截取模式下的行数上限；导出全文时为 None。
+    #[serde(default)]
+    line_limit: Option<usize>,
 }
 
 fn log_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -258,24 +264,47 @@ fn select_report_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
     selected
 }
 
-#[tauri::command]
-pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, String> {
+/// 取文本尾部最多 lines 行，返回（内容，是否截断）。
+fn tail_lines(content: &str, lines: usize) -> (String, bool) {
+    if lines == 0 {
+        return (String::new(), true);
+    }
+    let total = content.split('\n').count();
+    if total <= lines {
+        return (content.to_string(), false);
+    }
+    let tail: Vec<&str> = content.split('\n').skip(total - lines).collect();
+    (tail.join("\n"), true)
+}
+
+/// 两个命令共用的内部实现：line_limit 为 None 时导出全文（仅受字节尾部上限约束），
+/// Some(n) 时对每个文件再按行截取尾部 n 行，用于页面展示。
+fn collect_diagnostic_logs(app: &tauri::AppHandle, line_limit: Option<usize>) -> Result<DiagnosticSnapshot, String> {
     log::logger().flush();
-    let dir = log_dir(&app)?;
+    let dir = log_dir(app)?;
     let paths = list_log_paths(&dir)?;
     let mut files = Vec::new();
     let mut content = String::new();
+    let mut truncated = false;
     for path in select_report_paths(&paths) {
         let metadata = path.metadata().map_err(|error| error.to_string())?;
         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         let tail = &bytes[bytes.len().saturating_sub(MAX_TAIL_BYTES)..];
-        content.push_str(&format!("\n===== {name} =====\n"));
+        let mut part = format!("\n===== {name} =====\n");
         // 超长文件只导出尾部，必须显式标注，避免把截断后的内容当成完整日志。
         if bytes.len() > MAX_TAIL_BYTES {
-            content.push_str(&format!("<文件前部已截断，仅保留最近 {}MB>\n", MAX_TAIL_BYTES / 1_000_000));
+            truncated = true;
+            part.push_str(&format!("<文件前部已截断，仅保留最近 {}MB>\n", MAX_TAIL_BYTES / 1_000_000));
         }
-        content.push_str(&String::from_utf8_lossy(tail));
+        part.push_str(&String::from_utf8_lossy(tail));
+        if let Some(lines) = line_limit {
+            let (limited, was_truncated) = tail_lines(&part, lines);
+            truncated |= was_truncated;
+            content.push_str(&limited);
+        } else {
+            content.push_str(&part);
+        }
         files.push(DiagnosticFile {
             name,
             size: metadata.len(),
@@ -288,7 +317,21 @@ pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, 
         files,
         content,
         directory: dir.to_string_lossy().to_string(),
+        truncated,
+        line_limit,
     })
+}
+
+/// 导出/复制用的全文快照（每文件最多保留尾部 2MB 字节）。
+#[tauri::command]
+pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, String> {
+    collect_diagnostic_logs(&app, None)
+}
+
+/// 页面展示用的尾部快照：Rust 侧按行截取每个文件的尾部 lines 行，避免前端拉全量再裁剪。
+#[tauri::command]
+pub fn get_diagnostic_logs_tail(app: tauri::AppHandle, lines: usize) -> Result<DiagnosticSnapshot, String> {
+    collect_diagnostic_logs(&app, Some(lines.max(1)))
 }
 
 #[tauri::command]

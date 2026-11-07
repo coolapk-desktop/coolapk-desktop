@@ -29,9 +29,11 @@ import DiagnosticsSettingsPage from '../DiagnosticsSettingsPage.vue';
 describe('DiagnosticsSettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.invoke.mockImplementation((command: string) => command === 'get_diagnostic_logs'
-      ? Promise.resolve({ files: [{ name: 'coolapk-diagnostics.log', size: 8, modifiedAt: 1 }], content: '[INFO] app.ready', directory: '/logs' })
-      : Promise.resolve(undefined));
+    mocks.invoke.mockImplementation((command: string) => command === 'get_diagnostic_logs_tail'
+      ? Promise.resolve({ files: [{ name: 'coolapk-diagnostics.log', size: 8, modifiedAt: 1 }], content: '[INFO] app.ready', directory: '/logs', truncated: false, lineLimit: 1000 })
+      : command === 'get_diagnostic_logs'
+        ? Promise.resolve({ files: [{ name: 'coolapk-diagnostics.log', size: 8, modifiedAt: 1 }], content: '[INFO] app.ready', directory: '/logs', truncated: false })
+        : Promise.resolve(undefined));
     mocks.save.mockResolvedValue('content://documents/diagnostics');
     mocks.writeTextFile.mockResolvedValue(undefined);
     mocks.exportJsonFile.mockResolvedValue('/Downloads/coolapk-diagnostics.txt');
@@ -114,24 +116,30 @@ describe('DiagnosticsSettingsPage', () => {
     wrapper.unmount();
   });
 
-  it('只显示最近 1000 行时标注总行数，复制按钮明确为全部日志', async () => {
-    const lines = Array.from({ length: 1200 }, (_, index) => `[INFO] line-${index + 1}`);
-    mocks.invoke.mockResolvedValueOnce({ files: [], content: lines.join('\n'), directory: '/logs' });
+  it('展示走后端尾部快照并标注截断，显示全部时才加载完整日志', async () => {
+    const tailLines = Array.from({ length: 1000 }, (_, index) => `[INFO] line-${index + 201}`);
+    const fullLines = Array.from({ length: 1200 }, (_, index) => `[INFO] line-${index + 1}`);
+    mocks.invoke.mockImplementation((command: string) => command === 'get_diagnostic_logs_tail'
+      ? Promise.resolve({ files: [], content: tailLines.join('\n'), directory: '/logs', truncated: true, lineLimit: 1000 })
+      : Promise.resolve({ files: [], content: fullLines.join('\n'), directory: '/logs', truncated: false }));
     const wrapper = mount(DiagnosticsSettingsPage);
     await flushPromises();
+    expect(mocks.invoke).toHaveBeenCalledWith('get_diagnostic_logs_tail', { lines: 1000 });
     const summary = wrapper.find('.lines-summary').text();
     expect(summary).toContain('仅显示最近 1000 行');
-    expect(summary).toContain('共 1200 行');
     expect(summary).toContain('复制/导出仍包含全部日志');
+    // 展示阶段不应拉取全量日志。
+    expect(mocks.invoke).not.toHaveBeenCalledWith('get_diagnostic_logs');
     const copyButton = wrapper.findAll('button').find(button => button.text() === '复制全部日志')!;
     expect(copyButton.text()).toBe('复制全部日志');
     const shown = wrapper.find('.log-content').text().split('\n');
     expect(shown).toHaveLength(1000);
     expect(shown[0]).toBe('[INFO] line-201');
     expect(shown.at(-1)).toBe('[INFO] line-1200');
-    // 显示全部后屏幕内容与复制/导出一致，也不再有截断标注。
+    // 显示全部后才加载完整日志，屏幕内容与复制/导出一致，也不再有截断标注。
     await wrapper.find('.filters input[type="checkbox"]').setValue(true);
     await flushPromises();
+    expect(mocks.invoke).toHaveBeenCalledWith('get_diagnostic_logs');
     expect(wrapper.find('.log-content').text().split('\n')).toHaveLength(1200);
     expect(wrapper.find('.lines-summary').text()).toContain('已显示全部 1200 行');
     wrapper.unmount();
