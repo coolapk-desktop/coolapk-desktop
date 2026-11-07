@@ -61,7 +61,12 @@ vi.mock('../../api/coolapk', () => ({
 }));
 
 // FeedCard 用可寻址的 stub，方便从组件上触发 favorite-changed/deleted 事件。
-const FeedCardStub = { name: 'FeedCardStub', template: '<div class="feed-card-stub" />' };
+const FeedCardStub = {
+  name: 'FeedCardStub',
+  props: ['feed'],
+  // 渲染正文，便于断言「留下的是哪一条」。
+  template: '<div class="feed-card-stub">{{ feed && feed.message }}</div>',
+};
 
 import FavoritesPage from '../FavoritesPage.vue';
 import { useAuthStore } from '../../stores/auth';
@@ -159,6 +164,43 @@ describe('FavoritesPage 收藏页翻页与联动一致性', () => {
     // 条目数同步减 1：详情 item_num=20，移除后 19。
     expect(wrapper.findAll('.stat-value')[0].text()).toBe('19');
     expect(mocks.removeFavoriteContentIndexEntry).toHaveBeenCalledWith('10001', 'e2');
+    wrapper.unmount();
+  });
+
+  it('删除动态时按 entityId 命中实体包装条目并同步条目数', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+    itemRequests[0]!.resolve({ data: [entityOnlyItem(1), entityOnlyItem(2), entityOnlyItem(3)] });
+    await flushPromises();
+    expect(wrapper.findAll('.stat-value')[0].text()).toBe('20');
+
+    await wrapper.findComponent(FeedCardStub).vm.$emit('deleted', 'e3');
+    await flushPromises();
+
+    const remaining = wrapper.findAll('.collection-feed-item');
+    expect(remaining).toHaveLength(2);
+    // 删除动态与取消收藏同口径：条目数必须一起减，不能只消失条目。
+    expect(wrapper.findAll('.stat-value')[0].text()).toBe('19');
+    expect(mocks.removeFavoriteContentIndexEntry).toHaveBeenCalledWith('10001', 'e3');
+    wrapper.unmount();
+  });
+
+  it('收藏单内搜索命中正文索引时按 entityId 主键匹配实体包装条目', async () => {
+    mocks.searchFavoriteContentIndex.mockResolvedValue([{ feedId: 'e2' }]);
+    const wrapper = mountPage();
+    await flushPromises();
+    itemRequests[0]!.resolve({ data: [entityOnlyItem(1), entityOnlyItem(2)] });
+    await flushPromises();
+
+    await wrapper.get('.filter-search-input').setValue('独特词');
+    // 搜索有 180ms 防抖。
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    await flushPromises();
+
+    // 关键词不在标题/摘要里，只有正文索引命中才能留下 e2。
+    const remaining = wrapper.findAll('.collection-feed-item');
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]!.text()).toContain('收藏内容2');
     wrapper.unmount();
   });
 

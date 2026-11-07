@@ -450,6 +450,8 @@ export const useDownloadStore = defineStore('downloads', () => {
     // 同应用同版本可能存在多来源安装包（不同 apkId，或 xapk/apks 与 apk 并存），
     // 匹配键必须包含 kind 与 apkId：否则选来源 B 时会误命中来源 A 的旧任务，
     // 谎报「已在队列/已下载完成」，导致用户想要的安装包根本没进队列。
+    // 注意：目前 AppDetailPage 的两个入口（当前版本 / 版本历史）都只下载 apk 且不传 kind，
+    // kind 维度是为多形态安装包预留；真正区分来源靠 apkId，新增 xapk/apks 入口时必须显式传 kind。
     const existing = tasks.value.find((task) =>
       task.packageName === options.packageName
       && task.versionName === versionName
