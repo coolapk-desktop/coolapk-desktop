@@ -54,6 +54,7 @@ jobs:
       contents: read
       packages: write
     env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
       PUBLISH_IMAGE: ${{ github.event_name == 'push' || inputs.build_version != '' || (inputs.create_release && inputs.release_tag != '') }}
     steps:
       - uses: actions/checkout@v5
