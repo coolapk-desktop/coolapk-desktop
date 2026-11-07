@@ -223,6 +223,8 @@ import { preloadUserProfile } from '../../utils/userProfilePreloader';
 import {
   getCommentReplyRequestOptions,
   getExpectedCommentCount,
+  // 复用 commentList 的统一标识：楼中楼/游标/合并共用同一优先级，避免宿主各自实现互相矛盾
+  getReplyEntityId as commentRowId,
   getReplyData,
   getReplyPageCursor,
   hasMoreReplyPages,
@@ -735,11 +737,6 @@ function handleSendComment() {
   const answer = props.answer as any;
   const current = Number(answer?.replynum ?? answer?.replyNum ?? answer?.replyCount) || 0;
   answer.replynum = Math.max(0, current) + 1;
-}
-
-/** 回复实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
-function commentRowId(row: any): string {
-  return String(row?.id ?? row?.entityId ?? '').trim();
 }
 
 /** 合并后续页时按 id 去重：本地插入的回复可能又出现在服务端回包里。 */

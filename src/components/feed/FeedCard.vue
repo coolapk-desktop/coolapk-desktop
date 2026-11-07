@@ -388,6 +388,8 @@ import { generateTextDiffHtml, getDiffSummary } from '../../utils/textDiff';
 import {
   getCommentReplyRequestOptions,
   getExpectedCommentCount,
+  // 复用 commentList 的统一标识：楼中楼/游标/合并共用同一优先级，避免宿主各自实现互相矛盾
+  getReplyEntityId as commentRowId,
   getReplyData,
   getReplyPageCursor,
   hasMoreReplyPages,
@@ -1099,11 +1101,6 @@ function handleLikeChanged(payload: { feedId: string | number; liked: boolean; c
 /** 评论发表成功后本地累加计数，标题与底栏立即一致，不做整页重拉。 */
 function handleSendComment() {
   props.feed.replynum = Math.max(0, Number(props.feed.replynum) || 0) + 1;
-}
-
-/** 评论实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
-function commentRowId(row: any): string {
-  return String(row?.id ?? row?.entityId ?? '').trim();
 }
 
 /** 后续页回包可能带上刚就地插入的评论，合并时按 id 去重，避免同一评论在下一页重复出现。 */

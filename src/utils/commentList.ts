@@ -55,7 +55,13 @@ export function getReplyData(response: any): any[] {
 
 /** 评论/回复的唯一标识：回包有的只给 id，有的只给 entityId（APK 以 entityId 为准）。 */
 export function getReplyEntityId(item: any): string {
-  return String(item?.entityId ?? item?.id ?? '').trim();
+  // entityId 是接口主键，但帖子类回包偶尔给空串/空白：空值不能挡住 id 兜底，
+  // 否则该行会被当成「无标识」而在游标与去重里被漏掉。
+  const entityId = item?.entityId;
+  const primary = entityId === undefined || entityId === null || String(entityId).trim() === ''
+    ? item?.id
+    : entityId;
+  return String(primary ?? '').trim();
 }
 
 /** APK replyList 使用已加载评论的首尾 ID 作为下一页游标。 */

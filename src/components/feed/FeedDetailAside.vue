@@ -74,6 +74,8 @@ import { getFeedInteractionType } from '../../utils/feedInteractions';
 import {
   DEFAULT_COMMENT_SORT_MODE,
   getCommentReplyRequestOptions,
+  // 复用 commentList 的统一标识：与游标/合并共用同一优先级，避免宿主 id 优先的相反语义
+  getReplyEntityId as commentRowId,
   getExpectedCommentCount,
   getReplyData,
   getReplyPageCursor,
@@ -169,11 +171,6 @@ function removeComment(id: string | number) {
 /** 发表评论成功后本地累加计数：标题/底栏立即一致，不再整页重拉评论。 */
 function handleSendComment() {
   props.feed.replynum = Math.max(0, Number(props.feed?.replynum) || 0) + 1;
-}
-
-/** 评论实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
-function commentRowId(row: any): string {
-  return String(row?.id ?? row?.entityId ?? '').trim();
 }
 
 /**
