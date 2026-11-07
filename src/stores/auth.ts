@@ -4,6 +4,8 @@ import { CoolapkTauriAPI } from '../api/coolapk';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
 import { clearUserProfileCache } from '../utils/userProfilePreloader';
 import { useUserRelationsStore } from './userRelations';
+import { clearFeedFavorites } from './feedFavorites';
+import { clearGoodsRows } from './goodsRows';
 
 export interface UserProfile {
   uid: string | number;
@@ -44,6 +46,11 @@ export const useAuthStore = defineStore('auth', () => {
     clearUserProfileCache();
     // 关注关系带账号视角，切号/登出必须清掉，否则会显示上一个账号的关注状态。
     useUserRelationsStore().reset();
+    // 收藏态与好物行覆盖层是无账号维度的模块级注册表，切号/登出必须清空，
+    // 否则 FeedCard 会按注册表优先级显示上一个账号的收藏态与收藏计数。
+    // （两者均为纯模块、只依赖 vue，直接导入无循环依赖。）
+    clearFeedFavorites();
+    clearGoodsRows();
     user.value = null;
     isLoggedIn.value = false;
     rawCookie.value = '';
@@ -213,6 +220,9 @@ export const useAuthStore = defineStore('auth', () => {
       userAvatar: data.userAvatar || getAvatarUrlByUid(String(data.uid)),
       level: 1
     };
+    // 切号与登出同源：底层凭据已被 Rust 侧替换，前端注册表与账号维度缓存
+    // 必须整体清空（覆盖注册表无账号维度，留着会显示上一个账号的收藏态）。
+    clearFrontendAuthState();
     user.value = profile;
     isLoggedIn.value = true;
     clearResourceMemoryCache();

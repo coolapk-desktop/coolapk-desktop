@@ -129,7 +129,7 @@ export function feedFavoritesSizeForTests(): number {
   return states.size;
 }
 
-/** 主要供测试与极端重置场景使用。 */
+/** 切号/登出时由 clearFrontendAuthState() 调用：覆盖层无账号维度，不清会串号。 */
 export function clearFeedFavorites(): void {
   states.clear();
 }
