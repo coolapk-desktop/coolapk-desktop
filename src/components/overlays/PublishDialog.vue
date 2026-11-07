@@ -216,6 +216,7 @@ import { useRecentEmojis } from '../../utils/recentEmojis';
 import EmojiPanel from '../common/EmojiPanel.vue';
 import { isSystemEmoji, type EmojiPicture } from '../../utils/emojiPanel';
 import { showToast } from '../../utils/toast';
+import { requestConfirmation } from '../../utils/confirm';
 import { renderCoolapkRichText } from '../../utils/richText';
 import { extractFeedImageInputs, normalizeFeedImageItems } from '../../utils/livePhoto';
 import { listFullPublishDrafts, saveFullPublishDraft, deleteFullPublishDraft, restoreFullPublishDraft, type FullPublishDraft, type PublishDraftState } from '../../utils/publishDrafts';
@@ -331,6 +332,7 @@ const showDrafts = ref(false);
 const savingDraft = ref(false);
 let draftAccount = '';
 let sessionIsEdit = false;
+let editBaseline = '';
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
 let saveRevision = 0;
 let pendingDraftSave: Promise<void> | null = null;
@@ -348,6 +350,11 @@ onBeforeUnmount(() => {
 async function closePublish() {
   if (submitting.value || processingMedia.value) return;
   finishImageDrag();
+  // 编辑模式不落草稿：有关键改动时关闭前必须二次确认，无改动则直接关闭。
+  if (sessionIsEdit && editBaseline && !editLoading.value && !editLoadError.value && JSON.stringify(draftSnapshot()) !== editBaseline) {
+    const confirmed = await requestConfirmation({ title: '放弃修改？', message: '当前编辑内容尚未保存，关闭后将丢失这些修改。', confirmText: '放弃修改', danger: true });
+    if (!confirmed) return;
+  }
   try {
     // 正在进行的保存先结束，避免关闭瞬间用旧快照覆盖新草稿。
     if (pendingDraftSave) await pendingDraftSave.catch(() => {});
@@ -384,6 +391,8 @@ async function persistCurrentDraft() {
   try { await task; } finally { if (pendingDraftSave === task) pendingDraftSave = null; }
 }
 async function applyDraftState(state: PublishDraftState, id: string) {
+  // 切换/删除草稿必须使仍在途的图片解析失效，否则慢解析结果会落进切换后的草稿。
+  ++openRevision;
   restoringDraft = true;
   clearTimeout(draftTimer);
   draftId.value = id;
@@ -407,7 +416,13 @@ async function applyDraftState(state: PublishDraftState, id: string) {
 }
 async function switchDraft(draft: FullPublishDraft) {
   try { await persistCurrentDraft(); await applyDraftState(restoreFullPublishDraft(draft), draft.id); showDrafts.value = false; }
-  catch (failure) { errorMessage.value = `读取草稿失败：${failure instanceof Error ? failure.message : String(failure)}`; }
+  catch (failure) {
+    const reason = failure instanceof Error ? failure.message : String(failure);
+    errorMessage.value = `读取草稿失败：${reason}`;
+    // 媒体彻底损坏的草稿要有出路：确认后允许删除，避免每次点开都失败。
+    const confirmed = await requestConfirmation({ title: '草稿读取失败', message: `这份草稿的媒体数据已损坏（${reason}）。是否删除这份草稿？`, confirmText: '删除草稿', danger: true });
+    if (confirmed) await removeDraft(draft.id);
+  }
 }
 async function newDraft() {
   try {
@@ -462,6 +477,7 @@ watch(() => appStore.isPublishOpen, async (open) => {
     restoringDraft = true;
     draftAccount = String(authStore.user?.uid || 'guest');
     sessionIsEdit = isEditMode.value;
+    editBaseline = '';
     draftId.value = createUuid();
     showDrafts.value = false;
     showVisibility.value = false;
@@ -551,6 +567,7 @@ watch(() => appStore.isPublishOpen, async (open) => {
     await nextTick();
     renderEditor();
     restoringDraft = false;
+    if (sessionIsEdit && !editLoadError.value) editBaseline = JSON.stringify(draftSnapshot());
     nextTick(() => messageInput.value?.focus());
   }
 });
@@ -886,15 +903,18 @@ async function handleImageSelected(e: Event) {
   errorMessage.value = '';
   try {
   const companions = await originalLiveCompanions(files);
+  if (revision !== openRevision) { showToast('已切换草稿，本次选择的图片已丢弃', 'info'); return; }
   for (const image of images.value) { if (image.liveIdentifier && !image.liveVideo && companions.has(image.liveIdentifier)) { image.liveVideo = companions.get(image.liveIdentifier); image.url = undefined; } }
   const photoFiles = files.filter(file => !/\.(mov|mp4)$/i.test(file.name));
   const remain = MAX_IMAGES - images.value.length;
+  let dropped = 0;
   if (photoFiles.length > remain) errorMessage.value = `最多只能添加 ${MAX_IMAGES} 张图片`;
   // 顺序读取保证选择顺序，某张图片出错时保留其他可用图片。
   for (const file of photoFiles.slice(0, remain)) {
-    try { const image = await preparePublishImage(file); if (image.liveIdentifier && !image.liveVideo) image.liveVideo = companions.get(image.liveIdentifier); if (revision === openRevision && appStore.isPublishOpen && images.value.length < MAX_IMAGES) images.value.push(image); }
+    try { const image = await preparePublishImage(file); if (image.liveIdentifier && !image.liveVideo) image.liveVideo = companions.get(image.liveIdentifier); if (revision !== openRevision || !appStore.isPublishOpen) dropped++; else if (images.value.length < MAX_IMAGES) images.value.push(image); }
     catch (failure) { errorMessage.value = `${file.name}：${failure instanceof Error ? failure.message : String(failure)}`; }
   }
+  if (dropped) showToast(`已切换草稿，${dropped} 张解析完成的图片未添加`, 'info');
   if (!photoFiles.length && !companions.size) errorMessage.value = '所选文件不是实况原片中的动态文件；普通视频请从更多 → 视频上传';
   } catch (failure) { errorMessage.value = failure instanceof Error ? failure.message : String(failure); } finally { processingMedia.value = false; }
 }
@@ -1006,6 +1026,8 @@ async function handlePublish() {
   const articleImages = [articleState.value.cover, ...articleState.value.blocks.filter((block) => block.type === 'image').map((block) => block.image)].filter((image): image is PublishImage => !!image);
   const selectedImages = publishMode.value === 'article' ? articleImages : images.value;
   if (selectedImages.some(image => image.liveEnabled && !image.liveVideo)) { errorMessage.value = '实况照片缺少原始动态文件，请同时选择原片及对应 MOV，或选择仅静态照片'; return; }
+  const missingImage = selectedImages.findIndex(image => !image.url && !image.file);
+  if (missingImage >= 0) { errorMessage.value = `第 ${missingImage + 1} 张图片缺少图片数据，请移除后重新选择该图片`; return; }
   if (draftAccount !== String(authStore.user?.uid || 'guest')) { errorMessage.value = '账号已切换，请重新打开发帖页'; return; }
 
   if (!isEditMode.value) {

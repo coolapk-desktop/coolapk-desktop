@@ -217,6 +217,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import AppImage from '../common/AppImage.vue';
 import { normalizePublishArticleBlocks } from '../../utils/publishArticle';
+import { showToast } from '../../utils/toast';
 import type { PublishArticleBlock, PublishArticleState, PublishImage } from '../../utils/publishArticle';
 import { preparePublishImage } from '../../utils/publishMedia';
 
@@ -516,6 +517,24 @@ function nearestTextBlockId(blocks: PublishArticleBlock[], preferredIndex: numbe
   return null;
 }
 
+// 一步撤销：暂存最近被删除的块，删除后 5 秒内可从 toast 恢复。
+const lastRemovedBlock = ref<{ index: number; block: PublishArticleBlock } | null>(null);
+
+function undoRemoveBlock(): void {
+  const removed = lastRemovedBlock.value;
+  if (!removed || controlsDisabled.value) return;
+  lastRemovedBlock.value = null;
+  const blocks = [...props.modelValue.blocks];
+  blocks.splice(Math.min(removed.index, blocks.length), 0, removed.block);
+  emitState({ blocks });
+  if (removed.block.type === 'text') {
+    activeTextBlockId.value = removed.block.id;
+    const caret = removed.block.text.length;
+    savedSelections.set(removed.block.id, { start: caret, end: caret });
+    void focusTextBlock(removed.block.id, caret);
+  }
+}
+
 function removeBlock(index: number): void {
   if (controlsDisabled.value || index < 0 || index >= props.modelValue.blocks.length) return;
   const blocks = [...props.modelValue.blocks];
@@ -530,6 +549,8 @@ function removeBlock(index: number): void {
     void focusTextBlock(removed.id, 0);
     return;
   }
+  lastRemovedBlock.value = { index, block: removed };
+  showToast(removed.type === 'text' ? '已删除段落' : '已移除图片', 'info', 5000, { label: '撤销', onClick: () => undoRemoveBlock() });
   blocks.splice(index, 1);
   if (removed.type === 'text') {
     textAreaRefs.delete(removed.id);

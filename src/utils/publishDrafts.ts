@@ -87,7 +87,14 @@ export async function deleteFullPublishDraft(uid: string, id: string): Promise<v
 export function restoreFullPublishDraft(draft: FullPublishDraft): PublishDraftState {
   // 任意媒体损坏时整体停止恢复，防止用户不知情地发布缺图草稿。
   const state = draft.state;
-  const file = state.video ? restoreFile(state.video.file) : undefined;
+  // 视频损坏单独降级：丢视频保文字/图片，避免整份草稿永远打不开（图片仍严格校验）。
+  let video: PublishVideo | undefined;
+  if (state.video) {
+    try {
+      const file = restoreFile(state.video.file);
+      video = { ...state.video, file, cover: restoreFile(state.video.cover), preview: URL.createObjectURL(file) };
+    } catch { video = undefined; }
+  }
   const restoreImage = (image: StoredImage): PublishImage => ({ ...image, file: image.file ? restoreFile(image.file) : undefined, liveVideo: image.liveVideo ? restoreFile(image.liveVideo) : undefined });
   const article = state.article ? {
     ...state.article,
@@ -99,7 +106,7 @@ export function restoreFullPublishDraft(draft: FullPublishDraft): PublishDraftSt
       ? state.article.blocks.map((block): PublishArticleBlock => block.type === 'image' ? { ...block, image: restoreImage(block.image) } : { ...block })
       : []),
   } : undefined;
-  return { ...state, article, video: state.video && file ? { ...state.video, file, cover: restoreFile(state.video.cover), preview: URL.createObjectURL(file) } : undefined, images: state.images.map(restoreImage) };
+  return { ...state, article, video, images: state.images.map(restoreImage) };
 }
 
 interface PublishDraft {
