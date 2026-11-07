@@ -105,11 +105,18 @@ const buyUrl = computed(() => sourceGoods.value.product_goods_url || sourceGoods
 
 function openGoods() {
   const url = buyUrl.value;
-  if (!url) return;
+  if (!url) {
+    showToast('该好物暂无可打开的购买链接', 'info');
+    return;
+  }
   void CoolapkTauriAPI.openUrl(url, 'system');
 }
 
-const voteNum = ref(Number(props.item.goodsListInfo?.vote_num ?? props.item.vote_num ?? props.item.voteNum ?? 0));
+/**
+ * 票数直接读 props：父组件投票后会整体重拉 items，行组件因 key 不变被复用，
+ * 旧实现用 ref 快照初始化一次，重拉后仍显示本地 ±1 的估算值。
+ */
+const voteNum = computed(() => Number(props.item.goodsListInfo?.vote_num ?? props.item.vote_num ?? props.item.voteNum ?? 0));
 const isVoted = computed(() => {
   const value = props.item.goodsListInfo?.is_vote ?? props.item.isVote ?? props.item.is_vote;
   return value === true || value === 1 || value === '1';
@@ -133,7 +140,13 @@ async function handleVote() {
   try {
     await CoolapkTauriAPI.voteGoodsListItem(id, itemId, target ? 1 : -1);
     emit('vote', props.item, target ? 1 : -1);
-    voteNum.value = Math.max(0, voteNum.value + (target ? 1 : -1));
+    // 回写行对象本身（computed 才有可读来源）；父组件的重拉会以服务端数值为准覆盖。
+    const stats: any = props.item.goodsListInfo || props.item;
+    if (stats && typeof stats === 'object') {
+      stats.vote_num = Math.max(0, voteNum.value + (target ? 1 : -1));
+      // 投票态同样回写：否则按钮高亮要等父组件整页重拉才变化。
+      stats.is_vote = target ? 1 : 0;
+    }
   } catch (err) {
     showToast(getErrorMessage(err, '投票失败'), 'error');
   } finally {

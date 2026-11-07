@@ -54,7 +54,12 @@
     </div>
 
     <div v-else-if="items.length === 0 && allItems.length > 0" class="state-wrapper">
-      <EmptyState title="该分类暂无好物" description="切换其他分类看看" />
+      <!-- 分类是前端对「已加载行」的过滤：还没翻完就宣判「暂无」会误导用户。 -->
+      <EmptyState
+        :title="activeType && !noMore ? '该分类在已加载内容中暂无' : '该分类暂无好物'"
+        :description="activeType && !noMore ? '继续加载下一页，可能会找到该分类的内容' : '切换其他分类看看'"
+      />
+      <AppButton v-if="activeType && !noMore" size="sm" @click="load(false)">加载更多</AppButton>
     </div>
 
     <div v-else-if="allItems.length === 0" class="state-wrapper">
@@ -125,6 +130,7 @@ import EmptyState from '../common/EmptyState.vue';
 import CreateGoodsListDialog from './CreateGoodsListDialog.vue';
 import { useAuthStore } from '../../stores/auth';
 import { applyGoodsRows, getGoodsRowState, type GoodsRowState } from '../../stores/goodsRows';
+import { showToast } from '../../utils/toast';
 
 const props = withDefaults(
   defineProps<{
@@ -278,7 +284,11 @@ function selectType(_type: string) {
 
 function openDetail(item: any) {
   const id = String(item?.id ?? item?.entityId ?? '');
-  if (!id) return;
+  if (!id) {
+    // 卡片可点击却毫无反应，用户无法判断是加载失败还是缺数据。
+    showToast('该条目缺少标识，暂时无法打开', 'info');
+    return;
+  }
   router.push(`${detailBase.value}/${id}`);
 }
 

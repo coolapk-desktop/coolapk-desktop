@@ -202,8 +202,21 @@ const activeSortOption = computed(
   () => sortOptions.find((o) => o.key === activeSort.value) || sortOptions[0],
 );
 
+/**
+ * 行去重键：优先稳定 id；没有 id 时用「标题 + 商城 + 价格 + 购买链接」组合。
+ * 旧实现只拼标题和商城名，接口返回两条同标题占位行时会得到同一个键，
+ * 后续同键行会被去重逻辑整批丢弃。仍拼不出可用键时返回空串，调用方按「无键不过滤」处理。
+ */
 function goodsKey(goods: any): string {
-  return String(goods?.id ?? goods?.entityId ?? `${goods?.goods_title}-${goods?.mall_title}`);
+  const stable = goods?.id ?? goods?.entityId ?? goods?.product_goods_id;
+  if (stable !== undefined && stable !== null && String(stable).trim()) return String(stable);
+  const parts = [
+    goods?.goods_title,
+    goods?.mall_title,
+    goods?.goods_promo_price,
+    goods?.goods_buy_url || goods?.goods_url,
+  ].map((value) => String(value ?? '').trim());
+  return parts.some(Boolean) ? parts.join('|') : '';
 }
 
 function goodsPic(goods: any): string {
@@ -381,8 +394,9 @@ async function loadMore() {
     if (list.length === 0) {
       noMore.value = true;
     } else {
-      const existing = new Set(goods.value.map(goodsKey));
-      goods.value.push(...list.filter((i: any) => !existing.has(goodsKey(i))));
+      const existing = new Set(goods.value.map(goodsKey).filter(Boolean));
+      // 无稳定键的行不参与去重：宁可多显示一条，也不能把异常行当重复静默丢掉。
+      goods.value.push(...list.filter((i: any) => { const key = goodsKey(i); return !key || !existing.has(key); }));
       page.value++;
     }
   } catch (err: any) {
@@ -472,7 +486,11 @@ function handleScroll(e: Event) {
 
 function openGoods(goods: any) {
   const buyUrl = goods?.goods_buy_url || goods?.goods_url || '';
-  if (!buyUrl) return;
+  if (!buyUrl) {
+    // 卡片 cursor 是 pointer，静默 return 会让用户以为界面卡死。
+    showToast('该好物暂无可打开的购买链接', 'info');
+    return;
+  }
   void CoolapkTauriAPI.openUrl(buyUrl, 'system');
 }
 

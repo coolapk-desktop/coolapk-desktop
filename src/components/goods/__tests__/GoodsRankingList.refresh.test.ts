@@ -22,6 +22,9 @@ vi.mock('vue-router', async (importOriginal) => {
   return { ...actual, useRouter: () => ({ push: mocks.routerPush }) };
 });
 
+const toastMocks = vi.hoisted(() => ({ showToast: vi.fn() }));
+vi.mock('../../../utils/toast', () => ({ showToast: toastMocks.showToast }));
+
 import GoodsRankingList from '../GoodsRankingList.vue';
 
 const row = (id: string, title: string) => ({
@@ -43,7 +46,14 @@ async function mountInKeepAlive() {
     attachTo: document.body,
     global: {
       plugins: [createPinia(), router],
-      stubs: { AppButton: true, AppImage: true, LoadingState: true, ErrorState: true, EmptyState: true, CreateGoodsListDialog: true },
+      stubs: {
+        AppButton: { props: ['size', 'variant', 'icon'], template: '<button class="app-button"><slot /></button>' },
+        AppImage: true,
+        LoadingState: true,
+        ErrorState: true,
+        EmptyState: { props: ['title', 'description'], template: '<div class="empty-state"><div class="empty-title">{{ title }}</div><div class="empty-desc">{{ description }}</div></div>' },
+        CreateGoodsListDialog: true,
+      },
     },
   });
   await flushPromises();
@@ -84,6 +94,40 @@ describe('好物清单列表：返回时静默刷新与滚动源判定', () => {
       // 不得因为合并把已有行丢掉
       expect(ctx.wrapper.text()).toContain('清单A');
       expect(ctx.wrapper.text()).toContain('清单B');
+    } finally {
+      ctx.wrapper.unmount();
+    }
+  });
+
+  it('分类筛选后未加载页里可能有命中时，提示继续加载而不是宣判「暂无」', async () => {
+    mocks.getGoodsListTypes.mockResolvedValue({ data: [{ id: '2', title: '分类二' }] });
+    mocks.getGoodsList.mockResolvedValue({ data: [row('a', '清单A')] });
+    const ctx = await mountInKeepAlive();
+    try {
+      // 已加载的行都属于分类 1，切到分类 2 时本地结果为空但后面还有分页
+      const chips = ctx.wrapper.findAll('.category-chip');
+      const typeChip = chips.find((chip) => chip.text().includes('分类二'));
+      expect(typeChip).toBeDefined();
+      await typeChip!.trigger('click');
+      await flushPromises();
+
+      expect(ctx.wrapper.get('.empty-title').text()).toContain('已加载内容中暂无');
+      expect(ctx.wrapper.get('.empty-desc').text()).toContain('继续加载下一页');
+      expect(ctx.wrapper.findAll('button').some((b) => b.text().includes('加载更多'))).toBe(true);
+    } finally {
+      ctx.wrapper.unmount();
+    }
+  });
+
+  it('没有标识的条目点击时给出提示，而不是静默无反应', async () => {
+    mocks.getGoodsListTypes.mockResolvedValue({ data: [] });
+    mocks.getGoodsList.mockResolvedValue({ data: [{ uid: '9', dateline: '1700000000', goodsListInfo: { title: '无 id 清单' } }] });
+    const ctx = await mountInKeepAlive();
+    try {
+      await ctx.wrapper.get('.goods-list-card').trigger('click');
+      await flushPromises();
+      expect(mocks.routerPush).not.toHaveBeenCalled();
+      expect(String(toastMocks.showToast.mock.calls.at(-1)![0])).toContain('缺少标识');
     } finally {
       ctx.wrapper.unmount();
     }

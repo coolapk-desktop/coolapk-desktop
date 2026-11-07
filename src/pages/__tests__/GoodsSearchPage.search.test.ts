@@ -7,9 +7,12 @@ const mocks = vi.hoisted(() => ({
   searchGoods: vi.fn(),
   getGoodsSearchHotWords: vi.fn().mockResolvedValue({ data: [] }),
   openUrl: vi.fn(),
+  showToast: vi.fn(),
 }));
 
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
+
+vi.mock('../../utils/toast', () => ({ showToast: mocks.showToast }));
 
 import GoodsSearchPage from '../GoodsSearchPage.vue';
 
@@ -137,6 +140,50 @@ describe('好物搜索：请求竞态与地址栏状态', () => {
       expect(wrapper.get('.filter-option.is-active').text()).toBe('销量');
       expect(wrapper.get('.coupon-toggle').classes()).toContain('is-on');
       expect(wrapper.text()).toContain('路由恢复结果');
+    } finally {
+      wrapper.unmount();
+    }
+  });
+});
+
+describe('好物搜索：去重键与无链接反馈', () => {
+  it('两条无 id 且同标题的异常行都要显示，不能被当成重复整批丢掉', async () => {
+    mocks.searchGoods.mockReset();
+    mocks.getGoodsSearchHotWords.mockResolvedValue({ data: [] });
+    mocks.searchGoods.mockResolvedValueOnce({
+      data: [
+        { goods_title: '占位条', mall_title: '京东' },
+        { goods_title: '占位条', mall_title: '京东', goods_promo_price: '19.9' },
+      ],
+    });
+    const { wrapper } = await mountPage();
+    try {
+      const input = wrapper.get('.search-input');
+      await input.setValue('占位');
+      await input.trigger('keyup.enter');
+      await flushPromises();
+      // 两条同标题异常行没有稳定 id：既要能各自成键，也不能因为键相同而丢一条
+      expect(wrapper.findAll('.goods-card')).toHaveLength(2);
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
+  it('没有购买链接的好物点击后给出提示，而不是静默无反应', async () => {
+    mocks.searchGoods.mockReset();
+    mocks.getGoodsSearchHotWords.mockResolvedValue({ data: [] });
+    mocks.searchGoods.mockResolvedValueOnce({ data: [{ id: 'n1', goods_title: '无链接商品', mall_title: '京东' }] });
+    const { wrapper } = await mountPage();
+    try {
+      const input = wrapper.get('.search-input');
+      await input.setValue('无链接');
+      await input.trigger('keyup.enter');
+      await flushPromises();
+
+      await wrapper.get('.goods-card').trigger('click');
+      await flushPromises();
+      expect(mocks.openUrl).not.toHaveBeenCalled();
+      expect(mocks.showToast.mock.calls.at(-1)![0]).toContain('暂无');
     } finally {
       wrapper.unmount();
     }

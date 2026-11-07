@@ -331,21 +331,23 @@ async function toggleFavorite() {
   const target = !favorite.value;
   favoriteBusy.value = true;
   try {
-    await CoolapkTauriAPI.setFeedCloudFavorite(props.feedId, target, 'goodsList');
+    const response: any = await CoolapkTauriAPI.setFeedCloudFavorite(props.feedId, target, 'goodsList');
     favorite.value = target;
+    // 服务端返回真实计数时以它为准：重复收藏/取消会被服务端去重，纯本地 ±1 会长期漂移。
+    const serverFavnum = Number(response?.data?.favnum ?? response?.data?.fav_num ?? response?.favnum);
     // 回写详情实体：动作栏的收藏态与 favnum 都从 feed 读，收藏后必须同步计数。
     // 注意：本页只拿到 feedId，feed 详情是自己拉的一份副本（清单页列表持有另一份对象），
     // 因此这里只能保证本页一致，跨页面同步需列表页自身刷新。
     if (feed.value) {
-      syncFavoriteToFeed(feed.value, {
-        favorited: target,
-        favnum: Math.max(0, Number(feed.value.favnum || 0) + (target ? 1 : -1)),
-      });
+      const nextFavnum = Number.isFinite(serverFavnum) && serverFavnum >= 0
+        ? serverFavnum
+        : Math.max(0, Number(feed.value.favnum || 0) + (target ? 1 : -1));
+      syncFavoriteToFeed(feed.value, { favorited: target, favnum: nextFavnum });
       // 跨页同步：清单/榜单页持有另一份行对象，经行状态注册表按 id 共享最新收藏态与计数，
       // 返回列表时不必等静默刷新落地就能看到正确状态。
       setGoodsRowState(String(props.feedId), {
         favorited: target,
-        favnum: Math.max(0, Number(feed.value.favnum || 0)),
+        favnum: Number(feed.value.favnum || 0),
       });
     }
   } catch (err) { showToast(getErrorMessage(err, '收藏失败'), 'error'); }

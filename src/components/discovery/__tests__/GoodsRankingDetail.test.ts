@@ -68,4 +68,19 @@ describe('好物榜详情', () => {
     expect(openComposer).toHaveBeenCalledOnce();
     w.unmount();
   });
+
+  it('收藏接口返回真实计数时以服务端为准，不再本地 ±1', async () => {
+    const detail = { id: 123, uid: 8, favnum: 2, goodsListInfo: { title: '鼠标榜' }, goodsListItem: [] } as Record<string, any>;
+    api.getFeedDetail.mockResolvedValue({ data: detail });
+    // 服务端去重后返回 7（本地 ±1 会算成 3）：必须以服务端为准
+    api.setFeedCloudFavorite.mockResolvedValue({ code: 200, data: { favnum: 7 } });
+    const w = shallowMount(GoodsListDetailBody, { props: { feedId: '123', kind: 'ranking' }, global: { stubs: { FeedCommentSection: { name: 'FeedCommentSection', props: ['officialDetail'], template: '<div />' } } } });
+    await flushPromises();
+    const actions = w.findComponent(FeedActionBar);
+    actions.vm.$emit('toggle-fav');
+    await flushPromises();
+    expect(detail.favnum).toBe(7);
+    expect(actions.props('favnum')).toBe(7);
+    w.unmount();
+  });
 });
