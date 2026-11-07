@@ -148,7 +148,6 @@ npm run serve:web
 在浏览器打开 `http://127.0.0.1:17521`。正式运行可通过 `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin coolapk-web` 构建服务，将二进制与 `dist-web` 一起部署。
 
 - `COOLAPK_WEB_BIND` 默认是 `127.0.0.1:17521`。远程访问时，在前面配置 HTTPS 反向代理，将页面和 `/api` 转发到同一服务。
-- `COOLAPK_WEB_ORIGIN` 填写浏览器访问的完整站点源，例如 `https://coolapk.example`。它用于校验 API 请求来源。
 - `COOLAPK_WEB_DIST` 默认读取当前目录下的 `dist-web`。它也可以指向独立部署的前端产物目录。
 
 浏览器使用 Cookie 导入登录。Web 服务不会因闲置而注销登录。配置 `COOLAPK_WEB_DATA_DIR` 后，只要浏览器仍保留本站会话 Cookie 且酷安登录凭据有效，重启服务后也能恢复登录。未配置时，会话仅保存在服务进程内，重启后需要重新登录。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
@@ -157,18 +156,20 @@ npm run serve:web
 
 ```powershell
 docker build -t coolapk-web .
-docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -e COOLAPK_WEB_ORIGIN=http://127.0.0.1:17521 -e COOLAPK_WEB_ALLOW_LOCAL_CONTAINER=1 -v coolapk-web-data:/var/lib/coolapk-web coolapk-web
+docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -v coolapk-web-data:/var/lib/coolapk-web coolapk-web
 ```
 
-访问 `http://127.0.0.1:17521`。本机 HTTP 模式只应将端口发布到 `127.0.0.1`。如果该端口已被占用，同时修改端口映射和 `COOLAPK_WEB_ORIGIN` 中的主机端口。
+访问 `http://127.0.0.1:17521`。本机 HTTP 模式只应将端口发布到 `127.0.0.1`。如果该端口已被占用，修改端口映射左侧的主机端口即可。
 
 桌面客户端可在「设置 → 启动与行为」启用 Web 访问，再点击「在浏览器打开」。应用会记住开关和访问范围，下次启动时自动恢复。浏览器使用桌面客户端的当前账号和草稿，界面偏好保存在各自客户端。
 
 需要从另一台设备访问时，将访问范围设为「本机 + 局域网」，启用 Web 访问后点击「复制链接」。应用会自动选择局域网地址，桌面本机仍可点击「在浏览器打开」。局域网 HTTP 连接未加密，同一网络中能访问该地址的人可使用当前桌面账号，请仅在可信网络使用。若无法连接，检查两台设备是否在同一局域网，以及防火墙是否允许桌面应用接收入站连接。
 
-无头服务器可使用仓库的 `compose.yaml`。镜像发布到 GHCR 后运行 `docker compose up -d`。首次发布后，维护者需在 GitHub Packages 将镜像包设为公开，服务器即可匿名拉取。公网访问时，把 `COOLAPK_WEB_ORIGIN` 设为实际的 HTTPS 站点源，并将反向代理或隧道指向本机映射端口。命名卷保存浏览器会话、登录凭据和会话内的设备配置，请限制宿主机上的卷访问权限。
+无头服务器可运行 `docker compose up -d` 拉取并启动镜像。Compose 默认使用 GHCR 的 `:latest` 标签，首次正式版镜像发布后即可拉取。启动后访问 `http://127.0.0.1:17521`。
 
-正式 tag 发布对应版本镜像和 `latest`，测试版使用独立版本标签，main 构建发布 `sha-<提交号>`。服务器手动升级可运行 `docker compose pull && docker compose up -d`。需要自动跟随镜像标签时，可在宿主机 crontab 中添加以下任务，将路径换成 Compose 项目目录。
+公网访问时，将 HTTPS 反向代理或 Cloudflare Tunnel 指向本机映射端口。应用会根据浏览器请求识别访问地址，无需额外设置域名和端口。命名卷保存浏览器会话、登录凭据和会话内的设备配置，请限制宿主机上的卷访问权限。
+
+正式版更新 `:latest`，测试版使用各自的版本标签，main 分支构建发布 `sha-<提交号>`。运行 `docker compose pull && docker compose up -d` 可更新到当前标签指向的构建。需要定时更新时，可在宿主机 crontab 中添加以下任务，将路径换成 Compose 项目目录。
 
 ```cron
 17 4 * * * cd /srv/coolapk-web && docker compose pull && docker compose up -d
