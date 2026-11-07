@@ -144,7 +144,6 @@
     />
 
     <!-- 1. 被回复/转发的原动态 -->
-    <!-- 1. 被回复/转发的原动态 -->
     <div
       v-if="isTargetFeed && targetRow"
       class="quoted-feed-box"
@@ -422,7 +421,7 @@ import { getFeedInteractionType } from '../../utils/feedInteractions';
 import { hasActiveTextSelection } from '../../utils/selection';
 import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from '../../utils/favoriteContentIndex';
 import { syncFavoriteToFeed as writeFavoriteToFeed } from '../../utils/feedFavorite';
-import { getFeedFavoriteState } from '../../stores/feedFavorites';
+import { getFeedFavoriteState, setFeedFavoriteState } from '../../stores/feedFavorites';
 
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
@@ -1087,7 +1086,10 @@ async function handleDeleteFeed() {
 }
 
 function removeComment(id: string | number) {
+  const existed = comments.value.some((c: any) => String(c.id) === String(id));
   comments.value = comments.value.filter((c: any) => String(c.id) !== String(id));
+  // 删除成功后回减计数，与发表评论时的 +1 对称，避免总评论数只增不减。
+  if (existed) props.feed.replynum = Math.max(0, Number(props.feed.replynum) || 0) - 1;
 }
 
 /**
@@ -1250,6 +1252,9 @@ async function toggleFav() {
     await CoolapkTauriAPI.setFeedCloudFavorite(id, target, feedType, trace);
     isFav.value = target;
     favnum.value = Math.max(0, favnum.value + (target ? 1 : -1));
+    // 直接取消收藏不走收藏夹选择器，必须显式把注册表覆盖值同步为最新状态；
+    // 否则其它副本卡片初始化时会读到旧的「已收藏」覆盖值，与云端不一致。
+    setFeedFavoriteState(id, { favorited: target, favnum: favnum.value });
     if (target) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(target ? '已收藏到云端' : '已取消云端收藏', 'success');
@@ -1369,6 +1374,9 @@ function updateCommentCursor(pageReplies: any[], resetFirst = false) {
 
 async function loadMoreComments() {
   if (
+    // 用户已收起评论（可能发生在第 1 页请求进行中）就不继续请求和写入隐藏列表，
+    // 重新展开时 openComments 会按当前页码继续拉取。
+    !showComments.value ||
     !hasMoreComments.value ||
     commentsLoading.value ||
     commentsLoadingMore.value
