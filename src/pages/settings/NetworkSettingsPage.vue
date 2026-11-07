@@ -32,13 +32,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { onBeforeRouteLeave, useRoute } from 'vue-router';
+import { computed, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
-import { usePageTabsStore } from '../../stores/pageTabs';
-import { getPageTabId } from '../../utils/pageTabs';
-import { requestConfirmation } from '../../utils/confirm';
+import { useUnsavedChangesGuard } from '../../utils/useUnsavedChangesGuard';
 
 type ProxyType = 'http' | 'https' | 'socks4' | 'socks4a' | 'socks5' | 'socks5h';
 const proxyTypes: ProxyType[] = ['http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h'];
@@ -91,36 +88,12 @@ function discardDraft() {
   testResult.value = '';
 }
 
-// 路由离开和关闭页面标签都可能丢弃草稿，统一走同一份确认。
-async function confirmLeaveWithUnsavedChanges(): Promise<boolean> {
-  if (!hasUnsavedChanges.value) return true;
-  const confirmed = await requestConfirmation({
-    title: '放弃未保存的代理设置？',
-    message: '代理设置尚未应用，离开后本次修改将不会生效。',
-    confirmText: '放弃修改',
-    danger: true
-  });
-  if (confirmed) discardDraft();
-  return confirmed;
-}
-
-// 离开本页时草稿会被直接丢弃，需要先确认；未修改或无路由环境（如单测直挂组件）时直接放行。
-onBeforeRouteLeave(() => confirmLeaveWithUnsavedChanges());
-
-// 关闭页面标签不会触发路由守卫，这里把同一份确认注册到页签 store。
-const pageTabsStore = usePageTabsStore();
-const route = useRoute();
-function currentTabId(): string {
-  // 设置子页共用同一个「设置」标签；单测可能不提供路由环境，此时直接用同一个 id 兜底。
-  return typeof route?.path === 'string' ? getPageTabId(route) : 'settings';
-}
-let guardedTabId = '';
-onMounted(() => {
-  guardedTabId = currentTabId();
-  pageTabsStore.registerTabCloseGuard(guardedTabId, confirmLeaveWithUnsavedChanges);
-});
-onUnmounted(() => {
-  if (guardedTabId) pageTabsStore.unregisterTabCloseGuard(guardedTabId);
+// 路由离开与关闭页签共用统一守卫：未修改放行、确认后丢弃草稿、取消则留下，行为与此前一致。
+useUnsavedChangesGuard({
+  hasUnsavedChanges: () => hasUnsavedChanges.value,
+  title: '放弃未保存的代理设置？',
+  message: '代理设置尚未应用，离开后本次修改将不会生效。',
+  onDiscard: discardDraft
 });
 
 async function testProxy() {
