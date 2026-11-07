@@ -245,6 +245,9 @@ const sidebarTab = ref<'users' | 'fans'>(sidebarTabFromRoute(route.query.tab));
 
 function switchSidebarTab(tab: 'users' | 'fans') {
   sidebarTab.value = tab;
+  // 手动切换也写回 ?tab=，保持地址栏与界面一致；保留其它 query（如 category）。
+  // watch(route.query.tab) 在 nextTab === sidebarTab 时直接返回，不会触发重复加载。
+  void router.replace({ path: route.path, query: { ...route.query, tab } });
   if (tab === 'fans' && fansUsers.value.length === 0) {
     void loadFansUsers(true);
   }

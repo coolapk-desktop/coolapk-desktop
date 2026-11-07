@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia';
 
 const mocks = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
   query: { value: {} as Record<string, string> },
   getFollowUserList: vi.fn(),
   getFansList: vi.fn(),
@@ -16,8 +17,8 @@ vi.mock('vue-router', async () => {
   const { ref } = await import('vue');
   mocks.query = ref({});
   return {
-    useRoute: () => ({ get query() { return mocks.query.value; } }),
-    useRouter: () => ({ push: mocks.push }),
+    useRoute: () => ({ path: '/following', get query() { return mocks.query.value; } }),
+    useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
   };
 });
 
@@ -179,6 +180,18 @@ describe('关注页账号 UID', () => {
     mocks.query.value = { category: 'feeds' };
     await flushPromises();
     expect(wrapper.findAll('.sidebar-tab-btn')[0]!.classes()).toContain('active');
+    wrapper.unmount();
+  });
+
+  it('手动点击侧栏页签写回 ?tab= 且保留其它 query', async () => {
+    useAuthStore().user = { uid: '100', username: '自己' } as any;
+    const wrapper = mountFollowingPage();
+    await flushPromises();
+    await wrapper.findAll('.sidebar-tab-btn')[1]!.trigger('click');
+    await flushPromises();
+    expect(mocks.replace).toHaveBeenCalledWith({ path: '/following', query: { tab: 'fans' } });
+    // 手动切换不触发重复加载。
+    expect(mocks.getFansList).toHaveBeenCalledOnce();
     wrapper.unmount();
   });
 

@@ -48,6 +48,9 @@ describe('Android 首页返回', () => {
     deepLink.handle();
     expect(deepLink.router.replace).toHaveBeenCalledWith('/');
     expect(deepLink.quit).not.toHaveBeenCalled();
+    const topic = setup('/topic/xyz');
+    topic.handle();
+    expect(topic.router.replace).toHaveBeenCalledWith('/topics');
   });
 
   it('路由变化后清除退出计时', () => {
