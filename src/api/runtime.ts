@@ -22,16 +22,17 @@ export function initializeSession(): Promise<void> {
   return sessionReady;
 }
 
-export async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (!isWebBuild) return tauriInvoke<T>(command, args);
+export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isWebBuild) return args === undefined ? tauriInvoke<T>(command) : tauriInvoke<T>(command, args);
 
-  const files = Object.entries(args).filter((entry): entry is [string, Uint8Array<ArrayBuffer>] => entry[1] instanceof Uint8Array);
+  const payload = args ?? {};
+  const files = Object.entries(payload).filter((entry): entry is [string, Uint8Array<ArrayBuffer>] => entry[1] instanceof Uint8Array);
   let body: BodyInit;
   let path: string;
   let headers: HeadersInit | undefined;
   if (files.length) {
     const form = new FormData();
-    const metadata = { ...args };
+    const metadata = { ...payload };
     for (const [name, bytes] of files) {
       form.append(name, new Blob([bytes]), name);
       delete metadata[name];
@@ -41,7 +42,7 @@ export async function invoke<T>(command: string, args: Record<string, unknown> =
     path = 'upload';
   } else {
     headers = { 'Content-Type': 'application/json' };
-    body = JSON.stringify(args);
+    body = JSON.stringify(payload);
     path = 'command';
   }
   return requestJson<T>(`/api/${path}/${encodeURIComponent(command)}`, { headers, body });
