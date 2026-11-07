@@ -85,7 +85,36 @@ export const useNotificationStore = defineStore('notifications', () => {
     return count;
   }
 
-  /** 仅校正会话列表已明确识别的自己发出的私信，不能用于站内通知。 */
+  // 按会话键记录已被抵消的自己发送未读水位，保证轮询重复刷新时只抵消一次。
+  const suppressedSelfUnread = new Map<string, number>();
+
+  /**
+   * 按会话键幂等抵消自己发出的未读：同一会话在同一未读水位只扣一次，
+   * 该会话未读数值增加时才再扣差值；会话未读回落时同步下调水位。
+   * 仅校正会话列表已明确识别为自己发送的条目，不能用于站内通知。
+   */
+  function suppressMessageCounts(items: ReadonlyArray<{ key: string; count: number }>): number {
+    let suppressed = 0;
+    for (const item of items) {
+      const key = String(item?.key || '').trim();
+      if (!key) continue;
+      const parsed = Number(item?.count);
+      if (!Number.isFinite(parsed)) continue;
+      const count = Math.max(0, Math.floor(parsed));
+      const previous = suppressedSelfUnread.get(key) || 0;
+      if (count <= previous) { suppressedSelfUnread.set(key, count); continue; }
+      const delta = Math.min(count - previous, categoryCounts.message);
+      suppressedSelfUnread.set(key, count);
+      if (delta <= 0) continue;
+      categoryCounts.message -= delta;
+      locallyViewedMessages += delta;
+      unreadCount.value = Math.max(0, unreadCount.value - delta);
+      suppressed += delta;
+    }
+    return suppressed;
+  }
+
+  /** 旧的单值接口：无会话键，调用方应优先使用 suppressMessageCounts。 */
   function suppressMessageCount(count: number): number {
     const parsed = Number(count);
     const suppressed = Number.isFinite(parsed) ? Math.min(Math.max(0, Math.floor(parsed)), categoryCounts.message) : 0;
@@ -99,6 +128,7 @@ export const useNotificationStore = defineStore('notifications', () => {
 
   /** 仅在服务端全部已读请求成功后调用；官方 all 包含私信。 */
   function markNotificationsCleared(includeMessages = false): void {
+    if (includeMessages) suppressedSelfUnread.clear();
     notificationClearVersion.value += 1;
     beginNotificationClear();
     const remainingMessages = includeMessages ? 0 : categoryCounts.message;
@@ -111,6 +141,7 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   function reset(): void {
+    suppressedSelfUnread.clear();
     notificationClearVersion.value += 1;
     beginNotificationClear();
     unreadCount.value = 0;
@@ -121,5 +152,5 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   return { unreadCount, categoryCounts, notificationCount, messageCount, notificationStateVersion, notificationClearVersion, applyServerResponse, applyNotifyCount,
-    markViewed, markMessagesViewed, markCategoryViewed, suppressMessageCount, beginNotificationClear, markNotificationsCleared, reset };
+    markViewed, markMessagesViewed, markCategoryViewed, suppressMessageCount, suppressMessageCounts, beginNotificationClear, markNotificationsCleared, reset };
 });

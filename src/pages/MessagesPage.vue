@@ -263,7 +263,8 @@
         ></div>
         
         <div class="input-bottom-bar">
-          <div v-if="draftSaved" class="draft-status"><i class="far fa-save"></i> 草稿已自动保存</div>
+          <div v-if="draftSaving" class="draft-status"><i class="fas fa-circle-notch fa-spin"></i> 草稿保存中...</div>
+          <div v-else-if="draftSaved" class="draft-status"><i class="far fa-save"></i> 草稿已自动保存</div>
           <div v-else class="draft-status-placeholder"></div>
 
           <div class="input-actions">
@@ -331,7 +332,7 @@ import { showToast } from '../utils/toast';
 import {
   getMessageSenderUid,
   getMessageUnreadCount,
-  getSelfMessageUnreadCount,
+  getRawMessageUnreadCount,
   isMessageSentByCurrentUser,
 } from '../utils/messageUnread';
 
@@ -404,6 +405,28 @@ interface ChatHistoryPaginationState {
   hasMore: boolean;
 }
 const chatHistoryPagination = new Map<string, ChatHistoryPaginationState>();
+// 会话历史缓存上限：按最近访问 LRU 淘汰，淘汰时同步清理 pagination 与滚动记录，避免状态错配。
+const MAX_CACHED_CONVERSATIONS = 20;
+function evictChatHistoryCacheEntry(key: string) {
+  chatHistoryCache.delete(key);
+  chatHistoryPagination.delete(key);
+  chatScrollMap.delete(key);
+}
+function trimChatHistoryCaches(activeKey: string) {
+  while (chatHistoryCache.size > MAX_CACHED_CONVERSATIONS) {
+    const oldestKey = [...chatHistoryCache.keys()].find((key) => key !== activeKey);
+    // 当前打开中的会话受保护不被淘汰；仅当缓存里只剩当前会话时保持现状。
+    if (oldestKey === undefined) break;
+    evictChatHistoryCacheEntry(oldestKey);
+  }
+}
+function setChatHistoryCache(sessionKey: string, list: any[]) {
+  if (!sessionKey) return;
+  // Map 按插入序近似 LRU：重新插入把该会话移到最新端，再裁掉最旧的条目。
+  chatHistoryCache.delete(sessionKey);
+  chatHistoryCache.set(sessionKey, list);
+  trimChatHistoryCaches(sessionKey);
+}
 let historyRequestSequence = 0;
 const refreshingHistoryRequests = new Set<number>();
 const MESSAGE_POLL_INTERVAL_MS = 10_000;
@@ -412,6 +435,7 @@ let messagePollingActive = false;
 
 const inputText = ref('');
 const draftSaved = ref(false);
+const draftSaving = ref(false);
 const sending = ref(false);
 const sendingImage = ref(false);
 const followingPartner = ref(false);
@@ -789,9 +813,11 @@ function getConversationKey(session: any = currentSession.value): string {
 
 async function saveCurrentDraft() {
   const key = getConversationKey();
-  if (!key) return;
+  if (!key) { draftSaving.value = false; return; }
   await saveMessageDraft(currentUserUid.value, key, inputText.value);
+  // 只有真正落盘后才提示“已自动保存”；输入期间显示“保存中”。
   draftSaved.value = Boolean(inputText.value.trim());
+  draftSaving.value = false;
 }
 
 // 逐字输入时不必每次都写草稿：节流后再落盘，切换会话或离开页面时强制 flush。
@@ -838,6 +864,7 @@ async function restoreDraft(session: any) {
   }
 
   draftSaved.value = Boolean(inputText.value.trim());
+  draftSaving.value = false;
   syncTextToEditor(inputText.value);
 
   // 手机恢复草稿或分享链接时不抢焦点，避免 WebView 为显示光标上移整个页面并挤掉顶部安全区。
@@ -890,7 +917,9 @@ watch(
 );
 
 watch(inputText, () => {
-  draftSaved.value = Boolean(inputText.value.trim());
+  // 输入首字符只进入“保存中”状态，防抖落盘成功后才显示“已自动保存”。
+  draftSaved.value = false;
+  draftSaving.value = true;
   scheduleSaveCurrentDraft();
 });
 
@@ -1340,7 +1369,7 @@ async function loadMoreHistory() {
       pagination.firstItem = getOldestChatHistoryCursor(chatHistory.value);
       pagination.hasMore = true;
       hasMoreHistory.value = true;
-      chatHistoryCache.set(sessionKey, [...chatHistory.value]);
+      setChatHistoryCache(sessionKey, [...chatHistory.value]);
     }
 
     await nextTick();
@@ -1401,10 +1430,12 @@ const loadSessions = async () => {
     );
     if (res?.data && Array.isArray(res.data)) {
       const rawServerSessions: any[] = res.data;
-      // 只抵消列表中明确标记为自己发送的未读数量，不影响未识别发送者的真实未读。
-      notificationStore.suppressMessageCount(
-        getSelfMessageUnreadCount(rawServerSessions, currentUserUid.value),
-      );
+      // 只抵消列表中明确标记为自己发送的未读数量，且按会话键幂等：
+      // 轮询每轮拿到同一份服务端数据时不再重复扣减，未读增加才补扣差值。
+      notificationStore.suppressMessageCounts(rawServerSessions.map((item) => ({
+        key: String(item?.ukey || item?.id || getSessionPartnerUid(item) || ''),
+        count: isMessageSentByCurrentUser(item, currentUserUid.value) ? getRawMessageUnreadCount(item) : 0,
+      })));
       const serverSessions: any[] = rawServerSessions.map(normalizeSessionUnreadState);
       const hadSessions = sessions.value.length > 0;
       if (!hadSessions) hasMoreSessions.value = serverSessions.length > 0;
@@ -1549,7 +1580,7 @@ async function refreshCurrentChatHistory() {
     // 基于响应到达时的记录合并，避免覆盖同步期间发出的消息或加载的历史。
     const list = sortChatHistory(mergeChatHistory(chatHistory.value, res.data));
     chatHistory.value = list;
-    chatHistoryCache.set(sessionKey, list);
+    setChatHistoryCache(sessionKey, list);
     historyError.value = '';
     const pagination = getChatHistoryPagination(sessionKey);
     if (!pagination.firstItem && list.length) {
@@ -1723,7 +1754,7 @@ const selectSession = async (session: any) => {
       const existingHistory = hasCachedHistory ? chatHistory.value : [];
       const list = hasCachedHistory ? sortChatHistory(mergeChatHistory(existingHistory, incoming)) : incoming;
       chatHistory.value = list;
-      chatHistoryCache.set(sessionKey, list);
+      setChatHistoryCache(sessionKey, list);
       const cachedPagination = hasCachedHistory ? chatHistoryPagination.get(sessionKey) : null;
       const pagination = cachedPagination
         ? { ...cachedPagination, firstItem: getOldestChatHistoryCursor(list), lastItem: '' }
@@ -1860,10 +1891,10 @@ const handleKeydown = (e: KeyboardEvent) => {
 function removeFollowTipFromSession(sessionKey: string) {
   if (!sessionKey) return;
   const cachedHistory = chatHistoryCache.get(sessionKey);
-  if (cachedHistory) chatHistoryCache.set(sessionKey, cachedHistory.filter((item) => !isFollowTipEntity(item)));
+  if (cachedHistory) setChatHistoryCache(sessionKey, cachedHistory.filter((item) => !isFollowTipEntity(item)));
   if (getSessionKey(currentSession.value) === sessionKey) {
     chatHistory.value = chatHistory.value.filter((item) => !isFollowTipEntity(item));
-    chatHistoryCache.set(sessionKey, [...chatHistory.value]);
+    setChatHistoryCache(sessionKey, [...chatHistory.value]);
   }
 }
 
@@ -2034,12 +2065,12 @@ const sendImageFile = async (file?: File, existingUrl?: string, pendingItem?: Pe
     } else {
       // 发送期间切换了会话：消息已发出，不能写新会话视图，只更新原会话的缓存。
       const cached = cacheKey ? chatHistoryCache.get(cacheKey) : null;
-      if (cached) chatHistoryCache.set(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
+      if (cached) setChatHistoryCache(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
     }
 
     // 同步写入缓存
     if (cacheKey && isOwnerSession()) {
-      chatHistoryCache.set(cacheKey, [...chatHistory.value]);
+      setChatHistoryCache(cacheKey, [...chatHistory.value]);
     }
 
     // 更新左侧列表摘要与时间（始终写原会话快照，避免写错切换后的会话）
@@ -2098,10 +2129,20 @@ const openMessageImage = (msg: any) => {
 
 const sendTextMessage = async (text: string): Promise<boolean> => {
   if (!currentSession.value) return false;
-  const targetUid = getSessionPartnerUid(currentSession.value);
+  // 发送期间用户可能切到另一个会话：先快照 owner 会话与账号，写回前逐一校验，
+  // 保证乐观气泡、摘要/置顶、草稿清除都只作用于发起发送的原会话。
+  const ownerSession = currentSession.value;
+  const ownerUid = String(currentUserUid.value);
+  const targetUid = getSessionPartnerUid(ownerSession);
   if (!targetUid) {
     throw new Error('未识别到对方的合法酷安账号 UID');
   }
+  const cacheKey = String(ownerSession.ukey || ownerSession.id || '');
+  const isOwnerSession = () => (
+    currentSession.value === ownerSession
+    && String(currentUserUid.value) === ownerUid
+    && getConversationKey(currentSession.value) === getConversationKey(ownerSession)
+  );
 
   // 调用后台原生 API 发送
   const sendRes = await CoolapkTauriAPI.sendPrivateMessage(String(targetUid), text);
@@ -2112,44 +2153,49 @@ const sendTextMessage = async (text: string): Promise<boolean> => {
   const newMsg = {
     ...(realMsg && getChatHistoryItemId(realMsg) ? realMsg : { id: Date.now(), __localPending: true }),
     uid: targetUid,
-    fromuid: currentUserUid.value,
+    fromuid: ownerUid,
     message: text,
     dateline: realMsg?.dateline || nowTimestamp
   };
 
-  chatHistory.value = mergeChatHistory(chatHistory.value, [newMsg]);
-
-  // 同步写入缓存
-  const ukey = currentSession.value.ukey || currentSession.value.id;
-  if (ukey) {
-    chatHistoryCache.set(ukey, [...chatHistory.value]);
+  if (isOwnerSession()) {
+    chatHistory.value = mergeChatHistory(chatHistory.value, [newMsg]);
+    // 同步写入缓存
+    if (cacheKey) setChatHistoryCache(cacheKey, [...chatHistory.value]);
+  } else {
+    // 发送期间已切换会话：消息已发出，不能写新会话视图，只更新原会话的缓存。
+    const cached = cacheKey ? chatHistoryCache.get(cacheKey) : null;
+    if (cached) setChatHistoryCache(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
   }
 
-  // 更新左侧列表的摘要和时间（列表渲染优先读 message 字段）
-  const sess = currentSession.value;
-  markSessionAndViewBadge(sess);
-  sess.message = text;
-  sess.lastMessage = text;
-  sess.summary = text;
-  sess.last_message = text;
-  sess.dateline = nowTimestamp;
-  sess.lastupdate = nowTimestamp;
+  // 更新左侧列表的摘要和时间（始终写原会话快照，避免写错切换后的会话）
+  markSessionAndViewBadge(ownerSession);
+  ownerSession.message = text;
+  ownerSession.lastMessage = text;
+  ownerSession.summary = text;
+  ownerSession.last_message = text;
+  ownerSession.dateline = nowTimestamp;
+  ownerSession.lastupdate = nowTimestamp;
 
-  // 将当前会话置顶
-  const idx = sessions.value.findIndex(s => (s.ukey && s.ukey === currentSession.value.ukey) || s.id === currentSession.value.id);
+  // 将原会话置顶
+  const idx = sessions.value.findIndex(s => s === ownerSession || (s.ukey && s.ukey === ownerSession.ukey) || s.id === ownerSession.id);
   if (idx > 0) {
     const [s] = sessions.value.splice(idx, 1);
     sessions.value.unshift(s);
   }
 
-  if (ukey) {
-    chatScrollMap.delete(String(ukey));
+  if (cacheKey) {
+    chatScrollMap.delete(cacheKey);
   }
-  inputText.value = '';
-  if (editorRef.value) editorRef.value.innerHTML = '';
-  await clearMessageDraft(currentUserUid.value, getConversationKey(currentSession.value));
-  draftSaved.value = false;
-  scrollToBottom();
+  // 消息已发出，原会话的草稿必须清除（即使当前视图已是别的会话）。
+  await clearMessageDraft(ownerUid, getConversationKey(ownerSession));
+  if (isOwnerSession()) {
+    inputText.value = '';
+    if (editorRef.value) editorRef.value.innerHTML = '';
+    draftSaved.value = false;
+    draftSaving.value = false;
+    scrollToBottom();
+  }
   return true;
 };
 
