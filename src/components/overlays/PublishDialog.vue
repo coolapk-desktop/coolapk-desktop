@@ -208,6 +208,7 @@ import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue';
 import { useAppStore } from '../../stores/app';
 import { useSettingsStore } from '../../stores/settings';
 import { useAuthStore } from '../../stores/auth';
+import { isWebBuild } from '../../api/runtime';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { renderCoolapkEmoji, getEmojiUrl } from '../../utils/coolapkEmoji';
 import { useRecentEmojis } from '../../utils/recentEmojis';
@@ -217,7 +218,7 @@ import { showToast } from '../../utils/toast';
 import { renderCoolapkRichText } from '../../utils/richText';
 import { extractFeedImageInputs, normalizeFeedImageItems } from '../../utils/livePhoto';
 import { listFullPublishDrafts, saveFullPublishDraft, deleteFullPublishDraft, restoreFullPublishDraft, type FullPublishDraft, type PublishDraftState } from '../../utils/publishDrafts';
-import { verifyWithCaptcha, extractCaptchaParamsFromResponse } from '../../utils/neteaseCaptcha';
+import { verifyWithCaptcha, extractCaptchaParamsFromError, extractCaptchaParamsFromResponse } from '../../utils/neteaseCaptcha';
 import { shuzilmGuideState, openShuzilmGuide, isRiskControlError, hasActiveShuzilmDeviceId } from '../../utils/shuzilmDeviceGuide';
 import PublishIcon from './PublishIcon.vue';
 import PublishOptionSheet from './PublishOptionSheet.vue';
@@ -1054,12 +1055,15 @@ async function handlePublish() {
       try {
         res = await executeCreate();
       } catch (err: any) {
-        const captchaParams = extractCaptchaParamsFromResponse(err);
+        const captchaParams = extractCaptchaParamsFromError(err);
         if (captchaParams?.captchaId) {
           const token = await verifyWithCaptcha(captchaParams.captchaId);
           res = await executeCreate(token);
         } else if (isRiskControlError(err)) {
-          errorMessage.value = `酷安服务端风控拦截（需官方设备认证），${isEditMode.value ? '修改' : '发布'}失败`;
+          errorMessage.value = isWebBuild
+            ? `酷安拒绝了本次${isEditMode.value ? '修改' : '发布'}请求，提示网络或设备环境异常。编辑内容已保留。`
+            : `酷安服务端风控拦截（需官方设备认证），${isEditMode.value ? '修改' : '发布'}失败`;
+          if (isWebBuild) return;
           openShuzilmGuide({
             reason: 'risk_controlled',
             message: '请求被酷安服务端拦截。请到设备信息设置粘贴手机官方酷安复制的设备日志，保存后重试。',
@@ -1080,7 +1084,10 @@ async function handlePublish() {
           const token = await verifyWithCaptcha(captchaParams.captchaId);
           res = await executeCreate(token);
         } else if (isRiskControlError(res)) {
-          errorMessage.value = `酷安服务端风控拦截（需官方设备认证），${isEditMode.value ? '修改' : '发布'}失败`;
+          errorMessage.value = isWebBuild
+            ? `酷安拒绝了本次${isEditMode.value ? '修改' : '发布'}请求，提示网络或设备环境异常。编辑内容已保留。`
+            : `酷安服务端风控拦截（需官方设备认证），${isEditMode.value ? '修改' : '发布'}失败`;
+          if (isWebBuild) return;
           openShuzilmGuide({
             reason: 'risk_controlled',
             message: '请求被酷安服务端拦截。请到设备信息设置粘贴手机官方酷安复制的设备日志，保存后重试。',

@@ -12,7 +12,7 @@
     <div v-else ref="viewport" class="pager-viewport" @pointerdown="startDrag" @touchmove="preventSwipeScroll" @click.capture="blockSwipeClick" @wheel="wheel">
       <div ref="track" class="pager-track">
         <section v-for="(tab, index) in tabs" :key="getHomeTabKey(tab)" class="pager-page" :style="{ left: `${index * 100}%` }" :inert="index !== activeIndex || undefined" :aria-hidden="index !== activeIndex" :data-tab-key="getHomeTabKey(tab)">
-          <HomeTabPanel v-if="visited.has(getHomeTabKey(tab)) || index === activeIndex || (mobile && Math.abs(index - activeIndex) <= 1)" :ref="el => setPanel(getHomeTabKey(tab), el)" embedded :tab-key="getHomeTabKey(tab)" :tabs="serverTabs" :selected="index === activeIndex" :preview="mobile && (Math.abs(index - activeIndex) <= 1 || (moving && index >= previewRange[0] && index <= previewRange[1]))" />
+          <HomeTabPanel v-if="visited.has(getHomeTabKey(tab)) || index === activeIndex || (mobile && Math.abs(index - activeIndex) <= 1)" :ref="el => setPanel(getHomeTabKey(tab), el)" embedded :tab-key="getHomeTabKey(tab)" :tabs="serverTabs" :selected="index === activeIndex" @initial-load-settled="mountDesktopSidebar" :preview="mobile && (Math.abs(index - activeIndex) <= 1 || (moving && index >= previewRange[0] && index <= previewRange[1]))" />
         </section>
       </div>
     </div>
@@ -26,6 +26,7 @@ import FeedTabs from './FeedTabs.vue';
 import FeedLayoutToggle from './FeedLayoutToggle.vue';
 import RightSidebar from '../layout/RightSidebar.vue';
 import HomeTabPanel from '../../pages/HomeTabPanel.vue';
+import { isWebBuild } from '../../api/runtime';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useSettingsStore } from '../../stores/settings';
 import { getHomeTabKey, resolvePreferredHomeTab, type HomeSubChannelSelection } from '../../utils/homeTabs';
@@ -44,7 +45,10 @@ const toolbarActive = ref(true);
 const joinedToolbar = computed(() => props.mobile && toolbarActive.value && Boolean(homeToolbarTarget?.value));
 onActivated(() => { toolbarActive.value = true; });
 onDeactivated(() => { toolbarActive.value = false; });
-const sidebarMounted = ref(!props.mobile);
+const sidebarMounted = ref(!props.mobile && !isWebBuild);
+function mountDesktopSidebar() {
+  if (!props.mobile) sidebarMounted.value = true;
+}
 const settings = useSettingsStore();
 const serverTabs = ref<ConfigPageTab[]>([]), activeKey = ref(''), error = ref('');
 const viewport = ref<HTMLElement | null>(null), track = ref<HTMLElement | null>(null);
@@ -223,7 +227,7 @@ watch(() => props.mobile, () => {
   // 改变布局时结束未完成的手势，保留已选栏目及其页面实例。
   resetGesture();
   clickUntil = 0;
-  if (!props.mobile) sidebarMounted.value = true;
+  if (!props.mobile && (!isWebBuild || activePanel.value)) sidebarMounted.value = true;
   void nextTick(measure);
 });
 function bind() {

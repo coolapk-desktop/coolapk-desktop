@@ -1,3 +1,5 @@
+#![cfg(feature = "native")]
+
 pub mod agent_bridge;
 pub mod coolapk;
 pub mod diagnostics;

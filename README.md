@@ -124,6 +124,25 @@ npm ci
 npm run tauri dev
 ```
 
+### 浏览器版
+
+Web、桌面和移动端使用同一套 Vue 页面。Web 服务复用 Rust 酷安客户端，并在同一站点提供前端文件和 API。
+
+```powershell
+npm run build:web
+npm run serve:web
+```
+
+在浏览器打开 `http://127.0.0.1:17521`。正式运行可通过 `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin coolapk-web` 构建服务，将二进制与 `dist-web` 一起部署。
+
+- `COOLAPK_WEB_BIND` 默认是 `127.0.0.1:17521`。远程访问时，在前面配置 HTTPS 反向代理，将页面和 `/api` 转发到同一服务。
+- `COOLAPK_WEB_ORIGIN` 填写浏览器访问的完整站点源，例如 `https://coolapk.example`。它用于校验 API 请求来源。
+- `COOLAPK_WEB_DIST` 默认读取当前目录下的 `dist-web`。它也可以指向独立部署的前端产物目录。
+
+浏览器使用 Cookie 导入登录，酷安凭据保存在服务进程内。会话闲置 12 小时或服务重启后，需要重新导入。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
+
+### 原生客户端构建
+
 生产构建可按当前平台选择产物格式：
 
 ```bash

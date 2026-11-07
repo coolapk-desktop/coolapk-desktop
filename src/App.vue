@@ -165,6 +165,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import EquipmentProductPicker from './components/profile/EquipmentProductPicker.vue';
 import { useRoute } from 'vue-router';
 import { listen } from '@tauri-apps/api/event';
+import { isWebBuild } from './api/runtime';
 import AppShell from './components/layout/AppShell.vue';
 import PublishDialog from './components/overlays/PublishDialog.vue';
 import ImageViewer from './components/overlays/ImageViewer.vue';
@@ -603,10 +604,10 @@ let unregisterAndroidError: (() => void) | null = null;
 let unregisterAgentBridgeConfirm: (() => void) | null = null;
 
 onMounted(() => {
-  void downloadStore.initialize();
+  if (!isWebBuild) void downloadStore.initialize();
   authStore.initAuth();
   unregisterAndroidBackground = setupAndroidBackgroundNotifications(() => settingsStore.settings, () => String(authStore.user?.uid || ''));
-  if (/android/i.test(navigator.userAgent)) {
+  if (!isWebBuild && /android/i.test(navigator.userAgent)) {
     void listen('android-background-notification-count', event => {
       useNotificationStore().applyServerResponse(event.payload);
     }).then(unlisten => { unregisterAndroidCounts = unlisten; });
@@ -615,7 +616,7 @@ onMounted(() => {
     }).then(unlisten => { unregisterAndroidError = unlisten; });
   }
   // Agent 写操作确认：只在本机 MCP 客户端请求时触发，未开启接口时不会收到事件。
-  void registerAgentBridgeConfirm().then(unlisten => { unregisterAgentBridgeConfirm = unlisten; });
+  if (!isWebBuild) void registerAgentBridgeConfirm().then(unlisten => { unregisterAgentBridgeConfirm = unlisten; });
   unregisterViewport = setupViewportHeight();
   unregisterKeyboardAssist = setupKeyboardScrollAssist();
   window.addEventListener('resize', settingsStore.refreshAutoZoom);
@@ -624,7 +625,7 @@ onMounted(() => {
 
   // 本地调试（vite dev）跳过自动更新检查，避免误弹更新提示或静默下载安装包；
   // 设置页的"立即检查更新"手动触发不受影响
-  void (async () => {
+  if (!isWebBuild) void (async () => {
     await refreshUpdatePlatform();
     if (isMacOS.value || isLinux.value) {
       const installError = await CoolapkTauriAPI.takeUpdateInstallError();
@@ -638,7 +639,7 @@ onMounted(() => {
   window.addEventListener('check-for-update', handleCheckForUpdate);
 
   // 启动时先清理过期图片，再按总占用阈值决定是否清理全部缓存。
-  if (settingsStore.settings.autoCleanCache) {
+  if (!isWebBuild && settingsStore.settings.autoCleanCache) {
     void (async () => {
       try {
         await CoolapkTauriAPI.cleanExpiredCache(

@@ -1,4 +1,5 @@
 fn main() {
+    #[cfg(feature = "native")]
     tauri_build::build();
 
     println!("cargo:rerun-if-env-changed=COOLAPK_RUST_TEST_MANIFEST");

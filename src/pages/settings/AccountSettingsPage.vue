@@ -11,7 +11,7 @@
         <AppButton v-else variant="danger" size="sm" @click="handleLogout">退出登录</AppButton>
       </div>
 
-      <div class="setting-row">
+      <div v-if="!isWebBuild" class="setting-row">
         <div class="row-info">
           <span class="row-label">Cookie 凭据管理</span>
           <span class="row-sub">查看本地保存的登录凭据（脱敏）、复制或清除</span>
@@ -23,7 +23,7 @@
     <div class="account-management">
       <div class="account-management-header">
         <div>
-          <h4 class="account-management-title">本地账户</h4>
+          <h4 class="account-management-title">{{ isWebBuild ? '会话账户' : '本地账户' }}</h4>
           <p class="account-management-desc">切换会先验证凭据；退出登录不会删除这里的账户。</p>
         </div>
         <AppButton variant="secondary" size="sm" @click="authStore.openLoginModal()">添加账户</AppButton>
@@ -98,6 +98,7 @@ import AppDialog from '../../components/common/AppDialog.vue';
 import AppConfirmDialog from '../../components/common/AppConfirmDialog.vue';
 import AppAvatar from '../../components/common/AppAvatar.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { getErrorMessage } from '../../utils/errors';
 
 const authStore = useAuthStore();

@@ -17,7 +17,7 @@
           </p>
           <p v-if="buildCommit" class="about-desc">构建提交：{{ buildCommit }}</p>
         </div>
-        <AppButton variant="secondary" size="sm" icon="fas fa-sync-alt" @click="checkUpdate">
+        <AppButton v-if="!isWebBuild" variant="secondary" size="sm" icon="fas fa-sync-alt" @click="checkUpdate">
           检查更新
         </AppButton>
       </div>
@@ -97,6 +97,7 @@
 </template>
 
 <script setup lang="ts">
+import { isWebBuild } from '../../api/runtime';
 import { computed, onMounted, ref } from 'vue';
 import { APP_VERSION } from '../../constants/version';
 import { CoolapkTauriAPI } from '../../api/coolapk';

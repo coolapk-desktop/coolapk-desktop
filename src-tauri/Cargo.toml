@@ -4,6 +4,7 @@ version = "1.40.0"
 description = "基于 Tauri 2、Vue 3 和 Rust 的非官方酷安桌面客户端"
 authors = ["coolapk-desktop"]
 edition = "2024"
+default-run = "coolapk_desktop"
 license = "MIT"
 repository = "https://github.com/coolapk-desktop/coolapk-desktop"
 
@@ -11,27 +12,38 @@ repository = "https://github.com/coolapk-desktop/coolapk-desktop"
 name = "coolapk_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "coolapk_desktop"
+path = "src/main.rs"
+required-features = ["native"]
+
+[[bin]]
+name = "coolapk-web"
+path = "src/bin/coolapk-web.rs"
+required-features = ["web"]
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-deep-link = "2.4.10"
-tauri-plugin-http = "2"
-tauri-plugin-store = "2"
+tauri = { version = "2", features = [], optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-notification = { version = "2", optional = true }
+tauri-plugin-deep-link = { version = "2.4.10", optional = true }
+tauri-plugin-http = { version = "2", optional = true }
+tauri-plugin-store = { version = "2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 flate2 = "1"
 getrandom = "0.3"
-semver = "1"
+semver = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "gzip", "multipart", "rustls-tls", "stream", "socks"] }
 tokio = { version = "1.36", features = ["full"] }
 futures-util = "0.3"
 bcrypt = "0.15"
 # 本地 Agent 接口的 HTTP 层：仅用于回环/UDS 上的极小子集，不参与酷安请求链路。
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tower-http = { version = "0.6", features = ["fs", "compression-gzip"], optional = true }
 md-5 = "0.10"
 base64 = "0.22"
 hex = "0.4"
@@ -39,45 +51,45 @@ hmac = "0.12"
 sha1 = "0.10"
 chrono = "0.4"
 anyhow = "1.0"
-tracing = "0.1"
-opener = "0.7"
-tauri-plugin-log = "2"
+tracing = { version = "0.1", optional = true }
+opener = { version = "0.7", optional = true }
+tauri-plugin-log = { version = "2", optional = true }
 log = "0.4"
-tauri-plugin-fs = "2"
-tauri-plugin-opener = "2"
+tauri-plugin-fs = { version = "2", optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
 # 磁贴正文按字形簇（grapheme cluster）截断，避免把 ZWJ 组合 emoji 从中间切开。
 # 本就在依赖树中（tauri 间接引入），不增加新 crate。
-unicode-segmentation = "1.13"
+unicode-segmentation = { version = "1.13", optional = true }
 
 [dev-dependencies]
 # 用 Router::oneshot 直接打桩调用，无需启动真实应用实例。
 tower = { version = "0.5", features = ["util"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-autostart = "2"
-tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-tauri-plugin-stronghold = "2"
-notify-rust = "4.18"
+tauri = { version = "2", features = ["tray-icon"], optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"], optional = true }
+tauri-plugin-stronghold = { version = "2", optional = true }
+notify-rust = { version = "4.18", optional = true }
 # 关闭 WKWebView 对 requestAnimationFrame 的半刷新率钳制（144Hz 屏上 rAF 被限到 72），
 # 通过 WebKit 私有 _features API 切换 PreferPageRenderingUpdatesNear60FPSEnabled；非 macOS 为 no-op
-tauri-plugin-macos-fps = "0.1"
+tauri-plugin-macos-fps = { version = "0.1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
-webview2-com = "0.38.2"
-windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Com", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_UI_Controls_Dialogs"] }
+winreg = { version = "0.55", optional = true }
+webview2-com = { version = "0.38.2", optional = true }
+windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Com", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_UI_Controls_Dialogs"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = { version = "0.2", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = { version = "0.21", optional = true }
 
 [target.'cfg(target_os = "ios")'.dependencies]
-objc2 = "0.6"
-block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSHTTPCookie", "NSException", "NSObjCRuntime"] }
+objc2 = { version = "0.6", optional = true }
+block2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSString", "NSHTTPCookie", "NSException", "NSObjCRuntime"], optional = true }
 
 # Apple 平台改用系统信任库校验 TLS（iOS/macOS 经 Security.framework），
 # 使 Rust 客户端与 WKWebView 对系统根证书（含本机 MITM 代理、企业 CA）的信任决策一致。
@@ -88,12 +100,23 @@ rustls = { version = "0.23", default-features = false }
 rustls-platform-verifier = "0.7"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libloading = "0.7"
-zbus = "5.18"
+libloading = { version = "0.7", optional = true }
+zbus = { version = "5.18", optional = true }
 
 [features]
 default = ["custom-protocol"]
-custom-protocol = ["tauri/custom-protocol"]
+custom-protocol = ["native", "tauri/custom-protocol"]
+native = [
+    "dep:tauri-build", "dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-notification",
+    "dep:tauri-plugin-deep-link", "dep:tauri-plugin-http", "dep:tauri-plugin-store", "dep:semver",
+    "dep:tracing", "dep:opener", "dep:tauri-plugin-log", "dep:tauri-plugin-fs",
+    "dep:tauri-plugin-opener", "dep:unicode-segmentation", "dep:tauri-plugin-autostart", "dep:tauri-plugin-single-instance",
+    "dep:tauri-plugin-stronghold", "dep:notify-rust", "dep:tauri-plugin-macos-fps", "dep:winreg",
+    "dep:webview2-com", "dep:windows", "dep:libc", "dep:jni",
+    "dep:objc2", "dep:block2", "dep:objc2-foundation", "dep:libloading",
+    "dep:zbus",
+]
+web = ["dep:tower-http", "axum/multipart"]
 
 [profile.release]
 strip = true

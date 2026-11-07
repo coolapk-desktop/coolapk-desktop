@@ -70,6 +70,7 @@
             v-if="displaySrc"
             ref="imageRef"
             :src="displaySrc"
+            :referrerpolicy="isWebBuild ? 'no-referrer' : undefined"
             :data-original-url="originalUrl || undefined"
             :data-resource-url="currentUrl || undefined"
             alt="Viewer Image"
@@ -173,8 +174,9 @@ import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
 import { useSettingsStore } from '../../stores/settings';
 import { useNoImageMode, provideDetailImageScope } from '../../composables/useNoImageMode';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { getHdImageUrl, getOriginalImageUrl } from '../../utils/image';
-import { getMemoryCachedResourceSync, loadImageResource, normalizeResourceUrl } from '../../utils/resourceCache';
+import { canLoadWebImageDirectly, preloadWebImage, getMemoryCachedResourceSync, loadImageResource, normalizeResourceUrl } from '../../utils/resourceCache';
 import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 import { getErrorMessage } from '../../utils/errors';
 import { showToast } from '../../utils/toast';
@@ -428,6 +430,15 @@ async function resolveImageData(url: string): Promise<boolean> {
     return true;
   }
   displaySrc.value = '';
+  const targetUrl = normalizeResourceUrl(url);
+  if (isWebBuild && canLoadWebImageDirectly(targetUrl)) {
+    const loaded = await preloadWebImage(targetUrl);
+    if (sequence !== resolveSequence) return false;
+    if (loaded) {
+      displaySrc.value = targetUrl;
+      return true;
+    }
+  }
   try {
     const dataUrl = await loadImageResource(url, CoolapkTauriAPI.getImageDataUrl);
     if (sequence !== resolveSequence) return false;
@@ -701,7 +712,7 @@ function loadCurrentMedia() {
  * 这里只做预热，不参与 displaySrc；同一地址的并发请求由 resourceCache 合并。
  */
 function prefetchAdjacentImages() {
-  if (noImageMode.value) return;
+  if (isWebBuild || noImageMode.value) return;
   const items = imageItems.value;
   if (items.length < 2) return;
   const prefetchOriginal = settingsStore.settings.autoLoadOriginalImage;

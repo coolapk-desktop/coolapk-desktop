@@ -1,13 +1,7 @@
-pub mod auth;
+include!("core_modules.rs");
+
 pub mod android_notifications;
-pub mod client;
-pub(crate) mod http_session;
-pub(crate) mod network_proxy;
-mod native_device;
-pub(crate) mod shuzilm;
 pub mod commands;
 #[cfg(windows)]
 mod equipment_cookie_windows;
 pub mod desktop_update;
-
-pub mod video_upload;

@@ -389,6 +389,7 @@ import { desktopFeedCommentsOpenKey } from '../utils/desktopFeedComments';
 import { isAnswerSearchEntity } from '../utils/searchEntities';
 import { isQuestionFeedEntity, isQuestionHomeTab } from '../utils/question';
 import { isRatingFeedEntity } from '../utils/rating';
+const emit = defineEmits<{ 'initial-load-settled': [] }>();
 const props = withDefaults(defineProps<{ embedded?: boolean; tabKey?: string; tabs?: ConfigPageTab[]; selected?: boolean; preview?: boolean }>(), { embedded: false, selected: true, preview: false });
 import { feedPageVisibleKey, feedPageRenderKey, homePagerMovingKey } from '../utils/feedPageVisibility';
 const pagerMoving = inject(homePagerMovingKey, ref(false));
@@ -1690,6 +1691,7 @@ async function initializeHome() {
   }
   isInitializingHome = false;
   await loadFeeds(true);
+  emit('initial-load-settled');
 }
 
 function bindGlobalListeners() {

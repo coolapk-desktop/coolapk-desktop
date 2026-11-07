@@ -1,4 +1,5 @@
 import type { Store } from '@tauri-apps/plugin-store';
+import { isWebBuild } from '../api/runtime';
 
 interface StoreLike {
   get<T>(key: string): Promise<T | undefined>;
@@ -20,6 +21,38 @@ class MemoryStore implements StoreLike {
   async save(): Promise<void> {}
 }
 
+let browserDatabase: Promise<IDBDatabase> | undefined;
+
+async function openBrowserStore(fileName: string): Promise<StoreLike> {
+  browserDatabase ??= new Promise((resolve, reject) => {
+    const request = indexedDB.open('coolapk-web', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('values');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const database = await browserDatabase;
+  return {
+    async get<T>(key: string) {
+      return new Promise<T | undefined>((resolve, reject) => {
+        const request = database.transaction('values').objectStore('values').get([fileName, key]);
+        request.onsuccess = () => resolve(request.result as T | undefined);
+        request.onerror = () => reject(request.error);
+      });
+    },
+    async set(key: string, value: unknown) {
+      // 与 Tauri Store 一样只接受可序列化数据，避免 Vue Proxy 无法被 IndexedDB 克隆。
+      const snapshot = JSON.parse(JSON.stringify(value));
+      return new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction('values', 'readwrite');
+        transaction.oncomplete = () => resolve();
+        transaction.onabort = () => reject(transaction.error);
+        transaction.objectStore('values').put(snapshot, [fileName, key]);
+      });
+    },
+    async save() {},
+  };
+}
+
 const stores = new Map<string, Promise<StoreLike>>();
 const operationQueues = new Map<string, Promise<unknown>>();
 
@@ -32,6 +65,10 @@ async function loadStore(fileName: string): Promise<StoreLike> {
   if (existing) return existing;
 
   const promise = (async () => {
+    if (isWebBuild) {
+      try { return await openBrowserStore(fileName); }
+      catch { return new MemoryStore(); }
+    }
     if (!isTauriRuntime()) return new MemoryStore();
     try {
       const { Store } = await import('@tauri-apps/plugin-store');

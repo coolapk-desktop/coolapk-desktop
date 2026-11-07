@@ -7,7 +7,10 @@ import { useSettingsStore } from '../../../stores/settings';
 
 const mocks = vi.hoisted(() => ({
   getImageDataUrl: vi.fn(),
+  web: false,
 }));
+
+vi.mock('../../../api/runtime', () => ({ get isWebBuild() { return mocks.web; } }));
 
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
@@ -43,7 +46,31 @@ describe('AppImage', () => {
     mocks.getImageDataUrl.mockReset();
     mocks.getImageDataUrl.mockResolvedValue('data:image/jpeg;base64,YWJj');
   });
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  afterEach(() => { mocks.web = false; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('Web 先直载公开图片，失败后只请求一次代理', async () => {
+    mocks.web = true;
+    const src = 'https://image.coolapk.com/feed/web.jpg';
+    const wrapper = mount(AppImage, { props: { src } });
+    await flushPromises();
+    expect(wrapper.get('img').attributes('src')).toBe(src);
+    expect(mocks.getImageDataUrl).not.toHaveBeenCalled();
+    await wrapper.get('img').trigger('error');
+    await flushPromises();
+    expect(blobs.has(wrapper.get('img').attributes('src')!)).toBe(true);
+    expect(mocks.getImageDataUrl).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('Web 私信图片从鉴权接口加载', async () => {
+    mocks.web = true;
+    const src = 'https://api.coolapk.com/v6/message/showImage?id=123&type=n';
+    const wrapper = mount(AppImage, { props: { src } });
+    await flushPromises();
+    expect(blobs.has(wrapper.get('img').attributes('src')!)).toBe(true);
+    expect(mocks.getImageDataUrl).toHaveBeenCalledWith(src, expect.any(Object));
+    wrapper.unmount();
+  });
 
   it('保留原始图片地址供右键菜单保存', async () => {
     const sourceUrl = 'http://image.coolapk.com/feed/test.jpg';

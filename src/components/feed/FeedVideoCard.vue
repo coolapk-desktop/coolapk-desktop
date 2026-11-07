@@ -8,7 +8,7 @@
         :src="playableUrl || undefined"
         :poster="video.poster || undefined"
         controls
-        preload="metadata"
+        :preload="isWebBuild ? 'none' : 'metadata'"
         playsinline
         @play="hasStarted = true"
         @ended="hasStarted = false"
@@ -35,8 +35,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { useSettingsStore } from '../../stores/settings';
 import AppImage from '../common/AppImage.vue';
 import { extractFeedVideoUrl, formatFeedVideoDuration, getFeedVideo } from '../../utils/feedMedia';
@@ -51,10 +52,12 @@ const videoError = ref(false);
 const resolvedUrl = ref('');
 const resolutionFailed = ref(false);
 const resolving = ref(false);
+const webProxyUrl = ref('');
 let resolutionVersion = 0;
+let playRequested = false;
 
 function getPlayableSource(url: string): string {
-  if (!url) return '';
+  if (!url || isWebBuild) return url;
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
@@ -74,6 +77,7 @@ function getPlayableSource(url: string): string {
 
 const playableUrl = computed(() => {
   if (!video.value) return '';
+  if (isWebBuild) return webProxyUrl.value || resolvedUrl.value || video.value.url;
   const url = video.value.requestParams && !resolutionFailed.value ? resolvedUrl.value : video.value.url;
   return getPlayableSource(url);
 });
@@ -102,8 +106,14 @@ async function resolveVideo() {
   }
 }
 
-watch([() => video.value?.requestParams, () => settingsStore.settings.noImageMode], ([, noImageMode]) => {
-  if (noImageMode) {
+watch([() => video.value?.requestParams, () => isWebBuild ? video.value?.url : undefined, () => settingsStore.settings.noImageMode], ([, , noImageMode]) => {
+  if (isWebBuild) {
+    resolutionVersion += 1;
+    playRequested = false;
+    hasStarted.value = false;
+    webProxyUrl.value = '';
+  }
+  if (noImageMode || isWebBuild) {
     resolvedUrl.value = '';
     resolutionFailed.value = false;
     resolving.value = false;
@@ -114,22 +124,51 @@ watch([() => video.value?.requestParams, () => settingsStore.settings.noImageMod
 }, { immediate: true });
 
 async function playVideo() {
-  if (!videoRef.value || resolving.value) return;
+  if (resolving.value) return;
+  playRequested = true;
+  if (isWebBuild && !playableUrl.value && video.value?.requestParams) {
+    await resolveVideo();
+    await nextTick();
+    if (!playRequested) return;
+  }
+  if (!videoRef.value || !playableUrl.value) {
+    if (isWebBuild) videoError.value = true;
+    return;
+  }
   videoError.value = false;
   try {
     await videoRef.value.play();
   } catch {
-    videoError.value = true;
+    if (!resolving.value) videoError.value = true;
   }
 }
 
-function handleVideoError() {
-  if (!resolving.value) videoError.value = true;
+async function handleVideoError() {
+  if (resolving.value) return;
+  if (isWebBuild && !resolvedUrl.value && !resolutionFailed.value && video.value?.requestParams) {
+    const version = resolutionVersion + 1;
+    await resolveVideo();
+    await nextTick();
+    if (version !== resolutionVersion) return;
+    if (resolvedUrl.value && playRequested) await playVideo();
+    else if (!resolvedUrl.value) await handleVideoError();
+    return;
+  }
+  if (isWebBuild && !webProxyUrl.value) {
+    const cdnUrl = [resolvedUrl.value, video.value?.url].find(url => /^https:\/\/(?:[a-z0-9-]+\.)*weibocdn\.com\//i.test(url || ''));
+    if (cdnUrl) {
+      webProxyUrl.value = `/api/media/weibo-video?url=${encodeURIComponent(cdnUrl)}`;
+      await nextTick();
+      if (playRequested) await playVideo();
+      return;
+    }
+  }
+  videoError.value = true;
 }
 
 function retryVideo() {
   videoError.value = false;
-  if (video.value?.requestParams) {
+  if (video.value?.requestParams && !webProxyUrl.value) {
     void resolveVideo();
     return;
   }

@@ -1,3 +1,4 @@
+import { isWebBuild } from '../api/runtime';
 import { reactive } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { logDiagnosticLimited, classifyDiagnosticRequestError } from './diagnosticLogger';
@@ -125,7 +126,7 @@ function pumpPreloadQueue() {
  * 在后台静默预加载指定用户的个人资料与空间数据
  */
 export function preloadUserProfile(rawUid: string | number | undefined | null) {
-  if (!rawUid) return;
+  if (isWebBuild || !rawUid) return;
   const uid = String(rawUid).trim();
   if (!uid || uid === '0' || uid === 'undefined' || uid === 'null') return;
 

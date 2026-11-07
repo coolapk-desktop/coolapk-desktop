@@ -3,11 +3,8 @@
     <div class="card-header">
       <h3 class="card-title">{{ currentPeriod.title }}</h3>
       <div class="rank-controls">
-      <button class="refresh-btn period-prev" title="上一个热榜" aria-label="上一个热榜" @click="switchPeriod(-1)"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
-      <button class="refresh-btn period-next" title="下一个热榜" aria-label="下一个热榜" @click="switchPeriod(1)"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
-      <button class="refresh-btn" :title="`刷新${currentPeriod.title}`" @click="fetchHot">
-        <i class="fas fa-sync-alt"></i>
-      </button>
+      <button class="period-btn period-prev" title="上一个热榜" aria-label="上一个热榜" @click="switchPeriod(-1)"><i class="fas fa-chevron-left" aria-hidden="true"></i></button>
+      <button class="period-btn period-next" title="下一个热榜" aria-label="下一个热榜" @click="switchPeriod(1)"><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
       </div>
     </div>
 
@@ -124,7 +121,7 @@ onUnmounted(() => { sequence += 1; });
   gap: var(--space-2);
 }
 
-.refresh-btn {
+.period-btn {
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -138,7 +135,7 @@ onUnmounted(() => { sequence += 1; });
 .rank-controls { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .rank-controls button:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 
-.refresh-btn:hover {
+.period-btn:hover {
   color: var(--brand-primary);
 }
 

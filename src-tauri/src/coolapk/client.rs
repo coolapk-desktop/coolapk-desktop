@@ -247,6 +247,8 @@ pub struct CoolapkClient {
     auth: RwLock<CoolapkAuth>,
     user_cookie: RwLock<Option<String>>,
     cookie_file: RwLock<Option<PathBuf>>,
+    #[cfg(feature = "web")]
+    web_accounts: Option<RwLock<Value>>,
     device_profile: RwLock<DeviceProfile>,
     native_device_profile: DeviceProfile,
     device_code: RwLock<String>,
@@ -1114,6 +1116,8 @@ impl CoolapkClient {
             auth: RwLock::new(CoolapkAuth::new(device_code.clone())),
             user_cookie: RwLock::new(None),
             cookie_file: RwLock::new(None),
+            #[cfg(feature = "web")]
+            web_accounts: None,
             device_profile: RwLock::new(DeviceProfile::default()),
             native_device_profile,
             device_code: RwLock::new(device_code),
@@ -1121,6 +1125,16 @@ impl CoolapkClient {
             generated_identity: RwLock::new(super::shuzilm::IdentityState::default()),
             identity_generation: tokio::sync::Mutex::new(()),
         }
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) fn new_web() -> Self {
+        let client = Self {
+            web_accounts: Some(RwLock::new(json!({ "lastLoginUid": "", "accounts": [] }))),
+            ..Self::new()
+        };
+        client.generated_identity.write().expect("new device identity").automatic = true;
+        client
     }
 
     fn api_client(&self) -> Result<Client, String> { self.client.read().map(|client| client.clone()).map_err(|_| "无法读取酷安 HTTP 客户端".to_string()) }
@@ -1646,6 +1660,10 @@ impl CoolapkClient {
 
     /// 读取账户库根对象（{ lastLoginUid, accounts: [...] }）
     fn load_accounts_root(&self) -> Value {
+        #[cfg(feature = "web")]
+        if let Some(accounts) = &self.web_accounts {
+            return accounts.read().expect("web account store lock").clone();
+        }
         let Some(path) = self.accounts_file_path() else {
             return json!({ "lastLoginUid": "", "accounts": [] });
         };
@@ -1656,6 +1674,11 @@ impl CoolapkClient {
     }
 
     fn save_accounts_root(&self, root: &Value) {
+        #[cfg(feature = "web")]
+        if let Some(accounts) = &self.web_accounts {
+            *accounts.write().expect("web account store lock") = root.clone();
+            return;
+        }
         if let Some(path) = self.accounts_file_path() {
             if let Ok(json) = serde_json::to_string_pretty(root) {
                 let _ = std::fs::write(&path, json);
@@ -1822,6 +1845,22 @@ impl CoolapkClient {
             .get_user_cookie()
             .ok_or_else(|| "当前没有可持久化的登录凭据".to_string())?;
         self.save_account(uid, username, user_avatar, &cookie).await
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) async fn import_web_account(&self, cookie: &str) -> Result<Value, String> {
+        if cookie.len() > 16 * 1024 || !Self::has_valid_session_cookie(cookie) {
+            return Err("请输入包含有效 SESSID 的 Cookie".into());
+        }
+        let previous_cookie = self.get_user_cookie();
+        let accounts = self.load_accounts_root();
+        let previous_uid = accounts["lastLoginUid"].as_str().unwrap_or_default();
+        let result = self.login_by_webview_cookie(cookie).await;
+
+        if result.is_err() {
+            self.restore_login_state(previous_cookie, previous_uid)?;
+        }
+        result
     }
 
     /// 删除一个已保存的账户；若删除的是当前登录账户则同时清空登录态
@@ -3935,7 +3974,7 @@ impl CoolapkClient {
     }
 
     /// 图片代理与通用文件下载共用认证、来源站点和网络策略。
-    fn resource_request(&self, source_url: &str, upgrade_http: bool) -> Result<reqwest::RequestBuilder, String> {
+    fn resource_request(&self, source_url: &str, upgrade_http: bool, redirects: SessionPolicy) -> Result<reqwest::RequestBuilder, String> {
         let mut url =
             reqwest::Url::parse(source_url).map_err(|e| format!("invalid image URL: {e}"))?;
         let scheme = url.scheme().to_ascii_lowercase();
@@ -3974,7 +4013,10 @@ impl CoolapkClient {
             // 不能只带 Token，否则持久缓存改为原生代理加载后会出现空白图片。
             let token = self.get_token()?;
             self.apply_device_profile(
-                self.api_client()?
+                match redirects {
+                    SessionPolicy::NoRedirect => self.api_redirect_client()?,
+                    _ => self.api_client()?,
+                }
                     .get(url)
                     .timeout(std::time::Duration::from_secs(20))
                     .header(
@@ -3990,7 +4032,7 @@ impl CoolapkClient {
             } else {
                 "https://www.coolapk.com/"
             };
-            session(url.as_str(), SessionPolicy::Follow)?
+            session(url.as_str(), redirects)?
                 .get(url)
                 .timeout(std::time::Duration::from_secs(12))
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -4013,7 +4055,7 @@ impl CoolapkClient {
 
     /// 流式保存任意 HTTP 文件，返回服务器文件名、类型及最终地址供保存端命名。
     pub async fn download_file_to(&self, source_url: &str, path: &std::path::Path) -> Result<(String, String, String), String> {
-        let response = self.resource_request(source_url, false)?.header("Accept", "*/*").timeout(std::time::Duration::from_secs(3600)).send().await.map_err(|error| format!("下载文件失败：{error}"))?;
+        let response = self.resource_request(source_url, false, SessionPolicy::Follow)?.header("Accept", "*/*").timeout(std::time::Duration::from_secs(3600)).send().await.map_err(|error| format!("下载文件失败：{error}"))?;
         Self::write_download_response(response, path).await
     }
 
@@ -4034,9 +4076,34 @@ impl CoolapkClient {
     }
 
     pub async fn get_image_data_url(&self, source_url: &str) -> Result<String, String> {
+        self.image_data_url(source_url, SessionPolicy::Follow).await
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) fn web_image_needs_account(source_url: &str) -> bool {
+        reqwest::Url::parse(source_url).is_ok_and(|url| {
+            matches!(url.host_str(), Some("api.coolapk.com" | "api2.coolapk.com"))
+                && url.path() == "/v6/message/showImage"
+        })
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) async fn get_web_image_data_url(&self, source_url: &str) -> Result<String, String> {
+        let url = reqwest::Url::parse(source_url).map_err(|_| "图片地址无效")?;
+        let host = url.host_str().unwrap_or_default();
+        let allowed = matches!(host, "image.coolapk.com" | "avatar.coolapk.com" | "static.coolapk.com")
+            || is_weibo_image_host(host)
+            || Self::web_image_needs_account(source_url);
+        if !allowed || url.port().is_some() || !url.username().is_empty() || url.password().is_some() {
+            return Err("该图片地址无法由 Web 服务加载".into());
+        }
+        self.image_data_url(source_url, SessionPolicy::NoRedirect).await
+    }
+
+    async fn image_data_url(&self, source_url: &str, redirects: SessionPolicy) -> Result<String, String> {
         let source = reqwest::Url::parse(source_url).map_err(|error| error.to_string())?;
         let host = source.host_str().unwrap_or_default();
-        let response = self.resource_request(source_url, true)?
+        let mut response = self.resource_request(source_url, true, redirects)?
             .send()
             .await
             .map_err(|e| format!("failed to fetch image: {e}"))?;
@@ -4058,12 +4125,12 @@ impl CoolapkClient {
             return Err(format!("unexpected image content type: {content_type}"));
         }
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| format!("failed to read image: {e}"))?;
-        if bytes.len() > 50 * 1024 * 1024 {
-            return Err("image exceeds the 50 MB desktop limit".to_string());
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|e| format!("failed to read image: {e}"))? {
+            if bytes.len() + chunk.len() > 50 * 1024 * 1024 {
+                return Err("image exceeds the 50 MB limit".into());
+            }
+            bytes.extend_from_slice(&chunk);
         }
         let content_type = if diagnostic_zip { "application/zip" } else { &content_type };
         Ok(format!(
@@ -4132,11 +4199,29 @@ impl CoolapkClient {
     /// 注意：必须用独立干净 Client——主 client 携带酷安 App 指纹头（Dalvik UA/X-App-Token），
     /// 网页版服务器遇到这些头会返回空响应。
     pub async fn fetch_external_page(&self, url: &str) -> Result<Value, String> {
+        self.fetch_external_page_with_policy(url, SessionPolicy::Follow).await
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) async fn fetch_web_page(&self, raw: &str) -> Result<Value, String> {
+        let url = reqwest::Url::parse(raw).map_err(|_| "网页地址无效")?;
+        let feed = url.host_str() == Some("www.coolapk.com")
+            && url.path().strip_prefix("/feed/").is_some_and(|id| !id.is_empty() && id.bytes().all(|ch| ch.is_ascii_digit()));
+        let report = url.host_str() == Some("m.coolapk.com") && url.path() == "/mp/do"
+            && url.query_pairs().any(|(key, value)| key == "m" && value == "report");
+        if !(feed || report) || url.scheme() != "https" || url.port().is_some()
+            || !url.username().is_empty() || url.password().is_some() {
+            return Err("Web 服务仅加载酷安动态与举报页面".into());
+        }
+        self.fetch_external_page_with_policy(url.as_str(), SessionPolicy::NoRedirect).await
+    }
+
+    async fn fetch_external_page_with_policy(&self, url: &str, redirects: SessionPolicy) -> Result<Value, String> {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err("仅支持 http(s) 链接".to_string());
         }
 
-        let page_client = session(url, SessionPolicy::Follow)?;
+        let page_client = session(url, redirects)?;
 
         let parsed_url = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
         let is_coolapk_target = parsed_url.host_str().map(is_coolapk_host).unwrap_or(false);
@@ -4407,28 +4492,7 @@ impl CoolapkClient {
         video_url: &str,
         range: Option<&str>,
     ) -> Result<ProxiedVideoResponse, String> {
-        let parsed = reqwest::Url::parse(video_url.trim())
-            .map_err(|error| format!("微博视频地址无效：{error}"))?;
-        let host = parsed.host_str().unwrap_or_default();
-        if parsed.scheme() != "https" || !is_weibo_video_host(host) {
-            return Err("仅允许代理微博 HTTPS 视频地址".to_string());
-        }
-
-        let client = session(parsed.as_str(), SessionPolicy::Follow)?;
-        let mut request = client
-            .get(parsed)
-            .timeout(std::time::Duration::from_secs(90))
-            .header(USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .header("Accept", "video/mp4,video/*;q=0.9,*/*;q=0.8")
-            .header("Referer", "https://weibo.com/");
-        if let Some(range) = range.filter(|value| !value.trim().is_empty()) {
-            request = request.header("Range", range);
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|error| format!("读取微博视频失败：{error}"))?;
+        let response = self.request_weibo_video(video_url, range, SessionPolicy::Follow).await?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!("微博视频返回 HTTP {status}"));
@@ -4460,6 +4524,34 @@ impl CoolapkClient {
             content_range,
             body,
         })
+    }
+
+    pub(crate) async fn request_weibo_video(
+        &self, video_url: &str, range: Option<&str>, redirects: SessionPolicy,
+    ) -> Result<reqwest::Response, String> {
+        let parsed = reqwest::Url::parse(video_url.trim())
+            .map_err(|error| format!("微博视频地址无效：{error}"))?;
+        let host = parsed.host_str().unwrap_or_default();
+        if parsed.scheme() != "https" || !is_weibo_video_host(host) || parsed.port().is_some()
+            || !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err("仅允许代理微博 HTTPS 视频地址".to_string());
+        }
+
+        let client = session(parsed.as_str(), redirects)?;
+        let mut request = client
+            .get(parsed)
+            .timeout(std::time::Duration::from_secs(90))
+            .header(USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Accept", "video/mp4,video/*;q=0.9,*/*;q=0.8")
+            .header("Referer", "https://weibo.com/");
+        if let Some(range) = range.filter(|value| !value.trim().is_empty()) {
+            request = request.header("Range", range);
+        }
+
+        request
+            .send()
+            .await
+            .map_err(|error| format!("读取微博视频失败：{error}"))
     }
 
     /// 按 APK 的 Live Photo 链路获取实况视频最终地址。
@@ -4579,6 +4671,19 @@ impl CoolapkClient {
 
     /// 仅读取 Live Photo 视频的前部数据，用于识别容器中的实际视频编码。
     pub async fn get_live_photo_video_header(&self, video_url: &str) -> Result<String, String> {
+        self.live_photo_video_header(video_url, SessionPolicy::Follow).await
+    }
+
+    #[cfg(feature = "web")]
+    pub(crate) async fn get_web_live_photo_video_header(&self, video_url: &str) -> Result<String, String> {
+        let url = reqwest::Url::parse(video_url).map_err(|_| "Live Photo 视频地址无效")?;
+        if url.port().is_some() || !url.username().is_empty() || url.password().is_some() {
+            return Err("Live Photo 视频地址无效".into());
+        }
+        self.live_photo_video_header(video_url, SessionPolicy::NoRedirect).await
+    }
+
+    async fn live_photo_video_header(&self, video_url: &str, redirects: SessionPolicy) -> Result<String, String> {
         const HEADER_LIMIT: usize = 256 * 1024;
         let video_url = video_url.trim();
         let parsed_url = reqwest::Url::parse(video_url).map_err(|e| format!("invalid Live Photo video URL: {e}"))?;
@@ -4587,7 +4692,7 @@ impl CoolapkClient {
             return Err("Live Photo 视频地址必须来自酷安官方 HTTPS 域名".to_string());
         }
 
-        let client = session(parsed_url.as_str(), SessionPolicy::Follow)?;
+        let client = session(parsed_url.as_str(), redirects)?;
         let mut response = client
             .get(parsed_url)
             .timeout(std::time::Duration::from_secs(12))
@@ -7710,6 +7815,20 @@ impl CoolapkClient {
         if uid.is_empty() || uid == "0" || uid == "10000" {
             return Err("官方登录 WebView Cookie 未通过账号校验".to_string());
         }
+        #[cfg(feature = "web")]
+        let cookie = if self.web_accounts.is_some() {
+            let existing = self.load_accounts();
+            if existing.len() >= 10 && !existing.iter().any(|entry| entry["uid"] == uid) {
+                return Err("当前会话最多可保存 10 个账号".into());
+            }
+            // UID 以酷安确认的账号为准。
+            let mut pairs = cookie.split(';').map(str::trim)
+                .filter(|part| !part.starts_with("uid=")).map(str::to_owned).collect::<Vec<_>>();
+            pairs.push(format!("uid={uid}"));
+            pairs.join("; ")
+        } else {
+            cookie
+        };
         self.save_account(&uid, &username, &avatar, &cookie).await?;
         Ok(result)
     }

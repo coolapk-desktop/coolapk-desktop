@@ -547,6 +547,7 @@ import AppAvatar from '../common/AppAvatar.vue';
 import UserHoverCard from '../user/UserHoverCard.vue';
 import Button from '../ui/Button.vue';
 import FeedImageGrid from './FeedImageGrid.vue';
+import { isWebBuild } from '../../api/runtime';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
@@ -1082,8 +1083,8 @@ function scheduleReplyDetails(ids: string[]) {
 }
 
 watch(
-  () => collectReplyIds([...props.pinnedComments, ...props.comments]).join(','),
-  () => scheduleReplyDetails(collectReplyIds([...props.pinnedComments, ...props.comments])),
+  () => isWebBuild ? '' : collectReplyIds([...props.pinnedComments, ...props.comments]).join(','),
+  (ids) => { if (ids) scheduleReplyDetails(collectReplyIds([...props.pinnedComments, ...props.comments])); },
   { immediate: true },
 );
 
@@ -1336,7 +1337,7 @@ async function loadSubReplies(floor: any, reset: boolean) {
       loading: false,
       error: '',
     });
-    scheduleReplyDetails(collectReplyIds(pageRows));
+    if (!isWebBuild) scheduleReplyDetails(collectReplyIds(pageRows));
   } catch (error) {
     if (String(props.feedId || '').trim() !== requestedFeedId) return;
     updateSubReplyState(floorId, {

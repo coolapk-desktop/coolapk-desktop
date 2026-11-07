@@ -1,0 +1,73 @@
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+
+export const isWebBuild = import.meta.env.MODE === 'web';
+
+let sessionReady: Promise<void> | undefined;
+
+async function checkResponse(response: Response) {
+  if (response.ok) return;
+  const payload = await response.json().catch(() => null);
+  throw new Error(payload?.error || `Web 服务请求失败（HTTP ${response.status}）`);
+}
+
+export function initializeSession(): Promise<void> {
+  sessionReady ??= fetch('/api/session', { method: 'POST', credentials: 'same-origin' })
+    .then(checkResponse)
+    .catch(error => {
+      sessionReady = undefined;
+      throw error;
+    });
+  return sessionReady;
+}
+
+export async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  if (!isWebBuild) return tauriInvoke<T>(command, args);
+
+  const files = Object.entries(args).filter((entry): entry is [string, Uint8Array<ArrayBuffer>] => entry[1] instanceof Uint8Array);
+  let body: BodyInit;
+  let path: string;
+  let headers: HeadersInit | undefined;
+  if (files.length) {
+    const form = new FormData();
+    const metadata = { ...args };
+    for (const [name, bytes] of files) {
+      form.append(name, new Blob([bytes]), name);
+      delete metadata[name];
+    }
+    form.append('metadata', JSON.stringify(metadata));
+    body = form;
+    path = 'upload';
+  } else {
+    headers = { 'Content-Type': 'application/json' };
+    body = JSON.stringify(args);
+    path = 'command';
+  }
+  const session = initializeSession();
+  await session;
+  const request = () => fetch(`/api/${path}/${encodeURIComponent(command)}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers,
+    body,
+  });
+  let response = await request();
+  if (response.status === 401) {
+    // The server rejects missing sessions before executing the command.
+    if (sessionReady === session) sessionReady = undefined;
+    await initializeSession();
+    response = await request();
+  }
+  await checkResponse(response);
+  return response.json() as Promise<T>;
+}
+
+export function downloadInBrowser(url: string, fileName: string): string {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.rel = 'noopener noreferrer';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  return fileName;
+}
