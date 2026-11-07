@@ -127,12 +127,40 @@ describe('页面实例 key（keep-alive 槽位）', () => {
     expect(getPageComponentKey(search, 2)).toBe(getSearchPageComponentKey(search, 2));
   });
 
-  it('入口定位、对比项、私信预填与选机页数据源等临时 query 复用同一实例', () => {
+  it('产品对比按对比项区分页签：相同 ids/productIds 复用，不同组合分开', () => {
+    const compareAB = route('/product-compare', 'ProductCompare', {}, { ids: '1,2', productIds: '9,10' });
+    const compareABAgain = route('/product-compare', 'ProductCompare', {}, { ids: '1,2', productIds: '9,10' });
+    const compareCD = route('/product-compare', 'ProductCompare', {}, { ids: '3,4', productIds: '11,12' });
+
+    expect(getPageTabId(compareABAgain)).toBe(getPageTabId(compareAB));
+    expect(getPageTabId(compareCD)).not.toBe(getPageTabId(compareAB));
+    expect(getPageInstanceKey(compareABAgain)).toBe(getPageInstanceKey(compareAB));
+    // 标题体现对比项数量，不展示长 id 串。
+    // ids 与 productIds 一一对应，标题只显示对比项个数而不是两者之和。
+    expect(describePageTab(compareAB).title).toBe('产品对比 · 2 项');
+    expect(describePageTab(route('/product-compare', 'ProductCompare', {}, { productIds: '9,10,11' })).title).toBe('产品对比 · 3 项');
+    expect(describePageTab(route('/product-compare', 'ProductCompare')).title).toBe('产品对比');
+  });
+
+  it('产品对比的 Ctrl+R 刷新代数仍只重建当前实例', () => {
+    const compare = route('/product-compare', 'ProductCompare', {}, { ids: '1,2', productIds: '9,10' });
+    expect(getPageComponentKey(compare, 1)).toBe(getPageInstanceKey(compare) + ':1');
+    expect(getPageComponentKey(compare, 1)).not.toBe(getPageComponentKey(compare, 0));
+  });
+
+  it('历史遗留的旧对比页签（无 query 后缀）激活时不与新页签冲突', () => {
+    // 旧版本生成的标签 id 是不带 ids/productIds 的 'ProductCompare'；
+    // 新身份带结构化后缀，两者互不匹配，旧标签只是继续作为独立标签存在，不会报错。
+    const legacy = route('/product-compare', 'ProductCompare');
+    const withItems = route('/product-compare', 'ProductCompare', {}, { ids: '1,2' });
+    expect(getPageTabId(legacy)).toBe('ProductCompare');
+    expect(getPageTabId(withItems)).not.toBe(getPageTabId(legacy));
+  });
+
+  it('入口定位、私信预填与选机页数据源等临时 query 复用同一实例', () => {
     const detail = route('/feed/100', 'FeedDetail', { feedId: '100' });
     const replyEntry = route('/feed/100', 'FeedDetail', { feedId: '100' }, { replyId: '5' });
     const commentsEntry = route('/feed/100', 'FeedDetail', { feedId: '100' }, { scrollTo: 'comments' });
-    const compare = route('/product-compare', 'ProductCompare', {}, { ids: '1,2', productIds: '9,10' });
-    const otherCompare = route('/product-compare', 'ProductCompare', {}, { ids: '3,4', productIds: '11,12' });
     const following = route('/following', 'Following', {}, { category: 'feeds' });
     const followingFans = route('/following', 'Following', {}, { category: 'feeds', tab: 'fans' });
     const messages = route('/messages', 'Messages', {}, { targetUid: '5' });
@@ -144,7 +172,6 @@ describe('页面实例 key（keep-alive 槽位）', () => {
     expect(getPageComponentKey(replyEntry, 0)).toBe(getPageComponentKey(detail, 0));
     expect(getPageComponentKey(commentsEntry, 0)).toBe(getPageComponentKey(detail, 0));
     expect(getPageInstanceKey(replyEntry)).toBe(getPageInstanceKey(detail));
-    expect(getPageComponentKey(otherCompare, 0)).toBe(getPageComponentKey(compare, 0));
     expect(getPageComponentKey(followingFans, 0)).toBe(getPageComponentKey(following, 0));
     expect(getPageComponentKey(messagesPrefilled, 0)).toBe(getPageComponentKey(messages, 0));
     expect(getPageComponentKey(otherSelector, 0)).toBe(getPageComponentKey(selector, 0));

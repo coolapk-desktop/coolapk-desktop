@@ -42,6 +42,9 @@ const structuralQueryKeys: Partial<Record<string, string[]>> = {
   Product: ['tab'],
   Favorites: ['collectionId'],
   Messages: ['targetUid'],
+  // 产品对比按对比项区分页签与 keep-alive 实例：不同入口的对比组合各自占一个标签，
+  // 互不覆盖；ids/productIds 参与身份但不直接展示在标题里（标题只显示项数）。
+  ProductCompare: ['ids', 'productIds'],
   // 搜索标签按搜索范围区分（全局搜索 / 话题内搜索 / 用户动态搜索），
   // 关键词、页签和排序变化继续复用同一个搜索标签。
   Search: ['pageType', 'pageParam'],
@@ -164,6 +167,14 @@ export function describePageTab(route: TabRoute): PageTabDescriptor {
   else if (name === 'Node') [title, icon] = ['讨论区', 'fas fa-comments'];
   else if (name === 'AnyListDetail') [title, icon] = [`清单 ${param}`, 'fas fa-list'];
   else if (name === 'GoodsListDetail' || name === 'GoodsRankingDetail') [title, icon] = ['好物详情', 'fas fa-bag-shopping'];
+  // 产品对比标题只体现对比项数量，不展示长 id 串；无参数时保持通用标题。
+  else if (name === 'ProductCompare') {
+    // ids 是产品配置 id、productIds 是对应的产品 id，两者一一对应，数量不能相加；
+    // 只按对比项个数展示，取有值的那个列表长度。
+    const listOf = (key: string) => decodeRouteText(route.query[key]).split(',').map((id) => id.trim()).filter(Boolean);
+    const count = listOf('ids').length || listOf('productIds').length;
+    if (count) title = `产品对比 · ${count} 项`;
+  }
   else if (isSettingsPagePath(route.path)) [title, icon] = ['设置', 'fas fa-gear'];
 
   const section = decodeRouteText(route.query.section);
