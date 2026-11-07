@@ -51,6 +51,15 @@ vi.mock('../../utils/confirm', () => ({
   requestConfirmation: mocks.requestConfirmation,
 }));
 
+// 本测试只关注收藏单切换的请求时序；挂载时的正文索引后台同步会额外请求收藏列表，需隔离。
+vi.mock('../../utils/favoriteContentIndex', () => ({
+  normalizeFavoriteSearchText: (text: string) => text,
+  searchFavoriteContentIndex: vi.fn(async () => []),
+  removeFavoriteContentIndexEntry: vi.fn(async () => undefined),
+  syncFavoriteContentIndex: vi.fn(async () => null),
+  syncFavoriteContentIndexIfNeeded: vi.fn(async () => null),
+}));
+
 vi.mock('../../api/coolapk', () => ({
   CoolapkTauriAPI: {
     getCollectionList: mocks.getCollectionList,

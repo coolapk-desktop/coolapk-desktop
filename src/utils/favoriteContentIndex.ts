@@ -291,6 +291,22 @@ export async function syncFavoriteContentIndex(accountIdValue: string | number):
   return sync;
 }
 
+/**
+ * 带门控的同步入口（收藏页挂载时接线）：距上次同步不足 minIntervalMs 时直接跳过，
+ * 避免每次进入收藏页都触发收藏列表/详情请求。内部仍由 activeSyncs 去重 + 仅补齐
+ * 不完整/过期条目（每次最多 16 条重验证）保证幂等与请求有界。
+ */
+export async function syncFavoriteContentIndexIfNeeded(
+  accountIdValue: string | number,
+  minIntervalMs = 24 * 60 * 60 * 1000,
+): Promise<FavoriteContentIndexSyncResult | null> {
+  const accountId = accountKey(accountIdValue);
+  if (!accountId) return null;
+  const index = await loadIndex(accountId);
+  if (index.lastSyncAt && Date.now() - index.lastSyncAt < minIntervalMs) return null;
+  return syncFavoriteContentIndex(accountIdValue);
+}
+
 export async function queueFavoriteContentIndexEntry(accountIdValue: string | number, feed: any): Promise<void> {
   const accountId = accountKey(accountIdValue);
   const feedId = feedIdOf(feed);

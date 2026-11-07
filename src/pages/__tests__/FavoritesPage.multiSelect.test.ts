@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   requestConfirmation: vi.fn(),
   removeFavoriteContentIndexEntry: vi.fn(),
+  syncFavoriteContentIndex: vi.fn(async () => null),
+  syncFavoriteContentIndexIfNeeded: vi.fn(async () => null),
 }));
 
 vi.mock('vue-router', async () => {
@@ -48,6 +50,8 @@ vi.mock('../../utils/favoriteContentIndex', () => ({
   normalizeFavoriteSearchText: (text: string) => text,
   searchFavoriteContentIndex: () => [],
   removeFavoriteContentIndexEntry: mocks.removeFavoriteContentIndexEntry,
+  syncFavoriteContentIndex: mocks.syncFavoriteContentIndex,
+  syncFavoriteContentIndexIfNeeded: mocks.syncFavoriteContentIndexIfNeeded,
 }));
 
 import FavoritesPage from '../FavoritesPage.vue';
@@ -152,7 +156,7 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     wrapper.unmount();
   });
 
-  it('移除 1 条成功、1 条失败时提示「已移除 1 条，失败 1 条」，失败条目仍在列表', async () => {
+  it('移除 1 条成功、1 条失败时提示失败并保留失败项的勾选与多选模式', async () => {
     const wrapper = await mountPage();
     await openDetail(wrapper, ['f1', 'f2', 'f3']);
 
@@ -168,12 +172,43 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     await wrapper.get('.btn-batch-remove').trigger('click');
     await flushPromises();
 
-    expect(mocks.showToast).toHaveBeenCalledWith('已移除 1 条，失败 1 条', 'error');
+    expect(mocks.showToast).toHaveBeenCalledWith('已移除 1 条，失败 1 条', 'error', 5000, expect.anything());
     // 失败那条（f2）与未选的 f3 仍在列表
     expect(wrapper.findAll('.collection-feed-item')).toHaveLength(2);
-    // 重进多选确认剩 2 条（FeedCard 为 stub，用条数验证）
+    // 失败项保持勾选、多选模式未退出：用户可直接重试，不必重新逐条勾选。
+    expect(wrapper.findAll('.multi-select-hitbox')).toHaveLength(2);
+    expect(wrapper.get('.multi-select-selected-count').text()).toBe('已选 1 项');
+    wrapper.unmount();
+  });
+
+  it('部分失败后点击 toast 里的「重试失败项」仅重发失败条目，成功后退出多选', async () => {
+    const wrapper = await mountPage();
+    await openDetail(wrapper, ['f1', 'f2', 'f3']);
+
+    mocks.removeCollectionItem.mockImplementation(async (itemId: string) => {
+      if (itemId === 'ci-f1') return { code: 200 };
+      throw new Error('网络失败');
+    });
     await wrapper.get('.btn-multi-select').trigger('click');
-    expect(wrapper.get('.multi-select-toggle-all').text()).toContain('全选 2 条');
+    const hitboxes = wrapper.findAll('.multi-select-hitbox');
+    await hitboxes[0].trigger('click');
+    await hitboxes[1].trigger('click');
+    await wrapper.get('.btn-batch-remove').trigger('click');
+    await flushPromises();
+
+    const failureToast = mocks.showToast.mock.calls.find(([message]) => String(message).includes('失败'));
+    expect(failureToast).toBeDefined();
+    const actions = failureToast![3] as Array<{ label: string; onClick: () => void }>;
+    expect(actions[0].label).toContain('重试失败项');
+
+    // 恢复网络后重试：只有失败的那条被重新提交，成功后自动退出多选。
+    mocks.removeCollectionItem.mockResolvedValue({ code: 200 });
+    actions[0].onClick();
+    await flushPromises();
+
+    expect(mocks.removeCollectionItem).toHaveBeenLastCalledWith('ci-f2');
+    expect(mocks.showToast).toHaveBeenCalledWith('已移除 1 条', 'success');
+    expect(wrapper.find('.multi-select-hitbox').exists()).toBe(false);
     wrapper.unmount();
   });
 

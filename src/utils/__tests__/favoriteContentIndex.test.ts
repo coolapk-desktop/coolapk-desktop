@@ -33,6 +33,7 @@ import {
   removeFavoriteContentIndexEntry,
   searchFavoriteContentIndex,
   syncFavoriteContentIndex,
+  syncFavoriteContentIndexIfNeeded,
 } from '../favoriteContentIndex';
 
 describe('favorite content index', () => {
@@ -109,6 +110,37 @@ describe('favorite content index', () => {
     expect(Object.keys((mocks.values.get('account:42') as any).entries)).toEqual(['100']);
 
     await removeFavoriteContentIndexEntry('42', '100');
+    expect(Object.keys((mocks.values.get('account:42') as any).entries)).toEqual([]);
+  });
+
+  it('门控同步：首次调用执行同步，24h 内重复进入收藏页不再产生任何请求', async () => {
+    let syncRuns = 0;
+    mocks.getCollectionItemList.mockImplementation(async (_collectionId: string, page: number) => {
+      if (page !== 1) return { data: [] };
+      syncRuns += 1;
+      return { data: [{ id: '100', entityId: '100', message: '摘要' }] };
+    });
+    mocks.getPublicFeedDetail.mockImplementation(async (id: string) => ({ data: { id, message: `完整正文 ${id}` } }));
+
+    const first = await syncFavoriteContentIndexIfNeeded('42');
+    expect(first).not.toBeNull();
+    expect(syncRuns).toBe(1);
+
+    // lastSyncAt 刚刚更新：门控直接跳过，收藏单列表与详情都不再请求。
+    const second = await syncFavoriteContentIndexIfNeeded('42');
+    expect(second).toBeNull();
+    expect(syncRuns).toBe(1);
+    expect(mocks.getPublicFeedDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('门控同步：lastSyncAt 超过间隔时重新同步（幂等回填/剪枝入口）', async () => {
+    seedIndexWithDiskEntry(); // lastSyncAt: 1（很久以前）
+    mocks.getCollectionItemList.mockResolvedValue({ data: [] });
+    mocks.getPublicFeedDetail.mockResolvedValue({ data: { id: 'x', message: 'x' } });
+
+    const result = await syncFavoriteContentIndexIfNeeded('42');
+    // 磁盘条目已不在收藏列表中：同步完成后被 removed 剪枝。
+    expect(result).not.toBeNull();
     expect(Object.keys((mocks.values.get('account:42') as any).entries)).toEqual([]);
   });
 

@@ -667,6 +667,8 @@ import {
   normalizeFavoriteSearchText,
   removeFavoriteContentIndexEntry,
   searchFavoriteContentIndex,
+  syncFavoriteContentIndex,
+  syncFavoriteContentIndexIfNeeded,
 } from '../utils/favoriteContentIndex';
 
 const authStore = useAuthStore();
@@ -1260,6 +1262,9 @@ async function deleteCollection(collection: any) {
   collectionActionLoading.value = true;
   try {
     await CoolapkTauriAPI.deleteCollection(id);
+    // 删除收藏单会取消其中内容的归属（确认文案口径）：触发一次全量同步，
+    // 由 removed 剪枝统一清理这些条目的正文索引，聚合为一次列表遍历而非逐条写盘。
+    void syncFavoriteContentIndex(favoriteAccountId()).catch((error) => console.warn('删除收藏单后同步正文索引失败:', error));
     collections.value = collections.value.filter(item => collectionId(item) !== id);
     if (activeCollectionId.value === id) backToCollections();
     showToast('收藏单已删除', 'success');
@@ -1278,6 +1283,8 @@ async function clearInvalidCollectionItems() {
   try {
     await CoolapkTauriAPI.clearCollectionInvalidItems(activeCollectionId.value);
     showToast('清理请求已提交', 'success');
+    // 失效内容被服务端移出收藏后同样需要剪枝正文索引：复用全量同步的 removed 剪枝，聚合一次完成。
+    void syncFavoriteContentIndex(favoriteAccountId()).catch((error) => console.warn('清理失效内容后同步正文索引失败:', error));
     await fetchCollectionItems(true);
   } catch (err) {
     showToast(getErrorMessage(err, '清理失效内容失败'), 'error');
@@ -1326,18 +1333,29 @@ async function removeSelectedCollectionItems() {
   for (const itemId of targetIds) {
     const item = collectionItems.value.find(current => collectionItemId(current) === itemId);
     if (!item) {
+      // 条目已不在列表（无法重试）：计入失败并取消其勾选。
       failed += 1;
       collectionSelectedIds.value.delete(itemId);
       continue;
     }
     const result = await removeCollectionItemCore(item);
-    collectionSelectedIds.value.delete(itemId);
-    if (result.ok) removed += 1;
-    else failed += 1;
+    if (result.ok) {
+      removed += 1;
+      collectionSelectedIds.value.delete(itemId);
+    } else {
+      // 失败项保留勾选与多选模式，用户可直接重试，不必重新逐条勾选。
+      failed += 1;
+    }
   }
-  if (failed === 0) showToast('已移除 ' + removed + ' 条', 'success');
-  else showToast('已移除 ' + removed + ' 条，失败 ' + failed + ' 条', 'error');
-  clearCollectionMultiSelect();
+  if (failed === 0) {
+    showToast('已移除 ' + removed + ' 条', 'success');
+    clearCollectionMultiSelect();
+    return;
+  }
+  collectionBatchRemoving.value = false;
+  showToast('已移除 ' + removed + ' 条，失败 ' + failed + ' 条', 'error', 5000, [
+    { label: '重试失败项', onClick: () => { void removeSelectedCollectionItems(); } },
+  ]);
 }
 
 function openCollection(collection: any) {
@@ -1614,6 +1632,8 @@ watch(collectionContentSearchKeyword, () => scheduleCollectionContentSearch());
 onMounted(() => {
   if (authStore.isLoggedIn) {
     void fetchCollections();
+    // 回填历史收藏的正文索引并剪枝已移除内容：24h 门控 + 内部增量补齐，重复进入页面不产生请求风暴。
+    void syncFavoriteContentIndexIfNeeded(favoriteAccountId()).catch((error) => console.warn('收藏正文索引同步失败:', error));
   }
 });
 
