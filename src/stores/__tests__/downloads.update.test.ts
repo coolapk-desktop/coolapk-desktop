@@ -111,6 +111,41 @@ describe('下载中心的更新包任务', () => {
     expect(task.status).toBe('completed');
   });
 
+  it('清空历史不会对 update 任务调用 deleteApkDownloadFile', async () => {
+    // 先种一条普通 apk 记录，确认批量清理对普通任务仍然照常删文件。
+    localStorage.setItem('coolapk_desktop_downloads_v1', JSON.stringify([{"id":"apk-1","kind":"apk","title":"示例应用","packageName":"com.example.app","versionName":"1.0","versionCode":"1","apkId":"1","logoUrl":"","fileName":"示例应用-1.0.apk","extraAnalysisData":"","downloadDir":"/data","targetPath":"/data/app.apk","partialPath":"","publicPath":"","status":"completed","downloaded":1,"total":1,"speed":0,"retryCount":0,"error":"","createdAt":1,"updatedAt":1,"completedAt":1}]));
+    setActivePinia(createPinia());
+    const store = useDownloadStore();
+    const updateTask = store.appendUpdate({ version: '1.8.0' });
+    store.markUpdateReady(updateTask.id, '/cache/coolapk-setup.exe');
+
+    await store.clearHistory(true);
+
+    // 只有普通 apk 任务被删文件；更新任务的文件归更新器管，绝不传空路径去删。
+    expect(mocks.deleteApkDownloadFile).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteApkDownloadFile.mock.calls[0]![0]).toBe('/data/app.apk');
+    expect(store.tasks.some((item) => item.id === updateTask.id)).toBe(false);
+    expect(store.tasks.some((item) => item.id === 'apk-1')).toBe(false);
+  });
+
+  it('删除更新记录后写入删除标记：同版本不会被静默复活，且跨会话持久化', async () => {
+    const store = useDownloadStore();
+    const task = store.appendUpdate({ version: '1.8.0' });
+    store.markUpdateReady(task.id, '/cache/coolapk-setup.exe');
+
+    await store.removeUpdateTask(task.id);
+    expect(store.isUpdateVersionDeleted('1.8.0')).toBe(true);
+
+    // 模拟下次启动（新 pinia 实例、同一 localStorage）：删除标记仍在。
+    setActivePinia(createPinia());
+    const storeNextSession = useDownloadStore();
+    expect(storeNextSession.tasks.some((item) => item.id === task.id)).toBe(false);
+    expect(storeNextSession.isUpdateVersionDeleted('1.8.0')).toBe(true);
+
+    // 未删除过的版本不受影响。
+    expect(storeNextSession.isUpdateVersionDeleted('1.9.0')).toBe(false);
+  });
+
   it('应用重启后未完成的更新任务标记为失败，而不是假装可继续', () => {
     const raw = [{
       id: 'update-1.8.0', kind: 'update', title: '酷安桌面版', packageName: 'app-update',

@@ -16,6 +16,26 @@ export function isUpdateTask(task: DownloadTask): boolean {
 }
 
 const STORAGE_KEY = 'coolapk_desktop_downloads_v1';
+// 用户主动删除过的更新版本（tombstone）：防止自动检查把已删除的更新任务静默重新造出来。
+// 手动「后台下载更新」代表用户明确再次需要，会显式解除标记。
+const UPDATE_TOMBSTONE_KEY = 'coolapk_desktop_update_deleted_versions_v1';
+
+function readUpdateTombstones(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(UPDATE_TOMBSTONE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeUpdateTombstones(list: string[]) {
+  try {
+    localStorage.setItem(UPDATE_TOMBSTONE_KEY, JSON.stringify(list));
+  } catch {
+    // 删除标记写盘失败只影响复活防护，不影响主流程。
+  }
+}
 const ACTIVE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused'];
 // 进度类字段更新极其频繁（每个进度事件一次），单独节流写盘；状态/路径/错误必须立即落盘。
 const PROGRESS_KEYS = new Set(['downloaded', 'total', 'speed']);
@@ -313,18 +333,29 @@ export const useDownloadStore = defineStore('downloads', () => {
     // 应用重启后原生下载通道已经不存在，恢复成暂停状态，保留 .part 文件供继续下载。
     for (const task of tasks.value) {
       if (ACTIVE_STATUSES.includes(task.status)) task.status = 'paused';
-      // 前端无法直接探测 .part 是否还在（fs 插件未授予 exists 权限，见 batch6 报告）；
-      // 有进度却没有断点路径，说明断点大概率已随换设备/清目录丢失，给出保守提示，
-      // 不清空进度数字，用户可用「重新开始」自行决定重下。
       // 更新任务在应用重启后原生下载必然已中断，且不支持断点，直接标失败让用户重试。
       if (isUpdateTask(task) && task.status === 'paused') {
         task.status = 'failed';
         task.error = '应用重启导致下载中断，请重试';
         continue;
       }
-      if (task.status === 'paused' && task.downloaded > 0 && !task.partialPath && !task.error) {
-        task.error = '断点文件可能已失效，可重新开始';
-      }
+    }
+    // 断点校验：换设备、清缓存目录后 .part 可能已不存在，只凭进度数字点「继续」会从 0 重下却显示旧进度。
+    // 逐任务探测、失败一律降级为「无法确认」，绝不让探测异常阻塞启动恢复。
+    const probeTargets = tasks.value.filter((task) => !isUpdateTask(task) && task.status === 'paused' && task.downloaded > 0 && !task.error);
+    if (probeTargets.length > 0) {
+      await Promise.allSettled(probeTargets.map(async (task) => {
+        let status: 'exists' | 'missing' | 'unknown' = 'unknown';
+        try {
+          status = await CoolapkTauriAPI.apkDownloadPartialExists(task.partialPath, task.downloadDir, task.fileName);
+        } catch {
+          // 旧版本原生端没有该命令、或目录不可读：保持保守提示，不夸大也不清进度。
+          status = 'unknown';
+        }
+        if (status === 'missing') task.error = '断点文件已失效，可重新开始';
+        else if (status === 'unknown') task.error = '断点文件可能已失效，可重新开始';
+        // exists：断点还在，保持可继续的干净状态（error 为空）。
+      }));
     }
     persist();
     try {
@@ -523,6 +554,13 @@ export const useDownloadStore = defineStore('downloads', () => {
   async function remove(taskId: string, deleteFile = false) {
     const task = findTask(taskId);
     if (!task) return;
+    // 更新任务的安装包文件归更新器管：任何删除入口（含 clearHistory/clearFailed 批量清理）
+    // 都只移除记录，绝不调用 deleteApkDownloadFile——否则会对空路径做无意义的原生调用，
+    // 甚至因原生报错中断整批清理。
+    if (isUpdateTask(task)) {
+      await removeUpdateTask(taskId);
+      return;
+    }
     if (task.status === 'downloading') await cancel(taskId);
     if (deleteFile) {
       try {
@@ -701,12 +739,37 @@ export const useDownloadStore = defineStore('downloads', () => {
     });
   }
 
-  /** 移除更新任务记录（不动安装包文件，文件生命周期归更新器管）。 */
-  async function removeUpdateTask(taskId: string) {
+  /**
+   * 移除更新任务记录（不动安装包文件，文件生命周期归更新器管）。
+   * remember=true 表示「用户主动删除」，留下跨会话删除标记，避免自动检查静默复活；
+   * 渠道切换、忽略版本等策略性清理传 false——那不是用户不想要这个包，
+   * 否则用户切回原渠道后自动检查会被永久挡住。
+   */
+  async function removeUpdateTask(taskId: string, remember = true) {
     const task = findTask(taskId);
     if (!task || !isUpdateTask(task)) return;
+    if (remember && task.versionName) {
+      const tombstones = readUpdateTombstones();
+      if (!tombstones.includes(task.versionName)) {
+        tombstones.push(task.versionName);
+        writeUpdateTombstones(tombstones);
+      }
+    }
     tasks.value = tasks.value.filter((item) => item.id !== taskId);
     persist();
+  }
+
+  /** 该版本的更新记录是否被用户删除过（删除标记跨会话持久化）。 */
+  function isUpdateVersionDeleted(version: string) {
+    const normalized = version.trim();
+    return Boolean(normalized) && readUpdateTombstones().includes(normalized);
+  }
+
+  /** 解除删除标记：用户通过手动入口再次请求下载该版本时调用。 */
+  function clearDeletedUpdateVersion(version: string) {
+    const normalized = version.trim();
+    if (!normalized) return;
+    writeUpdateTombstones(readUpdateTombstones().filter((v) => v !== normalized));
   }
 
   watch(
@@ -744,6 +807,8 @@ export const useDownloadStore = defineStore('downloads', () => {
     markUpdateReady,
     markUpdateFailed,
     removeUpdateTask,
+    isUpdateVersionDeleted,
+    clearDeletedUpdateVersion,
     get eventUnlisten() { return eventUnlisten; },
   };
 });

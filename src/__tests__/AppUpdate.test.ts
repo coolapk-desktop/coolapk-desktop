@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   installError: vi.fn(),
   quitApp: vi.fn(),
   flushSettings: vi.fn(),
+  ignoreUpdateVersion: vi.fn(),
+  removeUpdateTask: vi.fn(),
+  storeTasks: [] as Array<{ id: string; kind: string; versionName: string }>,
   showToast: vi.fn(),
   desktopNotify: vi.fn(),
   push: vi.fn(),
@@ -38,18 +41,23 @@ vi.mock('../stores/settings', async () => {
   mocks.settings = reactive(mocks.settings);
   return { useSettingsStore: () => ({
   settings: mocks.settings, flushSettings: mocks.flushSettings, refreshAutoZoom: vi.fn(),
+  ignoreUpdateVersion: mocks.ignoreUpdateVersion, setIgnoreAllUpdates: vi.fn(),
 }) };
 });
-// 更新器会把自己的下载任务镜像进下载中心；这里给出对应的 no-op 接口，
-// 断言仍集中在更新器自身的提示与弹窗行为上。
+// 更新器会把自己的下载任务镜像进下载中心；这里给出可操纵的 mock 接口，
+// 用 storeTasks 模拟镜像列表，断言渠道/忽略版本时镜像记录被同步清理。
 vi.mock('../stores/downloads', () => ({
+  isUpdateTask: (task: { kind?: string } | null | undefined) => task?.kind === 'update',
   useDownloadStore: () => ({
     initialize: vi.fn(),
+    tasks: mocks.storeTasks,
     appendUpdate: vi.fn(() => ({ id: 'update-task' })),
     updateUpdateProgress: vi.fn(),
     markUpdateReady: vi.fn(),
     markUpdateFailed: vi.fn(),
-    removeUpdateTask: vi.fn(),
+    removeUpdateTask: mocks.removeUpdateTask,
+    isUpdateVersionDeleted: vi.fn(() => false),
+    clearDeletedUpdateVersion: vi.fn(),
   }),
 }));
 vi.mock('../stores/pageTabs', () => ({ usePageTabsStore: () => ({ getGeneration: () => 0, syncRoute: vi.fn() }) }));
@@ -81,6 +89,7 @@ describe('桌面自动更新交互', () => {
   let wrapper: ReturnType<typeof mountApp> | undefined;
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.storeTasks.length = 0;
     mocks.settings.updateChannel = 'stable';
     mocks.platform.os = 'macos';
     mocks.platform.arch = 'aarch64';
@@ -238,6 +247,40 @@ describe('桌面自动更新交互', () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain('更新包已下载');
     expect(localStorage.getItem('coolapk_pending_update')).toBeNull();
+  });
+
+  it('切换渠道后同步移除渠道不再允许的更新任务镜像', async () => {
+    mocks.settings.updateChannel = 'beta';
+    mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9-beta.1',
+      installerUrl: 'https://github.com/download/beta.dmg', installerName: 'coolapk-desktop_9.9.9-beta.1_aarch64.dmg',
+      packageType: 'installer',
+    });
+    wrapper = mountApp();
+    await flushPromises();
+    // 模拟下载期间下载中心里已建立的镜像记录。
+    mocks.storeTasks.push({ id: 'update-task', kind: 'update', versionName: '9.9.9-beta.1' });
+    mocks.settings.updateChannel = 'stable';
+    await flushPromises();
+    // 渠道切换属策略性清理：不写「用户删除」标记，切回原渠道后仍会自动提示。
+    expect(mocks.removeUpdateTask).toHaveBeenCalledWith('update-task', false);
+  });
+
+  it('忽略该版本后同步移除对应更新任务镜像', async () => {
+    // 无安装包时不会走静默后台下载，检查结果会以弹窗形式出现，才能点到「忽略此版本」。
+    mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9',
+      installerUrl: undefined, installerName: 'coolapk-desktop_9.9.9_aarch64.dmg', packageType: 'installer',
+    });
+    wrapper = mountApp();
+    await flushPromises();
+    window.dispatchEvent(new Event('check-for-update'));
+    await flushPromises();
+    mocks.storeTasks.push({ id: 'update-task', kind: 'update', versionName: '9.9.9' });
+    const ignoreButton = wrapper.findAll('button').find((button) => button.text() === '忽略此版本');
+    expect(ignoreButton).toBeTruthy();
+    await ignoreButton!.trigger('click');
+    await flushPromises();
+    // 渠道切换属策略性清理：不写「用户删除」标记，切回原渠道后仍会自动提示。
+    expect(mocks.removeUpdateTask).toHaveBeenCalledWith('update-task', false);
   });
 
   it('下载途中关闭测试渠道后，不保存测试包并重新检查正式版', async () => {

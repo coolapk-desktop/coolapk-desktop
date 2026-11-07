@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   pauseApkDownload: vi.fn().mockResolvedValue(undefined),
   cancelApkDownload: vi.fn().mockResolvedValue(undefined),
   deleteApkDownloadFile: vi.fn().mockResolvedValue(undefined),
+  // 断点探测三态：默认「无法确认」，需要具体断言时用例内单独 mock。
+  apkDownloadPartialExists: vi.fn().mockResolvedValue('unknown'),
   openApkDownloadDirectory: vi.fn().mockResolvedValue(undefined),
   installApkDownload: vi.fn().mockResolvedValue('started'),
   showToast: vi.fn(),
@@ -526,6 +528,47 @@ describe('batch6：pause 回滚 / 启动断点提示 / 清空失败记录', () =
     expect(task.status).toBe('paused');
     expect(task.error).toContain('断点文件可能已失效');
     expect(task.downloaded).toBe(4096);
+  });
+
+  it('启动恢复按探测结果区分「断点已失效」与「断点仍在」', async () => {
+    const seeded = (id: string, versionName: string) => ({
+      id, kind: 'apk', title: '断点应用', packageName: `com.demo.${id}`, versionName,
+      versionCode: '1', apkId: '1', logoUrl: '', fileName: 'a.apk', extraAnalysisData: '',
+      downloadDir: '', targetPath: '', partialPath: '/x/a.apk.part', publicPath: '',
+      status: 'downloading', downloaded: 4096, total: 8192, speed: 0, retryCount: 0,
+      error: '', createdAt: 1, updatedAt: 1, completedAt: 0,
+    });
+    localStorage.setItem('coolapk_desktop_downloads_v1', JSON.stringify([seeded('gone', '1.0.0'), seeded('alive', '1.0.1')]));
+    setActivePinia(createPinia());
+    mocks.apkDownloadPartialExists.mockImplementation(async (partialPath: string) => (
+      String(partialPath).includes('a.apk.part') ? 'exists' : 'missing'
+    ));
+    // 两个任务断点路径相同时用调用顺序区分：第一个缺失、第二个存在。
+    mocks.apkDownloadPartialExists.mockResolvedValueOnce('missing').mockResolvedValueOnce('exists');
+    const store = useDownloadStore();
+    await store.initialize();
+
+    const gone = store.tasks.find((item) => item.id === 'gone')!;
+    const alive = store.tasks.find((item) => item.id === 'alive')!;
+    expect(gone.error).toBe('断点文件已失效，可重新开始');
+    // 断点仍在：不给任何失效提示，进度保持可继续。
+    expect(alive.error).toBe('');
+    expect(alive.downloaded).toBe(4096);
+  });
+
+  it('断点探测抛错时降级为保守提示，不阻塞恢复', async () => {
+    localStorage.setItem('coolapk_desktop_downloads_v1', JSON.stringify([{
+      id: 'boom', kind: 'apk', title: '探测失败', packageName: 'com.demo.boom', versionName: '1.0.0',
+      versionCode: '1', apkId: '1', logoUrl: '', fileName: 'a.apk', extraAnalysisData: '',
+      downloadDir: '', targetPath: '', partialPath: '', publicPath: '',
+      status: 'paused', downloaded: 10, total: 20, speed: 0, retryCount: 0,
+      error: '', createdAt: 1, updatedAt: 1, completedAt: 0,
+    }]));
+    setActivePinia(createPinia());
+    mocks.apkDownloadPartialExists.mockRejectedValueOnce(new Error('命令不存在'));
+    const store = useDownloadStore();
+    await store.initialize();
+    expect(store.tasks[0].error).toContain('断点文件可能已失效');
   });
 
   it('clearFailed 只清空失败记录，可按需删除文件', async () => {
