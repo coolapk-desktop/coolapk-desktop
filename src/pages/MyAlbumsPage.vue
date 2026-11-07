@@ -56,6 +56,7 @@ import EmptyState from '../components/common/EmptyState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
+import { showToast } from '../utils/toast';
 
 const authStore = useAuthStore();
 const { embedded = false } = defineProps<{ embedded?: boolean }>();
@@ -88,7 +89,8 @@ async function loadAlbums() {
 async function selectAlbum(album: any) {
   selectedAlbum.value = album; detailLoading.value = true; albumItems.value = [];
   try { const res = await CoolapkTauriAPI.getAlbumDetail(albumId(album)); const detail = res?.data || {}; selectedAlbum.value = { ...album, ...detail }; albumItems.value = Array.isArray(detail.apkList) ? detail.apkList : (Array.isArray(detail.data) ? detail.data : []); }
-  catch (err: any) { error.value = err?.message || '读取专辑详情失败'; }
+  // 专辑详情读取失败不写入列表级 error：列表级 error 仅表达「专辑列表加载失败」。
+  catch (err: any) { showToast(err?.message || '读取专辑详情失败', 'error'); }
   finally { detailLoading.value = false; }
 }
 
@@ -98,13 +100,14 @@ function openEdit(album: any) { editingId.value = albumId(album); form.value = {
 async function uploadCover(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return;
   try { const res: any = await CoolapkTauriAPI.uploadImage(new Uint8Array(await file.arrayBuffer()), file.name, file.type, 'album'); form.value.cover = String(res?.data?.url || res?.data || ''); }
-  catch (err: any) { error.value = err?.message || '封面上传失败'; }
+  catch (err: any) { showToast(err?.message || '封面上传失败', 'error'); }
 }
 
 async function saveAlbum() {
   actionLoading.value = true;
   try { if (editingId.value) await CoolapkTauriAPI.editAlbum(editingId.value, form.value.title, form.value.intro, form.value.cover); else await CoolapkTauriAPI.createAlbum(form.value.title, form.value.intro, form.value.cover); editorOpen.value = false; await loadAlbums(); }
-  catch (err: any) { error.value = err?.message || '保存专辑失败'; }
+  // 写操作失败用 toast 呈现并保留对话框打开状态，不污染列表级 error。
+  catch (err: any) { showToast(err?.message || '保存专辑失败', 'error'); }
   finally { actionLoading.value = false; }
 }
 
@@ -112,7 +115,7 @@ async function addApk() {
   if (!selectedAlbum.value) return;
   actionLoading.value = true;
   try { await CoolapkTauriAPI.addAlbumApk(albumId(selectedAlbum.value), apkForm.value.packageName, apkForm.value.title, apkForm.value.url); addApkOpen.value = false; apkForm.value = { packageName: '', title: '', url: '' }; await selectAlbum(selectedAlbum.value); }
-  catch (err: any) { error.value = err?.message || '添加应用失败'; }
+  catch (err: any) { showToast(err?.message || '添加应用失败', 'error'); }
   finally { actionLoading.value = false; }
 }
 
@@ -121,7 +124,7 @@ async function removeApk(item: any) {
   const packageName = String(item?.packageName || item?.package_name || ''); if (!packageName) return;
   actionLoading.value = true;
   try { await CoolapkTauriAPI.deleteAlbumApk(albumId(selectedAlbum.value), packageName); await selectAlbum(selectedAlbum.value); }
-  catch (err: any) { error.value = err?.message || '移除应用失败'; }
+  catch (err: any) { showToast(err?.message || '移除应用失败', 'error'); }
   finally { actionLoading.value = false; }
 }
 

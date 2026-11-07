@@ -98,7 +98,7 @@
       <!-- 底部加载状态 -->
       <div class="pagination-footer">
         <LoadingState v-if="loading && page > 1" text="正在加载更多专辑..." />
-        <button v-else-if="error" class="retry-inline" @click="fetchAlbums(true)">加载失败，点击重试</button>
+        <button v-else-if="error" class="retry-inline" @click="retryPagination">加载失败，点击重试</button>
         <div v-else-if="noMore" class="no-more">已加载全部专辑</div>
       </div>
     </template>
@@ -230,6 +230,13 @@ async function fetchAlbums(isLoadMore = false) {
   } finally {
     loading.value = false;
   }
+}
+
+// footer 重试语义：页码只在成功后前进，上次「加载更多」失败时页码未前进，
+// 因此重试仍以当前页码走 fetchAlbums(true) 的「加载更多」分支补齐该页，
+// 不清空已加载内容，也不重置回首页。
+function retryPagination() {
+  void fetchAlbums(true);
 }
 
 function handleScroll(e: Event) {

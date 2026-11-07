@@ -22,6 +22,7 @@
         <UserEntityCard v-for="(item, index) in items" :key="item.id || item.entityId || index" :entity="item" tab="reply" @deleted="removeItem" />
         <div class="pagination-footer">
           <LoadingState v-if="loadingMore" text="正在加载更多..." />
+          <button v-else-if="loadMoreError" class="retry-inline" @click="retryLoadMore">加载失败，点击重试</button>
           <div v-else-if="noMore" class="no-more">已加载全部评论记录</div>
         </div>
       </div>
@@ -48,6 +49,15 @@ const loading = ref(false);
 const loadingMore = ref(false);
 const noMore = ref(false);
 const error = ref('');
+// 翻页（加载更多）失败单独呈现：列表级 error 只表达首页加载失败。
+const loadMoreError = ref('');
+
+async function retryLoadMore() {
+  if (loadMoreError.value) {
+    loadMoreError.value = '';
+    await load(false);
+  }
+}
 
 async function load(refresh = false) {
   if (!authStore.user?.uid || loading.value || loadingMore.value) return;
@@ -60,18 +70,21 @@ async function load(refresh = false) {
   } else {
     if (noMore.value) return;
     loadingMore.value = true;
+    loadMoreError.value = '';
   }
   try {
     const res = await CoolapkTauriAPI.getMyComments(String(authStore.user.uid), page.value);
     const incoming = Array.isArray(res?.data) ? res.data.map(normalizeComment) : [];
     if (!incoming.length) noMore.value = true;
     else {
-      const ids = new Set(items.value.map((item) => String(item.id || item.entityId)));
-      items.value.push(...incoming.filter((item: any) => !ids.has(String(item.id || item.entityId))));
+      const seen = new Set(items.value.map(dedupeKey).filter((k): k is string => k !== null));
+      items.value.push(...incoming.filter((item: any) => { const k = dedupeKey(item); return k === null || !seen.has(k); }));
       page.value++;
     }
   } catch (err: any) {
-    error.value = err?.message || '加载失败，请检查网络';
+    const message = err?.message || '加载失败，请检查网络';
+    if (loadingMore.value) loadMoreError.value = message;
+    else error.value = message;
   } finally {
     loading.value = false;
     loadingMore.value = false;
@@ -82,6 +95,13 @@ function normalizeComment(item: any) {
   const url = String(item?.url || '');
   const feedId = item?.feedId ?? item?.feed_id ?? url.match(/\/feed\/(\d+)/)?.[1];
   return { ...item, feedId };
+}
+
+// 与 HistoryPage 口径一致：无稳定键（id/entityId 均缺失）的条目不参与去重，也不生成 "undefined" 键。
+function dedupeKey(item: any): string | null {
+  const k = item?.id ?? item?.entityId;
+  if (k === undefined || k === null || k === '') return null;
+  return String(k);
 }
 
 function removeItem(id: string | number) {
@@ -114,4 +134,5 @@ async function refreshMobilePage() { await load(true); }
 .empty-wrapper { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-10) 0; }
 .pagination-footer { padding: var(--space-5) 0; text-align: center; }
 .no-more { color: var(--text-tertiary); font-size: var(--font-size-caption); }
+.retry-inline { border: 0; background: transparent; color: var(--brand-primary); cursor: pointer; font-size: var(--font-size-caption); }
 </style>
