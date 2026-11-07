@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import DigitalPage from '../DigitalPage.vue';
 import DiscoveryPager from '../../components/discovery/DiscoveryPager.vue';
 
-const api = vi.hoisted(() => ({ getTabConfig: vi.fn(), getDiscoveryPageData: vi.fn(), getProductCategoryList: vi.fn(), push: vi.fn() }));
+const api = vi.hoisted(() => ({ getTabConfig: vi.fn(), getDiscoveryPageData: vi.fn(), getProductCategoryList: vi.fn(), getProductBrandList: vi.fn(), getProductBrandProducts: vi.fn(), getProductList: vi.fn(), push: vi.fn() }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: api }));
 vi.mock('vue-router', async importOriginal => ({ ...await importOriginal<typeof import('vue-router')>(), useRouter: () => ({ push: api.push }) }));
 vi.mock('../../utils/anchorClick', () => ({ handleAnchorClick: vi.fn() }));
@@ -15,6 +15,9 @@ beforeEach(() => {
   localStorage.clear();
   api.push.mockReset();
   api.getProductCategoryList.mockReset();
+  api.getProductBrandList.mockReset();
+  api.getProductBrandProducts.mockReset();
+  api.getProductList.mockReset();
   api.getTabConfig.mockReset().mockResolvedValue({ data: [{ entityTemplate: 'configCard', title: '数码', entities: ['PHONE', 'TABLET', 'PC'].map(key => ({ title: key, pageName: `V10_${key}`, url: `V10_${key}` })) }] });
   api.getDiscoveryPageData.mockReset().mockImplementation(({ url }) => Promise.resolve({ data: [{ id: url, title: url }], hasMore: false }));
   vi.stubGlobal('IntersectionObserver', undefined);
@@ -116,5 +119,26 @@ it('下拉已到末页的数码栏目仍从第一页刷新并保留栏目', asyn
     expect(api.getDiscoveryPageData).toHaveBeenCalledTimes(calls + 1);
     expect(api.getDiscoveryPageData).toHaveBeenLastCalledWith(expect.objectContaining({ url: 'V10_PHONE', page: 1, firstItem: '', lastItem: '' }));
     expect(api.push).not.toHaveBeenCalled();
+  } finally { wrapper.unmount(); }
+});
+
+it('legacy 品牌列表响应无分页字段时保留页大小启发式：不足 20 条判没有更多', async () => {
+  vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1200);
+  api.getTabConfig.mockResolvedValue({ data: [{ entityTemplate: 'configCard', title: '数码', entities: [{ title: '手机', pageName: 'V10_PHONE', url: 'V10_PHONE', category: true }] }] });
+  api.getProductCategoryList.mockResolvedValue({ data: [{ id: 555, title: '分类A', url: '' }] });
+  api.getProductBrandList.mockResolvedValue({ data: [{ id: 777, title: '品牌B' }] });
+  api.getProductBrandProducts.mockResolvedValue([
+    { id: 1, entityType: 'product', title: '品牌产品A' },
+    { id: 2, entityType: 'product', title: '品牌产品B' },
+    { id: 3, entityType: 'product', title: '品牌产品C' },
+  ]);
+  const wrapper = render();
+  try {
+    await flushPromises();
+    const brandBtn = wrapper.findAll('.mode-button').find(btn => btn.text().includes('品牌'))!;
+    await brandBtn.trigger('click');
+    await flushPromises();
+    expect(api.getProductBrandProducts).toHaveBeenCalled();
+    expect(wrapper.text()).toContain('没有更多服务端内容了');
   } finally { wrapper.unmount(); }
 });

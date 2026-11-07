@@ -32,6 +32,11 @@
       </div>
     </section>
 
+    <div v-if="dataIncomplete && !loading" class="data-incomplete-hint" role="status">
+      <i class="fas fa-triangle-exclamation"></i>
+      外部数据源暂不可用，以下机型信息可能不完整
+    </div>
+
     <div v-if="loading" class="state-wrapper">
       <LoadingState text="正在加载机型数据..." />
     </div>
@@ -81,6 +86,10 @@
     <div ref="bottomSentinelRef" class="bottom-sentinel"></div>
     <div v-if="loadingMore" class="loading-more-wrapper">
       <LoadingState text="正在加载更多机型..." />
+    </div>
+    <div v-else-if="loadMoreError" class="load-more-error">
+      <span>加载更多机型失败</span>
+      <button type="button" class="load-more-retry-btn" @click="retryLoadMore">重试</button>
     </div>
     <div v-else-if="noMore && models.length > 0" class="no-more-text">
       已展示全部匹配机型
@@ -136,19 +145,20 @@ const compareLoading = ref(false);
 const loading = ref(false);
 const loadingMore = ref(false);
 const noMore = ref(false);
+const loadMoreError = ref(false);
+const dataIncomplete = ref(false);
 const page = ref(1);
 const error = ref('');
 const searchQuery = ref('');
 const appliedQuery = ref('');
-const sortBy = ref<'综合' | '热度' | '评分' | '关注数'>('综合');
+const sortBy = ref<'综合' | '评分'>('综合');
 const models = ref<PhoneModel[]>([]);
 const bottomSentinelRef = ref<HTMLElement | null>(null);
 
+// 数据源（外部 HTML / 分类兜底）没有热度、关注数字段，未实现的排序项直接隐藏，不诱导点击。
 const sortOptions = [
   { key: '综合', label: '综合' },
-  { key: '热度', label: '热度' },
   { key: '评分', label: '评分' },
-  { key: '关注数', label: '关注数' },
 ] as const;
 
 function getSourceUrl(pageNum: number) {
@@ -171,6 +181,22 @@ function routeRequestParams(): URLSearchParams {
 /** 数据源签名：外部链接的 query 决定机型列表，签名变化才需要重新请求。 */
 function routeRequestSignature(): string {
   return routeRequestParams().toString();
+}
+
+/** 兜底机型数据：缺失字段一律留空交给模板显示「暂无」，不编造评分/价格/标签/新品标记。 */
+function toFallbackModels(items: any[]): PhoneModel[] {
+  return items.map((item: any, idx: number) => ({
+    id: String(item.id || item.productId || item.product_id || idx),
+    name: String(item.title || item.name || '精选机型'),
+    image: String(item.logo || item.pic || item.cover || '').replace(/^http:\/\//i, 'https://'),
+    rating: Number(item.score ?? item.rating ?? 0) || 0,
+    tags: item.subTitle || item.sub_title
+      ? String(item.subTitle || item.sub_title).split(/[,，·/]/).map((s: string) => s.trim()).filter(Boolean)
+      : [],
+    specs: String(item.subTitle || item.sub_title || ''),
+    price: item.price ? `¥${item.price}起` : '',
+    isNew: false,
+  }));
 }
 
 const filteredModels = computed(() => {
@@ -217,7 +243,8 @@ async function loadModels(isRefresh: boolean = true) {
     models.value = [];
     loading.value = true;
   } else {
-    if (noMore.value) return;
+    if (noMore.value || loadMoreError.value) return;
+    loadMoreError.value = false;
     loadingMore.value = true;
   }
   error.value = '';
@@ -232,6 +259,7 @@ async function loadModels(isRefresh: boolean = true) {
       .filter((model) => model.name);
 
     if (incoming.length > 0) {
+      dataIncomplete.value = false;
       if (isRefresh) {
         models.value = incoming;
       } else {
@@ -253,16 +281,8 @@ async function loadModels(isRefresh: boolean = true) {
         else flatList.push(it);
       }
       if (flatList.length > 0) {
-        models.value = flatList.map((item: any, idx: number) => ({
-          id: String(item.id || item.productId || item.product_id || idx),
-          name: String(item.title || item.name || '精选机型'),
-          image: String(item.logo || item.pic || item.cover || '').replace(/^http:\/\//i, 'https://'),
-          rating: Number(item.score || item.rating || 9.2),
-          tags: item.subTitle || item.sub_title ? String(item.subTitle || item.sub_title).split(/[,，·/]/).map((s: string) => s.trim()).filter(Boolean) : ['性能旗舰', '高刷超清屏'],
-          specs: String(item.subTitle || item.sub_title || '高性能处理器 · 超清护眼大屏 · 强劲长续航'),
-          price: item.price ? `¥${item.price}起` : '¥3999起',
-          isNew: idx < 3,
-        }));
+        models.value = toFallbackModels(flatList);
+        dataIncomplete.value = true;
       } else {
         throw new Error('服务端没有返回机型列表');
       }
@@ -281,16 +301,8 @@ async function loadModels(isRefresh: boolean = true) {
           else flatList.push(it);
         }
         if (flatList.length > 0) {
-          models.value = flatList.map((item: any, idx: number) => ({
-            id: String(item.id || item.productId || item.product_id || idx),
-            name: String(item.title || item.name || '精选机型'),
-            image: String(item.logo || item.pic || item.cover || '').replace(/^http:\/\//i, 'https://'),
-            rating: Number(item.score || item.rating || 9.2),
-            tags: item.subTitle || item.sub_title ? String(item.subTitle || item.sub_title).split(/[,，·/]/).map((s: string) => s.trim()).filter(Boolean) : ['性能旗舰', '高刷超清屏'],
-            specs: String(item.subTitle || item.sub_title || '高性能处理器 · 超清护眼大屏 · 强劲长续航'),
-            price: item.price ? `¥${item.price}起` : '¥3999起',
-            isNew: idx < 3,
-          }));
+          models.value = toFallbackModels(flatList);
+          dataIncomplete.value = true;
           noMore.value = true;
         } else {
           error.value = err?.message || '加载机型数据失败，请检查网络';
@@ -299,7 +311,8 @@ async function loadModels(isRefresh: boolean = true) {
         error.value = err?.message || '加载机型数据失败，请检查网络';
       }
     } else {
-      noMore.value = true;
+      // 加载更多失败必须可见：标记错误并展示 footer 重试，不能静默当作「没有更多」。
+      loadMoreError.value = true;
     }
   } finally {
     loading.value = false;
@@ -311,6 +324,12 @@ async function loadModels(isRefresh: boolean = true) {
 
 function applySearch() {
   appliedQuery.value = searchQuery.value;
+}
+
+function retryLoadMore() {
+  loadMoreError.value = false;
+  noMore.value = false;
+  void loadModels(false);
 }
 
 function handleScroll(event: Event) {
@@ -681,6 +700,44 @@ async function refreshMobilePage() { await loadModels(true); }
   font-size: 12.5px;
   color: var(--text-tertiary);
   padding: 18px 0 8px 0;
+}
+
+.data-incomplete-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px;
+  padding: 8px 12px;
+  border: 1px solid rgba(237, 125, 36, 0.35);
+  border-radius: 8px;
+  background: #fff7ef;
+  color: #b25b12;
+  font-size: 12.5px;
+}
+
+.load-more-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 6px 0;
+  color: var(--danger, #e35d5d);
+  font-size: 12.5px;
+}
+
+.load-more-retry-btn {
+  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.load-more-retry-btn:hover {
+  background: var(--surface-hover);
 }
 
 .compare-selection-bar {

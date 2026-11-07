@@ -77,3 +77,31 @@ describe('产品对比页随地址栏对比项更新', () => {
     wrapper.unmount();
   });
 });
+
+describe('对比项部分加载失败可见可重试', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.query.ids = '1,2,3';
+    mocks.query.productIds = '9,10,11';
+    const productIdOf: Record<string, string> = { '1': '9', '2': '10', '3': '11' };
+    mocks.getProductConfig.mockImplementation((id: string) => Promise.resolve(config(id, productIdOf[id]!)));
+    mocks.getProductDetail.mockImplementation((productId: string) => Promise.resolve({ data: { title: `机型${productId}` } }));
+  });
+
+  it('3 项中 2 项失败时表格上方提示 1 项加载失败，重试后恢复 3 列', async () => {
+    mocks.getProductConfig.mockImplementation((id: string) =>
+      id === '3' ? Promise.reject(new Error('boom')) : Promise.resolve(config(id, { '1': '9', '2': '10' }[id]!)));
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.text()).toContain('1 项配置加载失败');
+    expect(wrapper.find('.partial-failure-retry').exists()).toBe(true);
+
+    mocks.getProductConfig.mockImplementation((id: string) =>
+      Promise.resolve(config(id, { '1': '9', '2': '10', '3': '11' }[id]!)));
+    await wrapper.get('.partial-failure-retry').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('项配置加载失败');
+    expect(wrapper.findAll('thead th.config-col')).toHaveLength(3);
+    wrapper.unmount();
+  });
+});

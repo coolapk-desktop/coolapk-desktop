@@ -8,16 +8,17 @@
       <ErrorState title="对比数据加载失败" :message="error" @retry="loadCompare" />
     </div>
 
-    <div v-else-if="configs.length < 2" class="state-wrapper">
-      <EmptyState title="至少需要两个配置" description="先选择机型，再到产品参数页勾选至少两个配置进行对比">
+    <div v-else class="compare-table-wrapper">
+      <div v-if="failedIds.length > 0" class="partial-failure-hint" role="status">
+        <span>{{ failedIds.length }} 项配置加载失败</span>
+        <button type="button" class="partial-failure-retry" @click="loadCompare">重试</button>
+      </div>
+      <EmptyState v-if="configs.length < 2" title="至少需要两个配置" description="先选择机型，再到产品参数页勾选至少两个配置进行对比">
         <button type="button" class="primary-action" @click="router.push('/product-selector?mode=compare')">
           <i class="fas fa-mobile-screen-button"></i> 去选择机型
         </button>
       </EmptyState>
-    </div>
-
-    <div v-else class="compare-table-wrapper">
-      <table class="compare-table">
+      <table v-else class="compare-table">
         <thead>
           <tr>
             <th class="field-col">参数</th>
@@ -64,6 +65,7 @@ const router = useRouter();
 
 const configs = ref<ProductConfig[]>([]);
 const modelTitles = ref<Record<string, string>>({});
+const failedIds = ref<string[]>([]);
 const loading = ref(false);
 const error = ref('');
 
@@ -185,16 +187,22 @@ async function loadCompare() {
   // 对比项换了就立即撤下旧表格，避免请求期间仍显示上一次的对比内容。
   configs.value = [];
   modelTitles.value = {};
+  failedIds.value = [];
   loading.value = true;
   error.value = '';
   try {
     const results = await Promise.allSettled(ids.map((id) => CoolapkTauriAPI.getProductConfig(id)));
     const loaded: ProductConfig[] = [];
+    const failed: string[] = [];
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value?.data && typeof result.value.data === 'object') {
         loaded.push({ ...result.value.data, id: ids[index] });
+      } else {
+        // 部分失败不能静默丢弃：记录失败项并在表格上方提示，可整体重试。
+        failed.push(ids[index]);
       }
     });
+    failedIds.value = failed;
     const productIdByConfig = new Map<string, string>();
     loaded.forEach((config, index) => {
       const configProductId = config.product_id ?? config.productId ?? productIds[index];
@@ -270,6 +278,29 @@ watch(
   min-height: 320px;
   display: grid;
   place-items: center;
+}
+
+.partial-failure-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(227, 93, 93, 0.3);
+  border-radius: 8px;
+  background: rgba(227, 93, 93, 0.08);
+  color: var(--danger, #c04646);
+  font-size: 12.5px;
+}
+
+.partial-failure-retry {
+  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 12px;
+  cursor: pointer;
 }
 
 .compare-table-wrapper {
