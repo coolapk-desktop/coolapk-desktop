@@ -1,6 +1,7 @@
 import { readTauriStoreValue, updateTauriStoreValue } from './tauriStore';
 import { createUuid } from './uuid';
 import { readFilePreview, type PublishImage } from './publishMedia';
+import { normalizePublishArticleBlocks } from './publishArticle';
 import type { PublishVideo } from './publishVideo';
 import type { PublishTarget, PublishOptions } from '../types/publish';
 import type { PublishArticleState, PublishArticleBlock } from './publishArticle';
@@ -91,7 +92,12 @@ export function restoreFullPublishDraft(draft: FullPublishDraft): PublishDraftSt
   const article = state.article ? {
     ...state.article,
     cover: state.article.cover ? restoreImage(state.article.cover) : null,
-    blocks: state.article.blocks.map((block): PublishArticleBlock => block.type === 'image' ? { ...block, image: restoreImage(block.image) } : { ...block }),
+    // 恢复出来的状态本身就要合法：老草稿在段尾插图会留下连续空段落，不能再靠
+    // 编辑器挂载兜底，这里用与发布前同一套规则收敛一次；旧数据 blocks 字段可能
+    // 整体缺失（损坏草稿），按空正文处理而不是抛错中断恢复。
+    blocks: normalizePublishArticleBlocks(Array.isArray(state.article.blocks)
+      ? state.article.blocks.map((block): PublishArticleBlock => block.type === 'image' ? { ...block, image: restoreImage(block.image) } : { ...block })
+      : []),
   } : undefined;
   return { ...state, article, video: state.video && file ? { ...state.video, file, cover: restoreFile(state.video.cover), preview: URL.createObjectURL(file) } : undefined, images: state.images.map(restoreImage) };
 }

@@ -253,6 +253,12 @@ const displaySrc = ref<string>('');
 const loadFailed = ref(false);
 /** 失败时交给 <img> 的地址，重试时优先重试同一地址。 */
 const failedSrc = ref('');
+/**
+ * 加载超时兜底：网络挂住或解码卡住时 <img> 既不触发 load 也不触发 error，
+ * 界面会永远停在「正在载入」。超时后走与 @error 一致的失败态，可重试。
+ */
+const IMAGE_LOAD_TIMEOUT_MS = 12000;
+let loadTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 /** 画面可用（有图且没有失败）时才允许缩放/旋转/保存等依赖图片的操作。 */
 const imageReady = computed(() => Boolean(displaySrc.value) && !loadFailed.value);
 useResourceUrlLifetime(displaySrc);
@@ -345,6 +351,8 @@ function scaledImageSize(size: ImageSize | null, zoom: number) {
 }
 
 function measureImage() {
+  // 图片真正出画面才算加载成功，这里解除超时兜底。
+  clearLoadTimeout();
   const image = imageRef.value;
   if (image?.naturalWidth && image.naturalHeight) {
     imageSize.value = { width: image.naturalWidth, height: image.naturalHeight };
@@ -433,6 +441,7 @@ async function resolveImageData(url: string): Promise<boolean> {
   // 每次重新解析都清掉上一张/上一次的失败态，避免一次失败影响之后的图片。
   loadFailed.value = false;
   failedSrc.value = '';
+  clearLoadTimeout();
   if (noImageMode.value) {
     displaySrc.value = '';
     return false;
@@ -443,12 +452,15 @@ async function resolveImageData(url: string): Promise<boolean> {
   }
   if (url.startsWith('data:') || url.startsWith('blob:')) {
     displaySrc.value = url;
+    // data:/blob: 也要等浏览器解码，解码卡住同样只能靠超时兜底。
+    startLoadTimeout(sequence);
     return true;
   }
   // 命中内存缓存时同步贴回，切图不用闪一帧「正在载入高清大图」。
   const cached = getMemoryCachedResourceSync(url);
   if (cached) {
     displaySrc.value = cached;
+    startLoadTimeout(sequence);
     return true;
   }
   displaySrc.value = '';
@@ -456,11 +468,13 @@ async function resolveImageData(url: string): Promise<boolean> {
     const dataUrl = await loadImageResource(url, CoolapkTauriAPI.getImageDataUrl);
     if (sequence !== resolveSequence) return false;
     displaySrc.value = dataUrl;
+    startLoadTimeout(sequence);
     return true;
   } catch (err) {
     if (sequence !== resolveSequence) return false;
     console.warn('看图器加载图片失败:', err);
     displaySrc.value = url; // 备用回退直接使用原 url
+    startLoadTimeout(sequence);
     return false;
   }
 }
@@ -598,6 +612,31 @@ async function resolveCurrentLiveVideo(force = false) {
   }
 }
 
+function clearLoadTimeout() {
+  if (loadTimeoutTimer !== null) {
+    clearTimeout(loadTimeoutTimer);
+    loadTimeoutTimer = null;
+  }
+}
+
+/**
+ * 挂上加载超时：被更新的解析（sequence 前进）或失败态顶掉时不命中，
+ * 避免旧定时器把切换后的新图片误判成超时。
+ */
+function startLoadTimeout(sequence: number) {
+  clearLoadTimeout();
+  loadTimeoutTimer = setTimeout(() => {
+    loadTimeoutTimer = null;
+    if (sequence !== resolveSequence || loadFailed.value || noImageMode.value || !viewerData.value) return;
+    const failed = displaySrc.value || currentUrl.value;
+    if (!failed) return;
+    failedSrc.value = failed;
+    loadFailed.value = true;
+    imageSize.value = null;
+    console.warn('看图器图片加载超时:', failed);
+  }, IMAGE_LOAD_TIMEOUT_MS);
+}
+
 /** <img> 加载失败：进入显式失败态并给出重试入口，不再把坏图留在画面上。 */
 function handleImageError(event: Event) {
   const image = imageRef.value;
@@ -605,6 +644,7 @@ function handleImageError(event: Event) {
   if (!image || event.target !== image) return;
   // 无图模式下查看器整体隐藏，失败态与它互不覆盖。
   if (noImageMode.value) return;
+  clearLoadTimeout();
   failedSrc.value = displaySrc.value;
   loadFailed.value = true;
   imageSize.value = null;
@@ -710,6 +750,7 @@ watch(viewerData, (val) => {
 
 function clearMediaForNoImageMode() {
   resolveSequence += 1;
+  clearLoadTimeout();
   liveResolveSequence += 1;
   livePlaybackSequence += 1;
   displaySrc.value = '';
@@ -1317,6 +1358,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('resize', updateViewportSize);
   clearTransitionTimer();
+  clearLoadTimeout();
   clearMediaForNoImageMode();
 });
 </script>
