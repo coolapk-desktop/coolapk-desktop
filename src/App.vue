@@ -690,6 +690,23 @@ async function restorePendingUpdate(): Promise<boolean> {
 const handleCheckForUpdate = () => void checkForUpdate(true);
 let unregisterAndroidBackground: (() => void) | null = null;
 let unregisterAndroidCounts: (() => void) | null = null;
+// 后台计数事件由 Rust 侧轮询发出，payload 不携带账号信息：
+// 注册时快照当前 uid，回调里校验；切号后旧监听丢弃事件，由 uid watcher 重新注册。
+let androidCountsUidSnapshot = '';
+async function registerAndroidCountsListener() {
+  if (unregisterAndroidCounts) {
+    unregisterAndroidCounts();
+    unregisterAndroidCounts = null;
+  }
+  if (!/android/i.test(navigator.userAgent)) return;
+  androidCountsUidSnapshot = String(authStore.user?.uid || '');
+  if (!androidCountsUidSnapshot) return;
+  unregisterAndroidCounts = await listen('android-background-notification-count', event => {
+    if (String(authStore.user?.uid || '') !== androidCountsUidSnapshot) return;
+    useNotificationStore().applyServerResponse(event.payload);
+  });
+}
+watch(() => String(authStore.user?.uid || ''), () => { void registerAndroidCountsListener(); });
 let unregisterAndroidError: (() => void) | null = null;
 let unregisterAgentBridgeConfirm: (() => void) | null = null;
 
@@ -698,9 +715,7 @@ onMounted(() => {
   authStore.initAuth();
   unregisterAndroidBackground = setupAndroidBackgroundNotifications(() => settingsStore.settings, () => String(authStore.user?.uid || ''));
   if (/android/i.test(navigator.userAgent)) {
-    void listen('android-background-notification-count', event => {
-      useNotificationStore().applyServerResponse(event.payload);
-    }).then(unlisten => { unregisterAndroidCounts = unlisten; });
+    void registerAndroidCountsListener();
     void listen<string>('android-background-notification-error', event => {
       showToast(event.payload, 'info', 6000);
     }).then(unlisten => { unregisterAndroidError = unlisten; });

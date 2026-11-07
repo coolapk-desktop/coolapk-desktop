@@ -1851,6 +1851,42 @@ watch(
   },
 );
 
+/**
+ * 切号防线：chatHistoryCache / chatHistoryPagination / chatScrollMap 都是
+ * 以会话 ukey 为 key 的页面级 Map，不含账号维度；authStore 的全局清理够不到这里。
+ * uid 变化时必须清空三份 Map、作废在途聊天记录请求、清掉待发图片与发送态，
+ * 并重置当前会话后重新加载会话列表，否则 A 账号的私信数据会呈现给 B 账号。
+ */
+function resetMessagesPageForAccountSwitch() {
+  chatHistoryCache.clear();
+  chatHistoryPagination.clear();
+  chatScrollMap.clear();
+  // 递增序号后，isCurrentRequest() 对所有在途聊天记录响应返回 false，直接丢弃。
+  historyRequestSequence += 1;
+  refreshingHistoryRequests.clear();
+  clearPendingImages();
+  sending.value = false;
+  sendingImage.value = false;
+  currentSession.value = null;
+  mobileChatActive.value = false;
+  chatHistory.value = [];
+  loadingHistory.value = false;
+  historyError.value = '';
+  loadingMoreHistory.value = false;
+  historyLoadMoreError.value = '';
+  hasMoreHistory.value = true;
+  isChatPositionReady.value = false;
+  sessionsError.value = '';
+}
+
+watch(currentUserUid, (uid, previousUid) => {
+  if (uid === previousUid) return;
+  resetMessagesPageForAccountSwitch();
+  // loadSessions 内部对未登录（清空列表）与已登录（重新拉取）都有对应路径；
+  // keep-alive 的 onActivated 行为不受影响，重新激活时仍按原逻辑恢复。
+  void loadSessions();
+});
+
 onActivated(() => {
   messagePageActive = true;
   bindGlobalListeners();
