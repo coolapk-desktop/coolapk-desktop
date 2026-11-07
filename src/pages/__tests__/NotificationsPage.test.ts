@@ -91,6 +91,7 @@ describe('通知评论点击入口', () => {
     const store = useNotificationStore();
     store.applyServerResponse({ data: { notification_v18: 2, feedlike: 1, message: 2, dateline: 100 } });
     const item = { id: 'row-id', feedId: '333', message: '通知内容', url: '/feed/333?notificationV18Id=9007199254740993&notificationV18Type=reply&reportSubItemId=123' };
+    mocks.feedFullText.mockResolvedValue('动态正文');
     mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 1, feedlike: 1, message: 2, dateline: 101 } } });
     const wrapper = await mountPage(item);
     try {
@@ -125,6 +126,7 @@ describe('通知评论点击入口', () => {
     const store = useNotificationStore();
     store.applyServerResponse({ data: { notification_v18: 2, dateline: 100 } });
     mocks.read.mockRejectedValueOnce(new Error('网络失败'));
+    mocks.feedFullText.mockResolvedValue('动态正文');
     const wrapper = await mountPage({ id: '123', message: '通知内容', url: '/feed/333?notificationV18Id=123&notificationV18Type=reply' });
     try {
       await wrapper.get('.notify-message').trigger('click');
@@ -177,11 +179,14 @@ describe('通知评论点击入口', () => {
       expect(mocks.clear).not.toHaveBeenCalled();
       expect(store.unreadCount).toBe(4);
       mocks.confirm.mockResolvedValue(true);
+      const clearVersionBefore = store.notificationClearVersion;
       await button.trigger('click');
       await flushPromises();
       expect(mocks.clear).toHaveBeenCalledWith('all');
       expect(store.unreadCount).toBe(0);
       expect(store.messageCount).toBe(0);
+      // 成功路径才推进 clearVersion，作为在途置读响应的版本闸。
+      expect(store.notificationClearVersion).toBe(clearVersionBefore + 1);
       expect(wrapper.find('.notify-card.unread').exists()).toBe(false);
     } finally { wrapper.unmount(); }
   });
@@ -193,10 +198,14 @@ describe('通知评论点击入口', () => {
     mocks.confirm.mockResolvedValue(true);
     mocks.clear.mockRejectedValueOnce(new Error('网络错误'));
     try {
+      const clearVersionBefore = store.notificationClearVersion;
       await wrapper.get('button[aria-label="全部已读"]').trigger('click');
       await flushPromises();
       expect(store.unreadCount).toBe(2);
       expect(store.messageCount).toBe(1);
+      // 失败不推进 clearVersion：在途置读响应不被作废，UI 不得假装全已读。
+      expect(store.notificationClearVersion).toBe(clearVersionBefore);
+      expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining('设置全部已读失败'), 'error');
       expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
     } finally { wrapper.unmount(); }
   });
@@ -266,6 +275,7 @@ describe('通知评论点击入口', () => {
   it('点击评论正文仍能定位回复，列表不再显示查看原动态按钮', async () => {
     const item = { id: '99', target_type: 'feed_reply', target_id: '222',
       note: '评论了你的动态：<a href="/feed/333?rid=222">评论内容</a>' };
+    mocks.feedFullText.mockResolvedValue('动态正文');
     const wrapper = await mountPage(item);
     await wrapper.get('.notify-action').trigger('click');
     await flushPromises();
@@ -276,6 +286,7 @@ describe('通知评论点击入口', () => {
 
   it.each(['addition_info', 'additionInfo'])('优先展示官方 %s 富文本摘要，不使用 message 中的裸分享地址', async field => {
     const url = 'https://www.coolapk.com/feed/72357393?s=share';
+    mocks.feedFullText.mockResolvedValue('动态正文');
     const wrapper = await mountPage({ id: '99', feedId: '333', replyId: '222', note: '回复了你', message: `6 月没躲过 ${url}`,
       [field]: `6 月没躲过[doge] <a href="${url}">【动态】#微信# 稳了俩月，终究还是寄了</a>` });
     try {
@@ -309,6 +320,7 @@ describe('通知评论点击入口', () => {
   });
 
   it('通知附加正文中的实体编码链接显示动态标题并沿用链接点击处理', async () => {
+    mocks.feedFullText.mockResolvedValue('动态正文');
     const wrapper = await mountPage({ id: '99', note: '回复了你', message: 'https://www.coolapk.com/feed/72357393', addition_info: '&lt;a href=&quot;/feed/72357393&quot;&gt;【动态】#微信# 稳了俩月&lt;/a&gt;' });
     try {
       expect(wrapper.get('.notify-message a').text()).toBe('【动态】#微信# 稳了俩月');
@@ -321,6 +333,7 @@ describe('通知评论点击入口', () => {
   it('没有动态 ID 的评论通知先查询评论所属动态', async () => {
     const item = { id: '99', target_type: 'feed_reply', target_id: '222', message: '回复内容' };
     mocks.reply.mockResolvedValue({ data: { id: '222', feedId: '333' } });
+    mocks.feedFullText.mockResolvedValue('动态正文');
     const wrapper = await mountPage(item);
     await wrapper.get('.notify-message').trigger('click');
     await flushPromises();
@@ -361,6 +374,7 @@ describe('通知评论点击入口', () => {
     const store = useNotificationStore();
     store.applyServerResponse({ data: { notification_v18: 1, dateline: 100 } });
     const item = { id: 'openable', feedId: '333', message: '赞了你的动态', isnew: 1, url: '/feed/333?notificationV18Id=777&notificationV18Type=feedlike' };
+    mocks.feedFullText.mockResolvedValue('动态正文');
     const wrapper = await mountPage(item);
     try {
       expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
@@ -369,6 +383,40 @@ describe('通知评论点击入口', () => {
       expect(mocks.openFeed).toHaveBeenCalledWith(expect.anything(), '333', item);
       expect(mocks.read).toHaveBeenCalledWith('777', 'feedlike');
       expect(mocks.toast).not.toHaveBeenCalled();
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(false);
+      expect(store.unreadCount).toBe(0);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('目标动态已删除时保留未读并提示复制链接，不上报服务端已读', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 1, dateline: 100 } });
+    const item = { id: 'deleted-feed', feedId: '333', message: '赞了你的动态', isnew: 1, webUrl: 'https://www.coolapk.com/feed/333', url: '/feed/333?notificationV18Id=888&notificationV18Type=feedlike' };
+    mocks.feedFullText.mockRejectedValue(new Error('动态不存在'));
+    const wrapper = await mountPage(item);
+    try {
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      // 用户可见口径：点开已删除动态的通知，未读不清、角标不降，并给出可复制链接的提示。
+      expect(mocks.openFeed).not.toHaveBeenCalled();
+      expect(mocks.read).not.toHaveBeenCalled();
+      expect(mocks.toast).toHaveBeenCalledWith('该通知暂无法在客户端打开，可复制其中的链接查看', 'info', 4000, expect.objectContaining({ label: '复制链接' }));
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
+      expect(store.unreadCount).toBe(1);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('正文里的动态链接确认可打开后才置读并跳转', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 1, dateline: 100 } });
+    const item = { id: 'anchor-feed', note: '评论了动态：<a href="/feed/555?notificationV18Id=999&notificationV18Type=reply">内容</a>', isnew: 1, url: '/feed/555?notificationV18Id=999&notificationV18Type=reply' };
+    mocks.feedFullText.mockResolvedValue('动态正文');
+    const wrapper = await mountPage(item);
+    try {
+      await wrapper.get('.notify-action a').trigger('click');
+      await flushPromises();
+      expect(mocks.openFeed).toHaveBeenCalledWith(expect.anything(), '555');
+      expect(mocks.read).toHaveBeenCalledWith('999', 'reply');
       expect(wrapper.find('.notify-card.unread').exists()).toBe(false);
       expect(store.unreadCount).toBe(0);
     } finally { wrapper.unmount(); }
@@ -477,7 +525,7 @@ describe('通知评论点击入口', () => {
 
   it('通知正文打开所属评论，正文分享链接仅打开链接自身，人物入口独立导航', async () => {
     const item = { id: '99', fromuid: '555', fromusername: '回复者', feedId: '333', replyId: '222', message: 'https://www.coolapk.com/feed/72357393?s=share 111' };
-    mocks.feedFullText.mockResolvedValueOnce('<a href="/t/topic">#抖音#</a> 有没有P版驻守的？');
+    mocks.feedFullText.mockResolvedValue('<a href="/t/topic">#抖音#</a> 有没有P版驻守的？');
     const wrapper = await mountPage(item);
     const shareLink = wrapper.get('.notify-message a');
     expect(shareLink.text()).toBe('【动态】#抖音# 有没有P版驻守的？');

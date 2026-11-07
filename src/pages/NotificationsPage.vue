@@ -569,7 +569,27 @@ async function openNotificationComment(item: any, href?: string): Promise<boolea
     }
   }
   if (!/^\d+$/.test(feedId)) return false;
-  openFeedDetail(router, feedId, item, replyId);
+  return await openFeedAfterProbe(feedId, item, replyId);
+}
+
+/** 目标动态探活：被删除/屏蔽的动态在详情页只会得到加载失败，
+ * 因此打开与置读前先确认能取到完整正文（复用带缓存与网页兜底的正文加载）。 */
+async function ensureFeedOpenable(feedId: string): Promise<boolean> {
+  try {
+    await loadFeedFullText(feedId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 打开动态前先探活；探活失败返回 false，由调用方保留未读并给出可行动提示。 */
+async function openFeedAfterProbe(feedId: string, context?: any, replyId?: string): Promise<boolean> {
+  if (!(await ensureFeedOpenable(feedId))) return false;
+  // 按调用方参数转发，保持 openFeedDetail 的既有上下文缓存行为。
+  if (replyId !== undefined) openFeedDetail(router, feedId, context, replyId);
+  else if (context !== undefined) openFeedDetail(router, feedId, context);
+  else openFeedDetail(router, feedId);
   return true;
 }
 
@@ -581,10 +601,8 @@ async function openNotificationTarget(item: any): Promise<boolean> {
   }
   if (await openNotificationComment(item)) return true;
   const feedId = getNotificationFeedId(item);
-  if (feedId) {
-    openFeedDetail(router, feedId, item);
-    return true;
-  }
+  // 已知动态 ID 时以探活结果为准：目标已删除不得回落到其它入口置读。
+  if (feedId) return await openFeedAfterProbe(feedId, item);
   const targetRoute = await resolveNotificationTarget(item);
   if (targetRoute) {
     void router.push(targetRoute);
@@ -713,8 +731,10 @@ async function markAllViewed(): Promise<void> {
   try {
     if (!await requestConfirmation({ title: '设为全部已读', message: '将点赞、关注、私信、回复、@、系统消息、活动消息的未读通知设为已读，该操作不可恢复，确定要操作吗？' })) return;
     if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
-    notificationStore.beginNotificationClear();
+    // 服务端清零成功后才推进 clearVersion：失败路径版本号与本地未读态原样保留，
+    // 在途置读的 NotifyCount 回包也不会被版本闸作废，仅以 toast 提示失败。
     await CoolapkTauriAPI.clearNotificationCount('all');
+    notificationStore.beginNotificationClear();
     if (!authStore.isLoggedIn || authStore.user?.uid !== accountUid) return;
     // 清除前发出的列表响应不能再把旧未读标记写回页面。
     notificationRequestId += 1;
@@ -783,13 +803,21 @@ async function handleNotifyClick(e: Event, item: any) {
   const feedRoute = normalizeCoolapkRoute(href);
   const linkedFeedId = feedRoute?.match(/^\/feed\/(\d+)(?:\?|$)/)?.[1];
   if (linkedFeedId) {
-    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    openFeedDetail(router, linkedFeedId);
+    // 先探活再置读：动态被删/被屏蔽时保留未读，并复用「可复制链接」提示范式。
+    if (await openFeedAfterProbe(linkedFeedId)) {
+      markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
+    } else {
+      reportNotificationUnopenable(item, href);
+    }
     return;
   }
   if (/(?:\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
-    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    handleAnchorClick(e);
+    // 评论链接同样先解析并确认目标动态存在，才上报服务端已读。
+    if (await openNotificationComment(item, href)) {
+      markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
+    } else {
+      reportNotificationUnopenable(item, href);
+    }
     return;
   }
   const notification = {
