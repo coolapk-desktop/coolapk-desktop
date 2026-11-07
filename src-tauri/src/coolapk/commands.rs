@@ -2067,6 +2067,9 @@ async fn run_apk_download(
             .map_err(|error| format!("创建临时文件失败：{error}"))?
     };
     let mut downloaded = initial_downloaded;
+    // 速度只统计「本次会话新增字节」：续传时 downloaded 从历史断点起算，
+    // 若直接用它除以会话耗时，恢复后首秒速度会虚高到断点总量级，ETA 同步失真。
+    let session_start_downloaded = initial_downloaded;
     let started_at = Instant::now();
     loop {
         match download_control(control) {
@@ -2108,7 +2111,8 @@ async fn run_apk_download(
         file.write_all(&chunk)
             .await
             .map_err(|error| format!("写入临时文件失败：{error}"))?;
-        let speed = downloaded / started_at.elapsed().as_secs().max(1);
+        let session_bytes = downloaded.saturating_sub(session_start_downloaded);
+        let speed = session_bytes / started_at.elapsed().as_secs().max(1);
         let _ = app.emit(
             "apk-download-progress",
             download_event_payload(task_id, "downloading", downloaded, total, speed, &target, &partial, None),
@@ -2135,7 +2139,8 @@ async fn run_apk_download(
         None
         }
     };
-    let speed = downloaded / started_at.elapsed().as_secs().max(1);
+    let session_bytes = downloaded.saturating_sub(session_start_downloaded);
+    let speed = session_bytes / started_at.elapsed().as_secs().max(1);
     let mut completed = download_event_payload(task_id, "completed", downloaded, total, speed, &target, &partial, None);
     completed["publicPath"] = json!(published_path);
     let _ = app.emit(

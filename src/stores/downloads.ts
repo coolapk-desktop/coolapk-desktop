@@ -152,6 +152,9 @@ export const useDownloadStore = defineStore('downloads', () => {
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
   const completedNotices = new Map<string, DownloadTask>();
+  // 记录「原生取消失败」的任务 id：cancel() 对外保持 Promise<void> 签名（批量取消回调依赖），
+  // remove 删除文件时据此判断是否需要用取消前的快照路径补删 .part。任务删除后条目一并清掉。
+  const cancelFailedIds = new Set<string>();
   const failedNotices = new Map<string, DownloadTask>();
   const notifiedNoticeKeys = new Set<string>();
   let persistFlushBound = false;
@@ -567,10 +570,12 @@ export const useDownloadStore = defineStore('downloads', () => {
     if (isUpdateTask(task)) return; // 更新包取消由更新器内部处理，这里只更新记录状态。
     try {
       await CoolapkTauriAPI.cancelApkDownload(taskId);
+      cancelFailedIds.delete(taskId);
     } catch (error) {
       // 原生取消失败只补错误说明，不回滚状态：任务保持已取消（UI 层可再次尝试删除记录），
       // applyNativeEvent 会对 canceled 任务忽略后续进度事件，避免「已取消又复活」。
       const message = error instanceof Error ? error.message : String(error);
+      cancelFailedIds.add(taskId);
       patchTask(taskId, { error: `取消失败：${message}` });
       showToast(`${task.title} 取消失败：${message}`, 'error');
     }
@@ -590,10 +595,17 @@ export const useDownloadStore = defineStore('downloads', () => {
       await removeUpdateTask(taskId);
       return;
     }
+    // cancel() 会先把 partialPath 清空再调原生取消；若原生取消失败，.part 仍在磁盘上。
+    // 先快照路径，删除文件时用它兜底，避免留下记录已删、无任何 UI 入口能清理的孤儿 .part。
+    const partialPathSnapshot = task.partialPath;
     if (task.status === 'downloading') await cancel(taskId);
+    const cancelFailed = cancelFailedIds.has(taskId);
+    cancelFailedIds.delete(taskId);
     if (deleteFile) {
+      // 原生取消成功时 Rust 侧已删除 .part，无需再用快照；仅取消失败时靠快照补删。
+      const partialPath = task.partialPath || (cancelFailed ? partialPathSnapshot : '');
       try {
-        await CoolapkTauriAPI.deleteApkDownloadFile(task.targetPath, task.partialPath, task.downloadDir, task.publicPath);
+        await CoolapkTauriAPI.deleteApkDownloadFile(task.targetPath, partialPath, task.downloadDir, task.publicPath);
       } catch (error) {
         // 跨平台迁移后旧绝对路径可能已经不属于当前系统，删除记录不能被这个历史路径阻塞。
         if (task.publicPath) {

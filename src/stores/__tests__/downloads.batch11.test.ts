@@ -114,6 +114,35 @@ describe('batch11：enqueue 匹配键与批量清理/重启/取消', () => {
     expect(task.downloaded).toBe(0);
   });
 
+  it('删除下载中任务且原生取消失败时：删除文件仍能用取消前的断点路径补删 .part（用户可见口径：删除后磁盘不残留孤儿 .part）', async () => {
+    // 挂起原生下载，避免 pump 在断言前把任务推进到 completed。
+    mocks.startApkDownload.mockReturnValue(new Promise(() => {}));
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '删除断点应用', packageName: 'com.demo.removepart', versionName: '1.0.0' });
+    task.status = 'downloading';
+    task.partialPath = '/data/删除断点应用-1.0.0.apk.part';
+
+    mocks.cancelApkDownload.mockRejectedValueOnce(new Error('通道已断开'));
+    await store.remove(task.id, true);
+    // 取消失败时记录里的 partialPath 已被 cancel 清空，删除必须回退到取消前的快照路径。
+    expect(mocks.deleteApkDownloadFile).toHaveBeenCalledWith(task.targetPath, '/data/删除断点应用-1.0.0.apk.part', task.downloadDir, task.publicPath);
+    // 记录仍被删除（现有语义：取消不回滚、删除不因取消失败而保留记录）。
+    expect(store.tasks.some((t) => t.id === task.id)).toBe(false);
+  });
+
+  it('删除下载中任务且原生取消成功时：不再用快照路径重复调用删除（用户可见口径：正常取消删除不产生多余文件操作）', async () => {
+    mocks.startApkDownload.mockReturnValue(new Promise(() => {}));
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '正常删除应用', packageName: 'com.demo.removeok', versionName: '1.0.0' });
+    task.status = 'downloading';
+    task.partialPath = '/data/正常删除应用-1.0.0.apk.part';
+
+    await store.remove(task.id, true);
+    // 原生取消成功时 Rust 侧已删除 .part，前端不传快照路径做无意义调用。
+    expect(mocks.deleteApkDownloadFile).toHaveBeenCalledWith(task.targetPath, '', task.downloadDir, task.publicPath);
+    expect(store.tasks.some((t) => t.id === task.id)).toBe(false);
+  });
+
   it('cancel 原生失败时保持已取消并暴露可重试的错误信息', async () => {
     const store = useDownloadStore();
     const { task } = store.enqueue({ title: '取消失败应用', packageName: 'com.demo.cancelfail', versionName: '1.0.0' });
