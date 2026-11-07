@@ -124,6 +124,7 @@ import ErrorState from '../common/ErrorState.vue';
 import EmptyState from '../common/EmptyState.vue';
 import CreateGoodsListDialog from './CreateGoodsListDialog.vue';
 import { useAuthStore } from '../../stores/auth';
+import { applyGoodsRows, getGoodsRowState, type GoodsRowState } from '../../stores/goodsRows';
 
 const props = withDefaults(
   defineProps<{
@@ -196,12 +197,22 @@ function listMessage(item: any): string {
   return info.message || info.description || info.sort_message || '';
 }
 
+/**
+ * 统计字段优先读行状态注册表：详情页（或本页刷新）写入的最新值存在时
+ * 覆盖本页持有的行对象副本，避免从详情返回后计数陈旧。
+ */
+function rowStat(item: any, pick: (state: GoodsRowState) => number | undefined, fallback: number): number {
+  const state = getGoodsRowState(listKey(item));
+  const v = state ? pick(state) : undefined;
+  return v === undefined ? fallback : v;
+}
+
 function listItemNum(item: any): number {
-  return Number(goodsListInfo(item)?.item_num || 0);
+  return rowStat(item, (s) => s.itemNum, Number(goodsListInfo(item)?.item_num || 0));
 }
 
 function listVoteNum(item: any): number {
-  return Number(goodsListInfo(item)?.vote_num || 0);
+  return rowStat(item, (s) => s.voteNum, Number(goodsListInfo(item)?.vote_num || 0));
 }
 
 function isVoteList(item: any): boolean {
@@ -210,11 +221,11 @@ function isVoteList(item: any): boolean {
 }
 
 function listFollowNum(item: any): number {
-  return Number(goodsListInfo(item)?.follow_num || 0);
+  return rowStat(item, (s) => s.followNum, Number(goodsListInfo(item)?.follow_num || 0));
 }
 
 function listReplyNum(item: any): number {
-  return Number(goodsListInfo(item)?.reply_num || 0);
+  return rowStat(item, (s) => s.replynum, Number(goodsListInfo(item)?.reply_num || 0));
 }
 
 async function loadTypes() {
@@ -251,6 +262,8 @@ async function load(isRefresh = false) {
         allItems.value.push(...list.filter((i: any) => !existing.has(listKey(i))));
       }
       page.value++;
+      // 加载到的行灌入注册表，作为后续跨页合并与覆盖展示的基准。
+      applyGoodsRows(list);
     }
   } catch (err: any) {
     error.value = err?.message || '加载失败';
@@ -309,7 +322,27 @@ onMounted(() => {
   void load(true);
 });
 
-onActivated(bindGlobalListeners);
+// 从详情页（keep-alive）返回时静默补拉第 1 页：详情页的收藏/评论/投票
+// 只回写它自己那份副本，这里按 id 原地合并进已加载行并同步注册表，
+// 不重置分页与滚动位置，避免打断用户的浏览状态。
+async function refreshOnActivated() {
+  if (loading.value || allItems.value.length === 0) return;
+  try {
+    const res = await CoolapkTauriAPI.getGoodsList({ uid: props.uid || '', page: 1 });
+    const list = (res?.data && Array.isArray(res.data)) ? res.data : [];
+    if (list.length === 0) return;
+    applyGoodsRows(list);
+    const byId = new Map(list.map((row: any) => [listKey(row), row]));
+    allItems.value = allItems.value.map((row) => byId.get(listKey(row)) || row);
+  } catch {
+    // 静默刷新失败不打扰用户；用户仍可下拉或翻页重试。
+  }
+}
+
+onActivated(() => {
+  bindGlobalListeners();
+  void refreshOnActivated();
+});
 onDeactivated(unbindGlobalListeners);
 onUnmounted(unbindGlobalListeners);
 

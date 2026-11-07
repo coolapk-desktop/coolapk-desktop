@@ -187,6 +187,8 @@ import { handleAnchorClick } from '../../utils/anchorClick';
 import {
   getCommentReplyRequestOptions,
   getExpectedCommentCount,
+  // 复用 commentList 的统一标识：楼中楼/游标/合并共用同一优先级，避免宿主各自实现互相矛盾
+  getReplyEntityId as commentRowId,
   getReplyData,
   getReplyPageCursor,
   hasMoreReplyPages,
@@ -195,6 +197,7 @@ import {
   type CommentSortSelection,
 } from '../../utils/commentList';
 import { useAuthStore } from '../../stores/auth';
+import { setGoodsRowState } from '../../stores/goodsRows';
 import { useSettingsStore } from '../../stores/settings';
 import { showToast } from '../../utils/toast';
 import { getErrorMessage } from '../../utils/errors';
@@ -289,11 +292,8 @@ async function openComments() {
 async function commentPosted() {
   if (!feed.value) return;
   feed.value.replynum = Math.max(0, replyNum.value) + 1;
-}
-
-/** 回复实体的唯一标识：接口回包有的只给 id，有的只给 entityId。 */
-function commentRowId(row: any): string {
-  return String(row?.id ?? row?.entityId ?? '').trim();
+  // 同一份回复数要同步给列表页那份副本，否则返回榜单还是旧数字。
+  setGoodsRowState(String(props.feedId), { replynum: feed.value.replynum });
 }
 
 /** 合并后续页时按 id 去重：本地插入的评论可能又出现在服务端回包里。 */
@@ -340,6 +340,12 @@ async function toggleFavorite() {
       syncFavoriteToFeed(feed.value, {
         favorited: target,
         favnum: Math.max(0, Number(feed.value.favnum || 0) + (target ? 1 : -1)),
+      });
+      // 跨页同步：清单/榜单页持有另一份行对象，经行状态注册表按 id 共享最新收藏态与计数，
+      // 返回列表时不必等静默刷新落地就能看到正确状态。
+      setGoodsRowState(String(props.feedId), {
+        favorited: target,
+        favnum: Math.max(0, Number(feed.value.favnum || 0)),
       });
     }
   } catch (err) { showToast(getErrorMessage(err, '收藏失败'), 'error'); }
