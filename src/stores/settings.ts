@@ -612,8 +612,13 @@ export const useSettingsStore = defineStore('settings', () => {
     }, DEVICE_SYNC_DEBOUNCE_MS);
   }, { deep: true, flush: 'sync' });
   onScopeDispose(() => { if (deviceSyncTimer) clearTimeout(deviceSyncTimer); });
+  // 关闭实验性功能会连带把 beta 渠道翻回 stable（beta 属于实验能力）。
+  // 这是跨字段隐式副作用，必须给用户一次性可见提示；渠道本来就是 stable 时不提示。
   watch(() => settings.value.experimentalFeatures, (enabled) => {
-    if (!enabled && settings.value.updateChannel === 'beta') settings.value.updateChannel = 'stable';
+    if (!enabled && settings.value.updateChannel === 'beta') {
+      settings.value.updateChannel = 'stable';
+      showToast('已关闭实验性功能，更新渠道已同时切回稳定版', 'info', 4000);
+    }
   }, { flush: 'sync' });
   // 动态磁贴开关变更后立即同步给后端：开启时立即刷新磁贴，关闭时清空磁贴队列。
   watch(() => settings.value.liveTileEnabled, (enabled) => {

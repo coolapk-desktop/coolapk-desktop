@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { registerGlobalHotkeys } from '../hotkeys';
+import { registerGlobalHotkeys, REGISTERED_HOTKEY_IDS, EXTERNAL_HOTKEY_IDS } from '../hotkeys';
+import { SHORTCUT_BRANCH_IDS, SHORTCUT_DEFINITIONS } from '../shortcuts';
 import * as commentTracker from '../activeCommentTracker';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 
@@ -50,6 +51,47 @@ vi.mock('../../stores/settings', () => ({
     setZoom: vi.fn(),
   }),
 }));
+
+describe('快捷键清单与注册表单一真源', () => {
+  const listedBranches = new Set(SHORTCUT_DEFINITIONS.map(d => d.branchId));
+
+  it('清单覆盖 hotkeys.ts 全部已注册分支', () => {
+    // 每个实际生效的 keydown 分支都必须在帮助清单里登记，防止快捷键页漏项。
+    for (const id of REGISTERED_HOTKEY_IDS) {
+      expect(listedBranches.has(id), `分支 ${id} 未收录进 SHORTCUT_DEFINITIONS`).toBe(true);
+    }
+    for (const id of EXTERNAL_HOTKEY_IDS) {
+      expect(listedBranches.has(id), `外部分支 ${id} 未收录进 SHORTCUT_DEFINITIONS`).toBe(true);
+    }
+  });
+
+  it('每个登记的分支 id 都有帮助页条目（漏登记直接失败）', () => {
+    // 新增 keydown 分支时必须先在 SHORTCUT_BRANCH_IDS 登记（类型层强制），
+    // 这条断言再强制它必须出现在帮助清单里，两步都漏不掉。
+    for (const id of SHORTCUT_BRANCH_IDS) {
+      expect(listedBranches.has(id), `分支 ${id} 已登记但没有帮助页条目`).toBe(true);
+    }
+  });
+
+  it('清单不含没有分支背书的条目（不捏造未注册的快捷键）', () => {
+    for (const d of SHORTCUT_DEFINITIONS) {
+      expect(
+        REGISTERED_HOTKEY_IDS.has(d.branchId) || EXTERNAL_HOTKEY_IDS.has(d.branchId),
+        `清单条目 ${d.branchId}（${d.key}）没有任何注册分支背书`,
+      ).toBe(true);
+    }
+  });
+
+  it('缩放快捷键已收录进清单（此前清单遗漏）', () => {
+    // 用户可见：快捷键帮助页能看到「放大界面 / 缩小界面」两行。
+    const zoomIn = SHORTCUT_DEFINITIONS.filter(d => d.branchId === 'zoomIn');
+    const zoomOut = SHORTCUT_DEFINITIONS.filter(d => d.branchId === 'zoomOut');
+    expect(zoomIn.length).toBeGreaterThanOrEqual(1);
+    expect(zoomOut.length).toBeGreaterThanOrEqual(1);
+    expect(zoomIn.some(d => d.key.includes('Ctrl+='))).toBe(true);
+    expect(zoomOut.some(d => d.key.includes('Ctrl+-'))).toBe(true);
+  });
+});
 
 describe('registerGlobalHotkeys', () => {
   it('Ctrl+R 刷新首页当前栏目', () => {

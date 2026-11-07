@@ -4,6 +4,7 @@ import { CoolapkTauriAPI } from '../api/coolapk';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
 import { clearUserProfileCache } from '../utils/userProfilePreloader';
 import { useUserRelationsStore } from './userRelations';
+import { useTopicHubStore } from './topicHub';
 import { clearFeedFavorites } from './feedFavorites';
 import { clearGoodsRows } from './goodsRows';
 
@@ -51,6 +52,9 @@ export const useAuthStore = defineStore('auth', () => {
     // （两者均为纯模块、只依赖 vue，直接导入无循环依赖。）
     clearFeedFavorites();
     clearGoodsRows();
+    // 话题流缓存按当前账号视角返回（feed 实体带 userAction/收藏计数），
+    // 切号/登出必须清掉，避免话题页残留上一个账号视角的数据。
+    useTopicHubStore().clearAccountData();
     user.value = null;
     isLoggedIn.value = false;
     rawCookie.value = '';

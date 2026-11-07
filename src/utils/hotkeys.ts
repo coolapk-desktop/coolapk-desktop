@@ -5,6 +5,36 @@ import { hasActiveComments, collapseActiveComments } from './activeCommentTracke
 import { usePageTabsStore } from '../stores/pageTabs';
 import { refreshPageTabGeneration } from './pageTabs';
 import { navigateBack } from './navigation';
+import type { ShortcutBranchId } from './shortcuts';
+
+/**
+ * 本文件 keydown 中实际处理的注册分支 id。
+ * 元素类型是 utils/shortcuts.ts 的 `ShortcutBranchId` 字面量联合：新增分支时
+ * 写未登记的 id 会编译期报错；登记后若忘记补 SHORTCUT_DEFINITIONS 帮助页条目，
+ * utils/__tests__/hotkeys.test.ts 的覆盖断言会失败。两道闸共同防止清单漂移。
+ */
+export const REGISTERED_HOTKEY_IDS: ReadonlySet<ShortcutBranchId> = new Set([
+  'closeTab',
+  'tabCycle',
+  'navBack',
+  'navForward',
+  'toggleSidebar',
+  'quickRoutes',
+  'publish',
+  'openSettings',
+  'refresh',
+  'zoomIn',
+  'zoomOut',
+  'escape',
+  'feedNavNext',
+  'feedNavPrev',
+  'feedNavComment',
+]);
+
+/** 由其它组件注册、但收录进快捷键帮助清单的分支 id（如 Ctrl+K 由 SearchCommand 处理）。 */
+export const EXTERNAL_HOTKEY_IDS: ReadonlySet<ShortcutBranchId> = new Set([
+  'search',
+]);
 
 /**
  * 全局快捷键注册：
