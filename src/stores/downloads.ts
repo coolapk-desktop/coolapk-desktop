@@ -214,6 +214,9 @@ export const useDownloadStore = defineStore('downloads', () => {
     if (!event.taskId) return;
     const task = findTask(event.taskId);
     if (!task) return;
+    // 已取消的任务不再接受任何原生事件：原生取消失败时迟到的进度事件
+    // 会把任务拉回 downloading，造出「已取消又复活」的假状态。
+    if (task.status === 'canceled') return;
     const status = normalizeStatus(event.status);
     const patch: Partial<DownloadTask> = {};
     if (status) patch.status = status;
@@ -442,7 +445,18 @@ export const useDownloadStore = defineStore('downloads', () => {
     total?: number;
   }): EnqueueResult {
     const versionName = options.versionName?.trim() || '';
-    const existing = tasks.value.find((task) => task.packageName === options.packageName && task.versionName === versionName && task.status !== 'canceled');
+    const kind = options.kind || 'apk';
+    const apkId = String(options.apkId ?? '');
+    // 同应用同版本可能存在多来源安装包（不同 apkId，或 xapk/apks 与 apk 并存），
+    // 匹配键必须包含 kind 与 apkId：否则选来源 B 时会误命中来源 A 的旧任务，
+    // 谎报「已在队列/已下载完成」，导致用户想要的安装包根本没进队列。
+    const existing = tasks.value.find((task) =>
+      task.packageName === options.packageName
+      && task.versionName === versionName
+      && task.kind === kind
+      && task.apkId === apkId
+      && task.status !== 'canceled',
+    );
     if (existing) {
       // 命中失败/暂停任务时必须真正重新排队，不能只把旧任务原样返回给调用方去谎报「已加入队列」。
       const previousStatus = existing.status;
@@ -451,7 +465,6 @@ export const useDownloadStore = defineStore('downloads', () => {
       return { task: existing, reused: true, resumed, previousStatus };
     }
     const createdAt = now();
-    const kind = options.kind || 'apk';
     const task: DownloadTask = {
       id: createTaskId(),
       kind,
@@ -459,7 +472,7 @@ export const useDownloadStore = defineStore('downloads', () => {
       packageName: options.packageName,
       versionName,
       versionCode: String(options.versionCode ?? ''),
-      apkId: String(options.apkId ?? ''),
+      apkId,
       logoUrl: options.logoUrl || '',
       fileName: buildFileName({ ...options, kind }),
       extraAnalysisData: options.extraAnalysisData || '',
@@ -525,6 +538,16 @@ export const useDownloadStore = defineStore('downloads', () => {
   async function restart(taskId: string) {
     const task = findTask(taskId);
     if (!task || isUpdateTask(task) || !['paused', 'failed', 'canceled'].includes(task.status)) return;
+    // 语义是「从头下载」，必须先删原生 .part 断点文件，否则原生续传会从旧进度继续，
+    // 与注释承诺不符。只删断点（partial），targetPath/publicPath 留空避免误删已完成的安装包。
+    if (task.partialPath) {
+      try {
+        await CoolapkTauriAPI.deleteApkDownloadFile('', task.partialPath, task.downloadDir, '');
+      } catch (error) {
+        // 删断点失败不阻塞重新排队，但必须让用户知道可能从旧断点继续而不是真正从头。
+        showToast(`删除断点文件失败，可能从旧进度继续下载：${error instanceof Error ? error.message : String(error)}`, 'error');
+      }
+    }
     patchTask(taskId, { status: 'queued', downloaded: 0, speed: 0, partialPath: '', error: '' });
     await pump();
   }
@@ -543,7 +566,11 @@ export const useDownloadStore = defineStore('downloads', () => {
     try {
       await CoolapkTauriAPI.cancelApkDownload(taskId);
     } catch (error) {
-      patchTask(taskId, { error: error instanceof Error ? error.message : String(error) });
+      // 原生取消失败只补错误说明，不回滚状态：任务保持已取消（UI 层可再次尝试删除记录），
+      // applyNativeEvent 会对 canceled 任务忽略后续进度事件，避免「已取消又复活」。
+      const message = error instanceof Error ? error.message : String(error);
+      patchTask(taskId, { error: `取消失败：${message}` });
+      showToast(`${task.title} 取消失败：${message}`, 'error');
     }
   }
 
@@ -635,10 +662,15 @@ export const useDownloadStore = defineStore('downloads', () => {
     await pump();
   }
 
-  /** 一键清空失败记录：只移除 failed 任务，不触碰进行中/已完成的历史。 */
+  /**
+   * 一键清空失败记录：只移除 failed 任务，不触碰进行中/已完成的历史。
+   * 更新任务走 remember=false：批量清理是「清理记录」，不是单条「删除记录」，
+   * 不能写墓碑把该版本的自动更新提示永久挡住。
+   */
   async function clearFailed(deleteFiles = false) {
     const targets = tasks.value.filter((task) => task.status === 'failed');
     for (const task of targets) {
+      if (isUpdateTask(task)) { await removeUpdateTask(task.id, false); continue; }
       await remove(task.id, deleteFiles);
     }
   }
@@ -646,6 +678,8 @@ export const useDownloadStore = defineStore('downloads', () => {
   async function clearHistory(deleteFiles = false) {
     const targets = [...historyTasks.value];
     for (const task of targets) {
+      // 与 clearFailed 同理：批量清空历史不等于用户不要这个版本，不写更新墓碑。
+      if (isUpdateTask(task)) { await removeUpdateTask(task.id, false); continue; }
       await remove(task.id, deleteFiles);
     }
   }

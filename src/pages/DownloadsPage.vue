@@ -251,6 +251,14 @@
             <!-- 更新包下载中：不支持暂停/取消（Rust 侧无对应命令），不提供按钮避免误导 -->
             <template v-if="isUpdateTask(task) && task.status === 'downloading'"></template>
 
+            <!-- 更新包排队中：已登记但首个进度未到，没有可暂停/取消的下载，
+                 但用户仍应有单条「删除记录」入口，操作区不能为空 -->
+            <template v-else-if="isUpdateTask(task) && task.status === 'queued'">
+              <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
+                删除记录
+              </AppButton>
+            </template>
+
             <!-- 下载中：暂停 / 取消 -->
             <template v-else-if="task.status === 'downloading'">
               <AppButton variant="secondary" size="sm" icon="fas fa-pause" @click="downloadStore.pause(task.id)">

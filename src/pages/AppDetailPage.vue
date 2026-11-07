@@ -238,6 +238,16 @@
             <div class="version-card-main">
               <span class="version-name">{{ versionName(ver) }}</span>
               <span v-if="versionSize(ver)" class="version-size">{{ versionSize(ver) }}</span>
+              <!-- 历史版本直接下载：用该版本自己的 versionCode/apkId 入队，而不是当前 appInfo 的版本 -->
+              <AppButton
+                variant="secondary"
+                size="sm"
+                icon="fas fa-download"
+                class="version-download-btn"
+                @click="handleVersionDownload(ver)"
+              >
+                下载
+              </AppButton>
             </div>
             <span v-if="versionDate(ver)" class="version-date">{{ versionDate(ver) }}</span>
             <div v-if="versionLog(ver)" class="version-log">{{ versionLog(ver) }}</div>
@@ -497,7 +507,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
-import { useDownloadStore } from '../stores/downloads';
+import { useDownloadStore, type EnqueueResult } from '../stores/downloads';
 import AppButton from '../components/common/AppButton.vue';
 import AppImage from '../components/common/AppImage.vue';
 import AppDialog from '../components/common/AppDialog.vue';
@@ -1064,22 +1074,7 @@ async function handleDownload() {
       extraAnalysisData: appInfo.value?.extraAnalysisData || appInfo.value?.extra_analysis_data || '',
       total: Number(appInfo.value?.apksize || appInfo.value?.size || 0) || 0,
     });
-    const { task, reused, resumed } = result;
-    // 按任务的真实状态提示，避免复用失败/暂停任务时谎报「已加入下载队列」。
-    let message: string;
-    if (resumed) {
-      message = `已重新排队下载：${task.title}`;
-    } else if (reused && task.status === 'completed') {
-      message = '该版本已下载完成';
-    } else if (reused && (task.status === 'downloading' || task.status === 'queued')) {
-      message = `该版本已在下载队列中：${task.title}`;
-    } else {
-      message = `已加入下载队列：${task.title}`;
-    }
-    showToast(message, 'success', 2800, {
-      label: '打开下载中心',
-      onClick: () => { void router.push('/downloads'); },
-    });
+    showEnqueueToast(result);
   } catch (err: any) {
     alert(`加入下载队列失败：${err?.message || '请检查网络或登录状态'}`);
   } finally {
@@ -1143,6 +1138,55 @@ function toggleFollow() {
 
 function versionName(ver: any): string {
   return ver?.versionName || ver?.version_name || ver?.apkversionname || ver?.version || '未知版本';
+}
+
+/** 版本历史条目的 versionCode：字段名随接口版本变化，逐一兜底。 */
+function versionCodeOf(ver: any): string {
+  return String(ver?.versioncode || ver?.apkversioncode || ver?.versionCode || ver?.version_code || ver?.apkVersionCode || ver?.apk_version_code || '');
+}
+
+/** 版本历史条目的 apkId：同一应用多来源安装包靠它区分任务。 */
+function versionApkIdOf(ver: any): string {
+  return String(ver?.aid || ver?.id || ver?.apkid || ver?.apkId || ver?.entityId || '');
+}
+
+/** 按任务真实状态给出准确文案，避免复用旧任务时谎报「已加入队列」。 */
+function showEnqueueToast(result: EnqueueResult) {
+  const { task, reused, resumed } = result;
+  let message: string;
+  if (resumed) {
+    message = `已重新排队下载：${task.title}`;
+  } else if (reused && task.status === 'completed') {
+    message = '该版本已下载完成';
+  } else if (reused && (task.status === 'downloading' || task.status === 'queued')) {
+    message = `该版本已在下载队列中：${task.title}`;
+  } else {
+    message = `已加入下载队列：${task.title}`;
+  }
+  showToast(message, 'success', 2800, {
+    label: '打开下载中心',
+    onClick: () => { void router.push('/downloads'); },
+  });
+}
+
+/** 下载版本历史中的某一条：必须用该版本的 apkId/versionCode 入队。 */
+function handleVersionDownload(ver: any) {
+  if (!packageName.value) return;
+  const versionNameText = String(versionName(ver));
+  try {
+    const result = downloadStore.enqueue({
+      title: appTitle.value,
+      packageName: packageName.value,
+      versionName: versionNameText,
+      versionCode: versionCodeOf(ver),
+      apkId: versionApkIdOf(ver),
+      logoUrl: logoUrl.value,
+      total: Number(ver?.apksize || ver?.size || 0) || 0,
+    });
+    showEnqueueToast(result);
+  } catch (err: any) {
+    showToast(`加入下载队列失败：${err?.message || '请检查网络或登录状态'}`, 'error');
+  }
 }
 
 function versionSize(ver: any): string {
@@ -1845,6 +1889,12 @@ async function refreshMobilePage() { await fetchAppDetail(); if (activeDetailTab
   background-color: var(--surface-hover);
   padding: 1px 6px;
   border-radius: var(--radius-pill);
+}
+
+/* 版本下载按钮靠右，移动端窄屏下保持可点区域 */
+.version-download-btn {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .version-date {
