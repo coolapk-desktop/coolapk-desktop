@@ -3,7 +3,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, ensure};
@@ -33,7 +33,6 @@ use crate::web_commands::dispatch_web_command;
 
 const SESSION_COOKIE: &str = "coolapk_web_session";
 const SECURE_SESSION_COOKIE: &str = "__Host-coolapk_web_session";
-const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const MAX_SESSIONS: usize = 512;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_UPLOAD_BYTES: usize = 272 * 1024 * 1024;
@@ -44,18 +43,6 @@ struct Session {
 }
 
 impl Session {
-    fn refresh_expiry(&self) {
-        let Some(persisted) = &self.persisted else { return; };
-        let saved = persisted.lock().expect("web session snapshot lock");
-        if let Ok(file) = std::fs::File::open(&saved.0)
-            && file.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| {
-                time.elapsed().is_ok_and(|age| age >= Duration::from_secs(60))
-            })
-        {
-            let _ = file.set_modified(std::time::SystemTime::now());
-        }
-    }
-
     fn persist(&self, client: &CoolapkClient) -> Result<(), WebError> {
         let Some(persisted) = &self.persisted else { return Ok(()); };
         let mut saved = persisted.lock().expect("web session snapshot lock");
@@ -82,15 +69,10 @@ impl Session {
     }
 }
 
-struct SessionEntry {
-    session: Arc<Session>,
-    last_seen: Instant,
-}
-
 struct WebState {
     origin: String,
     secure_cookie: bool,
-    sessions: Mutex<HashMap<String, SessionEntry>>,
+    sessions: Mutex<HashMap<String, Arc<Session>>>,
     desktop: Option<Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>>,
     session_dir: Option<PathBuf>,
     requests: tokio::sync::Semaphore,
@@ -120,6 +102,29 @@ fn session_cookies<'a>(
 }
 
 impl WebState {
+    fn make_session_room(
+        &self,
+        sessions: &mut HashMap<String, Arc<Session>>,
+    ) -> Result<(), WebError> {
+        if sessions.len() < MAX_SESSIONS {
+            return Ok(());
+        }
+        // Standalone sessions can leave the cache only after their snapshot has been saved.
+        let evictable = sessions.iter().find(|(_, session)| {
+            Arc::strong_count(session) == 1
+                && (self.desktop.is_some()
+                    || session.persisted.as_ref().is_some_and(|saved| {
+                        !saved.lock().expect("web session snapshot lock").1.is_null()
+                    }))
+        });
+        if let Some((key, _)) = evictable {
+            let key = key.clone();
+            sessions.remove(&key);
+            return Ok(());
+        }
+        Err(error(StatusCode::SERVICE_UNAVAILABLE, "浏览器会话已满，请稍后重试"))
+    }
+
     fn cookie_name(&self) -> &'static str {
         if self.secure_cookie {
             SECURE_SESSION_COOKIE
@@ -133,45 +138,34 @@ impl WebState {
         headers: &HeaderMap,
         create: bool,
     ) -> Result<(Arc<Session>, Option<String>), WebError> {
-        let now = Instant::now();
         let mut sessions = self.sessions.lock().expect("web sessions lock");
-        sessions.retain(|_, entry| now.duration_since(entry.last_seen) < SESSION_TTL);
         // Older builds used Path=/api, so browsers can send the stale cookie before the new one.
         for key in session_cookies(headers, self.cookie_name()) {
-            if let Some(entry) = sessions.get_mut(key) {
-                entry.last_seen = now;
-                entry.session.refresh_expiry();
-                return Ok((Arc::clone(&entry.session), None));
+            if let Some(session) = sessions.get(key) {
+                return Ok((Arc::clone(session), None));
             }
-            if sessions.len() < MAX_SESSIONS
-                && let Some(dir) = &self.session_dir
+            if let Some(dir) = &self.session_dir
                 && key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
             {
                 let path = dir.join(format!("{key}.json"));
                 if let Ok(file) = std::fs::File::open(&path)
-                    && file.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| time.elapsed().is_ok_and(|age| age < SESSION_TTL))
                     && let Ok(snapshot) = serde_json::from_reader::<_, Value>(file)
                     && let Ok(client) = CoolapkClient::restore_web_session(&snapshot)
                 {
+                    self.make_session_room(&mut sessions)?;
                     let session = Arc::new(Session {
                         client: Arc::new(tokio::sync::Mutex::new(Arc::new(client))),
                         persisted: Some(Mutex::new((path, snapshot))),
                     });
-                    session.refresh_expiry();
-                    sessions.insert(key.to_owned(), SessionEntry { session: Arc::clone(&session), last_seen: now });
+                    sessions.insert(key.to_owned(), Arc::clone(&session));
                     return Ok((session, None));
                 }
             }
         }
         if !create {
-            return Err(error(StatusCode::UNAUTHORIZED, "浏览器会话已过期，请重试"));
+            return Err(error(StatusCode::UNAUTHORIZED, "浏览器会话不可用，请重试"));
         }
-        if sessions.len() >= MAX_SESSIONS {
-            return Err(error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "浏览器会话已满，请稍后重试",
-            ));
-        }
+        self.make_session_room(&mut sessions)?;
         let mut token = [0u8; 32];
         getrandom::fill(&mut token)
             .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法创建浏览器会话"))?;
@@ -181,13 +175,7 @@ impl WebState {
                 .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(Arc::new(CoolapkClient::new_web())))),
             persisted: self.session_dir.as_ref().map(|dir| Mutex::new((dir.join(format!("{token}.json")), Value::Null))),
         });
-        sessions.insert(
-            token.clone(),
-            SessionEntry {
-                session: Arc::clone(&session),
-                last_seen: now,
-            },
-        );
+        sessions.insert(token.clone(), Arc::clone(&session));
         Ok((session, Some(token)))
     }
 }
@@ -982,38 +970,6 @@ pub async fn run() -> anyhow::Result<()> {
     }
     let state = Arc::new(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    let cleanup_state = Arc::downgrade(&state);
-    tokio::spawn(async move {
-        let mut timer = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            timer.tick().await;
-            let Some(state) = cleanup_state.upgrade() else {
-                break;
-            };
-            state
-                .sessions
-                .lock()
-                .expect("web sessions lock")
-                .retain(|_, entry| entry.last_seen.elapsed() < SESSION_TTL);
-            if let Some(dir) = &state.session_dir
-                && let Ok(entries) = std::fs::read_dir(dir)
-            {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "json")
-                        && path.file_stem().and_then(|name| name.to_str()).is_some_and(|key| {
-                            key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
-                        })
-                        && entry.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| {
-                            time.elapsed().is_ok_and(|age| age >= SESSION_TTL + Duration::from_secs(60))
-                        })
-                    {
-                        let _ = std::fs::remove_file(path);
-                    }
-                }
-            }
-        }
-    });
     println!("Coolapk Web listening on {bind}");
     axum::serve(listener, router(state, dist)).await?;
     Ok(())

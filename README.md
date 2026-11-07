@@ -151,7 +151,7 @@ npm run serve:web
 - `COOLAPK_WEB_ORIGIN` 填写浏览器访问的完整站点源，例如 `https://coolapk.example`。它用于校验 API 请求来源。
 - `COOLAPK_WEB_DIST` 默认读取当前目录下的 `dist-web`。它也可以指向独立部署的前端产物目录。
 
-浏览器使用 Cookie 导入登录。会话闲置 12 小时后需要重新导入。未配置 `COOLAPK_WEB_DATA_DIR` 时，会话仅存在于服务进程内。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
+浏览器使用 Cookie 导入登录。Web 服务不会因闲置而注销登录。配置 `COOLAPK_WEB_DATA_DIR` 后，只要浏览器仍保留本站会话 Cookie 且酷安登录凭据有效，重启服务后也能恢复登录。未配置时，会话仅保存在服务进程内，重启后需要重新登录。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
 
 本机也可以通过 Docker 构建和运行。在仓库根目录执行：
 
