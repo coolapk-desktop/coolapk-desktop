@@ -297,6 +297,35 @@ describe('设置页面交互', () => {
     expect(settings.settings.alwaysOnTop).toBe(true);
   });
 
+  it('桌面行为同步失败时启动页显示生效告警，恢复后消失', async () => {
+    const { wrapper, settings } = mountPage(StartupSettingsPage);
+    await flushPromises();
+    expect(wrapper.find('.native-sync-alert').exists()).toBe(false);
+
+    // 开关值已保存但桌面端未同步：页面必须暴露真实生效状态，而不是只显示「已开启」。
+    settings.traySyncFailed = true;
+    settings.alwaysOnTopSyncFailed = true;
+    await flushPromises();
+    const alert = wrapper.find('.native-sync-alert');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toContain('关闭到托盘');
+    expect(alert.text()).toContain('窗口置顶');
+    expect(alert.text()).toContain('未能同步到桌面端');
+    expect(alert.text()).not.toContain('启动参数');
+
+    // 同步成功后告警消失，避免长期误报。
+    settings.traySyncFailed = false;
+    settings.alwaysOnTopSyncFailed = false;
+    settings.startupFlagsSyncFailed = true;
+    await flushPromises();
+    expect(wrapper.find('.native-sync-alert').text()).toContain('启动参数');
+    expect(wrapper.find('.native-sync-alert').text()).not.toContain('窗口置顶');
+
+    settings.startupFlagsSyncFailed = false;
+    await flushPromises();
+    expect(wrapper.find('.native-sync-alert').exists()).toBe(false);
+  });
+
   it('非 Windows 10 环境下隐藏动态磁贴设置区块', async () => {
     vi.mocked(getPlatformInfo).mockResolvedValueOnce({
       os: 'windows',

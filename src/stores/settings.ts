@@ -417,6 +417,9 @@ const ACCENT_PALETTES: Record<AccentColor, { light: AccentPalette; dark: AccentP
 
 /** 持久化失败去重标记：同一失败周期只提示一次，写盘恢复成功后复位。 */
 let persistenceFailureNotified = false;
+
+/** 桌面原生行为（托盘/置顶/启动参数）同步失败的一次性告警闸门，同步成功后复位。 */
+const nativeSyncFailureNotified = { tray: false, alwaysOnTop: false, startupFlags: false };
 function notifyPersistenceFailure() {
   if (persistenceFailureNotified) return;
   persistenceFailureNotified = true;
@@ -434,6 +437,12 @@ export const useSettingsStore = defineStore('settings', () => {
   // 生效”是两个语义：失败时不回滚用户已保存的地址，只把失败暴露给页面显示告警，
   // 避免 store 仍显示“已应用”而用户无从发现代理没生效。
   const proxySyncFailed = ref(false);
+  // 桌面原生行为（托盘/置顶/启动参数）是否真实同步到后端，口径同 proxySyncFailed：
+  // 保存的开关值与「是否生效」是两个语义，失败时不回滚开关，只暴露失败状态供页面
+  // 展示告警，避免 store 仍显示“已应用”而用户无从发现功能没生效。
+  const traySyncFailed = ref(false);
+  const alwaysOnTopSyncFailed = ref(false);
+  const startupFlagsSyncFailed = ref(false);
   const isTauriRuntime = typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
   let fileStore: SettingsFileStore | null = null;
   let persistenceReady = !isTauriRuntime;
@@ -790,8 +799,22 @@ export const useSettingsStore = defineStore('settings', () => {
     applyNoImageMode(settings.value.noImageMode);
   }
 
+  /** 同一次失败只提示一次；同步成功后重置，下次再失败可以重新提示（同 proxySyncFailureNotified 范式）。 */
+  function notifyNativeSyncFailure(kind: keyof typeof nativeSyncFailureNotified, message: string) {
+    if (nativeSyncFailureNotified[kind]) return;
+    nativeSyncFailureNotified[kind] = true;
+    showToast(message, 'warning', 6000);
+  }
+
   function syncCloseToTray(enabled: boolean) {
-    invoke('set_close_to_tray', { enabled }).catch((err) => {
+    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) { traySyncFailed.value = false; nativeSyncFailureNotified.tray = false; return; }
+    invoke('set_close_to_tray', { enabled }).then(() => {
+      traySyncFailed.value = false;
+      nativeSyncFailureNotified.tray = false;
+    }).catch((err) => {
+      // 开关已落库且界面显示已开启，但原生行为没生效，必须让用户看见（同代理同步范式）。
+      traySyncFailed.value = true;
+      notifyNativeSyncFailure('tray', '「关闭到托盘」设置未生效，请重新切换开关或重启应用');
       console.warn('同步关闭到托盘设置失败:', err);
     });
   }
@@ -801,7 +824,12 @@ export const useSettingsStore = defineStore('settings', () => {
     // Android/iOS 不提供桌面窗口置顶接口，初始化与设置同步都应跳过。
     if (isTouchMobilePlatform()) return;
     if ((window as any).__TAURI_INTERNALS__?.metadata) {
-      void getCurrentWindow().setAlwaysOnTop(enabled).catch((err) => {
+      void getCurrentWindow().setAlwaysOnTop(enabled).then(() => {
+        alwaysOnTopSyncFailed.value = false;
+        nativeSyncFailureNotified.alwaysOnTop = false;
+      }).catch((err) => {
+        alwaysOnTopSyncFailed.value = true;
+        notifyNativeSyncFailure('alwaysOnTop', '窗口置顶设置未生效，请重新切换开关');
         console.warn('设置窗口置顶失败:', err);
       });
     }
@@ -813,7 +841,12 @@ export const useSettingsStore = defineStore('settings', () => {
       startMinimized: s.startMinimized,
       rememberWindowState: s.rememberWindowState,
       alwaysOnTop: s.alwaysOnTop,
+    }).then(() => {
+      startupFlagsSyncFailed.value = false;
+      nativeSyncFailureNotified.startupFlags = false;
     }).catch((err) => {
+      startupFlagsSyncFailed.value = true;
+      notifyNativeSyncFailure('startupFlags', '启动参数设置未同步，重启后可能不按预期生效');
       console.warn('同步启动参数失败:', err);
     });
   }
@@ -986,6 +1019,9 @@ export const useSettingsStore = defineStore('settings', () => {
     setNetworkProxyUrl,
     reapplyNetworkProxy,
     proxySyncFailed,
+    traySyncFailed,
+    alwaysOnTopSyncFailed,
+    startupFlagsSyncFailed,
     applyAppearance,
     setAutostart,
     setTheme,

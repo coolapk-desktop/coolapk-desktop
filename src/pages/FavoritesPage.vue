@@ -919,16 +919,44 @@ function syncCollectionItemCount(removed: number) {
   if (current) current.itemNum = collectionItemNum.value;
 }
 
+// 正文索引清理的失败可见性：这里处于热点路径（列表滚动逐条联动、批量删除连打），
+// 不能每条失败都弹 toast；策略是失败先重试一次，仍失败写诊断日志，只有连续多次
+// 失败（索引大概率整体不可用，如断网）才聚合提示一次，成功后复位计数与提示闸门。
+let contentIndexRemoveConsecutiveFailures = 0;
+let contentIndexRemoveFailureNotified = false;
+async function removeContentIndexEntryWithVisibility(accountId: string | number, feedId: string | number) {
+  const reset = () => {
+    contentIndexRemoveConsecutiveFailures = 0;
+    contentIndexRemoveFailureNotified = false;
+  };
+  try {
+    await removeFavoriteContentIndexEntry(accountId, feedId);
+    reset();
+  } catch {
+    try {
+      await removeFavoriteContentIndexEntry(accountId, feedId);
+      reset();
+    } catch (error) {
+      contentIndexRemoveConsecutiveFailures += 1;
+      console.error('[FavoritesPage] 收藏正文索引清理失败（已重试 1 次，内容可能残留在正文搜索中）:', { feedId: String(feedId), consecutiveFailures: contentIndexRemoveConsecutiveFailures }, error);
+      if (!contentIndexRemoveFailureNotified && contentIndexRemoveConsecutiveFailures >= 3) {
+        contentIndexRemoveFailureNotified = true;
+        showToast('收藏正文索引清理失败，已移除的内容可能仍出现在正文搜索中', 'warning', 5000);
+      }
+    }
+  }
+}
+
 function handleFeedDeleted(id: string | number) {
   // 删除动态与取消收藏都是「条目从收藏单消失」，计数口径必须一致。
   syncCollectionItemCount(removeCollectionItemsByKey(id));
-  void removeFavoriteContentIndexEntry(favoriteAccountId(), id).catch((error) => console.warn('移除删除动态的正文索引失败:', error));
+  void removeContentIndexEntryWithVisibility(favoriteAccountId(), id);
 }
 
 function handleFavoriteChanged(payload: { id: string | number; favorited: boolean }) {
   if (payload.favorited) return;
   syncCollectionItemCount(removeCollectionItemsByKey(payload.id));
-  void removeFavoriteContentIndexEntry(favoriteAccountId(), payload.id).catch((error) => console.warn('移除取消收藏的正文索引失败:', error));
+  void removeContentIndexEntryWithVisibility(favoriteAccountId(), payload.id);
 }
 const collectionLiked = ref(false);
 const collectionFollowPending = ref(false);
@@ -1269,7 +1297,7 @@ async function removeCollectionItemCore(item: any): Promise<{ ok: boolean; error
     syncCollectionItemCount(1);
     // 与取消收藏/删除动态路径一致：移除条目后同步清理正文索引，避免搜索命中已移除内容。
     const feedKey = favoriteFeedId(item) || itemId;
-    void removeFavoriteContentIndexEntry(favoriteAccountId(), feedKey).catch((error) => console.warn('移除收藏内容的正文索引失败:', error));
+    void removeContentIndexEntryWithVisibility(favoriteAccountId(), feedKey);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err };

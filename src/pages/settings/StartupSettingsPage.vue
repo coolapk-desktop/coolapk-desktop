@@ -214,6 +214,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-live-tile.ps1</code></pre
       </div>
 
       <!-- 同一开关只在外观设置中提供入口，这里仅保留说明与跳转，避免两处配置口径分叉。 -->
+      <!-- 生效状态告警：开关值已保存但桌面端没同步成功，与「未保存修改」是两个语义。 -->
+      <p v-if="nativeSyncFailureText" class="native-sync-alert" role="alert">
+        <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+        {{ nativeSyncFailureText }}
+      </p>
+
       <div v-if="showDesktopLayoutSwitch" class="setting-row">
         <div class="row-info">
           <span class="row-label">窗口响应式布局</span>
@@ -256,6 +262,16 @@ const closeBehavior = computed({
   },
 });
 
+// 三项桌面行为的「是否生效」独立于开关值：失败时不回滚开关，只在此处提示真实状态。
+const nativeSyncFailureText = computed(() => {
+  const failed: string[] = [];
+  if (settingsStore.traySyncFailed) failed.push('关闭到托盘');
+  if (settingsStore.alwaysOnTopSyncFailed) failed.push('窗口置顶');
+  if (settingsStore.startupFlagsSyncFailed) failed.push('启动参数');
+  if (failed.length === 0) return '';
+  return `${failed.join('、')}未能同步到桌面端，当前可能未生效；请重新切换对应开关，或重启应用后再试。`;
+});
+
 const updateTipHidden = computed(
   () => settingsStore.settings.ignoreAllUpdates || Boolean(settingsStore.settings.ignoredUpdateVersion)
 );
@@ -294,6 +310,18 @@ function reopenTip() {
   flex-direction: column;
   gap: var(--space-6);
   max-width: 720px;
+}
+
+.native-sync-alert {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--danger, var(--border));
+  border-radius: var(--radius-md, 8px);
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
 }
 
 .section-title {
