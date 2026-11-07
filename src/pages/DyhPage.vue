@@ -111,6 +111,8 @@ import ErrorState from '../components/common/ErrorState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import EntityFilterBar from '../components/common/EntityFilterBar.vue';
 import { useAuthStore } from '../stores/auth';
+import { getErrorMessage } from '../utils/errors';
+import { showToast } from '../utils/toast';
 
 const route = useRoute();
 const router = useRouter();
@@ -207,7 +209,7 @@ async function toggleFollow() {
   } catch (err) {
     isFollowing.value = prevFollowing;
     dyhDetail.value.follownum = prevFollowNum;
-    console.warn(target ? '关注看看号失败' : '取消关注看看号失败', err);
+    showToast(getErrorMessage(err, target ? '关注看看号失败' : '取消关注看看号失败'), 'error');
   } finally {
     followLoading.value = false;
   }
@@ -228,9 +230,14 @@ function handleDyhClear() {
   void fetchFeeds(false);
 }
 
-async function fetchFeeds(isLoadMore = false) {
-  if (!dyhId.value || feedsLoading.value || noMore.value) return;
+// 请求序号：翻页在途时发起的"重置"请求（清空搜索/切 Tab/下拉刷新）会使旧请求失效；
+// 重置请求不被 feedsLoading 短路，旧响应回来后因序号过期整体丢弃。
+let feedsSeq = 0;
 
+async function fetchFeeds(isLoadMore = false) {
+  if (!dyhId.value || noMore.value) return;
+  if (isLoadMore && feedsLoading.value) return;
+  const seq = ++feedsSeq;
   feedsLoading.value = true;
   if (!isLoadMore) feedsError.value = false;
   try {
@@ -257,6 +264,7 @@ async function fetchFeeds(isLoadMore = false) {
           ? data.rows
           : [];
 
+    if (seq !== feedsSeq) return;
     if (newFeeds.length === 0) {
       noMore.value = true;
     } else {
@@ -268,15 +276,19 @@ async function fetchFeeds(isLoadMore = false) {
       page.value++;
     }
   } catch (err) {
+    if (seq !== feedsSeq) return;
     feedsError.value = true;
     console.warn('获取看看号动态失败', err);
   } finally {
-    feedsLoading.value = false;
+    if (seq === feedsSeq) feedsLoading.value = false;
   }
 }
 
 function selectFeedTab(key: string) {
+  if (activeFeedTab.value === key) return;
   activeFeedTab.value = key;
+  // Tab 与搜索两套状态互不通知会导致"高亮新 Tab、内容仍是搜索结果"，切 Tab 时清空搜索。
+  searchKeyword.value = '';
   page.value = 1;
   noMore.value = false;
   feedsError.value = false;

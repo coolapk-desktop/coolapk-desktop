@@ -35,6 +35,9 @@
       <div v-if="loadingMore" class="loading-more">
         <LoadingState text="加载更多..." />
       </div>
+      <div v-if="error && feeds.length > 0" class="pagination-footer">
+        <button class="retry-inline" @click="retryPagination">加载失败，点击重试</button>
+      </div>
     </div>
   </div>
 </template>
@@ -97,8 +100,11 @@ function fetchTabApi(tab: string, p: number) {
   }
 }
 
+let requestSeq = 0;
+
 async function loadFeeds(isRefresh: boolean = false) {
   if (loading.value || (loadingMore.value && !isRefresh)) return;
+  const seq = ++requestSeq;
 
   if (isRefresh) {
     page.value = 1;
@@ -114,6 +120,7 @@ async function loadFeeds(isRefresh: boolean = false) {
 
   try {
     const res: any = await fetchTabApi(activeTab.value, page.value);
+    if (seq !== requestSeq) return;
     const rawItems = res && Array.isArray(res.data) ? res.data : [];
     const validItems = rawItems.length > 0
       ? rawItems.filter((item: any) => hasFeedRenderableContent(item) && !shouldHideFeed(item, settingsStore.settings))
@@ -136,11 +143,18 @@ async function loadFeeds(isRefresh: boolean = false) {
       feeds.value.push(...uniqueNew);
     }
   } catch (err: any) {
+    if (seq !== requestSeq) return;
     error.value = err?.message || '加载失败，请检查网络';
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (seq === requestSeq) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
+}
+
+function retryPagination() {
+  void loadFeeds(false);
 }
 
 function switchTab(key: string) {
@@ -153,7 +167,8 @@ function handleScroll(e: Event) {
   const el = e.target as HTMLElement;
   if (!el) return;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 250) {
-    if (!loading.value && !loadingMore.value && !noMore.value) {
+    // 分页失败后不再因滚动自动重试，统一走 footer 的重试按钮，避免狂发请求。
+    if (!loading.value && !loadingMore.value && !noMore.value && !error.value) {
       loadFeeds(false);
     }
   }
@@ -256,5 +271,18 @@ async function refreshMobilePage() { await loadFeeds(true); }
 
 .loading-more {
   padding: var(--space-4) 0;
+}
+
+.pagination-footer {
+  padding: 16px 0;
+  text-align: center;
+}
+
+.retry-inline {
+  border: 0;
+  background: transparent;
+  color: var(--brand-primary, #10b981);
+  font-size: 12px;
+  cursor: pointer;
 }
 </style>

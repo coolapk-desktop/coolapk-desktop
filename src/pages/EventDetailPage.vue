@@ -367,7 +367,8 @@ function handleScroll(e: Event) {
   const target = e.target as HTMLElement;
   const { scrollTop, clientHeight, scrollHeight } = target;
   if (scrollTop + clientHeight >= scrollHeight - 120) {
-    if (!feedsLoading.value && !noMore.value) {
+    // 分页失败后不再因滚动自动重试，统一走 footer 重试按钮。
+    if (!feedsLoading.value && !noMore.value && !feedsError.value) {
       void fetchFeeds(true);
     }
   }
@@ -383,7 +384,17 @@ watch(eventId, () => {
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
 const mobileRefreshBusy = computed(() => feedsLoading.value || headerLoading.value);
-async function refreshMobilePage() { page.value = 1; noMore.value = false; await fetchEventDetail(true); await fetchFeeds(false); }
+async function refreshMobilePage() {
+  page.value = 1;
+  noMore.value = false;
+  await fetchEventDetail(true);
+  // 详情（头部）请求失败时不再用旧 tab 拉动态，避免头部错误态与列表"成功"并存。
+  if (!headerError.value && eventDetail.value) await fetchFeeds(false);
+}
+
+// 供测试直接驱动下拉刷新路径，锁定"头部失败不再重拉动态"的顺序逻辑。
+defineExpose({ refreshMobilePage });
+
 </script>
 
 <style scoped>
