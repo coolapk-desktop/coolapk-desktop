@@ -1004,6 +1004,12 @@ const markSessionRead = (session: any) => {
   return wasUnread;
 };
 
+/** 置读成功后按会话实际未读数扣减全局私信角标：整会话未读可能 >1，固定 -1 会少扣。 */
+const markSessionAndViewBadge = (session: any) => {
+  const unread = getSessionUnreadCount(session);
+  if (markSessionRead(session)) notificationStore.markMessagesViewed(Math.max(1, unread));
+};
+
 const getRouteTargetUid = () => String(route.query.uid || route.query.targetUid || '').trim();
 
 /**
@@ -1561,7 +1567,7 @@ async function refreshCurrentChatHistory() {
     if (hasUnread) {
       const readResult = await withTimeout(CoolapkTauriAPI.readMessage(sessionKey), 10_000, '标记已读请求超时');
       if (!isCurrentRequest()) return;
-      if (markSessionRead(session)) notificationStore.markViewed('message');
+      markSessionAndViewBadge(session);
       if (readResult?.data && typeof readResult.data === 'object') notificationStore.applyServerResponse(readResult);
       persistSessionsCache();
     }
@@ -1762,6 +1768,10 @@ async function deleteSession(detail: { ukey?: string; id?: string; isNew?: boole
   });
   if (!confirmed) return;
 
+  // 删除后立刻递增请求序号：让在途的 selectSession/refreshCurrentChatHistory 响应失效，
+  // 避免把已删会话的聊天缓存写回，或对已删会话调用置读（markConversationRead 会校验序号）。
+  historyRequestSequence += 1;
+
   const sessionKey = String(session.ukey || session.id || detail.ukey || '').trim();
   try {
     if (!session.isNewConversation && !detail.isNew) {
@@ -1953,7 +1963,7 @@ const handleImageSelected = async (e: Event) => {
   }
 };
 
-const sendImageFile = async (file?: File, existingUrl?: string): Promise<boolean> => {
+const sendImageFile = async (file?: File, existingUrl?: string, pendingItem?: PendingImageItem): Promise<boolean> => {
   if (!currentSession.value) {
     alert('请先选择一个会话再发送图片');
     return false;
@@ -1963,10 +1973,21 @@ const sendImageFile = async (file?: File, existingUrl?: string): Promise<boolean
     alert('未识别到对方的合法酷安账号 UID');
     return false;
   }
+  // owner 快照：上传/发送是两次 await，期间用户可能切换会话；与文本路径一致，
+  // 不校验的话乐观气泡、摘要与会话置顶会写到切换后的新会话上。
+  const ownerUid = String(currentUserUid.value);
+  const ownerSession = currentSession.value;
+  const cacheKey = String(ownerSession.ukey || ownerSession.id || '');
+  const isOwnerSession = () => (
+    currentSession.value === ownerSession
+    && String(currentUserUid.value) === ownerUid
+    && getConversationKey(currentSession.value) === getConversationKey(ownerSession)
+  );
 
   sendingImage.value = true;
+  // picPath 提到 try 外：发送失败但已上传时，catch 里把地址回写待发送项以便重试复用。
+  let picPath = existingUrl || '';
   try {
-    let picPath = existingUrl || '';
     if (!picPath) {
       if (!file) throw new Error('图片尚未准备好');
       // 本地图片才上传，收藏表情直接使用已有 URL。
@@ -1987,55 +2008,74 @@ const sendImageFile = async (file?: File, existingUrl?: string): Promise<boolean
     if (!picPath) {
       throw new Error('图片上传成功但未获取到图片地址');
     }
+    // 上传期间已切换会话：尚未发送，中断并把图片退回待发送状态（catch 里回写已上传地址）。
+    if (!isOwnerSession()) {
+      throw new Error('会话已切换，图片已退回待发送列表，请在目标会话重新发送');
+    }
 
     // 发送图片私信（返回的真实消息带服务端 id，图片显示依赖真实 id）
     const sendRes = await CoolapkTauriAPI.sendPrivateImage(String(targetUid), picPath);
     const realMsg = sendRes?.data && Array.isArray(sendRes.data) ? sendRes.data[0] : null;
 
     const nowTimestamp = Math.floor(Date.now() / 1000);
-    if (realMsg && getChatHistoryItemId(realMsg)) {
-      chatHistory.value = mergeChatHistory(chatHistory.value, [{ ...realMsg, fromuid: currentUserUid.value, uid: targetUid }]);
+    // 与酷安 API 字段一致：uid=接收者，fromuid=发送者
+    const newMsg = {
+      ...(realMsg && getChatHistoryItemId(realMsg) ? realMsg : { id: Date.now(), __localPending: true }),
+      uid: targetUid,
+      fromuid: ownerUid,
+      message_pic: picPath,
+      dateline: realMsg?.dateline || nowTimestamp
+    };
+
+    if (isOwnerSession()) {
+      // 乐观更新当前会话 UI；与文本路径一致先排序再合并，避免本地时钟偏差导致乱序。
+      chatHistory.value = sortChatHistory(mergeChatHistory(chatHistory.value, [newMsg]));
     } else {
-      // 乐观更新 UI（与酷安 API 字段一致：uid=接收者，fromuid=发送者）
-      chatHistory.value.push({
-        id: Date.now(),
-        __localPending: true,
-        uid: targetUid,
-        fromuid: currentUserUid.value,
-        message_pic: picPath,
-        dateline: nowTimestamp
-      });
+      // 发送期间切换了会话：消息已发出，不能写新会话视图，只更新原会话的缓存。
+      const cached = cacheKey ? chatHistoryCache.get(cacheKey) : null;
+      if (cached) chatHistoryCache.set(cacheKey, sortChatHistory(mergeChatHistory(cached, [newMsg])));
     }
 
     // 同步写入缓存
-    const ukey = currentSession.value.ukey || currentSession.value.id;
-    if (ukey) {
-      chatHistoryCache.set(ukey, [...chatHistory.value]);
+    if (cacheKey && isOwnerSession()) {
+      chatHistoryCache.set(cacheKey, [...chatHistory.value]);
     }
 
-    // 更新左侧列表摘要与时间
-    const sess = currentSession.value;
-    if (markSessionRead(sess)) notificationStore.markViewed('message');
-    sess.message = '[图片]';
-    sess.lastMessage = '[图片]';
-    sess.summary = '[图片]';
-    sess.last_message = '[图片]';
-    sess.dateline = nowTimestamp;
-    sess.lastupdate = nowTimestamp;
+    // 更新左侧列表摘要与时间（始终写原会话快照，避免写错切换后的会话）
+    markSessionAndViewBadge(ownerSession);
+    ownerSession.message = '[图片]';
+    ownerSession.lastMessage = '[图片]';
+    ownerSession.summary = '[图片]';
+    ownerSession.last_message = '[图片]';
+    ownerSession.dateline = nowTimestamp;
+    ownerSession.lastupdate = nowTimestamp;
 
-    // 将当前会话置顶
-    const idx = sessions.value.findIndex(s => (s.ukey && s.ukey === currentSession.value.ukey) || s.id === currentSession.value.id);
+    // 将原会话置顶
+    const idx = sessions.value.findIndex(s => s === ownerSession || (s.ukey && s.ukey === ownerSession.ukey) || s.id === ownerSession.id);
     if (idx > 0) {
       const [s] = sessions.value.splice(idx, 1);
       sessions.value.unshift(s);
     }
 
-    if (ukey) {
-      chatScrollMap.delete(String(ukey));
+    if (cacheKey) {
+      chatScrollMap.delete(cacheKey);
     }
-    scrollToBottom();
+    if (isOwnerSession()) scrollToBottom();
     return true;
   } catch (err: any) {
+    // 发送失败但图片已上传：把已上传地址回写待发送项，重试时直接复用，不必重新上传。
+    if (picPath && !existingUrl) {
+      if (pendingItem) {
+        if (!pendingItem.url) pendingItem.url = picPath;
+      } else if (file) {
+        pendingImages.value.push({
+          id: `requeued_${Date.now()}`,
+          file,
+          url: picPath,
+          previewUrl: URL.createObjectURL(file)
+        });
+      }
+    }
     console.error('发送图片失败', err);
     const errMsg = typeof err === 'string'
       ? err
@@ -2086,7 +2126,7 @@ const sendTextMessage = async (text: string): Promise<boolean> => {
 
   // 更新左侧列表的摘要和时间（列表渲染优先读 message 字段）
   const sess = currentSession.value;
-  if (markSessionRead(sess)) notificationStore.markViewed('message');
+  markSessionAndViewBadge(sess);
   sess.message = text;
   sess.lastMessage = text;
   sess.summary = text;
@@ -2125,7 +2165,8 @@ const sendMessage = async () => {
     // 1. 发送待发送列表中的所有图片
     while (pendingImages.value.length > 0) {
       const item = pendingImages.value[0];
-      const success = await sendImageFile(item.file, item.url);
+      // 传入待发送项：发送失败但已上传时，可直接把 picPath 回写到该项供重试复用。
+      const success = await sendImageFile(item.file, item.url, item);
       if (success) {
         removePendingImage(0, true);
       } else {

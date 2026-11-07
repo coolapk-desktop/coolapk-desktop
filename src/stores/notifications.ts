@@ -60,6 +60,20 @@ export const useNotificationStore = defineStore('notifications', () => {
     return true;
   }
 
+  /**
+   * 整会话置读时按实际未读数扣减：一个会话可能有 >1 条未读，旧 markViewed 固定 -1 会少扣。
+   * readMessage 响应不一定带完整 NotifyCount（旧快照守卫也可能拒绝合并），所以本地扣减是必要兜底。
+   */
+  function markMessagesViewed(count: number): boolean {
+    const parsed = Number(count);
+    const viewed = Number.isFinite(parsed) ? Math.min(Math.max(0, Math.floor(parsed)), categoryCounts.message) : 0;
+    if (viewed <= 0) return false;
+    categoryCounts.message -= viewed;
+    locallyViewedMessages += viewed;
+    unreadCount.value = Math.max(0, unreadCount.value - viewed);
+    return true;
+  }
+
   /** 官方点赞/关注首屏成功后只清除对应内存计数，不保存跨启动抵消。 */
   function markCategoryViewed(category: NotificationCategory): number {
     if (!['like', 'follow', 'message'].includes(category)) return 0;
@@ -107,5 +121,5 @@ export const useNotificationStore = defineStore('notifications', () => {
   }
 
   return { unreadCount, categoryCounts, notificationCount, messageCount, notificationStateVersion, notificationClearVersion, applyServerResponse, applyNotifyCount,
-    markViewed, markCategoryViewed, suppressMessageCount, beginNotificationClear, markNotificationsCleared, reset };
+    markViewed, markMessagesViewed, markCategoryViewed, suppressMessageCount, beginNotificationClear, markNotificationsCleared, reset };
 });
