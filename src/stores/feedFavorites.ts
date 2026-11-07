@@ -18,6 +18,9 @@
  */
 import { reactive } from 'vue';
 
+/** 注册表容量上限：时间线上每条动态都可能写入，必须有界防止无界增长。 */
+export const FEED_FAVORITES_MAX = 500;
+
 export interface FeedFavoriteRegistryState {
   favorited?: boolean;
   /** 收藏计数（feed.favnum）。 */
@@ -33,6 +36,17 @@ export function feedFavoriteId(feed: any): string {
 }
 
 const states = reactive(new Map<string, FeedFavoriteRegistryState>());
+
+/**
+ * 单调递增的写入时间：同一毫秒内连续写入时也给每次写入一个更大的 updatedAt，
+ * 否则淘汰时无法区分先后（会按插入顺序误淘汰刚更新过的动态）。
+ */
+let lastUpdatedAt = 0;
+function nextUpdatedAt(): number {
+  const now = Date.now();
+  lastUpdatedAt = now > lastUpdatedAt ? now : lastUpdatedAt + 1;
+  return lastUpdatedAt;
+}
 
 /** 读某条 feed 的最新收藏态；无记录返回 undefined，调用方回落实体。 */
 export function getFeedFavoriteState(id: string | number | undefined | null): FeedFavoriteRegistryState | undefined {
@@ -51,7 +65,7 @@ export function setFeedFavoriteState(
   const key = id === undefined || id === null ? '' : String(id);
   if (!key || !patch || typeof patch !== 'object') return;
   const prev = states.get(key);
-  const next: FeedFavoriteRegistryState = { ...(prev || {}), ...patch, updatedAt: Date.now() };
+  const next: FeedFavoriteRegistryState = { ...(prev || {}), ...patch, updatedAt: nextUpdatedAt() };
   if (next.favnum !== undefined) {
     const count = Number(next.favnum);
     // 非法值直接丢弃，不覆盖已有合法状态。
@@ -61,6 +75,33 @@ export function setFeedFavoriteState(
   if (next.favorited !== undefined) next.favorited = Boolean(next.favorited);
   if (next.favorited === undefined && next.favnum === undefined) return;
   states.set(key, next);
+  // 淘汰在写入之后做，且新写入的 key 一定保留，避免误伤刚刚收藏/取消的动态。
+  if (states.size > FEED_FAVORITES_MAX) evictOldest(states, key, FEED_FAVORITES_MAX);
+}
+
+/**
+ * 按 updatedAt 最旧优先淘汰，直到 size <= max，且绝不淘汰 protectKey。
+ * 容量有限（500），全量扫一遍找最旧记录的开销可忽略。
+ */
+function evictOldest(
+  map: Map<string, FeedFavoriteRegistryState>,
+  protectKey: string,
+  max: number,
+): void {
+  while (map.size > max) {
+    let oldestKey = '';
+    let oldestAt = Infinity;
+    for (const [k, v] of map) {
+      if (k === protectKey) continue;
+      const at = v?.updatedAt ?? 0;
+      if (at < oldestAt) {
+        oldestAt = at;
+        oldestKey = k;
+      }
+    }
+    if (!oldestKey) break; // 只剩 protectKey 时放弃淘汰
+    map.delete(oldestKey);
+  }
 }
 
 /**
@@ -81,6 +122,11 @@ export function applyFeedFavorites(input: any | any[]): void {
     }
     if (Object.keys(patch).length > 0) setFeedFavoriteState(id, patch);
   }
+}
+
+/** 仅供测试读取当前条目数；不参与业务逻辑。 */
+export function feedFavoritesSizeForTests(): number {
+  return states.size;
 }
 
 /** 主要供测试与极端重置场景使用。 */

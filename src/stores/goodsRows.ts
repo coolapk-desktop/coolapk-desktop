@@ -10,6 +10,9 @@
  */
 import { reactive } from 'vue';
 
+/** 注册表容量上限：超过后按 updatedAt 最旧优先淘汰，防止长时间浏览无界增长。 */
+export const GOODS_ROWS_MAX = 500;
+
 export interface GoodsRowState {
   /** 详情页发表评论后本地累加的回复数。 */
   replynum?: number;
@@ -34,6 +37,17 @@ export function goodsRowId(row: any): string {
 
 const rows = reactive(new Map<string, GoodsRowState>());
 
+/**
+ * 单调递增的写入时间：同一毫秒内连续写入时也给每次写入一个更大的 updatedAt，
+ * 否则淘汰时无法区分先后（会按插入顺序误淘汰刚更新过的行）。
+ */
+let lastUpdatedAt = 0;
+function nextUpdatedAt(): number {
+  const now = Date.now();
+  lastUpdatedAt = now > lastUpdatedAt ? now : lastUpdatedAt + 1;
+  return lastUpdatedAt;
+}
+
 /** 读某行的最新状态；无记录返回 undefined，调用方回落到行对象。 */
 export function getGoodsRowState(id: string): GoodsRowState | undefined {
   const key = String(id ?? '');
@@ -45,7 +59,7 @@ export function setGoodsRowState(id: string, patch: Omit<GoodsRowState, 'updated
   const key = String(id ?? '');
   if (!key || !patch || typeof patch !== 'object') return;
   const prev = rows.get(key);
-  const next: GoodsRowState = { ...(prev || {}), ...patch, updatedAt: Date.now() };
+  const next: GoodsRowState = { ...(prev || {}), ...patch, updatedAt: nextUpdatedAt() };
   // 显式数字字段做下限保护，负值对计数无意义。
   for (const field of ['replynum', 'voteNum', 'followNum', 'itemNum', 'favnum'] as const) {
     const v = next[field];
@@ -53,6 +67,33 @@ export function setGoodsRowState(id: string, patch: Omit<GoodsRowState, 'updated
     else delete next[field];
   }
   rows.set(key, next);
+  // 淘汰在写入之后做，且新写入的 key 一定保留，避免误伤刚更新的行。
+  if (rows.size > GOODS_ROWS_MAX) evictOldest(rows, key, GOODS_ROWS_MAX);
+}
+
+/**
+ * 按 updatedAt 最旧优先淘汰，直到 size <= max，且绝不淘汰 protectKey。
+ * Map 只在测试/淘汰场景遍历，容量有限（500），全量扫一遍开销可忽略。
+ */
+function evictOldest(
+  map: Map<string, GoodsRowState>,
+  protectKey: string,
+  max: number,
+): void {
+  while (map.size > max) {
+    let oldestKey = '';
+    let oldestAt = Infinity;
+    for (const [k, v] of map) {
+      if (k === protectKey) continue;
+      const at = v?.updatedAt ?? 0;
+      if (at < oldestAt) {
+        oldestAt = at;
+        oldestKey = k;
+      }
+    }
+    if (!oldestKey) break; // 只剩 protectKey 时放弃淘汰
+    map.delete(oldestKey);
+  }
 }
 
 /**
@@ -77,6 +118,11 @@ export function applyGoodsRows(list: any[]): void {
     }
     if (Object.keys(patch).length > 0) setGoodsRowState(id, patch);
   }
+}
+
+/** 仅供测试读取当前条目数；不参与业务逻辑。 */
+export function goodsRowsSizeForTests(): number {
+  return rows.size;
 }
 
 /** 主要供测试与极端重置场景使用。 */

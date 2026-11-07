@@ -5,8 +5,13 @@ import {
   applyFeedFavorites,
   clearFeedFavorites,
   feedFavoriteId,
+  FEED_FAVORITES_MAX,
+  feedFavoritesSizeForTests,
 } from '../feedFavorites';
+
 import { syncFavoriteToFeed } from '../../utils/feedFavorite';
+
+const sizeFeedFavorites = feedFavoritesSizeForTests;
 
 describe('feedFavorites 注册表', () => {
   beforeEach(() => clearFeedFavorites());
@@ -54,6 +59,27 @@ describe('feedFavorites 注册表', () => {
     expect(getFeedFavoriteState('a1')?.favorited).toBe(false);
     expect(getFeedFavoriteState('a1')?.favnum).toBe(1);
     expect(feed.userAction.collect).toBe(0); // 实体字段也同步，保持两套一致。
+  });
+
+  it('容量上限：超过 FEED_FAVORITES_MAX 后淘汰最旧动态，最新写入的一定保留', () => {
+    for (let i = 0; i <= FEED_FAVORITES_MAX; i += 1) setFeedFavoriteState(`feed-${i}`, { favorited: true });
+    expect(sizeFeedFavorites()).toBe(FEED_FAVORITES_MAX);
+    expect(getFeedFavoriteState('feed-0')).toBeUndefined();
+    expect(getFeedFavoriteState(`feed-${FEED_FAVORITES_MAX}`)?.favorited).toBe(true);
+  });
+
+  it('容量上限：更新已有动态不算新增，且刚更新过的不被淘汰', () => {
+    for (let i = 0; i < FEED_FAVORITES_MAX; i += 1) setFeedFavoriteState(`feed-${i}`, { favorited: true });
+    expect(sizeFeedFavorites()).toBe(FEED_FAVORITES_MAX);
+
+    setFeedFavoriteState('feed-0', { favorited: false });
+    expect(sizeFeedFavorites()).toBe(FEED_FAVORITES_MAX);
+
+    // 新增触发淘汰：最旧的 feed-1 被淘汰，刚更新的 feed-0 保留并读到 false。
+    setFeedFavoriteState('feed-new', { favorited: true });
+    expect(sizeFeedFavorites()).toBe(FEED_FAVORITES_MAX);
+    expect(getFeedFavoriteState('feed-0')?.favorited).toBe(false);
+    expect(getFeedFavoriteState('feed-1')).toBeUndefined();
   });
 
   it('非法输入安全跳过', () => {

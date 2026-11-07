@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { applyGoodsRows, clearGoodsRows, getGoodsRowState, goodsRowId, setGoodsRowState } from '../../../stores/goodsRows';
+import { applyGoodsRows, clearGoodsRows, getGoodsRowState, goodsRowId, setGoodsRowState, GOODS_ROWS_MAX, goodsRowsSizeForTests } from '../../../stores/goodsRows';
+
+const sizeGoodsRows = goodsRowsSizeForTests;
 
 describe('goodsRows 行状态注册表', () => {
   beforeEach(() => clearGoodsRows());
@@ -36,6 +38,30 @@ describe('goodsRows 行状态注册表', () => {
     expect(b?.replynum).toBe(1);
     expect(b?.favnum).toBe(4);
     expect(b?.favorited).toBe(true);
+  });
+
+  it('容量上限：超过 GOODS_ROWS_MAX 后淘汰最旧行，最新写入的一定保留', () => {
+    for (let i = 0; i <= GOODS_ROWS_MAX; i += 1) setGoodsRowState(`row-${i}`, { replynum: i });
+    expect(sizeGoodsRows()).toBe(GOODS_ROWS_MAX);
+    // 最早写入的 row-0 被淘汰；最后写入的行仍在且数值正确。
+    expect(getGoodsRowState('row-0')).toBeUndefined();
+    expect(getGoodsRowState(`row-${GOODS_ROWS_MAX}`)?.replynum).toBe(GOODS_ROWS_MAX);
+  });
+
+  it('容量上限：更新已有行不算新增，且刚更新过的行不会被当成最旧淘汰', () => {
+    for (let i = 0; i < GOODS_ROWS_MAX; i += 1) setGoodsRowState(`row-${i}`, { replynum: i });
+    expect(sizeGoodsRows()).toBe(GOODS_ROWS_MAX);
+
+    setGoodsRowState('row-0', { replynum: 99 });
+    expect(sizeGoodsRows()).toBe(GOODS_ROWS_MAX);
+    expect(getGoodsRowState('row-0')?.replynum).toBe(99);
+
+    // 新增一行触发淘汰：应为真正最旧的 row-1，而不是刚刷新过的 row-0。
+    setGoodsRowState('row-new', { replynum: 1 });
+    expect(sizeGoodsRows()).toBe(GOODS_ROWS_MAX);
+    expect(getGoodsRowState('row-0')?.replynum).toBe(99);
+    expect(getGoodsRowState('row-1')).toBeUndefined();
+    expect(getGoodsRowState('row-new')?.replynum).toBe(1);
   });
 
   it('goodsRowId 与空参安全', () => {
