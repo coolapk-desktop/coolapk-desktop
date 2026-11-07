@@ -593,7 +593,7 @@ import { requestConfirmation } from '../utils/confirm';
 import { getErrorMessage } from '../utils/errors';
 import { showToast } from '../utils/toast';
 import { isRatingFeedEntity } from '../utils/rating';
-import { favoriteFeedCursorId, loadAllFavoriteCollections } from '../utils/favoriteFeeds';
+import { favoriteFeedCursorId, favoriteFeedId, loadAllFavoriteCollections } from '../utils/favoriteFeeds';
 import {
   normalizeFavoriteSearchText,
   removeFavoriteContentIndexEntry,
@@ -720,6 +720,11 @@ async function runCollectionContentSearch() {
     const results = await searchFavoriteContentIndex(accountId, keyword, 10_000);
     if (requestVersion !== collectionContentSearchVersion) return;
     collectionContentSearchIds.value = new Set(results.map(entry => entry.feedId));
+    // 历史收藏没有正文索引，搜索只覆盖已缓存索引与已加载条目；
+    // 条目较多且一条都没命中时提示用户，避免误以为没有收藏。
+    if (collectionItems.value.length >= 50 && !collectionItems.value.some(item => itemMatchesContentSearch(item, keyword))) {
+      showToast('仅搜索已缓存内容，较早的历史收藏可能未包含在结果中', 'warning');
+    }
   } catch (error) {
     if (requestVersion === collectionContentSearchVersion) console.warn('搜索收藏单正文索引失败:', error);
   } finally {
@@ -767,16 +772,20 @@ const filteredCollections = computed(() => {
   });
 });
 
+// 单条内容是否命中搜索：命中正文索引 id，或标题/摘要包含全部关键词。
+function itemMatchesContentSearch(item: any, rawKeyword: string): boolean {
+  const keywords = normalizeFavoriteSearchText(rawKeyword).split(' ').filter(Boolean);
+  if (keywords.length === 0) return true;
+  const itemId = String(item?.id || item?.feedId || '').trim();
+  if (itemId && collectionContentSearchIds.value.has(itemId)) return true;
+  const summary = normalizeFavoriteSearchText(`${item?.title || ''}\n${item?.message || item?.description || ''}`);
+  return keywords.every(keyword => summary.includes(keyword));
+}
+
 const filteredCollectionItems = computed(() => {
-  const query = normalizeFavoriteSearchText(collectionContentSearchKeyword.value);
-  if (!query) return collectionItems.value;
-  const keywords = query.split(' ').filter(Boolean);
-  return collectionItems.value.filter((item) => {
-    const itemId = String(item?.id || item?.feedId || '').trim();
-    if (itemId && collectionContentSearchIds.value.has(itemId)) return true;
-    const summary = normalizeFavoriteSearchText(`${item?.title || ''}\n${item?.message || item?.description || ''}`);
-    return keywords.every(keyword => summary.includes(keyword));
-  });
+  const keyword = collectionContentSearchKeyword.value.trim();
+  if (!keyword) return collectionItems.value;
+  return collectionItems.value.filter((item) => itemMatchesContentSearch(item, keyword));
 });
 
 const COLLECTION_GRADIENTS = [
@@ -800,16 +809,37 @@ function getCollectionGradient(titleOrId?: string): string {
   return COLLECTION_GRADIENTS[Math.abs(hash) % COLLECTION_GRADIENTS.length];
 }
 
+// 条目主键可能是 feed 的 id/entityId，也可能是收藏单条目的 collectionItemId，只按 f.id 过滤会漏删实体包装条目。
+function feedMatchesItemKey(item: any, key: string | number): boolean {
+  const target = String(key);
+  if (!target) return false;
+  for (const field of ['id', 'entityId', 'entity_id', 'feedId', 'feed_id', 'collectionItemId', 'collection_item_id']) {
+    const value = item?.[field];
+    if (value !== undefined && value !== null && String(value) === target) return true;
+  }
+  return false;
+}
+
+function removeCollectionItemsByKey(key: string | number): number {
+  const before = collectionItems.value.length;
+  collectionItems.value = collectionItems.value.filter((item: any) => !feedMatchesItemKey(item, key));
+  return before - collectionItems.value.length;
+}
+
 function handleFeedDeleted(id: string | number) {
-  const filter = (list: any[]) => list.filter((f: any) => String(f.id) !== String(id));
-  collectionItems.value = filter(collectionItems.value);
+  removeCollectionItemsByKey(id);
   void removeFavoriteContentIndexEntry(favoriteAccountId(), id).catch((error) => console.warn('移除删除动态的正文索引失败:', error));
 }
 
 function handleFavoriteChanged(payload: { id: string | number; favorited: boolean }) {
   if (payload.favorited) return;
-  const filter = (list: any[]) => list.filter((f: any) => String(f.id) !== String(payload.id));
-  collectionItems.value = filter(collectionItems.value);
+  const removed = removeCollectionItemsByKey(payload.id);
+  // 移除条目后同步收藏单条目数，避免计数与列表不一致。
+  if (removed > 0) {
+    collectionItemNum.value = Math.max(0, collectionItemNum.value - removed);
+    const current = collections.value.find(collection => collectionId(collection) === activeCollectionId.value);
+    if (current) current.itemNum = collectionItemNum.value;
+  }
   void removeFavoriteContentIndexEntry(favoriteAccountId(), payload.id).catch((error) => console.warn('移除取消收藏的正文索引失败:', error));
 }
 const collectionLiked = ref(false);
@@ -1107,6 +1137,9 @@ async function removeCollectionItem(item: any) {
     collectionItemNum.value = Math.max(0, collectionItemNum.value - 1);
     const current = collections.value.find(collection => collectionId(collection) === activeCollectionId.value);
     if (current) current.itemNum = collectionItemNum.value;
+    // 与取消收藏/删除动态路径一致：移除条目后同步清理正文索引，避免搜索命中已移除内容。
+    const feedKey = favoriteFeedId(item) || itemId;
+    void removeFavoriteContentIndexEntry(favoriteAccountId(), feedKey).catch((error) => console.warn('移除收藏内容的正文索引失败:', error));
     showToast('已从收藏单移除', 'success');
   } catch (err) {
     showToast(getErrorMessage(err, '移除收藏内容失败'), 'error');
@@ -1267,11 +1300,11 @@ async function toggleFollowCollection() {
       collectionFollownum.value = Math.max(0, collectionFollownum.value + (collectionFollowed.value ? 1 : -1));
     } else {
       console.warn('关注操作失败', res);
-      alert('操作失败，请稍后重试');
+      showToast('操作失败，请稍后重试', 'error');
     }
   } catch (err) {
     console.warn('关注操作失败', err);
-    alert('操作失败，请检查网络');
+    showToast('操作失败，请检查网络', 'error');
   } finally {
     collectionFollowPending.value = false;
   }
@@ -1288,11 +1321,11 @@ async function toggleLikeCollection() {
       collectionFavnum.value = Math.max(0, collectionFavnum.value + (collectionLiked.value ? 1 : -1));
     } else {
       console.warn('点赞操作失败', res);
-      alert('操作失败，请稍后重试');
+      showToast('操作失败，请稍后重试', 'error');
     }
   } catch (err) {
     console.warn('点赞操作失败', err);
-    alert('操作失败，请检查网络');
+    showToast('操作失败，请检查网络', 'error');
   } finally {
     collectionLikePending.value = false;
   }
@@ -1333,11 +1366,18 @@ async function fetchCollectionItems(isRefresh = false) {
       if (isRefresh) {
         collectionItems.value = newItems;
       } else {
-        const existingIds = new Set(collectionItems.value.map(i => i.id));
-        collectionItems.value.push(...newItems.filter((i: any) => !existingIds.has(i.id)));
+        // 去重键必须与分页游标用同一函数（favoriteFeedCursorId，entityId 优先）：
+        // 实体包装条目只有 entityId 时 i.id 全为 undefined，按 id 去重会导致每页只剩 1 条。
+        const existingIds = new Set(collectionItems.value.map((i: any) => favoriteFeedCursorId(i)));
+        collectionItems.value.push(...newItems.filter((i: any) => {
+          const key = favoriteFeedCursorId(i);
+          // 键为空的条目无法判断重复，保留以免误删。
+          return !key || !existingIds.has(key);
+        }));
       }
       if (!collectionItemsFirstItem.value) collectionItemsFirstItem.value = favoriteFeedCursorId(collectionItems.value[0]);
-      collectionItemsLastItem.value = favoriteFeedCursorId(collectionItems.value[collectionItems.value.length - 1]);
+      // 游标取本页原始 newItems 末条：若取去重后列表末条，服务端分页重叠时会游标回退、重复拉同一页。
+      collectionItemsLastItem.value = favoriteFeedCursorId(newItems[newItems.length - 1]);
       collectionItemsPage.value = page + 1;
     }
   } catch (err: any) {
