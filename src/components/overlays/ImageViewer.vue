@@ -321,7 +321,17 @@ function imagePanBounds(size: ImageSize, zoom: number) {
 }
 
 function clampMobilePan() {
-  if (!mobileLayout.value || !imageSize.value) return;
+  if (!imageSize.value) return;
+  if (!mobileLayout.value) {
+    // 桌面端：未放大且未旋转时图片正好贴合舞台，任何位移都只会把图拖出可视区（R3-3.3），
+    // 因此强制归零；放大/旋转后保持既有自由平移交互（已有手势用例锁定该行为）。
+    const untouched = scale.value <= 1.0001 && Math.abs(rotation.value % 360) < 0.0001;
+    if (untouched) {
+      translateX.value = 0;
+      translateY.value = 0;
+    }
+    return;
+  }
   const { x, y, originY } = imagePanBounds(imageSize.value, scale.value);
   translateX.value = Math.min(x, Math.max(-x, translateX.value));
   translateY.value = Math.min(y - originY, Math.max(-y - originY, translateY.value));
@@ -651,14 +661,21 @@ function handleImageError(event: Event) {
   console.warn('看图器图片加载失败:', failedSrc.value);
 }
 
-/** 失败态重试：清空失败标记并重新解析（内存缓存未命中时会真的重新请求）。 */
+/**
+ * 失败态重试：当前变体是显示地址（HD/封面后缀）且与原图地址不同时，
+ * 改试原图地址做变体回退，不再反复请求同一个死链（R3-3.1）。
+ * 回退后仍失败时保持失败态，重试按钮可继续点击（再次尝试当前候选）。
+ */
 async function retryLoadCurrentImage() {
-  const url = failedSrc.value || currentUrl.value;
+  const failed = failedSrc.value || currentUrl.value;
   loadFailed.value = false;
   failedSrc.value = '';
   imageSize.value = null;
   displaySrc.value = '';
-  if (!url) return;
+  if (!failed) return;
+  const original = originalUrl.value;
+  const isDataOrBlob = /^(?:data:|blob:)/.test(failed);
+  const url = !isDataOrBlob && original && original !== failed ? original : failed;
   await resolveImageData(url);
 }
 
@@ -1303,7 +1320,8 @@ function handleBackdropClick(e: MouseEvent) {
 }
 
 async function copyLink() {
-  const url = currentUrl.value;
+  // 复制图片原始链接（原图地址或接口给的 sourceUrl），不外传带尺寸后缀的显示地址（R3-3.2）。
+  const url = originalUrl.value || rawUrl.value || currentUrl.value;
   if (!url) {
     showToast('该图没有可复制的链接', 'warning');
     return;

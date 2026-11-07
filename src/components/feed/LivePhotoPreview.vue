@@ -68,6 +68,19 @@
     <span v-if="resolving && !isGif" class="live-photo-loading" aria-live="polite">
       <i class="fas fa-circle-notch fa-spin"></i>
     </span>
+
+    <!-- GIF 一次加载失败后给出可见占位，点击可就地重试，不再静默空白（R3-3.4）。 -->
+    <button
+      v-if="isGif && gifError"
+      type="button"
+      class="gif-error-placeholder"
+      aria-live="polite"
+      title="GIF 加载失败，点击重试"
+      @click.stop="retryGif"
+    >
+      <i class="fas fa-triangle-exclamation"></i>
+      <span>GIF 加载失败，点击重试</span>
+    </button>
   </div>
 </template>
 
@@ -131,9 +144,13 @@ const videoError = ref(false);
 const videoSource = ref<'metadata' | 'resolver' | 'none'>('none');
 const fallbackAttempted = ref(false);
 const isHovered = ref(false);
+const gifError = ref(false);
 const gifMounted = ref(false);
 const isGif = computed(() => !props.item.isLivePhoto && isAnimatedImageUrl(props.item.sourceUrl));
 let resolveSequence = 0;
+// resolver 失败后的退避窗口：悬浮重进超过该时长时允许再走一次 resolver（R3-3.5）。
+const FALLBACK_RETRY_BACKOFF_MS = 30_000;
+let lastFallbackAttemptAt = 0;
 
 const staticCoverUrl = computed(() => {
   if (isGif.value) return getStaticAnimatedImageUrl(props.item.sourceUrl);
@@ -173,6 +190,7 @@ async function handleMouseEnter() {
 async function startPreview() {
   if (isGif.value) {
     if (gifMounted.value) return;
+    gifError.value = false;
     autoGifPaused = false;
     isHovered.value = true;
     resolving.value = true;
@@ -183,6 +201,11 @@ async function startPreview() {
   isHovered.value = true;
   videoError.value = false;
   videoMounted.value = true;
+  // 距上次 resolver 失败超过退避窗口时复位标记，悬浮重进可以再试一次，
+  // 不再是整个组件生命周期只有一次 resolver 机会（R3-3.5）。
+  if (fallbackAttempted.value && Date.now() - lastFallbackAttemptAt > FALLBACK_RETRY_BACKOFF_MS) {
+    fallbackAttempted.value = false;
+  }
 
   if (!resolvedVideoUrl.value) {
     const sequence = ++resolveSequence;
@@ -221,6 +244,7 @@ async function retryThroughResolver() {
   ) return;
 
   fallbackAttempted.value = true;
+  lastFallbackAttemptAt = Date.now();
   videoError.value = false;
   isPlaying.value = false;
   videoSource.value = 'none';
@@ -272,8 +296,15 @@ function handleGifLoad() {
 }
 
 function handleGifError() {
-  autoGifPaused = true;
+  // 一次性网络失败不当成用户暂停：只停止预览并给出可见失败占位，
+  // 下次悬浮/点击占位即可重试，不再永久停播（R3-3.4）。
+  gifError.value = true;
   stopPreview();
+}
+
+function retryGif() {
+  gifError.value = false;
+  void startPreview();
 }
 
 function handleMouseLeave() {
@@ -323,6 +354,7 @@ function handleVideoError(event: Event) {
 watch(() => props.item.key, () => {
   stopPreview();
   autoGifPaused = false;
+  gifError.value = false;
   resolvedVideoUrl.value = '';
   videoError.value = false;
   videoSource.value = 'none';
@@ -477,6 +509,30 @@ watch(() => props.gifAutoPlay, enabled => {
   background: rgba(16, 185, 129, 0.9);
   color: #ffffff;
   box-shadow: 0 2px 10px rgba(16, 185, 129, 0.45);
+}
+
+.gif-error-placeholder {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #ffffff;
+  font-size: 12px;
+  font-family: var(--font-family-base);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.gif-error-placeholder i {
+  font-size: 11px;
 }
 
 .live-photo-loading {

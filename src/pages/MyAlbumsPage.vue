@@ -57,6 +57,7 @@ import ErrorState from '../components/common/ErrorState.vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { showToast } from '../utils/toast';
+import { requestConfirmation } from '../utils/confirm';
 
 const authStore = useAuthStore();
 const { embedded = false } = defineProps<{ embedded?: boolean }>();
@@ -86,12 +87,16 @@ async function loadAlbums() {
   finally { loading.value = false; }
 }
 
+// 详情请求序号：快速先后点击两个专辑时，慢的旧详情响应不得覆盖新选中的专辑（R3-2.5）。
+let selectSequence = 0;
+
 async function selectAlbum(album: any) {
+  const sequence = ++selectSequence;
   selectedAlbum.value = album; detailLoading.value = true; albumItems.value = [];
-  try { const res = await CoolapkTauriAPI.getAlbumDetail(albumId(album)); const detail = res?.data || {}; selectedAlbum.value = { ...album, ...detail }; albumItems.value = Array.isArray(detail.apkList) ? detail.apkList : (Array.isArray(detail.data) ? detail.data : []); }
+  try { const res = await CoolapkTauriAPI.getAlbumDetail(albumId(album)); if (sequence !== selectSequence) return; const detail = res?.data || {}; selectedAlbum.value = { ...album, ...detail }; albumItems.value = Array.isArray(detail.apkList) ? detail.apkList : (Array.isArray(detail.data) ? detail.data : []); }
   // 专辑详情读取失败不写入列表级 error：列表级 error 仅表达「专辑列表加载失败」。
-  catch (err: any) { showToast(err?.message || '读取专辑详情失败', 'error'); }
-  finally { detailLoading.value = false; }
+  catch (err: any) { if (sequence === selectSequence) showToast(err?.message || '读取专辑详情失败', 'error'); }
+  finally { if (sequence === selectSequence) detailLoading.value = false; }
 }
 
 function openCreate() { editingId.value = ''; form.value = { title: '', intro: '', cover: '' }; editorOpen.value = true; }
@@ -105,7 +110,15 @@ async function uploadCover(event: Event) {
 
 async function saveAlbum() {
   actionLoading.value = true;
-  try { if (editingId.value) await CoolapkTauriAPI.editAlbum(editingId.value, form.value.title, form.value.intro, form.value.cover); else await CoolapkTauriAPI.createAlbum(form.value.title, form.value.intro, form.value.cover); editorOpen.value = false; await loadAlbums(); }
+  try {
+    if (editingId.value) await CoolapkTauriAPI.editAlbum(editingId.value, form.value.title, form.value.intro, form.value.cover); else await CoolapkTauriAPI.createAlbum(form.value.title, form.value.intro, form.value.cover);
+    editorOpen.value = false;
+    // 编辑的是当前选中的专辑时，同步合并新标题/简介，详情面板不再停留旧文案（R3-2.7）。
+    if (selectedAlbum.value && albumId(selectedAlbum.value) === editingId.value) {
+      selectedAlbum.value = { ...selectedAlbum.value, title: form.value.title, name: form.value.title, intro: form.value.intro };
+    }
+    await loadAlbums();
+  }
   // 写操作失败用 toast 呈现并保留对话框打开状态，不污染列表级 error。
   catch (err: any) { showToast(err?.message || '保存专辑失败', 'error'); }
   finally { actionLoading.value = false; }
@@ -122,6 +135,14 @@ async function addApk() {
 async function removeApk(item: any) {
   if (!selectedAlbum.value) return;
   const packageName = String(item?.packageName || item?.package_name || ''); if (!packageName) return;
+  // 云端写操作加一次确认，避免误触垃圾桶直接把应用移出专辑（R3-2.6）。
+  const confirmed = await requestConfirmation({
+    title: '移除应用',
+    message: `确定把「${String(item?.title || item?.name || packageName)}」从该专辑移除吗？`,
+    confirmText: '移除',
+    danger: true,
+  });
+  if (!confirmed) return;
   actionLoading.value = true;
   try { await CoolapkTauriAPI.deleteAlbumApk(albumId(selectedAlbum.value), packageName); await selectAlbum(selectedAlbum.value); }
   catch (err: any) { showToast(err?.message || '移除应用失败', 'error'); }
