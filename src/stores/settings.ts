@@ -2,6 +2,7 @@ import { defineStore, getActivePinia } from 'pinia';
 import { listenMediaQuery } from '../utils/mediaQuery';
 import { ref, watch, onScopeDispose } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { invoke as invokeRuntime } from '../api/runtime';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { resolveDeviceIdentity } from '../utils/devicePresets';
 import { resolveDesktopCommentsOnRight } from '../utils/desktopCommentsPreference';
@@ -858,11 +859,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // 将用户保存的设备 ID 同步给 Rust 客户端，用于更新请求设备码。
   async function syncDeviceProfile(s: AppSettings): Promise<boolean> {
-    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return true;
     const f = s.deviceFingerprint;
     const deviceId = f.deviceId?.trim() || undefined;
     try {
-      await invoke('update_device_profile', {
+      await invokeRuntime('update_device_profile', {
         profile: {
           ...(f.customFingerprint
             ? {

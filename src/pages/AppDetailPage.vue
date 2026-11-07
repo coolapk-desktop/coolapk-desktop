@@ -504,6 +504,7 @@
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { initializeSession, isWebBuild } from '../api/runtime';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
@@ -1064,7 +1065,7 @@ async function handleDownload() {
   if (!packageName.value || downloadLoading.value) return;
   downloadLoading.value = true;
   try {
-    const result = downloadStore.enqueue({
+    const download = {
       title: appTitle.value,
       packageName: packageName.value,
       versionName: String(appVersion.value || ''),
@@ -1073,7 +1074,24 @@ async function handleDownload() {
       logoUrl: logoUrl.value,
       extraAnalysisData: appInfo.value?.extraAnalysisData || appInfo.value?.extra_analysis_data || '',
       total: Number(appInfo.value?.apksize || appInfo.value?.size || 0) || 0,
-    });
+    };
+    if (isWebBuild) {
+      await initializeSession();
+      const fileName = `${download.packageName}-${download.versionName || 'latest'}.apk`;
+      const query = new URLSearchParams({
+        packageName: download.packageName, apkId: String(download.apkId),
+        versionCode: String(download.versionCode), fileName,
+      });
+      const link = document.createElement('a');
+      link.href = `/api/download/apk?${query}`;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      return;
+    }
+    const result = downloadStore.enqueue(download);
     showEnqueueToast(result);
   } catch (err: any) {
     alert(`加入下载队列失败：${err?.message || '请检查网络或登录状态'}`);

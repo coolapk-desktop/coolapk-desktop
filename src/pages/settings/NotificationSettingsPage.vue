@@ -28,13 +28,13 @@
     </div>
 
     <div class="setting-group">
-      <h4 class="group-title">{{ isAndroid ? '系统通知' : '桌面通知' }}</h4>
+      <h4 class="group-title">{{ isWebBuild ? '浏览器通知' : isAndroid ? '系统通知' : '桌面通知' }}</h4>
       <div class="setting-row">
         <div class="row-info">
-          <span class="row-label">{{ isAndroid ? '系统通知' : '系统桌面通知' }}</span>
-          <span class="row-sub">{{ isAndroid ? '通过系统通知提醒新消息，需要允许通知权限' : '应用在后台或最小化到托盘时，通过系统通知气泡提醒新消息' }}</span>
+          <span class="row-label">{{ isWebBuild ? '浏览器通知' : isAndroid ? '系统通知' : '系统桌面通知' }}</span>
+          <span class="row-sub">{{ isWebBuild ? '页面打开期间，由浏览器提醒新消息' : isAndroid ? '通过系统通知提醒新消息，需要允许通知权限' : '应用在后台或最小化到托盘时，通过系统通知气泡提醒新消息' }}</span>
         </div>
-        <AppSwitch v-model="settingsStore.settings.desktopNotifications" />
+        <AppSwitch :model-value="settingsStore.settings.desktopNotifications" @update:model-value="setNotifications" />
       </div>
       <div v-if="isAndroid && settingsStore.settings.desktopNotifications" class="setting-row">
         <div class="row-info">
@@ -64,7 +64,7 @@
       </div>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        桌面通知需要系统授权，首次提醒时会自动请求权限。
+        {{ isWebBuild ? '开启时需要允许此站点发送通知。' : '桌面通知需要系统授权，首次提醒时会自动请求权限。' }}
       </p>
     </div>
   </div>
@@ -72,10 +72,20 @@
 
 <script setup lang="ts">
 import { useSettingsStore } from '../../stores/settings';
+import { isWebBuild } from '../../api/runtime';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 
 const settingsStore = useSettingsStore();
-const isAndroid = /android/i.test(navigator.userAgent);
+const isAndroid = !isWebBuild && /android/i.test(navigator.userAgent);
+
+async function setNotifications(enabled: boolean) {
+  if (isWebBuild && enabled) {
+    if (typeof Notification === 'undefined') return;
+    const permission = await Notification.requestPermission().catch(() => 'denied');
+    if (permission !== 'granted') return;
+  }
+  settingsStore.settings.desktopNotifications = enabled;
+}
 </script>
 
 <style scoped>

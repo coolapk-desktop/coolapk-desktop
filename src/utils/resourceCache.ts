@@ -39,6 +39,33 @@ export function canPersistResource(url: string): boolean {
   }
 }
 
+export function canLoadWebImageDirectly(url: string): boolean {
+  try {
+    const target = new URL(url);
+    return target.protocol === 'https:' && !target.username && !target.password
+      && !['api.coolapk.com', 'api2.coolapk.com'].includes(target.hostname.replace(/\.$/, ''));
+  } catch {
+    return false;
+  }
+}
+
+export function preloadWebImage(url: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const image = new Image();
+    const finish = (loaded: boolean) => {
+      clearTimeout(timeout);
+      image.onload = image.onerror = null;
+      if (!loaded) image.removeAttribute('src');
+      resolve(loaded);
+    };
+    const timeout = setTimeout(() => finish(false), 8_000);
+    image.referrerPolicy = 'no-referrer';
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+    image.src = url;
+  });
+}
+
 /** 缓存淘汰与显示结束分别释放所有权；下一任务再撤销地址，等待 Vue 完成 DOM 更新。 */
 function disposeUnused(entry: ResourceEntry) {
   if (entry.cached || entry.readers || !objectUrls.has(entry.src) || entry.timer !== undefined) return;

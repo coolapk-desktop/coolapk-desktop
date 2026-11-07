@@ -331,6 +331,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
+import { isWebBuild } from '../../api/runtime';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { showToast } from '../../utils/toast';
 import { useAuthStore } from '../../stores/auth';
@@ -622,8 +623,8 @@ async function startExport() {
         progress.value = sources.length > 1 ? `“${source.title}”：${status.message}` : status.message;
       }, source, controller.signal);
       const name = source.type === 'all' ? `coolapk_favorites_${stamp}` : `coolapk_collection_${source.id}_${stamp}`;
-      const exportDirectory = await CoolapkTauriAPI.createExportDirectory(name, settingsStore.settings.downloadPath);
-      lastExportDirectory.value = sources.length === 1 ? exportDirectory : settingsStore.settings.downloadPath;
+      const exportDirectory = isWebBuild ? '' : await CoolapkTauriAPI.createExportDirectory(name, settingsStore.settings.downloadPath);
+      lastExportDirectory.value = isWebBuild ? '' : sources.length === 1 ? exportDirectory : settingsStore.settings.downloadPath;
       for (const format of selectedFormats) {
         controller.signal.throwIfAborted();
         if (format === 'html') {
@@ -640,7 +641,7 @@ async function startExport() {
               const dataUrl = await CoolapkTauriAPI.getImageDataUrl(url);
               controller.signal.throwIfAborted();
               // Android 导出的 HTML 是公共目录中的单个文档，内嵌图片避免私有目录引用失效。
-              if (/android/i.test(navigator.userAgent)) return dataUrl;
+              if (isWebBuild || /android/i.test(navigator.userAgent)) return dataUrl;
               const directory = kind === 'emoji' ? emojiDirectory : kind === 'avatar' ? avatarDirectory : photoDirectory;
               const prefix = kind === 'emoji' ? 'emoji' : kind === 'avatar' ? 'avatar' : 'image';
               const savedPath = await CoolapkTauriAPI.saveImageDataUrl(

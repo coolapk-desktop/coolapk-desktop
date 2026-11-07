@@ -40,6 +40,7 @@ import { computed, nextTick, onDeactivated, ref, watch } from 'vue';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { useRoute, useRouter } from 'vue-router';
 import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
+import { isWebBuild } from '../../api/runtime';
 const route = useRoute();
 const router = useRouter();
 const mobileLayout = useMobileLayout();
@@ -58,12 +59,12 @@ const settingsMenu = [
   { path: '/settings/agent', label: 'Agent 接口', icon: 'fas fa-robot' },
   { path: '/settings/diagnostics', label: '诊断日志', icon: 'fas fa-file-lines' },
   { path: '/settings/about', label: '关于酷安', icon: 'fas fa-info-circle' },
-];
+].filter(item => !isWebBuild || !['downloads', 'network', 'startup', 'device', 'agent', 'diagnostics'].includes(item.path.split('/').pop() || ''));
 const categoriesOpen = ref(false);
 const categoryTrigger = ref<HTMLButtonElement | null>(null);
 const categoryPanel = ref<HTMLElement | null>(null);
 // 分类卡片和触发按钮始终跟随路由，支持直接打开和前进后退。
-const currentCategory = computed(() => settingsMenu.find(item => item.path === route.path) || settingsMenu[7]!);
+const currentCategory = computed(() => settingsMenu.find(item => item.path === route.path) || settingsMenu.find(item => item.path === '/settings/appearance')!);
 async function toggleCategories() {
   if (categoriesOpen.value) { closeCategories(); return; }
   categoriesOpen.value = true;

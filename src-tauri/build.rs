@@ -1,4 +1,8 @@
 fn main() {
+    #[cfg(not(feature = "native"))]
+    println!("cargo:rustc-check-cfg=cfg(desktop)");
+
+    #[cfg(feature = "native")]
     tauri_build::build();
 
     println!("cargo:rerun-if-env-changed=COOLAPK_RUST_TEST_MANIFEST");

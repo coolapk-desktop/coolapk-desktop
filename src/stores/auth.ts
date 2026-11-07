@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
+import { isWebBuild } from '../api/runtime';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
 import { clearUserProfileCache } from '../utils/userProfilePreloader';
 import { useUserRelationsStore } from './userRelations';
@@ -95,17 +96,19 @@ export const useAuthStore = defineStore('auth', () => {
       throw new Error('请输入有效的 Cookie 凭据字符串');
     }
 
-    // 1. 保存 Cookie 到底层 Rust 网络引擎
-    await CoolapkTauriAPI.saveCookie(trimmed);
-    // 底层凭据已替换，验证期间不能继续把旧账号显示为有效会话。
-    clearFrontendAuthState();
-
-    // 2. 发起 API 验证登录有效性并抓取个人资料
-    const res = await CoolapkTauriAPI.checkLoginStatus().catch((err: any) => {
-      const detail = (typeof err === 'string' ? err : err?.message) || '未知接口错误';
-      // HTTP 403、超时和断连都不能证明 Cookie 无效；保留凭据便于重试。
-      throw new Error(`酷安接口未能确认登录状态（${detail}）。Cookie 已保留，请检查连接或稍后重试。`);
-    });
+    let res;
+    if (isWebBuild) {
+      res = await CoolapkTauriAPI.importWebAccount(trimmed);
+    } else {
+      await CoolapkTauriAPI.saveCookie(trimmed);
+      // 底层凭据已替换，验证期间不能继续把旧账号显示为有效会话。
+      clearFrontendAuthState();
+      res = await CoolapkTauriAPI.checkLoginStatus().catch((err: any) => {
+        const detail = (typeof err === 'string' ? err : err?.message) || '未知接口错误';
+        // HTTP 403、超时和断连都不能证明 Cookie 无效；保留凭据便于重试。
+        throw new Error(`酷安接口未能确认登录状态（${detail}）。Cookie 已保留，请检查连接或稍后重试。`);
+      });
+    }
     const data = res?.data || res || {};
     // 解析 API 返回的用户属性
     const uid = String(data.uid || data.id || '');
@@ -143,7 +146,8 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('coolapk_user', JSON.stringify(profile));
 
     // 保存到多账户库
-    await saveProfileToAccounts(profile, trimmed);
+    if (isWebBuild) await loadAccounts();
+    else await saveProfileToAccounts(profile, trimmed);
 
     return profile;
   }

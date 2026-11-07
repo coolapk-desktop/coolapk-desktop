@@ -100,7 +100,7 @@
             </div>
 
             <!-- 官方直连授权核心主视觉卡片 -->
-            <div class="official-login-card">
+            <div v-if="!isWebBuild" class="official-login-card">
               <div class="card-hero-icon">
                 <img src="../../assets/coolapk-logo-rounded.png" alt="Coolapk" class="hero-logo" />
               </div>
@@ -139,7 +139,7 @@
             </div>
 
             <!-- 底部折叠：高级 / 备用登录选项 -->
-            <div class="advanced-login-toggle">
+            <div v-if="!isWebBuild" class="advanced-login-toggle">
               <button class="toggle-link" @click="showAdvanced = !showAdvanced">
                 <span>{{ showAdvanced ? '收起备用登录选项' : '备用登录选项 (Cookie 凭据 / 密码 / 短信)' }}</span>
                 <i :class="showAdvanced ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
@@ -147,7 +147,7 @@
             </div>
 
             <!-- 备用登录选项容器 -->
-            <div v-if="showAdvanced" class="advanced-login-panel">
+            <div v-if="isWebBuild || showAdvanced" class="advanced-login-panel">
               <div class="tab-nav">
                 <button
                   :class="['tab-item', { active: activeTab === 'cookie' }]"
@@ -233,6 +233,7 @@ import { ref, computed, watch, onUnmounted } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import { useAuthStore } from '../../stores/auth';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { logDiagnostic } from '../../utils/diagnosticLogger';
 import AppButton from '../common/AppButton.vue';
@@ -325,7 +326,7 @@ async function handleCheckWebLogin(showFailure = true): Promise<boolean> {
 
 // 监听 Rust 端发送的网页窗口自动重定向闭环事件
 let unlistenFn: any = null;
-listen('login-window-closed', () => {
+if (!isWebBuild) void listen('login-window-closed', () => {
   logDiagnostic('info', 'login', 'window_closed_event');
   debugStatus.value = '收到 login-window-closed 事件，触发同步校验';
   void handleCheckWebLogin(false);
@@ -335,7 +336,7 @@ listen('login-window-closed', () => {
 
 // Android 登录页返回主 Activity 时，后台期间的事件可能晚于页面恢复。
 function handleLoginWindowReturn() {
-  if (document.visibilityState === 'visible' && authStore.isLoginModalOpen && !webLoginCompleted) {
+  if (!isWebBuild && document.visibilityState === 'visible' && authStore.isLoginModalOpen && !webLoginCompleted) {
     void handleCheckWebLogin(false);
   }
 }
@@ -497,6 +498,7 @@ async function handleCookieLogin() {
 
   try {
     const profile = await authStore.loginWithCookie(rawCookieInput.value);
+    rawCookieInput.value = '';
     successMessage.value = `凭据绑定成功！欢迎，${profile.username || '酷友'}`;
     setTimeout(() => {
       authStore.closeLoginModal();

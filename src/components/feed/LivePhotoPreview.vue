@@ -106,6 +106,7 @@ const props = withDefaults(defineProps<{
   isLong?: boolean;
   autoPlayGif?: boolean;
   gifAutoPlay?: boolean;
+  gifViewportOnly?: boolean;
 }>(), {
   contentType: 'feed',
   isSingle: false,
@@ -131,7 +132,7 @@ function observePreview() {
     previewVisible = visible;
     if (!visible) stopPreview();
     else resumeSingleGif();
-  });
+  }, props.gifViewportOnly && isGif.value);
 }
 // 列表默认只挂载静态封面；视频地址在首次悬浮时才交给 <video>。
 const resolvedVideoUrl = ref('');

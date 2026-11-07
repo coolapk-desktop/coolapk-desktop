@@ -2,10 +2,6 @@
   <div class="sidebar-card">
     <div class="card-header">
       <h3 class="card-title">热门话题</h3>
-      <button class="refresh-btn" title="换一换" @click="fetchTopics">
-        <i class="fas fa-sync-alt"></i>
-        <span>换一换</span>
-      </button>
     </div>
     <div v-if="loading" class="loading-wrapper">
       <LoadingState text="正在获取话题" />
@@ -86,24 +82,6 @@ onMounted(fetchTopics);
   line-height: 22px;
   font-weight: 700;
   color: var(--text-primary);
-}
-
-.refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  padding: 3px 0;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  transition: color var(--duration-fast) var(--ease-default);
-}
-
-.refresh-btn:hover {
-  color: var(--brand-primary);
 }
 
 .loading-wrapper, .empty-wrapper {

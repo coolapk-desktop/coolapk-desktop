@@ -134,13 +134,13 @@ async function navigateCoolapkDeepLinks(urls: string[]) {
 }
 
 async function setupDeepLinkHandling() {
+  if (!isTauri()) return;
   try {
     // 已安装应用首次被深链启动时，从 getCurrent 读取启动参数；已有实例则接收 onOpenUrl 事件。
     unregisterDeepLink = await onOpenUrl((urls) => { void navigateCoolapkDeepLinks(urls); });
     const startupUrls = await getCurrent();
     if (startupUrls?.length) await navigateCoolapkDeepLinks(startupUrls);
   } catch (error) {
-    // 浏览器开发模式没有 Tauri 深链运行时，不影响普通页面启动。
     console.warn('初始化酷安深链处理失败:', error);
   }
 }

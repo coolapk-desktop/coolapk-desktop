@@ -2,6 +2,33 @@
   <div class="settings-section">
     <h3 class="section-title">启动与行为设置</h3>
 
+    <div v-if="showDesktopLayoutSwitch" class="setting-group">
+      <h4 class="group-title">Web 访问</h4>
+      <div class="setting-row">
+        <div class="row-info">
+          <span class="row-label">启用 Web 访问</span>
+          <span class="row-sub">{{ webAccessError || '在浏览器使用当前桌面账号，下次启动时恢复设置' }}</span>
+        </div>
+        <button v-if="webAccessUrl" class="select-control" type="button" @click="openWebAccess">在浏览器打开</button>
+        <AppSwitch :model-value="!!webAccessUrl" :disabled="webAccessBusy" @update:model-value="setWebAccess" />
+      </div>
+      <div class="setting-row">
+        <label for="web-access-scope" class="row-info">
+          <span class="row-label">访问范围</span>
+          <span v-if="webAccessScope === 'lan'" class="row-sub">同一网络中能访问该地址的人可使用当前桌面账号。请仅在可信局域网使用。</span>
+        </label>
+        <select id="web-access-scope" v-model="webAccessScope" class="select-control" :disabled="webAccessBusy" @change="setWebAccess(!!webAccessUrl)">
+          <option value="local">仅本机</option>
+          <option value="lan">本机 + 局域网</option>
+        </select>
+      </div>
+      <div v-if="webAccessUrl" class="setting-row">
+        <label for="web-access-url" class="row-label">访问链接</label>
+        <input id="web-access-url" class="select-control web-access-url" :value="webLanUrl || webAccessUrl" readonly @focus="($event.target as HTMLInputElement).select()" />
+        <button type="button" class="select-control" @click="copyWebAccess">{{ webAccessCopied ? '已复制' : '复制链接' }}</button>
+      </div>
+    </div>
+
     <div class="setting-group">
       <h4 class="group-title">启动</h4>
       <div class="setting-row">
@@ -241,10 +268,62 @@ import { computed, onMounted, ref } from 'vue';
 import { useSettingsStore } from '../../stores/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { getPlatformInfo, isTouchMobilePlatform } from '../../utils/platform';
+import { invoke } from '../../api/runtime';
 
 const settingsStore = useSettingsStore();
 // 桌面端语义的开关：手机上窗口永远窄，开了只会把移动外壳关掉，因此不展示。
 const showDesktopLayoutSwitch = !isTouchMobilePlatform();
+const webAccessUrl = ref<string | null>(null);
+const webLanUrl = ref<string | null>(null);
+const webAccessError = ref('');
+const webAccessScope = ref<'local' | 'lan'>('local');
+let savedWebAccessScope: 'local' | 'lan' = 'local';
+const webAccessBusy = ref(false);
+const webAccessCopied = ref(false);
+async function setWebAccess(enabled?: boolean) {
+  if (webAccessBusy.value) return;
+  webAccessBusy.value = true;
+  webAccessCopied.value = false;
+  try {
+    const access = await invoke<{
+      localUrl: string | null;
+      lanUrl: string | null;
+      allowLan: boolean;
+      restoreFailed: boolean;
+    } | null>('desktop_web_access', {
+      enabled,
+      allowLan: enabled === undefined ? undefined : webAccessScope.value === 'lan',
+    });
+    webAccessUrl.value = access?.localUrl ?? null;
+    webLanUrl.value = access?.lanUrl ?? null;
+    if (access) savedWebAccessScope = webAccessScope.value = access.allowLan ? 'lan' : 'local';
+    webAccessError.value = access?.restoreFailed ? 'Web 访问未能自动启动，请重新启用' : '';
+  } catch (error) {
+    webAccessScope.value = savedWebAccessScope;
+    if (enabled !== undefined) webAccessError.value = typeof error === 'string' ? error : '无法切换 Web 访问，请重试';
+  } finally {
+    webAccessBusy.value = false;
+  }
+}
+async function copyWebAccess() {
+  if (!webAccessUrl.value) return;
+  try {
+    await navigator.clipboard.writeText(webLanUrl.value || webAccessUrl.value);
+    webAccessCopied.value = true;
+    webAccessError.value = '';
+  } catch {
+    webAccessError.value = '无法自动复制，请选中访问链接手动复制';
+  }
+}
+async function openWebAccess() {
+  if (!webAccessUrl.value) return;
+  try {
+    await invoke('open_url', { url: webAccessUrl.value, mode: 'system' });
+  } catch {
+    webAccessError.value = '无法打开浏览器，请重试';
+  }
+}
+onMounted(() => { if (showDesktopLayoutSwitch) void setWebAccess(); });
 
 // 仅在 Windows 10 下展示动态磁贴设置与开发预览说明（Windows 11 已移除动态磁贴）。
 const showLiveTileSetting = ref(false);
@@ -379,6 +458,11 @@ function reopenTip() {
   cursor: pointer;
   outline: none;
   transition: border-color var(--duration-fast) var(--ease-default);
+}
+
+.web-access-url {
+  flex: 1;
+  min-width: 0;
 }
 
 .select-control:hover {

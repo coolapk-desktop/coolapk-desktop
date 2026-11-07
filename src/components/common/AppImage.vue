@@ -7,16 +7,18 @@
   >
     <img
       v-if="renderedSrc && !error"
+      :key="isWebBuild ? renderedSrc : undefined"
       :src="renderedSrc"
       :alt="alt"
       :style="{ objectFit: fit }"
       referrerpolicy="no-referrer"
       v-bind="$attrs"
+      :class="{ 'image-awaiting-load': isWebBuild && !webImageLoaded }"
       :data-original-url="contextImageUrl || undefined"
       @load="handleLoad"
       @error="handleError"
     />
-    <div v-else-if="loading && !hideSpinner" class="image-placeholder">
+    <div v-if="!error && !hideSpinner && ((!renderedSrc && loading) || (isWebBuild && renderedSrc && !webImageLoaded))" class="image-placeholder">
       <i class="fa-solid fa-spinner fa-spin"></i>
     </div>
     <div v-else-if="error" class="image-error">
@@ -28,10 +30,11 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onActivated, onDeactivated, onUnmounted } from 'vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { useSettingsStore } from '../../stores/settings';
 import { useNoImageMode } from '../../composables/useNoImageMode';
 import { sanitizeImageUrl } from '../../utils/image';
-import { loadImageResource, normalizeResourceUrl, getMemoryCachedResourceSync } from '../../utils/resourceCache';
+import { canLoadWebImageDirectly, loadImageResource, normalizeResourceUrl, getMemoryCachedResourceSync } from '../../utils/resourceCache';
 import { observeResourceVisibility } from '../../utils/resourceVisibility';
 import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 
@@ -58,12 +61,15 @@ const contextImageUrl = computed(() => props.src ? normalizeResourceUrl(props.sr
 // 同步尝试命中内存缓存
 const initialCached = typeof IntersectionObserver === 'undefined' ? getMemoryCachedResourceSync(props.src) : null;
 const renderedSrc = ref<string | undefined>(initialCached || undefined);
+const webImageLoaded = ref(false);
+watch(renderedSrc, () => { webImageLoaded.value = false; }, { flush: 'sync' });
 useResourceUrlLifetime(renderedSrc);
 const loading = ref(!initialCached && !!props.src);
 const error = ref(false);
 const isFallback = ref(false);
 
 let loadSequence = 0;
+let directImageSequence = 0;
 let active = true;
 let nearViewport = typeof IntersectionObserver === 'undefined';
 const containerRef = ref<HTMLElement | null>(null);
@@ -93,7 +99,7 @@ function releaseImage() {
   releaseRenderedImage();
 }
 
-async function loadImage(url: string | undefined) {
+async function loadImage(url: string | undefined, directError?: Event) {
   const sequence = ++loadSequence;
   if (!active || !nearViewport || noImageMode.value) {
     renderedSrc.value = undefined;
@@ -138,6 +144,14 @@ async function loadImage(url: string | undefined) {
     return;
   }
 
+  if (isWebBuild && !directError && canLoadWebImageDirectly(targetUrl)) {
+    if (renderedSrc.value !== targetUrl || error.value) loading.value = true;
+    error.value = false;
+    directImageSequence = sequence;
+    renderedSrc.value = targetUrl;
+    return;
+  }
+
   // 4. 依次检查持久缓存和网络（保持当前已渲染的图片，平滑过渡，不置为 undefined）
   loading.value = true;
   error.value = false;
@@ -155,8 +169,14 @@ async function loadImage(url: string | undefined) {
   } catch (err) {
     if (sequence !== loadSequence) return;
     // 代理请求失败时，自动降级为原生应用 HTTP/HTTPS 直接请求
-    isFallback.value = true;
-    renderedSrc.value = targetUrl;
+    if (isWebBuild) {
+      error.value = true;
+      if (directError) emit('error', directError);
+    }
+    else {
+      isFallback.value = true;
+      renderedSrc.value = targetUrl;
+    }
   } finally {
     if (sequence === loadSequence) loading.value = false;
   }
@@ -189,11 +209,27 @@ onActivated(() => {
 });
 
 function handleLoad(event: Event) {
+  if (isWebBuild) {
+    if ((event.target as HTMLImageElement).getAttribute('src') !== renderedSrc.value) return;
+    webImageLoaded.value = true;
+  }
   loading.value = false;
   emit('load', event);
 }
 
 function handleError(event: Event) {
+  if (isWebBuild) {
+    if ((event.target as HTMLImageElement).getAttribute('src') !== renderedSrc.value) return;
+    if (directImageSequence === loadSequence && props.src) {
+      renderedSrc.value = undefined;
+      void loadImage(props.src, event);
+      return;
+    }
+    error.value = true;
+    loading.value = false;
+    emit('error', event);
+    return;
+  }
   // 如果降级直接链接后依然失败，才提示为 Error
   if (isFallback.value || !props.src) {
     error.value = true;
@@ -227,6 +263,15 @@ function handleError(event: Event) {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.image-awaiting-load {
+  visibility: hidden;
+}
+
+.image-awaiting-load + .image-placeholder {
+  position: absolute;
+  inset: 0;
 }
 
 .app-image-container.fit-contain {

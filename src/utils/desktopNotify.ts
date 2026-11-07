@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { isWebBuild } from '../api/runtime';
 
 export type DesktopNotifyOptions = {
   title: string;
@@ -54,6 +55,21 @@ function playNotificationSound() {
  * 非 Tauri 环境（浏览器预览/单元测试）下静默忽略。
  */
 export async function desktopNotify(options: DesktopNotifyOptions, sound = false) {
+  if (isWebBuild) {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      const notification = new Notification(options.title, { body: options.body });
+      notification.onclick = () => {
+        window.focus();
+        if (options.route?.startsWith('/')) window.location.hash = options.route;
+        notification.close();
+      };
+      if (sound) playNotificationSound();
+    } catch {
+      // 某些移动浏览器只允许通过 Service Worker 发系统通知。
+    }
+    return;
+  }
   try {
     if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return;
     // Android 未授权时发送通知可能成功返回，却被系统丢弃，必须先申请权限。

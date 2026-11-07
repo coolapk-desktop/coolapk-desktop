@@ -15,6 +15,8 @@ pub(crate) enum Policy {
     Follow,
     NoRedirect,
     Download,
+    #[cfg(feature = "web")]
+    DownloadNoRedirect,
     Updater,
 }
 
@@ -52,6 +54,10 @@ impl Sessions {
             Policy::Download => builder
                 .user_agent("Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) +CoolMarket/16.6.5-2610162-universal")
                 .redirect(reqwest::redirect::Policy::limited(10)),
+            #[cfg(feature = "web")]
+            Policy::DownloadNoRedirect => builder
+                .user_agent("Dalvik/2.1.0 (Linux; U; Android 16; 23113RKC6C Build/AQ3A.250226.002) +CoolMarket/16.6.5-2610162-universal")
+                .redirect(reqwest::redirect::Policy::none()),
             Policy::Updater => builder.user_agent("coolapk-desktop-updater")
                 .redirect(reqwest::redirect::Policy::custom(|attempt| {
                     if update_redirect_allowed(attempt.url(), attempt.previous().len()) {

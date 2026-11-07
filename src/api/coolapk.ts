@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { downloadInBrowser, invoke, isWebBuild } from './runtime';
 import type { PublishOptions } from '../types/publish';
 import { router } from '../router';
 import { getFeedDetailMessage, hasFeedMoreSuffix, parseWebFeedDetail } from '../utils/feedContent';
@@ -176,7 +176,7 @@ async function invokeCommentList(command: string, args: Record<string, unknown>)
 export class CoolapkTauriAPI {
   // 1. 首页推荐
   static async getIndexV8Feeds(page: number = 1) {
-    return await safeFetch(`/feeds/index_v8?page=${page}`, 'get_index_v8_feeds', { page });
+    return await invokeNative('get_index_v8_feeds', { page }, { retry: true, kind: 'feed' });
   }
 
   static async getIndexV8FeedsPaged(options: {
@@ -464,7 +464,7 @@ export class CoolapkTauriAPI {
 
   // 2. 24H 热榜
   static async getHotFeeds(page: number = 1) {
-    return await safeFetch(`/feeds/hot?page=${page}`, 'get_hot_feeds', { page });
+    return await invokeNative('get_hot_feeds', { page }, { retry: true, kind: 'feed' });
   }
 
   static async getRankFeeds(rankType: string, page: number = 1, background = false) {
@@ -473,22 +473,22 @@ export class CoolapkTauriAPI {
 
   // 3. 全站最新
   static async getLatestFeeds(page: number = 1) {
-    return await safeFetch(`/feeds/latest?page=${page}`, 'get_latest_feeds', { page });
+    return await invokeNative('get_latest_feeds', { page }, { retry: true, kind: 'feed' });
   }
 
   // 4. 精选热帖
   static async getDigestFeeds(page: number = 1) {
-    return await safeFetch(`/feeds/digest?page=${page}`, 'get_digest_feeds', { page });
+    return await invokeNative('get_digest_feeds', { page }, { retry: true, kind: 'feed' });
   }
 
   // 5. 酷图热榜
   static async getCoolPictureRank(page: number = 1) {
-    return await safeFetch(`/feeds/cool_picture?page=${page}`, 'get_cool_picture_rank', { page });
+    return await invokeNative('get_cool_picture_rank', { page }, { retry: true, kind: 'feed' });
   }
 
   // 6. 酷品二手
   static async getSecondHandFeeds(page: number = 1) {
-    return await safeFetch(`/feeds/secondhand?page=${page}`, 'get_secondhand_feeds', { page });
+    return await invokeNative('get_secondhand_feeds', { page }, { retry: true, kind: 'feed' });
   }
 
   static async getBoardFeeds(boardTag: string, page: number = 1, background = false) {
@@ -497,22 +497,22 @@ export class CoolapkTauriAPI {
 
   // 游戏中心榜单与列表
   static async getGameList(gameType: string = 'hot', page: number = 1) {
-    return await safeFetch(`/game/list?type=${gameType}&page=${page}`, 'get_game_list', { gameType, page });
+    return await invokeNative('get_game_list', { gameType, page }, { retry: true, kind: 'feed' });
   }
 
   // 应用中心榜单与分类列表
   static async getAppList(cat: string = 'recommend', page: number = 1) {
-    return await safeFetch(`/apk/list?cat=${cat}&page=${page}`, 'get_app_list', { cat, page });
+    return await invokeNative('get_app_list', { cat, page }, { retry: true, kind: 'feed' });
   }
 
   // 专项 APK / 软件 / 游戏搜索
   static async searchApks(query: string, page: number = 1) {
-    return await safeFetch(`/search/apks?q=${encodeURIComponent(query)}&page=${page}`, 'search_apks', { query, page });
+    return await invokeNative('search_apks', { query, page }, { retry: true, kind: 'feed' });
   }
 
   // 游戏专项搜索（type=game，仅返回游戏实体）
   static async searchGames(query: string, page: number = 1) {
-    return await safeFetch(`/search/games?q=${encodeURIComponent(query)}&page=${page}`, 'search_games', { query, page });
+    return await invokeNative('search_games', { query, page }, { retry: true, kind: 'feed' });
   }
 
 
@@ -522,7 +522,7 @@ export class CoolapkTauriAPI {
   // 供「清单选帖/选商品」这类需要跨实体类型检索、再在本地按 entityType 过滤的场景使用；
   // 搜索页的多页签检索请用 searchByType(···, 'all')，两者的入参与返回结构不同，不要互相替换。
   static async searchAll(query: string, page: number = 1) {
-    return await safeFetch(`/search?q=${encodeURIComponent(query)}&page=${page}`, 'search_all', { query, page });
+    return await invokeNative('search_all', { query, page }, { retry: true, kind: 'feed' });
   }
 
   // 按 APK 的动态 searchType 搜索，返回原始 Entity/Card 字段；sponsor 实体已在 Rust 端过滤。
@@ -1320,7 +1320,8 @@ export class CoolapkTauriAPI {
   // 普通视频独立走官方腾讯 UGC 流程。
   // 上传类命令统一由 invokeNative 的 UPLOAD_COMMANDS 注入 { retry: false, timeoutMs: 0 }。
   static async uploadPublishVideo(videoBytes: Uint8Array, fileName: string, coverBytes: Uint8Array, duration: number) {
-    return await invokeNative('upload_publish_video', { videoBytes, fileName, coverBytes, duration });
+    return await invokeNative('upload_publish_video', { videoBytes, fileName, coverBytes, duration },
+      isWebBuild ? { retry: false, timeoutMs: 0 } : {});
   }
 
   static async uploadImage(imageBytes: Uint8Array, fileName: string, contentType: string, dir: string = 'feed', toUid?: string, liveVideoBytes?: Uint8Array, hdr = 0) {
@@ -1442,7 +1443,7 @@ export class CoolapkTauriAPI {
     const args: any = { message, options };
     if (pic) args.pic = pic;
     if (postToken) args.postToken = postToken;
-    return await invokeNative('create_feed', args);
+    return await invokeNative('create_feed', args, { retry: false });
   }
 
   static async getEditableFeed(feedId: string) {
@@ -1454,6 +1455,10 @@ export class CoolapkTauriAPI {
     // 正文已编辑，展开缓存必须失效，否则详情页会继续显示旧全文。
     invalidateFeedFullText(feedId);
     return result;
+  }
+
+  static async importWebAccount(cookieStr: string) {
+    return await invokeNative('import_web_account', { cookieStr }, { retry: false });
   }
 
   static async saveCookie(cookieStr: string) {
@@ -1506,7 +1511,7 @@ export class CoolapkTauriAPI {
   }
 
   static async getUserCookie() {
-    return await invoke<string | null>('get_user_cookie');
+    return isWebBuild ? null : await invoke<string | null>('get_user_cookie');
   }
 
   static async getImageDataUrl(
@@ -1528,6 +1533,17 @@ export class CoolapkTauriAPI {
 
   static async saveFile(url: string, dir?: string, loadedDataUrl?: string) {
     let cachedDataUrl = loadedDataUrl || getMemoryCachedResourceSync(url) || undefined;
+    if (isWebBuild) {
+      const target = new URL(url, window.location.href);
+      if (!['http:', 'https:', 'blob:', 'data:'].includes(target.protocol)) throw new Error('不支持的下载地址');
+      const fileName = target.protocol === 'http:' || target.protocol === 'https:'
+        ? target.pathname.split('/').pop() || 'download'
+        : 'download';
+      if (!cachedDataUrl && /^https?:$/.test(target.protocol)) {
+        cachedDataUrl = await this.getImageDataUrl(target.href).catch(() => undefined);
+      }
+      return downloadInBrowser(cachedDataUrl || target.href, fileName);
+    }
     const cachedBlobUrl = url.startsWith('blob:') ? url : cachedDataUrl?.startsWith('blob:') ? cachedDataUrl : undefined;
     if (cachedBlobUrl) {
       // 保存时才将缓存 Blob 转回 IPC 所需数据，继续复用已显示的原图而不重新下载。
@@ -1559,10 +1575,15 @@ export class CoolapkTauriAPI {
   }
 
   static async saveImageDataUrl(dataUrl: string, fileName: string, dir?: string) {
+    if (isWebBuild) return downloadInBrowser(dataUrl, fileName);
     return await invoke<string>('save_image_data_url', { dataUrl, fileName, dir: dir || '' });
   }
 
   static async openImageInSystemViewer(url: string, cacheDir?: string) {
+    if (isWebBuild) {
+      await this.openUrl(url, 'system');
+      return url;
+    }
     return await invoke<string>('open_image_in_system_viewer', { url, cacheDir: cacheDir || '' });
   }
 
@@ -1600,10 +1621,16 @@ export class CoolapkTauriAPI {
       }
 
       // 未适配的酷安网页仍可在应用内查看。
-      if (/^https?:\/\//i.test(url)) {
+      if (!isWebBuild && /^https?:\/\//i.test(url)) {
         await router.push({ path: '/external', query: { url } });
         return true;
       }
+    }
+    if (isWebBuild) {
+      const target = new URL(url, window.location.href);
+      if (!['http:', 'https:', 'mailto:', 'tel:', 'coolmarket:'].includes(target.protocol)) return false;
+      window.open(target.href, '_blank', 'noopener,noreferrer');
+      return true;
     }
     // 非 http(s)（如 mailto:）与 system 模式交给系统默认程序
     try {
@@ -1650,6 +1677,10 @@ export class CoolapkTauriAPI {
       || !['editProductOwner', 'productOwnerShare'].includes(url.searchParams.get('m') || '')) {
       throw new Error('无效的装备页面链接');
     }
+    if (isWebBuild) {
+      await this.openUrl(url.href, 'system');
+      return;
+    }
     await invoke('open_url', { url: url.href, mode: 'internal' });
   }
 
@@ -1672,6 +1703,12 @@ export class CoolapkTauriAPI {
   }
 
   static async exportJsonFile(fileName: string, content: string, dir?: string) {
+    if (isWebBuild) {
+      const url = URL.createObjectURL(new Blob([content], { type: 'application/octet-stream' }));
+      const result = downloadInBrowser(url, fileName);
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      return result;
+    }
     return await invoke<string>('export_json_file', { fileName, content, dir: dir || '' });
   }
 

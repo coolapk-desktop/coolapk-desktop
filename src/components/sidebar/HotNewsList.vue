@@ -1,6 +1,6 @@
 <template>
   <section class="sidebar-card hot-news-card">
-    <header class="card-header"><h3>热门资讯</h3><button class="refresh-btn" type="button" title="刷新热门资讯" aria-label="刷新热门资讯" @click="fetchNews"><i class="fas fa-sync-alt" aria-hidden="true"></i></button></header>
+    <header class="card-header"><h3>热门资讯</h3></header>
     <LoadingState v-if="loading" text="正在获取资讯" />
     <ErrorState v-else-if="error" title="资讯加载失败" :message="error" @retry="fetchNews" />
     <EmptyState v-else-if="!items.length" title="暂无热门资讯" />
@@ -63,8 +63,6 @@ onUnmounted(() => { sequence += 1; });
 .sidebar-card { background: var(--surface); min-width: 0; overflow: hidden; }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .card-header h3 { margin: 0; font-size: 17px; line-height: 22px; color: var(--text-primary); }
-.refresh-btn { border: 0; background: transparent; color: var(--text-tertiary); padding: 4px; cursor: pointer; }
-.refresh-btn:hover { color: var(--brand-primary); }
 .news-list { display: flex; flex-direction: column; gap: 4px; }
 .news-item { display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%; min-height: 40px; padding: 4px 0; border: 0; background: transparent; text-align: left; color: var(--text-primary); font: inherit; cursor: pointer; }
 .news-item:hover { color: var(--brand-primary); }

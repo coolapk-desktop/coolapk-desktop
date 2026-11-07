@@ -42,7 +42,7 @@ const icon = computed(() => {
   filter: brightness(0) invert(.4);
 }
 
-:global([data-theme="dark"]) .official-nav-icon {
+:global([data-theme="dark"] .official-nav-icon) {
   filter: brightness(0) invert(.72);
 }
 

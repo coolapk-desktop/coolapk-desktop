@@ -18,9 +18,9 @@
 
 ## 📥 下载与安装
 
-请前往 [👉 GitHub Releases](https://github.com/coolapk-desktop/coolapk-desktop/releases) 获取各平台的最新版本程序包：
+桌面端和移动端的安装包可从 [👉 GitHub Releases](https://github.com/coolapk-desktop/coolapk-desktop/releases) 获取。Web 版可从桌面客户端打开，也可用 Docker 独立部署。
 
-| 操作系统 | 文件格式 | 推荐安装包 |
+| 平台 | 文件格式 | 安装包或使用方式 |
 | :--- | :--- | :--- |
 | **Windows 安装版** | `.exe` | `coolapk-desktop_x.x.x_x64-setup.exe` (x64) / `arm64-setup.exe` (ARM64) |
 | **Windows 单文件版** | `.exe` | `coolapk-desktop_x.x.x_x64-portable.exe` (x64) / `arm64-portable.exe` (ARM64) |
@@ -28,8 +28,20 @@
 | **Linux** | `.AppImage` / `.deb` / `.rpm` | `coolapk-desktop_x.x.x_amd64.AppImage` / `.deb` / `.rpm` |
 | **Android** | `.apk` / `.aab` | `coolapk-vx.y.z-android-arm64.apk` / `coolapk-vx.y.z-android-arm64.aab` |
 | **iPhone / iPad** | `.ipa` | `coolapk-vx.y.z-ios-arm64-unsigned.ipa`（未签名，需自行签名安装） |
+| **Web（浏览器）** | 浏览器访问 / Docker 镜像 | [桌面内置 Web 或独立部署](#web-版) |
 
 > 💡 **提示**：构建产物均由 GitHub Actions 自动化流程在云端打包。Windows 单文件版无需解压或安装，系统需已有 WebView2 Runtime。iOS IPA 为未签名设备包，不能直接安装到普通 iPhone/iPad，需要使用 AltStore、SideStore、Sideloadly 或自己的 Apple 证书完成签名。
+
+### Web 版
+
+Web 版复用桌面和移动端的 Vue 界面与 Rust 酷安客户端。可以在浏览器浏览动态和评论、搜索，以及登录后使用收藏等账号功能。
+
+| 使用方式 | 如何打开 | 数据存储 |
+| :--- | :--- | :--- |
+| **桌面内置 Web** | 在 Windows、macOS 或 Linux 桌面客户端的「设置 → 启动与行为」启用 Web 访问。默认仅本机，亦可选择局域网 | 与桌面共用账号列表、当前账号和草稿。界面偏好各自保存 |
+| **独立 Docker** | 使用仓库的 [Compose 配置](compose.yaml) 部署，默认在服务器本机访问 `http://127.0.0.1:17521`。远程访问可配置 HTTPS 反向代理或隧道 | 在浏览器导入 Cookie 登录。Docker 命名卷保存会话、账号和设备配置，独立于桌面客户端 |
+
+镜像发布目标为 `ghcr.io/coolapk-desktop/coolapk-desktop`。本地构建、Compose 部署、更新和固定版本的命令见[浏览器版构建与部署](#浏览器版构建与部署)。
 
 ### 数据目录
 
@@ -101,7 +113,7 @@ macOS 与 Linux 的默认目录如下，同一系统用户下的不同分发包�
 ## 隐私与网络访问
 
 - 项目不内置个人 Cookie、账号 Token、统计 SDK 或遥测服务。
-- 登录凭据由用户手动输入，只保存在本地应用数据目录的账户库中，不写入仓库。
+- 登录凭据由用户手动导入。桌面版存入本地应用数据目录，独立 Web 存在服务会话中，配置持久化后写入服务端会话目录。
 - 客户端标识在每次启动时临时生成，不使用开发者或用户的固定设备指纹。
 - 应用会直接访问 `api.coolapk.com`、酷安图片/静态资源域名；不会向第三方字体或图标 CDN 发起请求。
 - 游客首次使用或点击“自动生成并使用”时，会向数盟 `auni.telecome.cn` 请求 DUID，仅发送合成设备标识，不发送酷安 Cookie 或真实硬件标识。游客 DUID 在本机缓存复用；登录后默认停用，用户可在设备信息设置中主动生成并启用本次登录使用的 DUID。
@@ -123,6 +135,48 @@ cd coolapk-desktop
 npm ci
 npm run tauri dev
 ```
+
+### 浏览器版构建与部署
+
+Web、桌面和移动端使用同一套 Vue 页面。Web 服务复用 Rust 酷安客户端，并在同一站点提供前端文件和 API。
+
+```powershell
+npm run build:web
+npm run serve:web
+```
+
+在浏览器打开 `http://127.0.0.1:17521`。正式运行可通过 `cargo build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin coolapk-web` 构建服务，将二进制与 `dist-web` 一起部署。
+
+- `COOLAPK_WEB_BIND` 默认是 `127.0.0.1:17521`。远程访问时，在前面配置 HTTPS 反向代理，将页面和 `/api` 转发到同一服务。
+- `COOLAPK_WEB_ORIGIN` 填写浏览器访问的完整站点源，例如 `https://coolapk.example`。它用于校验 API 请求来源。
+- `COOLAPK_WEB_DIST` 默认读取当前目录下的 `dist-web`。它也可以指向独立部署的前端产物目录。
+
+浏览器使用 Cookie 导入登录。会话闲置 12 小时后需要重新导入。未配置 `COOLAPK_WEB_DATA_DIR` 时，会话仅存在于服务进程内。应用安装包交给浏览器下载。Web 二进制与 Tauri 共用 Cargo 包，可在无桌面环境的服务器上构建和运行。
+
+本机也可以通过 Docker 构建和运行。在仓库根目录执行：
+
+```powershell
+docker build -t coolapk-web .
+docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -e COOLAPK_WEB_ORIGIN=http://127.0.0.1:17521 -e COOLAPK_WEB_ALLOW_LOCAL_CONTAINER=1 -v coolapk-web-data:/var/lib/coolapk-web coolapk-web
+```
+
+访问 `http://127.0.0.1:17521`。本机 HTTP 模式只应将端口发布到 `127.0.0.1`。如果该端口已被占用，同时修改端口映射和 `COOLAPK_WEB_ORIGIN` 中的主机端口。
+
+桌面客户端可在「设置 → 启动与行为」启用 Web 访问，再点击「在浏览器打开」。应用会记住开关和访问范围，下次启动时自动恢复。浏览器使用桌面客户端的当前账号和草稿，界面偏好保存在各自客户端。
+
+需要从另一台设备访问时，将访问范围设为「本机 + 局域网」，启用 Web 访问后点击「复制链接」。应用会自动选择局域网地址，桌面本机仍可点击「在浏览器打开」。局域网 HTTP 连接未加密，同一网络中能访问该地址的人可使用当前桌面账号，请仅在可信网络使用。若无法连接，检查两台设备是否在同一局域网，以及防火墙是否允许桌面应用接收入站连接。
+
+无头服务器可使用仓库的 `compose.yaml`。镜像发布到 GHCR 后运行 `docker compose up -d`。首次发布后，维护者需在 GitHub Packages 将镜像包设为公开，服务器即可匿名拉取。公网访问时，把 `COOLAPK_WEB_ORIGIN` 设为实际的 HTTPS 站点源，并将反向代理或隧道指向本机映射端口。命名卷保存浏览器会话、登录凭据和会话内的设备配置，请限制宿主机上的卷访问权限。
+
+正式 tag 发布对应版本镜像和 `latest`，测试版使用独立版本标签，main 构建发布 `sha-<提交号>`。服务器手动升级可运行 `docker compose pull && docker compose up -d`。需要自动跟随镜像标签时，可在宿主机 crontab 中添加以下任务，将路径换成 Compose 项目目录。
+
+```cron
+17 4 * * * cd /srv/coolapk-web && docker compose pull && docker compose up -d
+```
+
+要固定版本或回滚，在 Compose 的 `.env` 中将 `COOLAPK_WEB_IMAGE` 设为对应的 GHCR 版本标签，再执行升级命令。
+
+### 原生客户端构建
 
 生产构建可按当前平台选择产物格式：
 

@@ -1,8 +1,14 @@
+use super::apk_download::{
+    empty_download_verification, is_coolapk_download_host, is_windows_reserved_file_name, request_apk_download,
+    resolve_apk_download_url, sanitize_apk_file_name,
+};
+#[cfg(test)]
+use super::apk_download::{build_coolapk_download_url, download_object_string};
 use super::http_session::{session, Policy as SessionPolicy, UPDATE_ALLOWED_HOSTS};
 use crate::coolapk::client::{CoolapkClient, DeviceProfile};
 use crate::download_manager::{DownloadControl, DownloadManager};
 use crate::diagnostics::{login_checkpoint, LoginStage};
-use base64::{Engine as _, engine::general_purpose::{STANDARD as BASE64, STANDARD_NO_PAD as BASE64_NO_PAD}};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use md5::{Digest, Md5};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -12,9 +18,109 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::{Emitter, Manager, State};
 
 pub struct AppState {
-    pub client: CoolapkClient,
+    pub client: std::sync::Arc<CoolapkClient>,
     pub downloads: DownloadManager,
     pub login_session: Mutex<Option<std::sync::Arc<LoginSession>>>,
+}
+
+#[derive(Default)]
+pub struct DesktopWebAccess {
+    #[cfg(desktop)]
+    server: tokio::sync::Mutex<Option<crate::web::DesktopWebServer>>,
+}
+
+#[cfg(desktop)]
+const DESKTOP_WEB_STORE: &str = "desktop_web.json";
+
+#[cfg(desktop)]
+impl DesktopWebAccess {
+    async fn configure(
+        &self,
+        app: &tauri::AppHandle,
+        client: &std::sync::Arc<CoolapkClient>,
+        enabled: Option<bool>,
+        allow_lan: Option<bool>,
+    ) -> Result<Value, String> {
+        use tauri_plugin_store::StoreExt;
+
+        let mut server = self.server.lock().await;
+        let store = app.store(DESKTOP_WEB_STORE).map_err(|err| err.to_string())?;
+        let saved = store.get("access").unwrap_or_else(|| json!({ "enabled": false, "allowLan": false }));
+        let saved_enabled = saved["enabled"].as_bool().unwrap_or(false);
+        let enabled_next = enabled.unwrap_or(saved_enabled);
+        let allow_lan_next = allow_lan.unwrap_or_else(|| saved["allowLan"].as_bool().unwrap_or(false));
+        if server.as_ref().is_some_and(|server| server.task.is_finished()) {
+            *server = None;
+        }
+
+        let changed = enabled.is_some() || allow_lan.is_some();
+        if changed || (enabled_next && server.is_none()) {
+            let replacement = if enabled_next
+                && server.as_ref().is_none_or(|current| current.lan_url.is_some() != allow_lan_next)
+            {
+                match crate::web::start_desktop(app.clone(), client.clone(), allow_lan_next).await {
+                    Ok(replacement) => Some(replacement),
+                    Err(err) if changed => return Err(err),
+                    Err(err) => {
+                        log::warn!("desktop_web.restore_failed: {err}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            if changed {
+                store.set("access", json!({ "enabled": enabled_next, "allowLan": allow_lan_next }));
+                if let Err(err) = store.save() {
+                    store.set("access", saved);
+                    return Err(format!("无法保存 Web 访问设置（{err}）"));
+                }
+            }
+            let previous = if let Some(replacement) = replacement {
+                server.replace(replacement)
+            } else if !enabled_next {
+                server.take()
+            } else {
+                None
+            };
+            if let Some(previous) = previous { previous.stop(); }
+        }
+
+        Ok(json!({
+            "localUrl": server.as_ref().map(|server| &server.url),
+            "lanUrl": server.as_ref().and_then(|server| server.lan_url.as_ref()),
+            "allowLan": allow_lan_next,
+            "restoreFailed": enabled_next && server.is_none(),
+        }))
+    }
+}
+
+#[cfg(desktop)]
+pub async fn restore_desktop_web_access(app: tauri::AppHandle) {
+    let access = app.state::<DesktopWebAccess>();
+    let state = app.state::<AppState>();
+    if let Err(err) = access.configure(&app, &state.client, None, None).await {
+        log::warn!("desktop_web.restore_failed: {err}");
+    }
+}
+
+#[tauri::command]
+pub async fn desktop_web_access(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    access: State<'_, DesktopWebAccess>,
+    enabled: Option<bool>,
+    allow_lan: Option<bool>,
+) -> Result<Option<serde_json::Value>, String> {
+    #[cfg(desktop)]
+    {
+        access.configure(&app, &state.client, enabled, allow_lan).await.map(Some)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, state, access, enabled, allow_lan);
+        Ok(None)
+    }
 }
 
 #[derive(Default)]
@@ -97,1536 +203,60 @@ static IMAGE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// 登录窗口使用桌面 Chromium UA，避免网易易盾把鼠标事件误判为仅支持触摸事件。
 const LOGIN_WEBVIEW_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36";
 
-#[tauri::command]
-pub async fn get_index_v8_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_index_v8_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_index_v8_feeds_paged(
-    state: State<'_, AppState>,
-    page: u32,
-    first_item: String,
-    last_item: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_index_v8_feeds_paged(page, &first_item, &last_item)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_index_v8_entities_paged(
-    state: State<'_, AppState>,
-    page: u32,
-    first_item: String,
-    last_item: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_index_v8_entities_paged(page, &first_item, &last_item)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_tab_config(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_tab_config().await
-}
-
-#[tauri::command]
-pub async fn update_home_tab_config(
-    state: State<'_, AppState>,
-    config_json: String,
-) -> Result<Value, String> {
-    state.client.update_home_tab_config(&config_json).await
-}
-
-#[tauri::command]
-pub async fn get_discovery_config(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_discovery_config().await
-}
-
-#[tauri::command]
-pub async fn get_discovery_page_data(
-    state: State<'_, AppState>,
-    url: String,
-    title: String,
-    sub_title: String,
-    page: u32,
-    first_item: String,
-    last_item: String,
-    page_context: String,
-    request_args_json: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_discovery_page_data(
-            &url,
-            &title,
-            &sub_title,
-            page,
-            &first_item,
-            &last_item,
-            &page_context,
-            request_args_json.as_deref().unwrap_or(""),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_live_detail(state: State<'_, AppState>, live_id: String) -> Result<Value, String> {
-    state.client.get_live_detail(&live_id).await
-}
-
-#[tauri::command]
-pub async fn get_search_suggestions(
-    state: State<'_, AppState>,
-    query: String,
-) -> Result<Value, String> {
-    state.client.get_search_suggestions(&query).await
-}
-
-#[tauri::command]
-pub async fn get_topic_detail_v7(state: State<'_, AppState>, tag: String) -> Result<Value, String> {
-    state.client.get_topic_detail_v7(&tag).await
-}
-
-#[tauri::command]
-pub async fn get_product_detail(
-    state: State<'_, AppState>,
-    product_id: String,
-) -> Result<Value, String> {
-    state.client.get_product_detail(&product_id).await
-}
-
-#[tauri::command]
-pub async fn get_product_feeds(
-    state: State<'_, AppState>,
-    product_id: String,
-    feed_type: String,
-    list_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_product_feeds(&product_id, &feed_type, &list_type, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_product_config(
-    state: State<'_, AppState>,
-    config_id: String,
-) -> Result<Value, String> {
-    state.client.get_product_config(&config_id).await
-}
-
-#[tauri::command]
-pub async fn add_config_compare(
-    state: State<'_, AppState>,
-    config_id: String,
-) -> Result<Value, String> {
-    state.client.add_config_compare(&config_id).await
-}
-
-#[tauri::command]
-pub async fn remove_config_compare(
-    state: State<'_, AppState>,
-    config_id: String,
-) -> Result<Value, String> {
-    state.client.remove_config_compare(&config_id).await
-}
-
-#[tauri::command]
-pub async fn get_product_brand_list(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_product_brand_list().await
-}
-
-#[tauri::command]
-pub async fn get_product_category_list(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_product_category_list().await
-}
-
-#[tauri::command]
-pub async fn get_product_list(
-    state: State<'_, AppState>,
-    url: String,
-    title: String,
-    sub_title: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_product_list(&url, &title, &sub_title, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""))
-        .await
-}
-
-#[tauri::command]
-pub async fn get_product_brand_products(
-    state: State<'_, AppState>,
-    brand_id: String,
-    brand_type: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_product_brand_products(&brand_id, &brand_type, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""))
-        .await
-}
-
-#[tauri::command]
-pub async fn get_secondhand_brand_list(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_secondhand_brand_list().await
-}
-
-#[tauri::command]
-pub async fn get_secondhand_product_list(
-    state: State<'_, AppState>,
-    brand_id: String,
-    list_type: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_secondhand_product_list(&brand_id, &list_type, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""))
-        .await
-}
-
-#[tauri::command]
-pub async fn get_product_media_list(
-    state: State<'_, AppState>,
-    product_id: String,
-    media_type: String,
-    is_recommend: i32,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_product_media_list(&product_id, &media_type, is_recommend, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn change_product_wish_status(
-    state: State<'_, AppState>,
-    product_id: String,
-    status: i32,
-) -> Result<Value, String> {
-    state
-        .client
-        .change_product_wish_status(&product_id, status)
-        .await
-}
-
-#[tauri::command]
-pub async fn change_product_follow_status(
-    state: State<'_, AppState>,
-    product_id: String,
-    status: i32,
-) -> Result<Value, String> {
-    state
-        .client
-        .change_product_follow_status(&product_id, status)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_product_wish_list(
-    state: State<'_, AppState>,
-    product_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_product_wish_list(&product_id, page).await
-}
-
-#[tauri::command]
-pub async fn get_product_buy_list(
-    state: State<'_, AppState>,
-    product_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_product_buy_list(&product_id, page).await
-}
-
-#[tauri::command]
-pub async fn get_my_product_list(
-    state: State<'_, AppState>,
-    uid: String,
-    product_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_my_product_list(&uid, &product_type, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_product_rating_chart(
-    state: State<'_, AppState>,
-    product_id: String,
-) -> Result<Value, String> {
-    state.client.get_product_rating_chart(&product_id).await
-}
-
-#[tauri::command]
-pub async fn get_product_subtab_feeds(
-    state: State<'_, AppState>,
-    product_id: String,
-    sub_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_product_subtab_feeds(&product_id, &sub_id, page).await
-}
-
-#[tauri::command]
-pub async fn create_product_rating(
-    state: State<'_, AppState>,
-    product_id: String,
-    score: i32,
-    message: String,
-    buy_status: bool,
-) -> Result<Value, String> {
-    state.client.create_product_rating(&product_id, score, &message, buy_status).await
-}
-
-#[tauri::command]
-pub async fn get_product_rating_list(
-    state: State<'_, AppState>,
-    product_id: String,
-    star: i32,
-    is_owner: i32,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_product_rating_list(&product_id, star, is_owner, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_apk_rating_user_list(
-    state: State<'_, AppState>,
-    apk_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_apk_rating_user_list(&apk_id, page).await
-}
-
-#[tauri::command]
-pub async fn change_rating_status(
-    state: State<'_, AppState>,
-    product_id: String,
-    value: i32,
-    uid: String,
-    buy_status: Option<i32>,
-    is_owner: Option<i32>,
-) -> Result<Value, String> {
-    state
-        .client
-        .change_rating_status(&product_id, value, &uid, buy_status, is_owner)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_dyh_detail(state: State<'_, AppState>, dyh_id: String) -> Result<Value, String> {
-    state.client.get_dyh_detail(&dyh_id).await
-}
-
-#[tauri::command]
-pub async fn get_dyh_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_dyh_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_dyh_feeds(
-    state: State<'_, AppState>,
-    dyh_id: String,
-    feed_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_dyh_feeds(&dyh_id, &feed_type, page).await
-}
-
-#[tauri::command]
-pub async fn get_event_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_event_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_event_detail(
-    state: State<'_, AppState>,
-    event_id: String,
-) -> Result<Value, String> {
-    state.client.get_event_detail(&event_id).await
-}
-
-#[tauri::command]
-pub async fn get_dyh_follow_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_dyh_follow_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_dyh_subscribe_list(
-    state: State<'_, AppState>,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_dyh_subscribe_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_dyh_editor_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_dyh_editor_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_feed_share_dyh_list(state: State<'_, AppState>, share_type: u32, page: u32) -> Result<Value, String> {
-    state.client.get_feed_share_dyh_list(share_type, page).await
-}
-
-#[tauri::command]
-pub async fn share_feed_to_dyh(state: State<'_, AppState>, feed_id: String, dyh_ids: String, share_type: u32) -> Result<Value, String> {
-    state.client.share_feed_to_dyh(&feed_id, &dyh_ids, share_type).await
-}
-
-#[tauri::command]
-pub async fn get_user_product_albums(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_user_product_albums(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn get_goods_list_items(
-    state: State<'_, AppState>,
-    uid: String,
-    goods_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_goods_list_items(&uid, &goods_id, page).await
-}
-
-#[tauri::command]
-pub async fn create_product_album(
-    state: State<'_, AppState>,
-    title: String,
-    description: String,
-    album_type: u32,
-    target_type: String,
-    target_id: String,
-    product_items: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_product_album(
-            &title,
-            &description,
-            album_type,
-            &target_type,
-            &target_id,
-            &product_items,
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_node_feeds(
-    state: State<'_, AppState>,
-    node_type: String,
-    node_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_node_feeds(&node_type, &node_id, page).await
-}
-
-#[tauri::command]
-pub async fn get_apk_feeds(
-    state: State<'_, AppState>,
-    package_name: String,
-    sort_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_apk_feeds(&package_name, &sort_type, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn check_login_info(state: State<'_, AppState>) -> Result<Value, String> {
-    let result = state.client.check_login_info().await;
-    match &result {
-        Ok(_) => log::info!("login.info_check_succeeded"),
-        Err(error) => log::warn!(
-            "login.info_check_failed reason={}",
-            login_failure_kind(error)
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub async fn get_hot_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_hot_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_rank_feeds(
-    state: State<'_, AppState>,
-    rank_type: String,
-    page: u32,
-    background: Option<bool>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_rank_feeds_with_mode(&rank_type, page, background.unwrap_or(false))
-        .await
-}
-
-#[tauri::command]
-pub async fn get_latest_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_latest_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_digest_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_digest_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_cool_picture_rank(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_cool_picture_rank(page).await
-}
-
-#[tauri::command]
-pub async fn get_board_feeds(
-    state: State<'_, AppState>,
-    board_tag: String,
-    page: u32,
-    background: Option<bool>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_board_feeds_with_mode(&board_tag, page, background.unwrap_or(false))
-        .await
-}
-
-#[tauri::command]
-pub async fn get_secondhand_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_secondhand_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_hot_topics(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_hot_topics().await
-}
-
-#[tauri::command]
-pub async fn get_favorite_list(
-    state: State<'_, AppState>,
-    fav_type: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_favorite_list(
-            &fav_type,
-            page,
-            first_item.as_deref().unwrap_or(""),
-            last_item.as_deref().unwrap_or(""),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_feed_collection_status(
-    state: State<'_, AppState>,
-    feed_id: String,
-) -> Result<Value, String> {
-    state.client.get_feed_collection_status(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn update_collection_item(
-    state: State<'_, AppState>,
-    collection_ids: String,
-    cancel_ids: String,
-    target_id: String,
-    feed_type: String,
-    trace: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .update_collection_item(
-            &collection_ids,
-            &cancel_ids,
-            &target_id,
-            &feed_type,
-            &trace,
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_collection_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state.client.get_collection_list(&uid, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or("")).await
-}
-
-#[tauri::command]
-pub async fn get_collection_item_list(
-    state: State<'_, AppState>,
-    collection_id: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_collection_item_list(
-            &collection_id,
-            page,
-            first_item.as_deref().unwrap_or(""),
-            last_item.as_deref().unwrap_or(""),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_collection_detail(
-    state: State<'_, AppState>,
-    collection_id: String,
-) -> Result<Value, String> {
-    state.client.get_collection_detail(&collection_id).await
-}
-
-#[tauri::command]
-pub async fn create_collection(
-    state: State<'_, AppState>,
-    title: String,
-    description: String,
-    cover: String,
-    is_open: i32,
-    source_id: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_collection(&title, &description, &cover, is_open, &source_id)
-        .await
-}
-
-#[tauri::command]
-pub async fn update_collection(
-    state: State<'_, AppState>,
-    id: String,
-    title: String,
-    description: String,
-    cover: String,
-    is_open: i32,
-) -> Result<Value, String> {
-    state
-        .client
-        .update_collection(&id, &title, &description, &cover, is_open)
-        .await
-}
-
-#[tauri::command]
-pub async fn delete_collection(state: State<'_, AppState>, id: String) -> Result<Value, String> {
-    state.client.delete_collection(&id).await
-}
-
-#[tauri::command]
-pub async fn remove_collection_item(
-    state: State<'_, AppState>,
-    item_id: String,
-) -> Result<Value, String> {
-    state.client.remove_collection_item(&item_id).await
-}
-
-#[tauri::command]
-pub async fn clear_collection_invalid_items(
-    state: State<'_, AppState>,
-    collection_id: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .clear_collection_invalid_items(&collection_id)
-        .await
-}
-
-#[tauri::command]
-pub async fn follow_collection(
-    state: State<'_, AppState>,
-    collection_id: String,
-) -> Result<Value, String> {
-    state.client.follow_collection(&collection_id).await
-}
-
-#[tauri::command]
-pub async fn unfollow_collection(
-    state: State<'_, AppState>,
-    collection_id: String,
-) -> Result<Value, String> {
-    state.client.unfollow_collection(&collection_id).await
-}
-
-#[tauri::command]
-pub async fn like_collection(
-    state: State<'_, AppState>,
-    collection_id: String,
-) -> Result<Value, String> {
-    state.client.like_collection(&collection_id).await
-}
-
-#[tauri::command]
-pub async fn unlike_collection(
-    state: State<'_, AppState>,
-    collection_id: String,
-) -> Result<Value, String> {
-    state.client.unlike_collection(&collection_id).await
-}
-
-#[tauri::command]
-pub async fn follow_dyh(state: State<'_, AppState>, dyh_id: String) -> Result<Value, String> {
-    state.client.follow_dyh(&dyh_id).await
-}
-
-#[tauri::command]
-pub async fn unfollow_dyh(state: State<'_, AppState>, dyh_id: String) -> Result<Value, String> {
-    state.client.unfollow_dyh(&dyh_id).await
-}
-
-#[tauri::command]
-pub async fn follow_live(state: State<'_, AppState>, live_id: String) -> Result<Value, String> {
-    state.client.follow_live(&live_id).await
-}
-
-#[tauri::command]
-pub async fn unfollow_live(state: State<'_, AppState>, live_id: String) -> Result<Value, String> {
-    state.client.unfollow_live(&live_id).await
-}
-
-#[tauri::command]
-pub async fn get_feed_forward_list(
-    state: State<'_, AppState>,
-    feed_id: String,
-    feed_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_feed_forward_list(&feed_id, &feed_type, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_feed_like_list(
-    state: State<'_, AppState>,
-    feed_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_feed_like_list(&feed_id, page).await
-}
-
-#[tauri::command]
-pub async fn get_feed_change_history(
-    state: State<'_, AppState>,
-    feed_id: String,
-) -> Result<Value, String> {
-    state.client.get_feed_change_history(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn search_tags(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_tags(&query, page).await
-}
-
-#[tauri::command]
-pub async fn follow_tag(state: State<'_, AppState>, tag: String) -> Result<Value, String> {
-    state.client.follow_tag(&tag).await
-}
-
-#[tauri::command]
-pub async fn unfollow_tag(state: State<'_, AppState>, tag: String) -> Result<Value, String> {
-    state.client.unfollow_tag(&tag).await
-}
-
-#[tauri::command]
-pub async fn get_device_feed_list(
-    state: State<'_, AppState>,
-    tag: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_device_feed_list(&tag, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""))
-        .await
-}
-
-#[tauri::command]
-pub async fn get_question_answers(
-    state: State<'_, AppState>,
-    feed_id: String,
-    sort: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_question_answers(
-            &feed_id,
-            &sort,
-            page,
-            first_item.as_deref().unwrap_or(""),
-            last_item.as_deref().unwrap_or(""),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn follow_question(state: State<'_, AppState>, question_id: String) -> Result<Value, String> {
-    state.client.follow_question(&question_id).await
-}
-
-#[tauri::command]
-pub async fn unfollow_question(state: State<'_, AppState>, question_id: String) -> Result<Value, String> {
-    state.client.unfollow_question(&question_id).await
-}
-
-#[tauri::command]
-pub async fn invite_question_answer(state: State<'_, AppState>, question_id: String, uid: String) -> Result<Value, String> {
-    state.client.invite_question_answer(&question_id, &uid).await
-}
-
-#[tauri::command]
-pub async fn get_vote_comments(
-    state: State<'_, AppState>,
-    feed_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_vote_comments(&feed_id, page).await
-}
-
-#[tauri::command]
-pub async fn create_user_vote(
-    state: State<'_, AppState>,
-    feed_id: String,
-    option_ids: Vec<String>,
-    anonymous_status: bool,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_user_vote(&feed_id, &option_ids, anonymous_status)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_hit_history(
-    state: State<'_, AppState>,
-    page: u32,
-    history_type: String,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state.client.get_hit_history(page, &history_type, first_item.as_deref(), last_item.as_deref()).await
-}
-
-#[tauri::command]
-pub async fn get_recent_history(state: State<'_, AppState>, page: u32, first_item: Option<String>, last_item: Option<String>) -> Result<Value, String> {
-    state.client.get_recent_history(page, first_item.as_deref(), last_item.as_deref()).await
-}
-
-#[tauri::command]
-pub async fn get_spam_feed_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_spam_feed_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_hidden_replies(
-    state: State<'_, AppState>,
-    feed_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_hidden_replies(&feed_id, page).await
-}
-
-#[tauri::command]
-pub async fn get_followed_topics(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_followed_topics(page).await
-}
-
-#[tauri::command]
-pub async fn search_users(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_users(&query, page).await
-}
-
-#[tauri::command]
-pub async fn get_search_suggestions_app(
-    state: State<'_, AppState>,
-    query: String,
-) -> Result<Value, String> {
-    state.client.get_search_suggestions_app(&query).await
-}
-
-#[tauri::command]
-pub async fn search_feed_topics(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_feed_topics(&query, page).await
-}
-
 // 发帖搜索使用独立接口，避免改变发现页的话题搜索行为。
+// These operations have the same arguments and behavior in the app and the HTTP service.
+macro_rules! shared_commands {
+    ($($mode:ident fn $name:ident(
+        $state:ident $(, $arg:ident: $ty:ty)* $(,)?
+    ) -> $result:ty $body:block)*) => {
+        $(shared_commands!(@native $mode fn $name($state $(, $arg: $ty)*) -> $result $body);)*
+
+    };
+    (@native async fn $name:ident($state:ident $(, $arg:ident: $ty:ty)*) -> $result:ty $body:block) => {
+        #[tauri::command]
+        pub async fn $name($state: State<'_, AppState> $(, $arg: $ty)*) -> Result<$result, String> $body
+    };
+    (@native sync fn $name:ident($state:ident $(, $arg:ident: $ty:ty)*) -> $result:ty $body:block) => {
+        #[tauri::command]
+        pub fn $name($state: State<'_, AppState> $(, $arg: $ty)*) -> Result<$result, String> $body
+    };
+}
+
+include!("shared_commands.rs");
+
 #[tauri::command]
-pub async fn search_publish_topics(state: State<'_, AppState>, query: String, page: u32, recent_ids: String) -> Result<Value, String> {
-    state.client.search_publish_topics(&query, page, &recent_ids).await
+pub async fn save_cookie_securely(state: State<'_, AppState>,
+    cookie_str: String,
+) -> Result<String, String> {
+    log::info!(
+        "login.cookie_received has_session={}",
+        CoolapkClient::has_valid_session_cookie(&cookie_str)
+    );
+    state.client.set_user_cookie(cookie_str)?;
+    // 保存和验证分开：回调页必须先确认服务端返回真实账号，再关登录窗口。
+    log::info!("login.cookie_staged");
+    Ok("登录 Cookie 已载入，正在验证会话".to_string())
 }
 
 #[tauri::command]
-pub async fn get_product_versions(state: State<'_, AppState>, product_id: String) -> Result<Value, String> {
-    state.client.get_product_versions(&product_id).await
-}
-
-#[tauri::command]
-pub async fn get_product_detail_by_name(
-    state: State<'_, AppState>,
-    name: String,
-) -> Result<Value, String> {
-    state.client.get_product_detail_by_name(&name).await
-}
-
-#[tauri::command]
-pub async fn get_load_config(state: State<'_, AppState>, refresh: Option<bool>) -> Result<Value, String> {
-    state.client.get_my_profile_cards(refresh.unwrap_or(false)).await
-}
-
-#[tauri::command]
-pub async fn get_my_card_manager(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_my_card_manager().await
-}
-
-#[tauri::command]
-pub async fn update_my_card_config(state: State<'_, AppState>, config_json: String) -> Result<Value, String> {
-    state.client.update_my_card_config(&config_json).await
-}
-
-#[tauri::command]
-pub async fn get_home_tab_config(
-    state: State<'_, AppState>,
-    reset: bool,
-) -> Result<Value, String> {
-    state.client.get_home_tab_config(reset).await
-}
-
-#[tauri::command]
-pub async fn get_feed_detail(state: State<'_, AppState>, feed_id: String, post_token: Option<String>, post_token_field: Option<String>) -> Result<Value, String> {
-    state.client.get_feed_detail(&feed_id, post_token.as_deref(), post_token_field.as_deref()).await
-}
-
-#[tauri::command]
-pub async fn get_public_feed_detail(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.get_public_feed_detail(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn get_editable_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.get_editable_feed(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn update_feed(
-    state: State<'_, AppState>,
-    feed_id: String,
-    message: String,
-    pic: String,
-    post_token: Option<String>,
-    options: Option<crate::coolapk::client::PublishOptions>,
-) -> Result<Value, String> {
-    state.client.update_feed(&feed_id, &message, &pic, post_token.as_deref(), options.as_ref()).await
-}
-
-#[tauri::command]
-pub async fn resolve_video_url(
-    state: State<'_, AppState>,
-    request_params: String,
-) -> Result<Value, String> {
-    state.client.resolve_video_url(&request_params).await
-}
-
-#[tauri::command]
-pub async fn resolve_live_photo_video(
-    state: State<'_, AppState>,
-    image_url: String,
-    content_id: String,
-    content_type: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .resolve_live_photo_video(&image_url, &content_id, &content_type)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_live_photo_video_header(state: State<'_, AppState>, video_url: String) -> Result<String, String> {
-    state.client.get_live_photo_video_header(&video_url).await
-}
-
-#[tauri::command]
-pub async fn get_reply_detail(
-    state: State<'_, AppState>,
-    reply_id: String,
-) -> Result<Value, String> {
-    state.client.get_reply_detail(&reply_id).await
-}
-
-#[tauri::command]
-pub async fn get_feed_replies(
-    state: State<'_, AppState>,
-    feed_id: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-    list_type: Option<String>,
-    from_feed_author: Option<u32>,
-    post_token: Option<String>,
-    post_token_field: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_feed_replies_with_captcha(
-            &feed_id,
-            page,
-            first_item.as_deref().unwrap_or(""),
-            last_item.as_deref().unwrap_or(""),
-            list_type.as_deref().unwrap_or("lastupdate_desc"),
-            from_feed_author.unwrap_or(0),
-            post_token.as_deref(),
-            post_token_field.as_deref(),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_sub_replies(
-    state: State<'_, AppState>,
-    feed_id: String,
-    reply_id: String,
-    page: u32,
-    last_item: Option<String>,
-    post_token: Option<String>,
-    post_token_field: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_sub_replies_with_captcha(
-            &feed_id,
-            &reply_id,
-            page,
-            last_item.as_deref().unwrap_or(""),
-            post_token.as_deref(),
-            post_token_field.as_deref(),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_hot_replies(
-    state: State<'_, AppState>,
-    feed_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_hot_replies(&feed_id, page).await
-}
-
-#[tauri::command]
-pub async fn search_all(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_all(&query, page).await
-}
-
-#[tauri::command]
-pub async fn search_by_type(
-    state: State<'_, AppState>,
-    search_type: String,
-    query: String,
-    page: u32,
-    first_item: String,
-    last_item: String,
-    page_type: String,
-    page_param: String,
-    feed_type: String,
-    sort: String,
-    is_strict: u32,
-    category: String,
-    page_context: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .search_by_type(
-            &search_type,
-            &query,
-            page,
-            &first_item,
-            &last_item,
-            &page_type,
-            &page_param,
-            &feed_type,
-            &sort,
-            is_strict,
-            &category,
-            &page_context,
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn get_hot_searches(state: State<'_, AppState>, refresh: bool) -> Result<Value, String> {
-    state.client.get_hot_searches(refresh).await
-}
-
-#[tauri::command]
-pub async fn search_feeds(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-    sort_type: String,
-) -> Result<Value, String> {
-    state.client.search_feeds(&query, page, &sort_type).await
-}
-
-#[tauri::command]
-pub async fn get_user_space(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_user_space(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_public_user_space(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_public_user_space(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_user_profile(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_user_profile(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_user_plugins(state: State<'_, AppState>, store: bool, page: u32, plugin_type: u8) -> Result<Value, String> {
-    state.client.get_user_plugins(store, page, plugin_type).await
-}
-
-#[tauri::command]
-pub async fn save_user_plugins(state: State<'_, AppState>, avatar_id: u64, feed_id: u64) -> Result<Value, String> {
-    state.client.save_user_plugins(avatar_id, feed_id).await
-}
-
-#[tauri::command]
-pub async fn claim_user_plugin(state: State<'_, AppState>, id: u64) -> Result<Value, String> {
-    state.client.claim_user_plugin(id).await
-}
-
-#[tauri::command]
-pub async fn get_my_profile(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_my_profile(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_public_user_profile(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_public_user_profile(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_user_remark_list(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_user_remark_list(&uid).await
-}
-
-#[tauri::command]
-pub async fn update_user_profile(
-    state: State<'_, AppState>,
-    key: String,
-    value: String,
-) -> Result<Value, String> {
-    state.client.update_user_profile(&key, &value).await
-}
-
-#[tauri::command]
-pub async fn change_avatar(
-    state: State<'_, AppState>,
-    image_bytes: Vec<u8>,
-    file_name: String,
-    content_type: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .change_avatar(&image_bytes, &file_name, &content_type)
-        .await
-}
-
-#[tauri::command]
-pub async fn update_user_cover(
-    state: State<'_, AppState>,
-    url: String,
-) -> Result<Value, String> {
-    state.client.update_user_cover(&url).await
-}
-
-#[tauri::command]
-pub async fn get_user_qr_image(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.get_user_qr_image(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_user_follow_nodes(
-    state: State<'_, AppState>,
+pub async fn persist_current_account(state: State<'_, AppState>,
     uid: String,
-) -> Result<Value, String> {
-    state.client.get_user_follow_nodes(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_user_forum_follow_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_user_forum_follow_list(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn get_user_feeds(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-    feed_type: String,
-) -> Result<Value, String> {
-    state.client.get_user_feeds(&uid, page, &feed_type).await
-}
-
-#[tauri::command]
-pub async fn get_user_like_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_user_like_list(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn get_user_tab_data(
-    state: State<'_, AppState>,
-    uid: String,
-    tab: String,
-    page: u32,
-    first_item: String,
-    last_item: String,
-    rating_target: String,
+    username: String,
+    user_avatar: String,
 ) -> Result<Value, String> {
     state
         .client
-        .get_user_tab_data(
-            &uid,
-            &tab,
-            page,
-            &first_item,
-            &last_item,
-            &rating_target,
-        )
+        .persist_current_account(&uid, &username, &user_avatar)
         .await
 }
 
 #[tauri::command]
-pub async fn get_topic_detail(state: State<'_, AppState>, tag: String) -> Result<Value, String> {
-    state.client.get_topic_detail(&tag).await
+pub async fn upload_publish_video(state: State<'_, AppState>, video_bytes: Vec<u8>, file_name: String, cover_bytes: Vec<u8>, duration: u64) -> Result<Value, String> {
+    state.client.upload_publish_video(&video_bytes, &file_name, &cover_bytes, duration).await
 }
 
 #[tauri::command]
-pub async fn get_topic_rating_list(
-    state: State<'_, AppState>, topic_id: String, page: u32, star: i32,
-    rating_type: String, detail_only: bool, first_item: String, last_item: String,
-) -> Result<Value, String> {
-    state.client.get_topic_rating_list(&topic_id, page, star, &rating_type, detail_only, &first_item, &last_item).await
-}
-
-#[tauri::command]
-pub async fn get_topic_rating_chart(state: State<'_, AppState>, topic_id: String) -> Result<Value, String> {
-    state.client.get_topic_rating_chart(&topic_id).await
-}
-
-#[tauri::command]
-pub async fn get_topic_feeds(
-    state: State<'_, AppState>,
-    tag: String,
-    page: u32,
-    list_type: String,
-    first_item: String,
-    last_item: String,
-    block_status: i32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_topic_feeds(&tag, page, &list_type, &first_item, &last_item, block_status)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_topic_tab_data(
-    state: State<'_, AppState>,
-    url: String,
-    title: String,
-    sub_title: String,
-    page: u32,
-    first_item: String,
-    last_item: String,
-    page_context: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_topic_tab_data(&url, &title, &sub_title, page, &first_item, &last_item, &page_context)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_topic_hub_data(
-    state: State<'_, AppState>,
-    sub_url: String,
-    page: u32,
-    first_item: String,
-    last_item: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_topic_hub_data(&sub_url, page, &first_item, &last_item)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_app_detail(
-    state: State<'_, AppState>,
-    package_name: String,
-) -> Result<Value, String> {
-    state.client.get_app_detail(&package_name).await
-}
-
-#[tauri::command]
-pub async fn get_apk_comments(
-    state: State<'_, AppState>,
-    app_id: String,
-    list_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_apk_comments(&app_id, &list_type, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_notification_count(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_notification_count().await
-}
-
-#[tauri::command]
-pub async fn get_emoji_pictures(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_emoji_pictures().await
-}
-
-#[tauri::command]
-pub async fn add_emoji_picture(state: State<'_, AppState>, url: String) -> Result<Value, String> {
-    state.client.add_emoji_picture(&url).await
-}
-
-#[tauri::command]
-pub async fn edit_emoji_pictures(state: State<'_, AppState>, action: String, ids: Vec<String>) -> Result<Value, String> {
-    state.client.edit_emoji_pictures(&action, &ids).await
-}
-
-#[tauri::command]
-pub async fn clear_notification_count(
-    state: State<'_, AppState>,
-    notification_type: String,
-) -> Result<Value, String> {
-    state.client.clear_notification_count(&notification_type).await
-}
-
-#[tauri::command]
-pub async fn delete_all_notifications(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.delete_all_notifications().await
-}
-
-#[tauri::command]
-pub async fn report_notification_click(state: State<'_, AppState>, task_id: String) -> Result<Value, String> {
-    state.client.report_notification_click(&task_id).await
-}
-
-#[tauri::command]
-pub async fn read_notification(state: State<'_, AppState>, id: String, notification_type: String) -> Result<Value, String> {
-    state.client.read_notification(&id, &notification_type).await
-}
-
-#[tauri::command]
-pub async fn get_notifications(
-    state: State<'_, AppState>,
-    notification_type: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-    note_type: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_notifications(&notification_type, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""), note_type.as_deref().unwrap_or(""))
-        .await
-}
-
-#[tauri::command]
-pub async fn list_messages(state: State<'_, AppState>, page: u32, first_item: String, last_item: String) -> Result<Value, String> {
-    state.client.list_messages(page, &first_item, &last_item).await
-}
-
-#[tauri::command]
-pub async fn get_recent_chat_users(
-    state: State<'_, AppState>,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_recent_chat_users(page).await
-}
-
-#[tauri::command]
-pub async fn list_chat_history(
-    state: State<'_, AppState>,
-    ukey: String,
-    page: u32,
-    first_item: Option<String>,
-    last_item: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .list_chat_history(&ukey, page, first_item.as_deref().unwrap_or(""), last_item.as_deref().unwrap_or(""))
-        .await
-}
-
-#[tauri::command]
-pub async fn delete_message_chat(
-    state: State<'_, AppState>,
-    ukey: String,
-) -> Result<Value, String> {
-    state.client.delete_message_chat(&ukey).await
-}
-
-#[tauri::command]
-pub async fn send_private_message(
-    state: State<'_, AppState>,
-    uid: String,
-    message: String,
-) -> Result<Value, String> {
-    state.client.send_private_message(&uid, &message).await
-}
-
-#[tauri::command]
-pub async fn send_private_image(
-    state: State<'_, AppState>,
-    uid: String,
-    message_pic: String,
-) -> Result<Value, String> {
-    state.client.send_private_image(&uid, &message_pic).await
-}
-
-#[tauri::command]
-pub async fn read_message(state: State<'_, AppState>, ukey: String) -> Result<Value, String> {
-    state.client.read_message(&ukey).await
-}
-
-#[tauri::command]
-pub async fn favorite_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.favorite_feed(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn unfavorite_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.unfavorite_feed(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn favorite_apk(
-    state: State<'_, AppState>,
-    package_name: String,
-) -> Result<Value, String> {
-    state.client.favorite_apk(&package_name).await
-}
-
-#[tauri::command]
-pub async fn get_apk_collection_status(state: State<'_, AppState>, apk_id: String) -> Result<Value, String> {
-    state.client.get_apk_collection_status(&apk_id).await
-}
-
-#[tauri::command]
-pub async fn unfavorite_apk(
-    state: State<'_, AppState>,
-    package_name: String,
-) -> Result<Value, String> {
-    state.client.unfavorite_apk(&package_name).await
-}
-
-#[tauri::command]
-pub async fn set_user_feed_top(state: State<'_, AppState>, uid: String, feed_id: String, top: bool) -> Result<Value, String> {
-    state.client.set_user_feed_top(&uid, &feed_id, top).await
-}
-
-#[tauri::command]
-pub async fn delete_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.delete_feed(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn delete_reply(state: State<'_, AppState>, reply_id: String) -> Result<Value, String> {
-    state.client.delete_reply(&reply_id).await
-}
-
-#[tauri::command]
-pub async fn create_forward(
-    state: State<'_, AppState>,
-    feed_id: String,
-    message: String,
-    pic: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_forward(&feed_id, &message, pic.as_deref())
-        .await
-}
-
-#[tauri::command]
-pub async fn upload_image(
-    state: State<'_, AppState>,
+pub async fn upload_image(state: State<'_, AppState>,
     image_bytes: Vec<u8>,
     file_name: String,
     content_type: String,
@@ -1650,146 +280,23 @@ pub async fn upload_image(
 }
 
 #[tauri::command]
-pub async fn get_black_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_black_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_ignore_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_ignore_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_limit_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_limit_list(page).await
-}
-
-#[tauri::command]
-pub async fn add_to_black_list(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.add_to_black_list(&uid).await
-}
-
-#[tauri::command]
-pub async fn remove_from_black_list(
-    state: State<'_, AppState>,
-    uid: String,
+pub async fn change_avatar(state: State<'_, AppState>,
+    image_bytes: Vec<u8>,
+    file_name: String,
+    content_type: String,
 ) -> Result<Value, String> {
-    state.client.remove_from_black_list(&uid).await
+    state
+        .client
+        .change_avatar(&image_bytes, &file_name, &content_type)
+        .await
 }
 
 #[tauri::command]
-pub async fn add_to_ignore_list(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.add_to_ignore_list(&uid).await
-}
-
-#[tauri::command]
-pub async fn remove_from_ignore_list(
-    state: State<'_, AppState>,
-    uid: String,
-) -> Result<Value, String> {
-    state.client.remove_from_ignore_list(&uid).await
-}
-
-#[tauri::command]
-pub async fn get_apk_url(
-    state: State<'_, AppState>,
-    package_name: String,
-) -> Result<Value, String> {
-    state.client.get_apk_url(&package_name).await
+pub async fn get_live_photo_video_header(state: State<'_, AppState>, video_url: String) -> Result<String, String> {
+    state.client.get_live_photo_video_header(&video_url).await
 }
 
 const APK_DOWNLOAD_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-
-fn download_value_to_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
-    }
-}
-
-fn download_object_string(value: Option<&Value>, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| value.and_then(|item| item.get(*key)).and_then(download_value_to_string))
-}
-
-fn decode_extra_analysis_data(value: &str) -> Option<Value> {
-    let encoded = value.split('~').next()?.trim();
-    if encoded.is_empty() {
-        return None;
-    }
-    let bytes = BASE64
-        .decode(encoded)
-        .or_else(|_| BASE64_NO_PAD.decode(encoded))
-        .ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-fn build_coolapk_download_url(package_name: &str, apk_id: &str, version_code: &str) -> Result<reqwest::Url, String> {
-    let package_name = package_name.trim();
-    let apk_id = apk_id.trim();
-    let version_code = version_code.trim();
-    if package_name.is_empty() || apk_id.is_empty() || version_code.is_empty() {
-        return Err("应用下载参数不完整，缺少包名、应用 ID 或版本号".to_string());
-    }
-    let mut url = reqwest::Url::parse("https://api.coolapk.com/v6/apk/download")
-        .map_err(|error| format!("构造酷安下载地址失败：{error}"))?;
-    url.query_pairs_mut()
-        .append_pair("pn", package_name)
-        .append_pair("aid", apk_id)
-        .append_pair("vc", version_code)
-        .append_pair("extra", "");
-    Ok(url)
-}
-
-fn is_coolapk_download_host(host: &str) -> bool {
-    matches!(host.to_ascii_lowercase().as_str(), "api.coolapk.com" | "api-dev.coolapk.com")
-}
-
-fn is_windows_reserved_file_name(file_name: &str) -> bool {
-    if !cfg!(windows) {
-        return false;
-    }
-    let base_name = file_name
-        .split('.')
-        .next()
-        .unwrap_or_default()
-        .trim_end_matches(|character| character == ' ' || character == '.')
-        .to_ascii_uppercase();
-    if matches!(base_name.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
-        return true;
-    }
-    let bytes = base_name.as_bytes();
-    (bytes.len() == 4 && (bytes.starts_with(b"COM") || bytes.starts_with(b"LPT")))
-        && (b'1'..=b'9').contains(&bytes[3])
-}
-
-fn sanitize_apk_file_name(file_name: &str) -> Result<String, String> {
-    let mut safe_name = file_name
-        .chars()
-        .take(160)
-        .map(|character| {
-            if character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-                '_'
-            } else {
-                character
-            }
-        })
-        .collect::<String>()
-        .trim()
-        .trim_matches('.')
-        .to_string();
-    if safe_name.is_empty() || safe_name == "." || safe_name == ".." || safe_name.contains("..") {
-        return Err("下载文件名不合法".to_string());
-    }
-    let lower_name = safe_name.to_ascii_lowercase();
-    if ![".apk", ".xapk", ".apks"].iter().any(|suffix| lower_name.ends_with(suffix)) {
-        safe_name.push_str(".apk");
-    }
-    if is_windows_reserved_file_name(&safe_name) {
-        safe_name.insert(0, '_');
-    }
-    Ok(safe_name)
-}
 
 fn constrain_windows_download_file_name(target_dir: &Path, file_name: String) -> Result<String, String> {
     if !cfg!(windows) {
@@ -1853,14 +360,6 @@ pub(crate) fn reject_download_symlink(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn empty_download_verification(value: &Value) -> bool {
-    match value.get("data") {
-        None | Some(Value::Null) => true,
-        Some(Value::String(data)) => data.trim().is_empty(),
-        Some(_) => false,
-    }
-}
-
 fn download_event_payload(
     task_id: &str,
     status: &str,
@@ -1904,7 +403,7 @@ async fn run_apk_download(
     target_path: Option<&str>,
     extra_analysis_data: Option<&str>,
 ) -> Result<Value, String> {
-    use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE, COOKIE, RANGE};
+    use reqwest::header::CONTENT_TYPE;
     use tauri::Emitter;
     use tokio::io::AsyncWriteExt;
 
@@ -1948,28 +447,7 @@ async fn run_apk_download(
     );
 
     // 官方客户端先从应用详情取得数字应用 ID 和版本号，再请求 /v6/apk/download。
-    // /v6/apk/url 返回的是网页跳转地址，不能当作安装包下载地址。
-    let requested_apk_id = apk_id.map(str::trim).filter(|value| !value.is_empty());
-    let requested_version_code = version_code.map(str::trim).filter(|value| !value.is_empty());
-    let detail = if requested_apk_id.is_none() || requested_version_code.is_none() {
-        Some(client.get_app_detail(package_name).await?)
-    } else {
-        None
-    };
-    let detail_data = detail.as_ref().and_then(|value| value.get("data"));
-    let decoded_extra = extra_analysis_data
-        .and_then(decode_extra_analysis_data)
-        .or_else(|| detail_data.and_then(|value| value.get("extraAnalysisData")).and_then(Value::as_str).and_then(decode_extra_analysis_data));
-    let resolved_apk_id = requested_apk_id
-        .map(str::to_string)
-        .or_else(|| download_object_string(detail_data, &["aid", "id", "entityId"]))
-        .ok_or_else(|| "应用详情未返回数字应用 ID".to_string())?;
-    let resolved_version_code = requested_version_code
-        .map(str::to_string)
-        .or_else(|| download_object_string(detail_data, &["versionCode", "versioncode", "version_code", "apkversioncode", "apkVersionCode", "apk_version_code"]))
-        .or_else(|| download_object_string(decoded_extra.as_ref(), &["versionCode", "versioncode", "version_code"]))
-        .ok_or_else(|| "应用详情未返回应用版本号".to_string())?;
-    let request_url = build_coolapk_download_url(package_name, &resolved_apk_id, &resolved_version_code)?;
+    let request_url = resolve_apk_download_url(client, package_name, apk_id, version_code, extra_analysis_data).await?;
     let host = request_url.host_str().unwrap_or_default().to_string();
     let is_coolapk_download = is_coolapk_download_host(&host);
 
@@ -1982,30 +460,7 @@ async fn run_apk_download(
         return Ok(json!({ "status": "canceled", "path": target, "partialPath": partial }));
     }
 
-    let http_client = session(request_url.as_str(), SessionPolicy::Download)?;
-    let mut request = if is_coolapk_download {
-        http_client
-            .post(request_url.clone())
-            .form(&[("nd", "1"), ("extraAnalysisData", "")])
-    } else {
-        http_client.get(request_url.clone())
-    };
-    if is_coolapk_download {
-        request = client.apply_download_headers(request)?;
-        if let Some(cookie) = client.get_user_cookie().filter(|value| !value.trim().is_empty()) {
-            let header = reqwest::header::HeaderValue::from_str(&cookie)
-                .map_err(|_| "登录 Cookie 格式无效".to_string())?;
-            request = request.header(COOKIE, header);
-        }
-    }
-    // 反编译 APK 的下载器无论是否断点续传都会发送这两个请求头。
-    request = request
-        .header(RANGE, format!("bytes={existing_length}-"))
-        .header(ACCEPT_ENCODING, "identity");
-    let mut response = request
-        .send()
-        .await
-        .map_err(|error| format!("下载请求失败：{error}"))?;
+    let mut response = request_apk_download(client, &request_url, existing_length, SessionPolicy::Download).await?;
     if response.status().as_u16() == 416 && existing_length > 0 {
         drop(response);
         let _ = tokio::fs::remove_file(&partial).await;
@@ -2285,160 +740,6 @@ pub async fn open_apk_download_directory(
 }
 
 #[tauri::command]
-pub async fn get_apk_qr(state: State<'_, AppState>, package_name: String) -> Result<Value, String> {
-    state.client.get_apk_qr(&package_name).await
-}
-
-#[tauri::command]
-pub async fn like_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.like_feed(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn unlike_feed(state: State<'_, AppState>, feed_id: String) -> Result<Value, String> {
-    state.client.unlike_feed(&feed_id).await
-}
-
-#[tauri::command]
-pub async fn like_reply(state: State<'_, AppState>, reply_id: String) -> Result<Value, String> {
-    state.client.like_reply(&reply_id).await
-}
-
-#[tauri::command]
-pub async fn unlike_reply(state: State<'_, AppState>, reply_id: String) -> Result<Value, String> {
-    state.client.unlike_reply(&reply_id).await
-}
-
-#[tauri::command]
-pub async fn reply_feed(
-    state: State<'_, AppState>,
-    feed_id: String,
-    message: String,
-    rid: Option<String>,
-    pic: Option<String>,
-    post_token: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .reply_feed(
-            &feed_id,
-            &message,
-            rid.as_deref(),
-            pic.as_deref(),
-            post_token.as_deref(),
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn comment_apk(
-    state: State<'_, AppState>,
-    app_id: String,
-    message: String,
-) -> Result<Value, String> {
-    state.client.comment_apk(&app_id, &message).await
-}
-
-#[tauri::command]
-pub async fn follow_user(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.follow_user(&uid).await
-}
-
-#[tauri::command]
-pub async fn unfollow_user(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.unfollow_user(&uid).await
-}
-
-#[tauri::command]
-pub async fn special_follow_user(
-    state: State<'_, AppState>,
-    uid: String,
-    special: bool,
-) -> Result<Value, String> {
-    state.client.special_follow_user(&uid, special).await
-}
-
-#[tauri::command]
-pub async fn cancel_follower(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.cancel_follower(&uid).await
-}
-
-#[tauri::command]
-pub async fn update_user_remark(
-    state: State<'_, AppState>,
-    uid: String,
-    name: String,
-) -> Result<Value, String> {
-    state.client.update_user_remark(&uid, &name).await
-}
-
-#[tauri::command]
-pub async fn get_following_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_following_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_follow_user_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-    category: Option<String>,
-) -> Result<Value, String> {
-    state.client.get_follow_user_list(&uid, page, category.as_deref()).await
-}
-
-#[tauri::command]
-pub async fn get_fans_user_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_fans_user_list(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn create_feed(
-    state: State<'_, AppState>,
-    message: String,
-    pic: Option<String>,
-    post_token: Option<String>,
-    options: Option<crate::coolapk::client::PublishOptions>,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_feed_with_options(&message, pic.as_deref(), post_token.as_deref(), options.as_ref())
-        .await
-}
-
-#[tauri::command]
-pub async fn create_answer(
-    state: State<'_, AppState>,
-    question_id: String,
-    message: String,
-    pic: Option<String>,
-    post_token: Option<String>,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_answer(
-            &question_id,
-            &message,
-            pic.as_deref(),
-            post_token.as_deref(),
-        )
-        .await
-}
-
-#[tauri::command]
-pub fn update_device_profile(
-    state: State<'_, AppState>,
-    profile: DeviceProfile,
-) -> Result<Value, String> {
-    state.client.update_device_profile(profile);
-    Ok(json!({ "code": 200, "data": true }))
-}
-
-#[tauri::command]
 pub fn set_network_proxy(state: State<'_, AppState>, proxy_url: Option<String>) -> Result<(), String> {
     state.client.set_network_proxy(proxy_url)
 }
@@ -2449,73 +750,13 @@ pub async fn test_network_proxy(proxy_url: String) -> Result<super::network_prox
 }
 
 #[tauri::command]
-pub fn get_device_info(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_device_info()
-}
-
-#[tauri::command]
 pub async fn initialize_device_identity(state: State<'_, AppState>) -> Result<Value, String> {
     state.client.initialize_device_identity().await
 }
 
 #[tauri::command]
-pub async fn generate_device_identity(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.generate_device_identity().await
-}
-
-#[tauri::command]
-pub fn use_saved_device_identity(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.use_saved_device_identity()
-}
-
-#[tauri::command]
-pub async fn save_cookie_securely(
-    state: State<'_, AppState>,
-    cookie_str: String,
-) -> Result<String, String> {
-    log::info!(
-        "login.cookie_received has_session={}",
-        CoolapkClient::has_valid_session_cookie(&cookie_str)
-    );
-    state.client.set_user_cookie(cookie_str)?;
-    // 保存和验证分开：回调页必须先确认服务端返回真实账号，再关登录窗口。
-    log::info!("login.cookie_staged");
-    Ok("登录 Cookie 已载入，正在验证会话".to_string())
-}
-
-#[tauri::command]
-pub async fn check_login_status(state: State<'_, AppState>) -> Result<Value, String> {
-    log::info!("login.status_check");
-    let result = state.client.check_login_status().await;
-    match &result {
-        Ok(_) => log::info!("login.status_check_succeeded"),
-        Err(error) => log::warn!(
-            "login.status_check_failed reason={}",
-            login_failure_kind(error)
-        ),
-    }
-    result
-}
-
-#[tauri::command]
-pub fn clear_user_cookie(state: State<'_, AppState>) -> Result<String, String> {
-    state.client.clear_user_cookie()?;
-    Ok("登录状态已清除".to_string())
-}
-
-#[tauri::command]
 pub fn get_user_cookie(state: State<'_, AppState>) -> Result<Option<String>, String> {
     Ok(state.client.get_user_cookie())
-}
-
-#[tauri::command]
-pub async fn list_accounts(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.list_accounts().await
-}
-
-#[tauri::command]
-pub async fn login_as(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.login_as(&uid).await
 }
 
 #[tauri::command]
@@ -2530,24 +771,6 @@ pub async fn save_account(
         .client
         .save_account(&uid, &username, &user_avatar, &cookie)
         .await
-}
-
-#[tauri::command]
-pub async fn persist_current_account(
-    state: State<'_, AppState>,
-    uid: String,
-    username: String,
-    user_avatar: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .persist_current_account(&uid, &username, &user_avatar)
-        .await
-}
-
-#[tauri::command]
-pub async fn remove_account(state: State<'_, AppState>, uid: String) -> Result<Value, String> {
-    state.client.remove_account(&uid).await
 }
 
 #[tauri::command]
@@ -3047,42 +1270,6 @@ pub fn create_export_directory(
 }
 
 #[tauri::command]
-pub async fn get_game_list(
-    state: State<'_, AppState>,
-    page: u32,
-    game_type: String,
-) -> Result<Value, String> {
-    state.client.get_game_list(page, &game_type).await
-}
-
-#[tauri::command]
-pub async fn search_apks(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_apks(&query, page).await
-}
-
-#[tauri::command]
-pub async fn search_games(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_games(&query, page).await
-}
-
-#[tauri::command]
-pub async fn get_app_list(
-    state: State<'_, AppState>,
-    page: u32,
-    cat: String,
-) -> Result<Value, String> {
-    state.client.get_app_list(page, &cat).await
-}
-
-#[tauri::command]
 pub async fn open_url(app: tauri::AppHandle, url: String, mode: Option<String>) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static BROWSER_WINDOW_ID: AtomicU64 = AtomicU64::new(1);
@@ -3459,11 +1646,6 @@ pub async fn fetch_external_page(state: State<'_, AppState>, url: String) -> Res
     state.client.fetch_external_page(&url).await
 }
 
-#[tauri::command]
-pub async fn submit_feed_report(state: State<'_, AppState>, id: String, report_type: String, reason: String, custom_reason: String, request_hash: String, pictures: Vec<String>) -> Result<Value, String> {
-    state.client.submit_feed_report(&id, &report_type, &reason, &custom_reason, &request_hash, &pictures).await
-}
-
 /// 从主窗口当前 URL 推导应用自身源地址（dev 为 http://127.0.0.1:17520，打包后为 tauri 自定义协议源），
 /// 用于登录回跳 forward 与关窗判定，避免 dev/生产环境不一致。
 ///
@@ -3661,46 +1843,6 @@ async fn get_login_webview_cookie<R: tauri::Runtime>(win: &tauri::WebviewWindow<
 fn is_coolapk_cookie_domain(domain: &str) -> bool {
     let domain = domain.trim_start_matches('.').to_ascii_lowercase();
     domain == "coolapk.com" || domain.ends_with(".coolapk.com")
-}
-
-/// 诊断日志只记录预定义类别，避免把服务器响应、Cookie 或授权码写入日志。
-fn login_failure_kind(error: &str) -> &'static str {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("captcha") || error.contains("验证码") {
-        "captcha"
-    } else if lower.contains("http 401") {
-        "http_401"
-    } else if lower.contains("http 403") {
-        "http_403"
-    } else if lower.contains("http 429") || lower.contains("rate_limit") {
-        "rate_limit"
-    } else if lower.contains("http 5") {
-        "http_5xx"
-    } else if lower.contains("http 4") {
-        "http_4xx"
-    } else if lower.contains("timed out") || lower.contains("timeout") || error.contains("超时") {
-        "timeout"
-    } else if lower.contains("error sending request")
-        || lower.contains("failed to send")
-        || lower.contains("connection")
-        || lower.contains("connect error")
-    {
-        "transport"
-    } else if lower.contains("sessid") || error.contains("会话") {
-        "invalid_session"
-    } else if error.contains("没有登录凭据") || error.contains("没有带回登录 Cookie") {
-        "missing_cookie"
-    } else if error.contains("未返回完整登录信息") || error.contains("未通过账号校验") {
-        "invalid_account_response"
-    } else if lower.contains("invalid coolapk json")
-        || lower.contains("failed to read coolapk response")
-    {
-        "invalid_response"
-    } else if error.contains("登录信息有误") || error.contains("未登录") {
-        "authentication"
-    } else {
-        "other"
-    }
 }
 
 /// APK 只在 ac=access_token 时把 code 交给 /account/accessToken。
@@ -4883,397 +3025,12 @@ pub fn quit_app(app: tauri::AppHandle) {
 }
 
 // === 应用集 ===
-#[tauri::command]
-pub async fn get_album_list(
-    state: State<'_, AppState>,
-    list_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_album_list(&list_type, page).await
-}
-
-#[tauri::command]
-pub async fn search_albums(
-    state: State<'_, AppState>,
-    query: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_albums(&query, page).await
-}
-
-#[tauri::command]
-pub async fn get_album_detail(
-    state: State<'_, AppState>,
-    album_id: String,
-) -> Result<Value, String> {
-    state.client.get_album_detail(&album_id).await
-}
-
-#[tauri::command]
-pub async fn get_user_album_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_user_album_list(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn create_album(
-    state: State<'_, AppState>,
-    title: String,
-    intro: String,
-    cover: String,
-) -> Result<Value, String> {
-    state.client.create_album(&title, &intro, &cover).await
-}
-
-#[tauri::command]
-pub async fn edit_album(
-    state: State<'_, AppState>,
-    album_id: String,
-    title: String,
-    intro: String,
-    cover: String,
-) -> Result<Value, String> {
-    state.client.edit_album(&album_id, &title, &intro, &cover).await
-}
-
-#[tauri::command]
-pub async fn add_album_apk(
-    state: State<'_, AppState>,
-    album_id: String,
-    package_name: String,
-    title: String,
-    url: String,
-    note: String,
-    display_order: i32,
-    logo: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .add_album_apk(&album_id, &package_name, &title, &url, &note, display_order, &logo)
-        .await
-}
-
-#[tauri::command]
-pub async fn delete_album_apk(
-    state: State<'_, AppState>,
-    album_id: String,
-    package_name: String,
-) -> Result<Value, String> {
-    state.client.delete_album_apk(&album_id, &package_name).await
-}
-
-#[tauri::command]
-pub async fn get_album_replies(
-    state: State<'_, AppState>,
-    album_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_album_replies(&album_id, page).await
-}
-
 // === 头条/编辑精选 ===
-#[tauri::command]
-pub async fn get_headline_feeds(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_headline_feeds(page).await
-}
-
-#[tauri::command]
-pub async fn get_update_list(state: State<'_, AppState>, page: u32) -> Result<Value, String> {
-    state.client.get_update_list(page).await
-}
-
-#[tauri::command]
-pub async fn get_editor_choice_feeds(
-    state: State<'_, AppState>,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_editor_choice_feeds(page).await
-}
-
 // === 应用额外 ===
-#[tauri::command]
-pub async fn get_apk_discoverers(
-    state: State<'_, AppState>,
-    package_name: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_apk_discoverers(&package_name, page).await
-}
-
-#[tauri::command]
-pub async fn get_apk_recommend_list(
-    state: State<'_, AppState>,
-    apk_type: String,
-    title: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_apk_recommend_list(&apk_type, &title, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_apk_related_apps(
-    state: State<'_, AppState>,
-    package_name: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_apk_related_apps(&package_name, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_apk_gift_list(
-    state: State<'_, AppState>,
-    apk_id: Option<String>,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .get_apk_gift_list(apk_id.as_deref(), page)
-        .await
-}
-
-#[tauri::command]
-pub async fn get_download_version_list(
-    state: State<'_, AppState>,
-    package_name: String,
-) -> Result<Value, String> {
-    state.client.get_download_version_list(&package_name).await
-}
-
 // === 图片 ===
-#[tauri::command]
-pub async fn get_picture_list(
-    state: State<'_, AppState>,
-    tag: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_picture_list(&tag, page).await
-}
-
 // === 用户 ===
-#[tauri::command]
-pub async fn get_user_rating_list(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_user_rating_list(&uid, page).await
-}
-
 // === 搜索 ===
-#[tauri::command]
-pub async fn search_apks_by_developer(
-    state: State<'_, AppState>,
-    developer: String,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .search_apks_by_developer(&developer, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn search_apks_by_tag(
-    state: State<'_, AppState>,
-    tag: String,
-    apk_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.search_apks_by_tag(&tag, &apk_type, page).await
-}
-
 // === 好物 / 购物生态 ===
-#[tauri::command]
-pub async fn get_goods_search_hot_words(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_goods_search_hot_words().await
-}
-
-#[tauri::command]
-pub async fn search_goods(
-    state: State<'_, AppState>,
-    keyword: String,
-    sort_name: String,
-    sort: String,
-    is_coupon: u32,
-    page: u32,
-) -> Result<Value, String> {
-    state
-        .client
-        .search_goods(&keyword, &sort_name, &sort, is_coupon, page)
-        .await
-}
-
-#[tauri::command]
-pub async fn prepare_goods_by_url(state: State<'_, AppState>, url: String) -> Result<Value, String> {
-    state.client.prepare_goods_by_url(&url).await
-}
-
-#[tauri::command]
-pub async fn get_goods_detail(
-    state: State<'_, AppState>,
-    goods_id: String,
-) -> Result<Value, String> {
-    state.client.get_goods_detail(&goods_id).await
-}
-
-#[tauri::command]
-pub async fn get_goods_list_types(state: State<'_, AppState>) -> Result<Value, String> {
-    state.client.get_goods_list_types().await
-}
-
-#[tauri::command]
-pub async fn get_goods_list(
-    state: State<'_, AppState>,
-    uid: String,
-    goods_id: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_goods_list(&uid, &goods_id, page).await
-}
-
-#[tauri::command]
-pub async fn get_goods_store_items(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_goods_store_items(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn get_product_albums(
-    state: State<'_, AppState>,
-    uid: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_product_albums(&uid, page).await
-}
-
-#[tauri::command]
-pub async fn get_my_goods_feeds(
-    state: State<'_, AppState>,
-    uid: String,
-    goods_type: String,
-    page: u32,
-) -> Result<Value, String> {
-    state.client.get_my_goods_feeds(&uid, &goods_type, page).await
-}
-
-#[tauri::command]
-pub async fn create_goods_list(
-    state: State<'_, AppState>,
-    title: String,
-    message: String,
-    cover: String,
-    top_limit: u32,
-    is_open_vote: u32,
-    list_type: String,
-    target_id: String,
-    target_type: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .create_goods_list(
-            &title,
-            &message,
-            &cover,
-            top_limit,
-            is_open_vote,
-            &list_type,
-            &target_id,
-            &target_type,
-        )
-        .await
-}
-
-#[tauri::command]
-pub async fn edit_goods_list(
-    state: State<'_, AppState>,
-    id: String,
-    title: String,
-    message: String,
-    cover: String,
-    top_limit: u32,
-    is_open_vote: u32,
-    list_type: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .edit_goods_list(&id, &title, &message, &cover, top_limit, is_open_vote, &list_type)
-        .await
-}
-
-#[tauri::command]
-pub async fn add_goods_to_goods_list(
-    state: State<'_, AppState>,
-    feed_id: String,
-    goods_id: String,
-    note: String,
-    pic: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .add_goods_to_goods_list(&feed_id, &goods_id, &note, &pic)
-        .await
-}
-
-#[tauri::command]
-pub async fn delete_goods_list_items(
-    state: State<'_, AppState>,
-    cancel_feed_id: String,
-    goods_id: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .delete_goods_list_items(&cancel_feed_id, &goods_id)
-        .await
-}
-
-#[tauri::command]
-pub async fn edit_goods_list_item(
-    state: State<'_, AppState>,
-    feed_id: String,
-    goods_id: String,
-    note: String,
-    pic: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .edit_goods_list_item(&feed_id, &goods_id, &note, &pic)
-        .await
-}
-
-#[tauri::command]
-pub async fn vote_goods_list_item(
-    state: State<'_, AppState>,
-    id: String,
-    item_id: String,
-    value: i32,
-) -> Result<Value, String> {
-    state.client.vote_goods_list_item(&id, &item_id, value).await
-}
-
-#[tauri::command]
-pub async fn bind_feed_to_goods_list(
-    state: State<'_, AppState>,
-    feed_id: String,
-    goods_list_id: String,
-) -> Result<Value, String> {
-    state
-        .client
-        .bind_feed_to_goods_list(&feed_id, &goods_list_id)
-        .await
-}
-
 #[cfg(test)]
 mod cache_tests {
     use super::{
@@ -5524,9 +3281,4 @@ mod download_tests {
         assert!(validate_download_path_for_file_operation(&text).is_err());
         let _ = std::fs::remove_dir_all(root);
     }
-}
-
-#[tauri::command]
-pub async fn upload_publish_video(state: State<'_, AppState>, video_bytes: Vec<u8>, file_name: String, cover_bytes: Vec<u8>, duration: u64) -> Result<Value, String> {
-    state.client.upload_publish_video(&video_bytes, &file_name, &cover_bytes, duration).await
 }

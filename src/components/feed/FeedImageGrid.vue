@@ -25,7 +25,8 @@
         :is-single="gridCount === 1"
         :is-long="gridCount === 1 && isLongImage"
         :auto-play-gif="settingsStore.settings.autoPlayGif"
-        :gif-auto-play="gifCount === 1 && settingsStore.settings.autoPlayGif"
+        :gif-auto-play="settingsStore.settings.autoPlayGif && (isComment ? index === firstGifIndex : gifCount === 1)"
+        :gif-viewport-only="isComment"
         @load="handleImageLoad(item.key, $event)"
       />
       <div v-if="processedImages.length >= 3 && index === processedImages.length - 1" class="image-count-badge">
@@ -78,7 +79,10 @@ const LONG_IMAGE_RATIO = 1.8;
 const imageRatios = defineModel<Record<string, number>>('imageRatios', { default: () => ({}) });
 
 const processedImages = computed(() => normalizeFeedImageItems(props.images));
-const gifCount = computed(() => processedImages.value.filter(item => !item.isLivePhoto && isAnimatedImageUrl(item.sourceUrl)).length);
+const isComment = computed(() => variant.value === 'comment' && contentType.value === 'reply');
+const isGif = (item: (typeof processedImages.value)[number]) => !item.isLivePhoto && isAnimatedImageUrl(item.sourceUrl);
+const gifCount = computed(() => processedImages.value.filter(isGif).length);
+const firstGifIndex = computed(() => processedImages.value.findIndex(isGif));
 
 const gridCount = computed(() => {
   return Math.min(processedImages.value.length, 9);

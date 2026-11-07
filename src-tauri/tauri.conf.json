@@ -5,6 +5,7 @@
   "identifier": "com.coolapk.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
+    "features": ["native"],
     "devUrl": "http://127.0.0.1:17520",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"

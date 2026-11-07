@@ -18,8 +18,9 @@
 import { computed, ref, watch, onMounted, onActivated, onDeactivated, onUnmounted } from 'vue';
 import AppImage from './AppImage.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { useNoImageMode } from '../../composables/useNoImageMode';
-import { loadImageResource, normalizeResourceUrl, getMemoryCachedResourceSync } from '../../utils/resourceCache';
+import { canLoadWebImageDirectly, preloadWebImage, loadImageResource, normalizeResourceUrl, getMemoryCachedResourceSync } from '../../utils/resourceCache';
 import { observeResourceVisibility } from '../../utils/resourceVisibility';
 import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 
@@ -84,6 +85,15 @@ async function loadPluginImage(url?: string) {
   if (syncCached) {
     pluginDataUrl.value = syncCached;
     return;
+  }
+
+  if (isWebBuild && canLoadWebImageDirectly(targetUrl)) {
+    const loaded = await preloadWebImage(targetUrl);
+    if (sequence !== pluginLoadSequence) return;
+    if (loaded) {
+      pluginDataUrl.value = targetUrl;
+      return;
+    }
   }
 
   try {

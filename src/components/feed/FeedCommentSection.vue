@@ -41,8 +41,8 @@
     <div v-if="floatingReplyComposer" :style="{ height: `${inlineComposerHeight}px` }" aria-hidden="true"></div>
     <!-- 评论发表输入框组件 -->
     <Teleport to="body" :disabled="!floatingComposer">
-    <div v-if="!floatingComposer || composerOpen" :class="floatingComposer ? ['official-composer-layer', { 'desktop-reply-composer': !officialDetail }] : 'inline-composer-layer'">
-    <div v-if="floatingComposer" class="official-composer-backdrop" @click="closeComposer"></div>
+    <div v-if="!floatingComposer || composerOpen" :class="floatingComposer ? ['official-composer-layer', { 'desktop-reply-composer': !officialDetail }] : 'inline-composer-layer'" @pointerdown.capture="composerBackdropPressed = false" @pointercancel.capture="composerBackdropPressed = false">
+    <div v-if="floatingComposer" class="official-composer-backdrop" @pointerdown.left="composerBackdropPressed = true" @click="handleComposerBackdropClick"></div>
     <div class="comment-composer-box" :data-resource-scroll-root="floatingComposer || undefined">
       <button v-if="floatingComposer" type="button" class="official-composer-close" aria-label="关闭评论输入" @click="closeComposer"><i class="fas fa-xmark"></i></button>
       <!-- 针对楼层的回复目标提示栏 -->
@@ -75,7 +75,7 @@
         @paste="handlePaste"
         @keydown="handleKeydown"
         @blur="flushDraft"
-        @pointerdown="showEmojiPicker = false"
+        @pointerdown="handleEditorPointerDown"
         @focus="handleEditorFocus"
       ></div>
 
@@ -548,6 +548,7 @@ import AppAvatar from '../common/AppAvatar.vue';
 import UserHoverCard from '../user/UserHoverCard.vue';
 import Button from '../ui/Button.vue';
 import FeedImageGrid from './FeedImageGrid.vue';
+import { isWebBuild } from '../../api/runtime';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useAuthStore } from '../../stores/auth';
 import { useSettingsStore } from '../../stores/settings';
@@ -1162,8 +1163,8 @@ function scheduleReplyDetails(ids: string[]) {
 }
 
 watch(
-  () => collectReplyIds([...props.pinnedComments, ...props.comments]).join(','),
-  () => scheduleReplyDetails(collectReplyIds([...props.pinnedComments, ...props.comments])),
+  () => isWebBuild ? '' : collectReplyIds([...props.pinnedComments, ...props.comments]).join(','),
+  (ids) => { if (ids) scheduleReplyDetails(collectReplyIds([...props.pinnedComments, ...props.comments])); },
   { immediate: true },
 );
 
@@ -1418,7 +1419,7 @@ async function loadSubReplies(floor: any, reset: boolean) {
       loading: false,
       error: '',
     });
-    scheduleReplyDetails(collectReplyIds(pageRows));
+    if (!isWebBuild) scheduleReplyDetails(collectReplyIds(pageRows));
   } catch (error) {
     if (String(props.feedId || '').trim() !== requestedFeedId) return;
     updateSubReplyState(floorId, {
@@ -1456,6 +1457,12 @@ function toggleEmojiPicker() {
   showEmojiPicker.value = !showEmojiPicker.value;
   // 移动端用表情面板替代软键盘，插入表情时不主动唤起键盘。
   if (showEmojiPicker.value && (isTouchMobilePlatform() || isCoarsePointer())) inputRef.value?.blur();
+}
+
+function handleEditorPointerDown() {
+  // 移动端浮层收起表情时会移动输入框，等输入框获得焦点再改变布局。
+  if (floatingComposer.value && (isTouchMobilePlatform() || isCoarsePointer())) return;
+  showEmojiPicker.value = false;
 }
 
 function handleEditorFocus() {
@@ -1657,7 +1664,16 @@ function setReplyTarget(username?: string, replyId?: string | number) {
   });
 }
 
+const composerBackdropPressed = ref(false);
+
+function handleComposerBackdropClick() {
+  // 软键盘切换会移动浮层，只有从遮罩开始的点击才能关闭编辑框。
+  if (!composerBackdropPressed.value) return;
+  closeComposer();
+}
+
 function closeComposer() {
+  composerBackdropPressed.value = false;
   if (props.standaloneTarget) {
     if (!sending.value) emit('close-composer');
     return;

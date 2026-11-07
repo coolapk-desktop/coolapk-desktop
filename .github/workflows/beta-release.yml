@@ -59,6 +59,9 @@ jobs:
   build:
     name: 全平台构建与检查
     needs: prepare
+    permissions:
+      contents: write
+      packages: write
     uses: ./.github/workflows/build.yml
     with:
       build_version: ${{ needs.prepare.outputs.version }}
@@ -86,6 +89,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           path: beta-artifacts
+          pattern: '!*.dockerbuild'
       - name: 校验并整理全平台更新包
         run: node scripts/collect-beta-assets.mjs
       - name: 为本次源码提交创建带注释测试标签

@@ -1,6 +1,7 @@
 # Frontend
 node_modules/
 dist/
+dist-web/
 *.log
 npm-debug.log*
 coverage/
