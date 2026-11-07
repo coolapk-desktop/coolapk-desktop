@@ -381,6 +381,9 @@ describe('设置页面交互', () => {
     await appCodeInput.setValue('2600000');
     expect(wrapper.find('.version-warning').exists()).toBe(true);
     await wrapper.get('.reset-button').trigger('click');
+    // 恢复默认已改为先确认再执行（防误触）。
+    settleConfirmation(true);
+    await flushPromises();
     expect(settings.settings.deviceFingerprint.model).toBe('23113RKC6C');
     expect(settings.settings.deviceFingerprint.appCode).toBe('2610162');
     expect(settings.settings.deviceFingerprint.sdkInt).toBe('36');
@@ -566,7 +569,7 @@ describe('设置页面交互', () => {
 
   it('快捷键页展示全部快捷键并可设置私信回车行为', async () => {
     const { wrapper, settings } = mountPage(ShortcutSettingsPage);
-    expect(wrapper.findAll('.setting-row')).toHaveLength(16);
+    expect(wrapper.findAll('.setting-row')).toHaveLength(19);
     expect(wrapper.text()).toContain('下一个标签页');
     expect(wrapper.text()).toContain('Ctrl+Tab');
     expect(wrapper.text()).toContain('Ctrl+Shift+Tab');
@@ -575,6 +578,9 @@ describe('设置页面交互', () => {
     expect(wrapper.text()).toContain('Ctrl+K');
     expect(wrapper.text()).toContain('Esc');
     expect(wrapper.text()).toContain('C');
+    // 缩放快捷键此前在清单里遗漏，现在必须展示。
+    expect(wrapper.text()).toContain('放大界面');
+    expect(wrapper.text()).toContain('缩小界面');
     await wrapper.get('select').setValue('newline');
     expect(settings.settings.messageEnterBehavior).toBe('newline');
   });
