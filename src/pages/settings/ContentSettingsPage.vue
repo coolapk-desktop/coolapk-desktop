@@ -164,7 +164,7 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">屏蔽关键词</span>
-          <span class="row-sub">正文或标题包含任一关键词的动态，将不在时间线中显示</span>
+          <span class="row-sub">正文或标题包含任一关键词的动态，将不在时间线中显示；单条最多 50 字符，最多 200 条</span>
         </div>
       </div>
       <div class="keyword-input-row">
@@ -173,6 +173,7 @@
           type="text"
           class="text-input"
           placeholder="输入要屏蔽的关键词，回车或点击添加"
+          maxlength="50"
           @keydown.enter.prevent="addKeyword"
         />
         <AppButton variant="secondary" size="sm" @click="addKeyword">添加</AppButton>
@@ -214,6 +215,7 @@ import AppSwitch from '../../components/common/AppSwitch.vue';
 import AppButton from '../../components/common/AppButton.vue';
 import SearchTabOrderList from '../../components/search/SearchTabOrderList.vue';
 import { isTouchMobilePlatform } from '../../utils/platform';
+import { showToast } from '../../utils/toast';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { DEFAULT_SEARCH_TABS } from '../../types/search';
 import { extractSearchTabs } from '../../utils/searchEntities';
@@ -253,10 +255,22 @@ onMounted(async () => {
 
 const blockedKeywords = computed(() => settingsStore.settings.blockedKeywords);
 
+// 与 settings.ts normalizeSettings 的过滤阈值保持一致，超限给出可见提示而非静默丢弃。
+const KEYWORD_MAX_LENGTH = 50;
+const KEYWORD_MAX_COUNT = 200;
+
 function addKeyword() {
   const kw = keywordInput.value.trim();
   if (!kw) return;
+  if (kw.length > KEYWORD_MAX_LENGTH) {
+    showToast(`关键词过长，单条最多 ${KEYWORD_MAX_LENGTH} 个字符`, 'warning');
+    return;
+  }
   if (!settingsStore.settings.blockedKeywords.includes(kw)) {
+    if (settingsStore.settings.blockedKeywords.length >= KEYWORD_MAX_COUNT) {
+      showToast(`屏蔽关键词已达上限（${KEYWORD_MAX_COUNT} 条），请先移除部分再添加`, 'warning');
+      return;
+    }
     settingsStore.settings.blockedKeywords = [...settingsStore.settings.blockedKeywords, kw];
   }
   keywordInput.value = '';

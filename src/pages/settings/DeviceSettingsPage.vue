@@ -462,7 +462,8 @@ async function useSavedDeviceId() {
 
 async function refreshDeviceProfile() {
   await nextTick();
-  if (await settingsStore.syncDeviceProfile(settingsStore.settings)) await loadDeviceInfo();
+  // 表单 change 走带反馈的同步：失败时弹可见提示，不再只 console.warn。
+  if (await settingsStore.syncDeviceProfileChecked(settingsStore.settings)) await loadDeviceInfo();
 }
 
 const currentDeviceId = computed(() => settingsStore.settings.deviceFingerprint?.deviceId || '');

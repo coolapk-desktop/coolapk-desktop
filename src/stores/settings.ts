@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+import { defineStore, getActivePinia } from 'pinia';
 import { listenMediaQuery } from '../utils/mediaQuery';
 import { ref, watch, onScopeDispose } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
@@ -9,6 +9,7 @@ import { normalizeSearchTabOrder } from '../utils/searchTabOrder';
 import { normalizeLightBackground, buildLightBackground } from '../utils/lightBackground';
 import { isLinuxDesktopRuntime, observeLinuxSystemTheme, type SystemTheme } from '../utils/linuxSystemTheme';
 import { isTouchMobilePlatform } from '../utils/platform';
+import { showToast } from '../utils/toast';
 import type {
   AppSettings,
   ThemeMode,
@@ -351,7 +352,10 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.androidBackgroundNotifications = readBoolean(source.androidBackgroundNotifications, result.androidBackgroundNotifications);
   result.notificationSound = readBoolean(source.notificationSound, result.notificationSound);
   result.notificationPollInterval = [1, 5, 10, 30].includes(Number(source.notificationPollInterval)) ? Number(source.notificationPollInterval) : result.notificationPollInterval;
-  result.blockedKeywords = Array.isArray(source.blockedKeywords) ? [...new Set(source.blockedKeywords.filter((item): item is string => typeof item === 'string' && item.trim().length > 0))] : result.blockedKeywords;
+  // 关键词屏蔽限制单条长度与总数，防止异常数据无限增长拖慢时间线过滤。
+  result.blockedKeywords = Array.isArray(source.blockedKeywords)
+    ? [...new Set(source.blockedKeywords.filter((item): item is string => typeof item === 'string' && item.trim().length > 0 && item.length <= 50))].slice(0, 200)
+    : result.blockedKeywords;
   result.publishDeviceSignature = readBoolean(source.publishDeviceSignature, result.publishDeviceSignature);
   result.deviceSignature = readString(source.deviceSignature, result.deviceSignature).slice(0, 40);
   result.updateSpeedLimitKBps = [0, 500, 1024, 2048, 5120].includes(Number(source.updateSpeedLimitKBps)) ? Number(source.updateSpeedLimitKBps) : result.updateSpeedLimitKBps;
@@ -411,6 +415,14 @@ const ACCENT_PALETTES: Record<AccentColor, { light: AccentPalette; dark: AccentP
   },
 };
 
+/** 持久化失败去重标记：同一失败周期只提示一次，写盘恢复成功后复位。 */
+let persistenceFailureNotified = false;
+function notifyPersistenceFailure() {
+  if (persistenceFailureNotified) return;
+  persistenceFailureNotified = true;
+  showToast('设置保存失败，本次更改在重启后可能不会保留', 'error', 4000);
+}
+
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<AppSettings>(cloneDefaultSettings());
   const resolvedTheme = ref<'dark' | 'light'>('light');
@@ -452,9 +464,14 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function queueFileSave(snapshot: AppSettings) {
     const copy = JSON.parse(JSON.stringify(snapshot)) as AppSettings;
-    saveQueue = saveQueue.then(() => saveSettingsFile(copy)).catch((err) => {
-      console.error('保存 settings.json 失败', err);
-    });
+    saveQueue = saveQueue
+      .then(() => saveSettingsFile(copy))
+      // 写盘恢复成功后复位去重标记，下一次失败仍会提示。
+      .then(() => { persistenceFailureNotified = false; })
+      .catch((err) => {
+        console.error('保存 settings.json 失败', err);
+        notifyPersistenceFailure();
+      });
     return saveQueue;
   }
 
@@ -493,6 +510,19 @@ export const useSettingsStore = defineStore('settings', () => {
     return saveQueue;
   }
 
+  // 应用退出或切到后台前把队列里未落盘的设置写完：此前 flushSettings 只在更新
+  // 安装前被 await，普通关闭/隐藏窗口时队列中的改动可能丢失，重启后回退旧值。
+  function flushPendingSettings() { void flushSettings(); }
+  if (typeof document !== 'undefined') {
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') flushPendingSettings(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', flushPendingSettings);
+    onScopeDispose(() => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', flushPendingSettings);
+    });
+  }
+
   // 持久化只负责写盘。视觉和原生副作用使用字段级 watcher，避免修改任意
   // 一个设置时重复调用所有系统 API。
   watch(
@@ -504,8 +534,10 @@ export const useSettingsStore = defineStore('settings', () => {
         } else {
           try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(newVal));
+            persistenceFailureNotified = false;
           } catch (err) {
             console.error('保存本地设置失败', err);
+            notifyPersistenceFailure();
           }
         }
       }
@@ -551,9 +583,22 @@ export const useSettingsStore = defineStore('settings', () => {
     },
     { flush: 'sync' },
   );
+  // 输入过程中逐键推送半成品 UA / 空型号会污染 Rust 侧请求头，防抖后只同步最终值。
+  const DEVICE_SYNC_DEBOUNCE_MS = 400;
+  let deviceSyncTimer: ReturnType<typeof setTimeout> | null = null;
+  let deviceSyncFailureNotified = false;
+  const boundPinia = getActivePinia();
   watch(() => settings.value.deviceFingerprint, () => {
-    if (nativeSyncReady) syncDeviceProfile(settings.value);
+    if (!nativeSyncReady) return;
+    if (deviceSyncTimer) clearTimeout(deviceSyncTimer);
+    deviceSyncTimer = setTimeout(() => {
+      deviceSyncTimer = null;
+      // 测试或热替换中旧 store 的未决定时器不得作用于新的 pinia 实例。
+      if (getActivePinia() !== boundPinia) return;
+      void syncDeviceProfileChecked(settings.value);
+    }, DEVICE_SYNC_DEBOUNCE_MS);
   }, { deep: true, flush: 'sync' });
+  onScopeDispose(() => { if (deviceSyncTimer) clearTimeout(deviceSyncTimer); });
   watch(() => settings.value.experimentalFeatures, (enabled) => {
     if (!enabled && settings.value.updateChannel === 'beta') settings.value.updateChannel = 'stable';
   }, { flush: 'sync' });
@@ -801,6 +846,20 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /** 带可见反馈的设备信息同步：跳过空型号等半成品输入，失败时去重提示不静默丢弃。 */
+  async function syncDeviceProfileChecked(s: AppSettings): Promise<boolean> {
+    const f = s.deviceFingerprint;
+    if (f.customFingerprint && !f.model.trim()) return true;
+    const ok = await syncDeviceProfile(s);
+    if (ok) {
+      deviceSyncFailureNotified = false;
+    } else if (!deviceSyncFailureNotified) {
+      deviceSyncFailureNotified = true;
+      showToast('设备信息同步失败，请求可能仍使用旧配置，请重试', 'error', 4000);
+    }
+    return ok;
+  }
+
   async function syncNativeSettings(s: AppSettings) {
     syncCloseToTray(s.closeToTray);
     syncAlwaysOnTop(s.alwaysOnTop);
@@ -896,6 +955,7 @@ export const useSettingsStore = defineStore('settings', () => {
     initializeSettings,
     flushSettings,
     syncDeviceProfile,
+    syncDeviceProfileChecked,
     setNetworkProxyUrl,
     applyAppearance,
     setAutostart,
