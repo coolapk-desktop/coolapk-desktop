@@ -41,8 +41,8 @@
     <div v-if="floatingReplyComposer" :style="{ height: `${inlineComposerHeight}px` }" aria-hidden="true"></div>
     <!-- 评论发表输入框组件 -->
     <Teleport to="body" :disabled="!floatingComposer">
-    <div v-if="!floatingComposer || composerOpen" :class="floatingComposer ? ['official-composer-layer', { 'desktop-reply-composer': !officialDetail }] : 'inline-composer-layer'">
-    <div v-if="floatingComposer" class="official-composer-backdrop" @click="closeComposer"></div>
+    <div v-if="!floatingComposer || composerOpen" :class="floatingComposer ? ['official-composer-layer', { 'desktop-reply-composer': !officialDetail }] : 'inline-composer-layer'" @pointerdown.capture="composerBackdropPressed = false" @pointercancel.capture="composerBackdropPressed = false">
+    <div v-if="floatingComposer" class="official-composer-backdrop" @pointerdown.left="composerBackdropPressed = true" @click="handleComposerBackdropClick"></div>
     <div class="comment-composer-box" :data-resource-scroll-root="floatingComposer || undefined">
       <button v-if="floatingComposer" type="button" class="official-composer-close" aria-label="关闭评论输入" @click="closeComposer"><i class="fas fa-xmark"></i></button>
       <!-- 针对楼层的回复目标提示栏 -->
@@ -74,7 +74,7 @@
         @input="handleEditorInput"
         @paste="handlePaste"
         @keydown="handleKeydown"
-        @pointerdown="showEmojiPicker = false"
+        @pointerdown="handleEditorPointerDown"
         @focus="handleEditorFocus"
       ></div>
 
@@ -1376,6 +1376,12 @@ function toggleEmojiPicker() {
   if (showEmojiPicker.value && (isTouchMobilePlatform() || isCoarsePointer())) inputRef.value?.blur();
 }
 
+function handleEditorPointerDown() {
+  // 移动端浮层收起表情时会移动输入框，等输入框获得焦点再改变布局。
+  if (floatingComposer.value && (isTouchMobilePlatform() || isCoarsePointer())) return;
+  showEmojiPicker.value = false;
+}
+
 function handleEditorFocus() {
   // 软键盘出现前收起表情；桌面端插入表情后的程序聚焦保留面板。
   if (isTouchMobilePlatform() || isCoarsePointer()) showEmojiPicker.value = false;
@@ -1570,7 +1576,16 @@ function setReplyTarget(username?: string, replyId?: string | number) {
   });
 }
 
+const composerBackdropPressed = ref(false);
+
+function handleComposerBackdropClick() {
+  // 软键盘切换会移动浮层，只有从遮罩开始的点击才能关闭编辑框。
+  if (!composerBackdropPressed.value) return;
+  closeComposer();
+}
+
 function closeComposer() {
+  composerBackdropPressed.value = false;
   if (props.standaloneTarget) {
     if (!sending.value) emit('close-composer');
     return;

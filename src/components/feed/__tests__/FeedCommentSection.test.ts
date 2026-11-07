@@ -1002,8 +1002,14 @@ describe('评论完整信息展示', () => {
       expect(focus).not.toHaveBeenCalled();
       expect(editor.textContent).toContain('😀');
       expect(layer.querySelector('.official-composer-emoji')).not.toBeNull();
-      await new DOMWrapper(editor).trigger('focus');
+      const editorWrapper = new DOMWrapper(editor);
+      await editorWrapper.trigger('pointerdown');
+      expect(layer.querySelector('.official-composer-emoji')).not.toBeNull();
+      await editorWrapper.trigger('focus');
       expect(layer.querySelector('.official-composer-emoji')).toBeNull();
+      await new DOMWrapper(layer.querySelector('.official-composer-backdrop')!).trigger('click');
+      expect(document.body.contains(editor)).toBe(true);
+      expect(editor.textContent).toContain('😀');
     } finally { wrapper.unmount(); ua.mockRestore(); }
   });
 
@@ -1027,7 +1033,9 @@ describe('评论完整信息展示', () => {
     expect(document.body.querySelector('.official-composer-layer')).toBeNull();
     await (wrapper.vm as any).openComposer();
     expect(document.body.querySelector('.official-composer-layer .comment-rich-editor')?.textContent).toBe('未发送的评论');
-    await new DOMWrapper(document.body.querySelector('.official-composer-backdrop')!).trigger('click');
+    const backdrop = new DOMWrapper(document.body.querySelector('.official-composer-backdrop')!);
+    await backdrop.trigger('pointerdown');
+    await backdrop.trigger('click');
     expect(document.body.querySelector('.official-composer-layer')).toBeNull();
     await (wrapper.vm as any).openComposer();
     expect(dim).toHaveBeenLastCalledWith(expect.any(Symbol), true);
