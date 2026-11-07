@@ -430,6 +430,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const androidProfileBackground = ref(false);
   const androidSystemBarDimOwners = new Set<symbol>();
   const profileToolbarCompact = ref(false);
+  // 代理是否真实同步到后端（set_network_proxy 成功与否）。保存的地址与“是否
+  // 生效”是两个语义：失败时不回滚用户已保存的地址，只把失败暴露给页面显示告警，
+  // 避免 store 仍显示“已应用”而用户无从发现代理没生效。
+  const proxySyncFailed = ref(false);
   const isTauriRuntime = typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
   let fileStore: SettingsFileStore | null = null;
   let persistenceReady = !isTauriRuntime;
@@ -869,9 +873,22 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   async function syncNetworkProxy(proxyUrl: string): Promise<boolean> {
-    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return true;
-    try { await invoke('set_network_proxy', { proxyUrl: proxyUrl.trim() || null }); return true; }
-    catch (err) { console.warn('同步网络代理设置失败:', err); return false; }
+    if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) { proxySyncFailed.value = false; return true; }
+    try {
+      await invoke('set_network_proxy', { proxyUrl: proxyUrl.trim() || null });
+      proxySyncFailed.value = false;
+      return true;
+    } catch (err) {
+      // 只记录失败状态供页面告警，不抛出、不改动已保存的代理地址。
+      proxySyncFailed.value = true;
+      console.warn('同步网络代理设置失败:', err);
+      return false;
+    }
+  }
+
+  /** 页面「重新应用」入口：用当前已保存的地址重试同步，不改写任何设置值。 */
+  async function reapplyNetworkProxy(): Promise<boolean> {
+    return syncNetworkProxy(settings.value.networkProxyUrl);
   }
 
   async function setNetworkProxyUrl(proxyUrl: string): Promise<boolean> {
@@ -957,6 +974,8 @@ export const useSettingsStore = defineStore('settings', () => {
     syncDeviceProfile,
     syncDeviceProfileChecked,
     setNetworkProxyUrl,
+    reapplyNetworkProxy,
+    proxySyncFailed,
     applyAppearance,
     setAutostart,
     setTheme,

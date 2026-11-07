@@ -27,6 +27,13 @@
       <p class="setting-note">清空地址并应用可恢复默认连接。SOCKS4a / SOCKS5h 由代理解析域名。移动设备请填写设备可访问的代理地址；网页登录窗口使用设备的系统网络设置。</p>
       <p v-if="testResult" class="setting-success" role="status">{{ testResult }}</p>
       <p v-if="error" class="setting-error" role="alert">{{ error }}</p>
+      <!-- 启动或应用时代理同步到后端失败：这是“生效状态”告警，与上方“未保存修改”是两个语义，
+           不参与未保存守卫。提供重新应用入口让用户无需重启即可恢复。 -->
+      <div v-if="settingsStore.proxySyncFailed" class="setting-unsaved proxy-sync-alert" role="alert">
+        <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+        <span class="proxy-sync-text">代理设置未能同步到后端，当前请求可能未经过代理；已保存的地址不会丢失。</span>
+        <button class="action-button secondary" :disabled="reapplying" @click="reapplyProxy">{{ reapplying ? '重试中…' : '重新应用' }}</button>
+      </div>
     </div>
   </div>
 </template>
@@ -53,6 +60,7 @@ const composedProxyUrl = computed(() => draftProxyAddress.value.trim() ? `${draf
 const hasUnsavedChanges = computed(() => composedProxyUrl.value !== settingsStore.settings.networkProxyUrl);
 const saving = ref(false);
 const testing = ref(false);
+const reapplying = ref(false);
 const error = ref('');
 const testResult = ref('');
 watch(() => settingsStore.settings.networkProxyUrl, (value) => { if (!saving.value) { const parsed = parseProxyUrl(value); draftProxyType.value = parsed.type; draftProxyAddress.value = parsed.address; } });
@@ -77,6 +85,14 @@ async function applyProxy() {
   error.value = '';
   try { if (!await settingsStore.setNetworkProxyUrl(value)) error.value = '代理设置未能生效，请检查地址后重试。'; }
   finally { saving.value = false; }
+}
+
+/** 重新应用已保存的代理地址：只重试后端同步，不改动草稿与已保存值。 */
+async function reapplyProxy() {
+  if (reapplying.value) return;
+  reapplying.value = true;
+  try { await settingsStore.reapplyNetworkProxy(); }
+  finally { reapplying.value = false; }
 }
 
 /** 放弃草稿并回到已保存的代理设置，避免确认后又被下一次离开重复拦截。 */
@@ -129,5 +145,8 @@ async function testProxy() {
 .setting-note { margin: var(--space-3) 0 0; }
 .setting-unsaved { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--warning, var(--border)); border-radius: var(--radius-md); background: var(--warning-soft, var(--surface)); color: var(--text-primary); font-size: var(--font-size-caption); }
 .setting-error { margin: var(--space-3) 0 0; color: var(--danger); font-size: var(--font-size-caption); }
+.proxy-sync-alert { justify-content: flex-start; border-color: var(--danger, var(--border)); }
+.proxy-sync-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.proxy-sync-alert .action-button { flex-shrink: 0; }
 .setting-success { margin: var(--space-3) 0 0; color: var(--success); font-size: var(--font-size-caption); }
 </style>

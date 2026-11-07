@@ -144,6 +144,13 @@
       </div>
     </div>
 
+    <!-- 分类列表拉取失败时始终可见的降级提示（放在 details 外，收起时也不被隐藏）：
+         此时排序基于协议默认分类，联网后可刷新。 -->
+    <div v-if="tabConfigFailed" class="tab-config-fallback" role="alert">
+      <span class="tab-config-fallback-text">暂时无法获取酷安分类列表，当前展示为默认分类；联网后可刷新。</span>
+      <AppButton variant="secondary" size="sm" :disabled="tabConfigLoading" @click="loadSearchTabs">{{ tabConfigLoading ? '刷新中…' : '重试' }}</AppButton>
+    </div>
+
     <details class="search-order-group" @toggle="toggleSearchOrder">
       <summary class="search-order-trigger">
         <span><i class="fas fa-arrow-down-short-wide" aria-hidden="true"></i>搜索分类排序</span>
@@ -227,6 +234,8 @@ const supportsSystemViewer = !isTouchMobilePlatform();
 const keywordInput = ref('');
 const searchOrderOpen = ref(false);
 const configuredSearchTabs = ref(DEFAULT_SEARCH_TABS);
+const tabConfigFailed = ref(false);
+const tabConfigLoading = ref(false);
 const orderedSearchTabs = computed(() => orderSearchTabs(configuredSearchTabs.value, settingsStore.settings.searchTabOrder).filter(tab => tab.searchType !== 'all'));
 const searchOrderMessage = ref('调整后自动保存；恢复默认将沿用酷安提供的分类顺序。');
 
@@ -245,13 +254,22 @@ function resetSearchOrder() {
   searchOrderMessage.value = '已恢复默认分类顺序。';
 }
 
-onMounted(async () => {
+// 拉取搜索分类：失败时降级到协议默认分类并给出可见提示，成功后清除提示。
+async function loadSearchTabs() {
+  if (tabConfigLoading.value) return;
+  tabConfigLoading.value = true;
   try {
     configuredSearchTabs.value = extractSearchTabs(await CoolapkTauriAPI.getTabConfig());
+    tabConfigFailed.value = false;
   } catch {
-    // 离线时仍可调整协议默认分类，下次搜索按已保存的顺序应用。
+    // 离线或后端失败时仍可调整协议默认分类，但要让用户知道顺序基于默认值，联网后部分可能失效。
+    tabConfigFailed.value = true;
+  } finally {
+    tabConfigLoading.value = false;
   }
-});
+}
+
+onMounted(loadSearchTabs);
 
 const blockedKeywords = computed(() => settingsStore.settings.blockedKeywords);
 
@@ -284,6 +302,8 @@ function removeKeyword(kw: string) {
 </script>
 
 <style scoped>
+.tab-config-fallback { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--warning, var(--border)); border-radius: var(--radius-md); background: var(--warning-soft, var(--surface)); color: var(--text-primary); font-size: var(--font-size-caption); }
+.tab-config-fallback-text { min-width: 0; overflow-wrap: anywhere; }
 .search-order-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .search-order-heading > p { flex: 1 1 220px; }
 .search-order-group { min-width: 0; }
