@@ -26,7 +26,82 @@ pub struct AppState {
 #[derive(Default)]
 pub struct DesktopWebAccess {
     #[cfg(desktop)]
-    server: tokio::sync::Mutex<Option<(String, tokio::task::JoinHandle<()>)>>,
+    server: tokio::sync::Mutex<Option<crate::web::DesktopWebServer>>,
+}
+
+#[cfg(desktop)]
+const DESKTOP_WEB_STORE: &str = "desktop_web.json";
+
+#[cfg(desktop)]
+impl DesktopWebAccess {
+    async fn configure(
+        &self,
+        app: &tauri::AppHandle,
+        client: &std::sync::Arc<CoolapkClient>,
+        enabled: Option<bool>,
+        allow_lan: Option<bool>,
+    ) -> Result<Value, String> {
+        use tauri_plugin_store::StoreExt;
+
+        let mut server = self.server.lock().await;
+        let store = app.store(DESKTOP_WEB_STORE).map_err(|err| err.to_string())?;
+        let saved = store.get("access").unwrap_or_else(|| json!({ "enabled": false, "allowLan": false }));
+        let saved_enabled = saved["enabled"].as_bool().unwrap_or(false);
+        let enabled_next = enabled.unwrap_or(saved_enabled);
+        let allow_lan_next = allow_lan.unwrap_or_else(|| saved["allowLan"].as_bool().unwrap_or(false));
+        if server.as_ref().is_some_and(|server| server.task.is_finished()) {
+            *server = None;
+        }
+
+        let changed = enabled.is_some() || allow_lan.is_some();
+        if changed || (enabled_next && server.is_none()) {
+            let replacement = if enabled_next
+                && server.as_ref().is_none_or(|current| current.lan_url.is_some() != allow_lan_next)
+            {
+                match crate::web::start_desktop(app.clone(), client.clone(), allow_lan_next).await {
+                    Ok(replacement) => Some(replacement),
+                    Err(err) if changed => return Err(err),
+                    Err(err) => {
+                        log::warn!("desktop_web.restore_failed: {err}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            if changed {
+                store.set("access", json!({ "enabled": enabled_next, "allowLan": allow_lan_next }));
+                if let Err(err) = store.save() {
+                    store.set("access", saved);
+                    return Err(format!("无法保存 Web 访问设置（{err}）"));
+                }
+            }
+            let previous = if let Some(replacement) = replacement {
+                server.replace(replacement)
+            } else if !enabled_next {
+                server.take()
+            } else {
+                None
+            };
+            if let Some(previous) = previous { previous.stop(); }
+        }
+
+        Ok(json!({
+            "localUrl": server.as_ref().map(|server| &server.url),
+            "lanUrl": server.as_ref().and_then(|server| server.lan_url.as_ref()),
+            "allowLan": allow_lan_next,
+            "restoreFailed": enabled_next && server.is_none(),
+        }))
+    }
+}
+
+#[cfg(desktop)]
+pub async fn restore_desktop_web_access(app: tauri::AppHandle) {
+    let access = app.state::<DesktopWebAccess>();
+    let state = app.state::<AppState>();
+    if let Err(err) = access.configure(&app, &state.client, None, None).await {
+        log::warn!("desktop_web.restore_failed: {err}");
+    }
 }
 
 #[tauri::command]
@@ -35,23 +110,15 @@ pub async fn desktop_web_access(
     state: State<'_, AppState>,
     access: State<'_, DesktopWebAccess>,
     enabled: Option<bool>,
-) -> Result<Option<String>, String> {
+    allow_lan: Option<bool>,
+) -> Result<Option<serde_json::Value>, String> {
     #[cfg(desktop)]
     {
-        let mut server = access.server.lock().await;
-        if server.as_ref().is_some_and(|(_, task)| task.is_finished()) {
-            *server = None;
-        }
-        if enabled == Some(false) {
-            if let Some((_, task)) = server.take() { task.abort(); }
-        } else if enabled == Some(true) && server.is_none() {
-            *server = Some(crate::web::start_desktop(app, state.client.clone()).await?);
-        }
-        Ok(server.as_ref().map(|(url, _)| url.clone()))
+        access.configure(&app, &state.client, enabled, allow_lan).await.map(Some)
     }
     #[cfg(not(desktop))]
     {
-        let _ = (app, state, access, enabled);
+        let _ = (app, state, access, enabled, allow_lan);
         Ok(None)
     }
 }

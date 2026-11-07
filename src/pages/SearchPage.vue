@@ -618,7 +618,7 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
 .clear-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
 .search-header-button { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
 .search-header-button img { width: 20px; height: 20px; object-fit: contain; filter: brightness(0) invert(.35); }
-:global([data-theme="dark"]) .search-header-button img { filter: brightness(0) invert(.75); }
+:global([data-theme="dark"] .search-header-button img) { filter: brightness(0) invert(.75); }
 .search-header-button:hover:not(:disabled) { background: var(--surface-hover); }
 .search-header-button:disabled { opacity: .55; cursor: default; }
 .suggestions-dropdown, .search-history-dropdown { position: absolute; top: calc(100% + 4px); right: 0; left: 0; z-index: 20; max-height: 260px; padding: 6px; overflow-y: auto; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: var(--radius-control); box-shadow: var(--shadow-dialog); }

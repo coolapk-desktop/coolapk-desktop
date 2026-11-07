@@ -3,8 +3,6 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 export const isDesktopWeb = typeof document !== 'undefined'
   && document.querySelector('meta[name="coolapk-desktop-web"]') !== null;
 export const isWebBuild = import.meta.env.MODE === 'web' || isDesktopWeb;
-const desktopAccessKey = isDesktopWeb && new URLSearchParams(location.hash.slice(3)).get('web-access');
-if (desktopAccessKey) history.replaceState(null, '', location.pathname + '#/');
 
 let sessionReady: Promise<void> | undefined;
 
@@ -15,11 +13,7 @@ async function checkResponse(response: Response) {
 }
 
 export function initializeSession(): Promise<void> {
-  sessionReady ??= fetch('/api/session', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: desktopAccessKey ? { 'X-Coolapk-Web-Access': desktopAccessKey } : undefined,
-  })
+  sessionReady ??= fetch('/api/session', { method: 'POST', credentials: 'same-origin' })
     .then(checkResponse)
     .catch(error => {
       sessionReady = undefined;

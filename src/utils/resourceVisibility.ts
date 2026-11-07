@@ -1,6 +1,7 @@
 // 每个滚动容器共用一个观察器；预加载区必须相对于真实滚动容器计算。
 const callbacks = new Map<Element, (visible: boolean) => void>();
 const observers = new Map<Element | null, { observer: IntersectionObserver; count: number }>();
+const playbackObservers = new Map<Element | null, { observer: IntersectionObserver; count: number }>();
 
 export function getResourceScrollRoot(element: Element): Element | null {
   // 动态流/详情明确声明滚动边界，批量恢复图片和卡片时无需逐级读取计算样式。
@@ -11,18 +12,19 @@ export function getResourceScrollRoot(element: Element): Element | null {
   return root === document.body ? null : root;
 }
 
-export function observeResourceVisibility(element: Element, callback: (visible: boolean) => void): () => void {
+export function observeResourceVisibility(element: Element, callback: (visible: boolean) => void, viewportOnly = false): () => void {
   if (typeof IntersectionObserver === 'undefined') {
     callback(true);
     return () => {};
   }
   const root = getResourceScrollRoot(element);
-  let group = observers.get(root);
+  const groups = viewportOnly ? playbackObservers : observers;
+  let group = groups.get(root);
   if (!group) {
     group = { observer: new IntersectionObserver(entries => {
       for (const entry of entries) callbacks.get(entry.target)?.(entry.isIntersecting);
-    }, { root, rootMargin: '600px 0px' }), count: 0 };
-    observers.set(root, group);
+    }, { root, rootMargin: viewportOnly ? '0px' : '600px 0px' }), count: 0 };
+    groups.set(root, group);
   }
   const resourceGroup = group;
   resourceGroup.count += 1;
@@ -36,7 +38,7 @@ export function observeResourceVisibility(element: Element, callback: (visible: 
     resourceGroup.observer.unobserve(element);
     if (--resourceGroup.count === 0) {
       resourceGroup.observer.disconnect();
-      observers.delete(root);
+      groups.delete(root);
     }
   };
 }

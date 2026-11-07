@@ -1238,6 +1238,9 @@ pub fn run() {
             }
 
             #[cfg(desktop)]
+            tauri::async_runtime::spawn(crate::coolapk::commands::restore_desktop_web_access(app.handle().clone()));
+
+            #[cfg(desktop)]
             {
             // 系统托盘图标：常驻后台、快捷恢复窗口与退出
             // Linux 托盘库由运行环境动态加载；缺失时仍要让主窗口正常启动。

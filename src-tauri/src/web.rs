@@ -91,7 +91,7 @@ struct WebState {
     origin: String,
     secure_cookie: bool,
     sessions: Mutex<HashMap<String, SessionEntry>>,
-    desktop: Option<(String, Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>)>,
+    desktop: Option<Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>>,
     session_dir: Option<PathBuf>,
     requests: tokio::sync::Semaphore,
     media_requests: tokio::sync::Semaphore,
@@ -166,11 +166,6 @@ impl WebState {
         if !create {
             return Err(error(StatusCode::UNAUTHORIZED, "浏览器会话已过期，请重试"));
         }
-        if let Some((key, _)) = &self.desktop
-            && headers.get("x-coolapk-web-access").and_then(|value| value.to_str().ok()) != Some(key.as_str())
-        {
-            return Err(error(StatusCode::FORBIDDEN, "请从桌面客户端设置打开 Web 访问"));
-        }
         if sessions.len() >= MAX_SESSIONS {
             return Err(error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -182,7 +177,7 @@ impl WebState {
             .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法创建浏览器会话"))?;
         let token = hex::encode(token);
         let session = Arc::new(Session {
-            client: self.desktop.as_ref().map(|(_, client)| Arc::clone(client))
+            client: self.desktop.as_ref().map(Arc::clone)
                 .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(Arc::new(CoolapkClient::new_web())))),
             persisted: self.session_dir.as_ref().map(|dir| Mutex::new((dir.join(format!("{token}.json")), Value::Null))),
         });
@@ -792,19 +787,67 @@ fn new_state(origin: String, secure_cookie: bool) -> WebState {
 }
 
 #[cfg(all(feature = "native", desktop))]
+pub struct DesktopWebServer {
+    pub url: String,
+    pub lan_url: Option<String>,
+    pub task: tokio::task::JoinHandle<()>,
+    shutdown: tokio::sync::watch::Sender<bool>,
+}
+
+#[cfg(all(feature = "native", desktop))]
+impl DesktopWebServer {
+    pub fn stop(self) {
+        let _ = self.shutdown.send(true);
+    }
+}
+
+#[cfg(all(feature = "native", desktop))]
+fn desktop_lan_ipv4() -> Option<std::net::Ipv4Addr> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let result = std::process::Command::new("powershell.exe")
+            .creation_flags(0x08000000)
+            .args(["-NoProfile", "-NonInteractive", "-Command",
+                "Get-NetIPConfiguration | Where-Object { $_.NetAdapter.HardwareInterface -and $_.IPv4DefaultGateway } | ForEach-Object { $_.IPv4Address.IPAddress }"])
+            .output();
+        if let Ok(output) = result
+            && output.status.success()
+            && let Some(ip) = String::from_utf8_lossy(&output.stdout).lines()
+                .filter_map(|line| line.trim().parse::<std::net::Ipv4Addr>().ok())
+                .find(std::net::Ipv4Addr::is_private)
+        {
+            return Some(ip);
+        }
+    }
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(ip) if ip.is_private() => Some(ip),
+        _ => None,
+    }
+}
+
+#[cfg(all(feature = "native", desktop))]
 pub async fn start_desktop(
     app: tauri::AppHandle,
     client: Arc<CoolapkClient>,
-) -> Result<(String, tokio::task::JoinHandle<()>), String> {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
+    allow_lan: bool,
+) -> Result<DesktopWebServer, String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await
+        .map_err(|err| format!("无法启动本机 Web 访问（{err}）"))?;
     let address = listener.local_addr().map_err(|e| e.to_string())?;
+    let lan_listener = if allow_lan {
+        let ip = tokio::task::spawn_blocking(desktop_lan_ipv4).await
+            .ok().flatten().ok_or("未找到局域网地址，请先连接 Wi-Fi 或网线")?;
+        Some(tokio::net::TcpListener::bind((ip, address.port())).await
+            .map_err(|err| format!("无法启动局域网访问（{err}）"))?)
+    } else {
+        None
+    };
     let origin = format!("http://{address}");
-    let mut key = [0u8; 32];
-    getrandom::fill(&mut key).map_err(|_| "无法创建 Web 访问密钥")?;
-    let key = hex::encode(key);
-    let url = format!("{origin}/#/?web-access={key}");
-    let mut state = new_state(origin, false);
-    state.desktop = Some((key, Arc::new(tokio::sync::Mutex::new(client))));
+    let url = format!("{origin}/#/");
+    let shared_client = Arc::new(tokio::sync::Mutex::new(client));
     let assets_app = app.clone();
     let assets = Router::new().fallback(get(move |request: Request| {
         let app = assets_app.clone();
@@ -828,13 +871,35 @@ pub async fn start_desktop(
         post(move |state, headers, request| desktop_drafts(app.clone(), state, headers, request))
             .layer(DefaultBodyLimit::max(384 * 1024 * 1024)),
     );
-    let router = router_with_assets(Arc::new(state), assets, drafts);
-    let task = tokio::spawn(async move {
-        if let Err(err) = axum::serve(listener, router).await {
+    let router_for = |origin| {
+        let mut state = new_state(origin, false);
+        state.desktop = Some(Arc::clone(&shared_client));
+        router_with_assets(Arc::new(state), assets.clone(), drafts.clone())
+    };
+    let (shutdown, stopped) = tokio::sync::watch::channel(false);
+    let serve = |listener, router, mut stopped: tokio::sync::watch::Receiver<bool>| async move {
+        if let Err(err) = axum::serve(listener, router).with_graceful_shutdown(async move {
+            let _ = stopped.wait_for(|value| *value).await;
+        }).await {
             log::warn!("Desktop Web stopped: {err}");
         }
+    };
+    let local = serve(listener, router_for(origin), stopped.clone());
+    let (lan_url, lan) = if let Some(listener) = lan_listener {
+        let origin = format!("http://{}", listener.local_addr().map_err(|err| err.to_string())?);
+        let lan_url = format!("{origin}/#/");
+        (Some(lan_url), Some(serve(listener, router_for(origin), stopped)))
+    } else {
+        (None, None)
+    };
+    let task = tokio::spawn(async move {
+        if let Some(lan) = lan {
+            tokio::join!(local, lan);
+        } else {
+            local.await;
+        }
     });
-    Ok((url, task))
+    Ok(DesktopWebServer { url, lan_url, task, shutdown })
 }
 
 #[cfg(all(feature = "native", desktop))]

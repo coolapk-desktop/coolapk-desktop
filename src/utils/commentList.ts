@@ -1,3 +1,5 @@
+import { getOriginalImageUrl, isAnimatedImageUrl } from './image';
+
 export type CommentSortMode = 'default' | 'likes' | 'latest' | 'earliest';
 
 export type CommentSortSelection = {
@@ -295,7 +297,10 @@ export function getCommentImages(item: any): string[] {
   ]) {
     collectImageValues(item?.[key], result);
   }
-  return [...new Set(result)];
+  return [...new Set(result.map(url => {
+    const original = getOriginalImageUrl(url);
+    return isAnimatedImageUrl(original) ? original : url;
+  }))];
 }
 
 export function getCommentLocation(item: any): string {
