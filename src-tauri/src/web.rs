@@ -738,6 +738,7 @@ fn router_with_assets(state: Arc<WebState>, assets: Router, extra_api: Router<Ar
             post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
         )
         .merge(extra_api)
+        .fallback(|| async { StatusCode::NOT_FOUND })
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             check_request,
@@ -768,9 +769,36 @@ fn router_with_assets(state: Arc<WebState>, assets: Router, extra_api: Router<Ar
         ))
 }
 
+fn is_page_navigation(request: &Request) -> bool {
+    let path = request.uri().path();
+    matches!(*request.method(), axum::http::Method::GET | axum::http::Method::HEAD)
+        && !path.starts_with("/assets/")
+        && path != "/api"
+        && !path.starts_with("/api/")
+        && request.headers().get(header::ACCEPT).is_some_and(|value| {
+            value.to_str().is_ok_and(|value| {
+                value.split(',').any(|kind| kind.split(';').next().is_some_and(|kind| kind.trim() == "text/html"))
+            })
+        })
+}
+
 #[cfg_attr(all(feature = "native", desktop), allow(dead_code))]
 fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
-    router_with_assets(state, Router::new().fallback_service(ServeDir::new(dist)), Router::new())
+    let index = dist.join("index.html");
+    let pages = Router::new().fallback(get(move |request: Request| {
+        let index = index.clone();
+        async move {
+            if !is_page_navigation(&request) {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            match tokio::fs::read_to_string(index).await {
+                Ok(html) => ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response(),
+                Err(_) => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+    }));
+    let assets = Router::new().fallback_service(ServeDir::new(dist).fallback(pages));
+    router_with_assets(state, assets, Router::new())
 }
 
 fn new_state(desktop_origin: Option<String>) -> WebState {
@@ -847,7 +875,7 @@ pub async fn start_desktop(
         None
     };
     let origin = format!("http://{address}");
-    let url = format!("{origin}/#/");
+    let url = format!("{origin}/");
     let shared_client = Arc::new(tokio::sync::Mutex::new(client));
     let assets_app = app.clone();
     let assets = Router::new().fallback(get(move |request: Request| {
@@ -855,16 +883,19 @@ pub async fn start_desktop(
         async move {
             let path = request.uri().path();
             let asset_path = if path == "/" { "/index.html" } else { path };
-            let Some(asset) = app.asset_resolver().get(asset_path.to_owned()) else {
+            let resolver = app.asset_resolver();
+            let asset = resolver.get(asset_path.to_owned());
+            let is_index = asset_path == "/index.html" || (asset.is_none() && is_page_navigation(&request));
+            let asset = if is_index { resolver.get("/index.html".to_owned()) } else { asset };
+            let Some(asset) = asset else {
                 return StatusCode::NOT_FOUND.into_response();
             };
-            let bytes = if asset_path == "/index.html" {
+            if is_index {
                 let html = String::from_utf8_lossy(&asset.bytes);
-                html.replacen("<head>", "<head><meta name=\"coolapk-desktop-web\">", 1).into_bytes()
-            } else {
-                asset.bytes
-            };
-            ([(header::CONTENT_TYPE, asset.mime_type)], bytes).into_response()
+                let html = html.replacen("<head>", "<head><meta name=\"coolapk-desktop-web\">", 1);
+                return ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response();
+            }
+            ([(header::CONTENT_TYPE, asset.mime_type)], asset.bytes).into_response()
         }
     }));
     let drafts = Router::new().route(
@@ -888,7 +919,7 @@ pub async fn start_desktop(
     let local = serve(listener, router_for(origin), stopped.clone());
     let (lan_url, lan) = if let Some(listener) = lan_listener {
         let origin = format!("http://{}", listener.local_addr().map_err(|err| err.to_string())?);
-        let lan_url = format!("{origin}/#/");
+        let lan_url = format!("{origin}/");
         (Some(lan_url), Some(serve(listener, router_for(origin), stopped)))
     } else {
         (None, None)

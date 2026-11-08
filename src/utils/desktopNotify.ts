@@ -61,7 +61,10 @@ export async function desktopNotify(options: DesktopNotifyOptions, sound = false
       const notification = new Notification(options.title, { body: options.body });
       notification.onclick = () => {
         window.focus();
-        if (options.route?.startsWith('/')) window.location.hash = options.route;
+        if (options.route?.startsWith('/')) {
+          const route = options.route;
+          void import('../router').then(({ router }) => router.push(route));
+        }
         notification.close();
       };
       if (sound) playNotificationSound();
