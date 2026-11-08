@@ -1,4 +1,5 @@
 .git
+data/web
 .github
 .vercel
 .playwright-mcp

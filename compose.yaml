@@ -5,7 +5,4 @@ services:
     ports:
       - "127.0.0.1:${COOLAPK_WEB_PORT:-17521}:8080"
     volumes:
-      - coolapk-web-data:/var/lib/coolapk-web
-
-volumes:
-  coolapk-web-data:
+      - ./data/web:/var/lib/coolapk-web

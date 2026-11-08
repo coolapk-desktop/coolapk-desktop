@@ -11,14 +11,15 @@ COPY src-tauri ./src-tauri
 RUN cargo build --locked --release --manifest-path src-tauri/Cargo.toml --no-default-features --features web --bin coolapk-web
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates util-linux \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 coolapk \
+    && useradd --system --user-group --uid 10001 coolapk \
     && install -d -m 0700 -o coolapk /var/lib/coolapk-web
 WORKDIR /app
 COPY --from=backend /app/src-tauri/target/release/coolapk-web /usr/local/bin/coolapk-web
 COPY --from=frontend /app/dist-web ./dist-web
-USER coolapk
+COPY --chmod=755 scripts/docker-web-entrypoint.sh /usr/local/bin/docker-web-entrypoint
 ENV COOLAPK_WEB_DATA_DIR=/var/lib/coolapk-web
 EXPOSE 8080
-CMD ["sh", "-c", "export COOLAPK_WEB_BIND=${COOLAPK_WEB_BIND:-0.0.0.0:${PORT:-8080}}; exec coolapk-web"]
+ENTRYPOINT ["/usr/local/bin/docker-web-entrypoint"]
+CMD ["coolapk-web"]

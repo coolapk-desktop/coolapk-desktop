@@ -39,7 +39,7 @@ Web 版复用桌面和移动端的 Vue 界面与 Rust 酷安客户端。可以�
 | 使用方式 | 如何打开 | 数据存储 |
 | :--- | :--- | :--- |
 | **桌面内置 Web** | 在 Windows、macOS 或 Linux 桌面客户端的「设置 → 启动与行为」启用 Web 访问。默认仅本机，亦可选择局域网 | 与桌面共用账号列表、当前账号和草稿。界面偏好各自保存 |
-| **独立 Docker** | 使用仓库的 [Compose 配置](compose.yaml) 部署，默认在服务器本机访问 `http://127.0.0.1:17521`。远程访问可配置 HTTPS 反向代理或隧道 | 在浏览器导入 Cookie 登录。Docker 命名卷保存会话、账号和设备配置，独立于桌面客户端 |
+| **独立 Docker** | 使用仓库的 [Compose 配置](compose.yaml) 部署，默认在服务器本机访问 `http://127.0.0.1:17521`。远程访问可配置 HTTPS 反向代理或隧道 | 在浏览器导入 Cookie 登录。会话、账号和设备配置保存在 `./data/web` |
 
 镜像发布目标为 `ghcr.io/coolapk-desktop/coolapk-desktop`。本地构建、Compose 部署、更新和固定版本的命令见[浏览器版构建与部署](#浏览器版构建与部署)。
 
@@ -156,26 +156,16 @@ npm run serve:web
 
 ```powershell
 docker build -t coolapk-web .
-docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -v coolapk-web-data:/var/lib/coolapk-web coolapk-web
+docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -v "${PWD}/data/web:/var/lib/coolapk-web" coolapk-web
 ```
-
-访问 `http://127.0.0.1:17521`。本机 HTTP 模式只应将端口发布到 `127.0.0.1`。如果该端口已被占用，修改端口映射左侧的主机端口即可。
 
 桌面客户端可在「设置 → 启动与行为」启用 Web 访问，再点击「在浏览器打开」。应用会记住开关和访问范围，下次启动时自动恢复。浏览器使用桌面客户端的当前账号和草稿，界面偏好保存在各自客户端。
 
 需要从另一台设备访问时，将访问范围设为「本机 + 局域网」，启用 Web 访问后点击「复制链接」。应用会自动选择局域网地址，桌面本机仍可点击「在浏览器打开」。局域网 HTTP 连接未加密，同一网络中能访问该地址的人可使用当前桌面账号，请仅在可信网络使用。若无法连接，检查两台设备是否在同一局域网，以及防火墙是否允许桌面应用接收入站连接。
 
-无头服务器可运行 `docker compose up -d` 拉取并启动镜像。Compose 默认使用 GHCR 的 `:latest` 标签，首次正式版镜像发布后即可拉取。启动后访问 `http://127.0.0.1:17521`。
+服务器部署运行 `docker compose up -d`，启动后访问 `http://127.0.0.1:17521`。数据保存在 `./data/web`。需要公网访问时，将 HTTPS 反向代理或 Cloudflare Tunnel 指向本机映射端口。
 
-公网访问时，将 HTTPS 反向代理或 Cloudflare Tunnel 指向本机映射端口。应用会根据浏览器请求识别访问地址，无需额外设置域名和端口。命名卷保存浏览器会话、登录凭据和会话内的设备配置，请限制宿主机上的卷访问权限。
-
-正式版更新 `:latest`，测试版使用各自的版本标签，main 分支构建发布 `sha-<提交号>`。运行 `docker compose pull && docker compose up -d` 可更新到当前标签指向的构建。需要定时更新时，可在宿主机 crontab 中添加以下任务，将路径换成 Compose 项目目录。
-
-```cron
-17 4 * * * cd /srv/coolapk-web && docker compose pull && docker compose up -d
-```
-
-要固定版本或回滚，在 Compose 的 `.env` 中将 `COOLAPK_WEB_IMAGE` 设为对应的 GHCR 版本标签，再执行升级命令。
+Compose 默认使用正式版镜像 `:latest`，首次正式版镜像发布后可拉取。升级运行 `docker compose pull && docker compose up -d`。需要固定版本时，在 `.env` 中设置 `COOLAPK_WEB_IMAGE`。
 
 ### 原生客户端构建
 
