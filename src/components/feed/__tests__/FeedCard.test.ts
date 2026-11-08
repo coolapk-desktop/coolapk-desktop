@@ -843,6 +843,35 @@ describe('动态卡片编辑记录', () => {
 });
 
 describe('动态关联和视频内容', () => {
+  it.each([true, false])('在详情图片下显示分享链接并打开原动态（移动=%s）', async officialMobileDetail => {
+    const wrapper = mount(FeedCard, {
+      props: {
+        detailMode: true,
+        officialMobileDetail,
+        feed: {
+          id: '74921995',
+          feedType: 'url',
+          message: '都看看有没有中招',
+          picArr: ['https://img.example/content.jpg'],
+          extra_title: '原动态标题',
+          extra_pic: 'https://img.example/link.jpg',
+          extra_url: 'https://www.coolapk.com/feed/74430401',
+        },
+      },
+      global: { stubs: { AppImage: true, FeedImageGrid: true, FeedHeader: true, FeedContent: true, FeedActionBar: true, FeedCommentSection: true } },
+    });
+    try {
+      const link = wrapper.get('.shared-link-card');
+      expect(wrapper.get('feed-image-grid-stub').element.nextElementSibling).toBe(link.element);
+      expect(link.text()).toContain('原动态标题');
+      expect(link.get('.shared-link-description').text()).toBe('https://www.coolapk.com/feed/74430401');
+      await link.trigger('click');
+      expect(mocks.routerPush).toHaveBeenCalledWith('/feed/74430401');
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     setActivePinia(createPinia());
