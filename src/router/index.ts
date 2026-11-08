@@ -1,4 +1,5 @@
-import { createRouter, createWebHashHistory } from 'vue-router';
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router';
+import { isWebBuild } from '../api/runtime';
 import HomePage from '../pages/HomePage.vue';
 import ProductSelectorPage from '../pages/ProductSelectorPage.vue';
 
@@ -169,7 +170,7 @@ const routes = [
 ];
 
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: isWebBuild ? createWebHistory() : createWebHashHistory(),
   routes,
   scrollBehavior(_to, _from, savedPosition) {
     if (savedPosition) return savedPosition;

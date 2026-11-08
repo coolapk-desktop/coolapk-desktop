@@ -143,6 +143,15 @@
       content-type="feed"
     />
 
+    <a v-if="sharedLink" :href="sharedLink.url" class="shared-link-card" @click.stop.prevent="openSharedLink">
+      <AppImage v-if="sharedLink.image" :src="sharedLink.image" image-class="shared-link-image" alt="" fit="cover" />
+      <i v-else class="fas fa-link shared-link-image" aria-hidden="true"></i>
+      <span class="shared-link-copy">
+        <span class="shared-link-title">{{ sharedLink.title }}</span>
+        <span class="shared-link-description">{{ sharedLink.description }}</span>
+      </span>
+    </a>
+
     <!-- 1. 被回复/转发的原动态 -->
     <div
       v-if="isTargetFeed && targetRow"
@@ -630,6 +639,36 @@ const secondHandLinkSource = computed(() => String(secondHandInfo.value?.link_so
 
 function openSecondHandLink() {
   if (secondHandLink.value) void CoolapkTauriAPI.openUrl(secondHandLink.value, 'internal');
+}
+
+const sharedLink = computed(() => {
+  const { feed } = props;
+  if (feed.feedType !== 'url') return null;
+
+  const title = String(feed.extra_title || feed.extraTitle || '').trim();
+  const href = String(feed.extra_url || feed.extraUrl || '').trim();
+  if (!title || !/^(https?:\/\/|\/)/i.test(href)) return null;
+
+  try {
+    const url = new URL(href, 'https://www.coolapk.com');
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    return {
+      title,
+      url: url.href,
+      image: String(feed.extra_pic || feed.extraPic || '').trim(),
+      description: String(feed.extra_info || feed.extraInfo || '').trim() || url.href,
+    };
+  } catch {
+    return null;
+  }
+});
+
+function openSharedLink() {
+  if (!sharedLink.value) return;
+  const { url } = sharedLink.value;
+  const route = normalizeCoolapkRoute(url);
+  if (route) void router.push(route);
+  else void CoolapkTauriAPI.openUrl(url, settingsStore.settings.externalLinkMode);
 }
 
 const emit = defineEmits<{
@@ -1979,6 +2018,51 @@ defineExpose({
 
 .question-stats i {
   color: var(--brand-primary);
+}
+
+.shared-link-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 680px;
+  padding: 6px 12px;
+  margin: 8px 0;
+  border-radius: 8px;
+  background: var(--background-secondary);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.shared-link-card:hover {
+  background: var(--surface-hover);
+}
+
+.shared-link-image {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+.shared-link-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.shared-link-title,
+.shared-link-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-link-description {
+  color: var(--text-secondary);
 }
 
 .quoted-feed-box {

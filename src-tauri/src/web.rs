@@ -3,7 +3,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Context, ensure};
@@ -33,7 +33,6 @@ use crate::web_commands::dispatch_web_command;
 
 const SESSION_COOKIE: &str = "coolapk_web_session";
 const SECURE_SESSION_COOKIE: &str = "__Host-coolapk_web_session";
-const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);
 const MAX_SESSIONS: usize = 512;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_UPLOAD_BYTES: usize = 272 * 1024 * 1024;
@@ -44,18 +43,6 @@ struct Session {
 }
 
 impl Session {
-    fn refresh_expiry(&self) {
-        let Some(persisted) = &self.persisted else { return; };
-        let saved = persisted.lock().expect("web session snapshot lock");
-        if let Ok(file) = std::fs::File::open(&saved.0)
-            && file.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| {
-                time.elapsed().is_ok_and(|age| age >= Duration::from_secs(60))
-            })
-        {
-            let _ = file.set_modified(std::time::SystemTime::now());
-        }
-    }
-
     fn persist(&self, client: &CoolapkClient) -> Result<(), WebError> {
         let Some(persisted) = &self.persisted else { return Ok(()); };
         let mut saved = persisted.lock().expect("web session snapshot lock");
@@ -82,15 +69,9 @@ impl Session {
     }
 }
 
-struct SessionEntry {
-    session: Arc<Session>,
-    last_seen: Instant,
-}
-
 struct WebState {
-    origin: String,
-    secure_cookie: bool,
-    sessions: Mutex<HashMap<String, SessionEntry>>,
+    desktop_origin: Option<String>,
+    sessions: Mutex<HashMap<String, Arc<Session>>>,
     desktop: Option<Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>>,
     session_dir: Option<PathBuf>,
     requests: tokio::sync::Semaphore,
@@ -120,12 +101,27 @@ fn session_cookies<'a>(
 }
 
 impl WebState {
-    fn cookie_name(&self) -> &'static str {
-        if self.secure_cookie {
-            SECURE_SESSION_COOKIE
-        } else {
-            SESSION_COOKIE
+    fn make_session_room(
+        &self,
+        sessions: &mut HashMap<String, Arc<Session>>,
+    ) -> Result<(), WebError> {
+        if sessions.len() < MAX_SESSIONS {
+            return Ok(());
         }
+        // Standalone sessions can leave the cache only after their snapshot has been saved.
+        let evictable = sessions.iter().find(|(_, session)| {
+            Arc::strong_count(session) == 1
+                && (self.desktop.is_some()
+                    || session.persisted.as_ref().is_some_and(|saved| {
+                        !saved.lock().expect("web session snapshot lock").1.is_null()
+                    }))
+        });
+        if let Some((key, _)) = evictable {
+            let key = key.clone();
+            sessions.remove(&key);
+            return Ok(());
+        }
+        Err(error(StatusCode::SERVICE_UNAVAILABLE, "浏览器会话已满，请稍后重试"))
     }
 
     fn session(
@@ -133,45 +129,41 @@ impl WebState {
         headers: &HeaderMap,
         create: bool,
     ) -> Result<(Arc<Session>, Option<String>), WebError> {
-        let now = Instant::now();
         let mut sessions = self.sessions.lock().expect("web sessions lock");
-        sessions.retain(|_, entry| now.duration_since(entry.last_seen) < SESSION_TTL);
         // Older builds used Path=/api, so browsers can send the stale cookie before the new one.
-        for key in session_cookies(headers, self.cookie_name()) {
-            if let Some(entry) = sessions.get_mut(key) {
-                entry.last_seen = now;
-                entry.session.refresh_expiry();
-                return Ok((Arc::clone(&entry.session), None));
+        // Same-origin GET requests may omit Origin. The browser sends Secure cookies
+        // according to the public URL, even when a proxy forwards over HTTP.
+        let cookie_names: &[&str] = match self.origin(headers) {
+            Some(origin) if origin.starts_with("https://") => &[SECURE_SESSION_COOKIE],
+            Some(_) => &[SESSION_COOKIE],
+            None => &[SECURE_SESSION_COOKIE, SESSION_COOKIE],
+        };
+        for key in cookie_names.iter().flat_map(|name| session_cookies(headers, name)) {
+            if let Some(session) = sessions.get(key) {
+                return Ok((Arc::clone(session), None));
             }
-            if sessions.len() < MAX_SESSIONS
-                && let Some(dir) = &self.session_dir
+            if let Some(dir) = &self.session_dir
                 && key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
             {
                 let path = dir.join(format!("{key}.json"));
                 if let Ok(file) = std::fs::File::open(&path)
-                    && file.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| time.elapsed().is_ok_and(|age| age < SESSION_TTL))
                     && let Ok(snapshot) = serde_json::from_reader::<_, Value>(file)
                     && let Ok(client) = CoolapkClient::restore_web_session(&snapshot)
                 {
+                    self.make_session_room(&mut sessions)?;
                     let session = Arc::new(Session {
                         client: Arc::new(tokio::sync::Mutex::new(Arc::new(client))),
                         persisted: Some(Mutex::new((path, snapshot))),
                     });
-                    session.refresh_expiry();
-                    sessions.insert(key.to_owned(), SessionEntry { session: Arc::clone(&session), last_seen: now });
+                    sessions.insert(key.to_owned(), Arc::clone(&session));
                     return Ok((session, None));
                 }
             }
         }
         if !create {
-            return Err(error(StatusCode::UNAUTHORIZED, "浏览器会话已过期，请重试"));
+            return Err(error(StatusCode::UNAUTHORIZED, "浏览器会话不可用，请重试"));
         }
-        if sessions.len() >= MAX_SESSIONS {
-            return Err(error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "浏览器会话已满，请稍后重试",
-            ));
-        }
+        self.make_session_room(&mut sessions)?;
         let mut token = [0u8; 32];
         getrandom::fill(&mut token)
             .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "无法创建浏览器会话"))?;
@@ -181,15 +173,22 @@ impl WebState {
                 .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(Arc::new(CoolapkClient::new_web())))),
             persisted: self.session_dir.as_ref().map(|dir| Mutex::new((dir.join(format!("{token}.json")), Value::Null))),
         });
-        sessions.insert(
-            token.clone(),
-            SessionEntry {
-                session: Arc::clone(&session),
-                last_seen: now,
-            },
-        );
+        sessions.insert(token.clone(), Arc::clone(&session));
         Ok((session, Some(token)))
     }
+
+    fn origin<'a>(&'a self, headers: &'a HeaderMap) -> Option<&'a str> {
+        self.desktop_origin.as_deref().or_else(|| headers.get(header::ORIGIN)?.to_str().ok())
+    }
+}
+
+fn standalone_origin_allowed(origin: &str) -> bool {
+    reqwest::Url::parse(origin).is_ok_and(|url| {
+        url.origin().ascii_serialization() == origin
+            && (url.scheme() == "https"
+                || (url.scheme() == "http"
+                    && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
+    })
 }
 
 async fn check_request(
@@ -197,17 +196,16 @@ async fn check_request(
     request: Request,
     next: Next,
 ) -> Response {
-    let same_origin = if request.method() == axum::http::Method::GET {
-        request
-            .headers()
-            .get("sec-fetch-site")
-            .is_some_and(|value| value == "same-origin")
-    } else {
-        request
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|value| value.to_str().ok())
-            == Some(state.origin.as_str())
+    let headers = request.headers();
+    let fetch_same_origin = headers.get("sec-fetch-site").is_some_and(|v| v == "same-origin");
+    let origin = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok());
+    let same_origin = match state.desktop_origin.as_deref() {
+        Some(expected) if request.method() != axum::http::Method::GET => origin == Some(expected),
+        Some(_) => fetch_same_origin,
+        None if request.method() == axum::http::Method::GET => {
+            fetch_same_origin && origin.is_none_or(standalone_origin_allowed)
+        }
+        None => fetch_same_origin && origin.is_some_and(standalone_origin_allowed),
     };
     if !same_origin {
         return error(StatusCode::FORBIDDEN, "请求来源无效").into_response();
@@ -243,16 +241,20 @@ async fn initialize_session(
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
     if let Some(token) = token {
-        let secure = if state.secure_cookie { "; Secure" } else { "" };
+        let secure_cookie = state.origin(&headers).is_some_and(|origin| origin.starts_with("https://"));
+        let (name, secure) = if secure_cookie {
+            (SECURE_SESSION_COOKIE, "; Secure")
+        } else {
+            (SESSION_COOKIE, "")
+        };
         let cookie = format!(
-            "{}={token}; Path=/; HttpOnly; SameSite=Strict{secure}",
-            state.cookie_name()
+            "{name}={token}; Path=/; HttpOnly; SameSite=Strict{secure}"
         );
         response.headers_mut().insert(
             header::SET_COOKIE,
             HeaderValue::from_str(&cookie).expect("valid session cookie"),
         );
-        if !state.secure_cookie {
+        if !secure_cookie {
             response.headers_mut().append(
                 header::SET_COOKIE,
                 HeaderValue::from_static(
@@ -736,6 +738,7 @@ fn router_with_assets(state: Arc<WebState>, assets: Router, extra_api: Router<Ar
             post(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
         )
         .merge(extra_api)
+        .fallback(|| async { StatusCode::NOT_FOUND })
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             check_request,
@@ -766,15 +769,41 @@ fn router_with_assets(state: Arc<WebState>, assets: Router, extra_api: Router<Ar
         ))
 }
 
-#[cfg_attr(all(feature = "native", desktop), allow(dead_code))]
-fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
-    router_with_assets(state, Router::new().fallback_service(ServeDir::new(dist)), Router::new())
+fn is_page_navigation(request: &Request) -> bool {
+    let path = request.uri().path();
+    matches!(*request.method(), axum::http::Method::GET | axum::http::Method::HEAD)
+        && !path.starts_with("/assets/")
+        && path != "/api"
+        && !path.starts_with("/api/")
+        && request.headers().get(header::ACCEPT).is_some_and(|value| {
+            value.to_str().is_ok_and(|value| {
+                value.split(',').any(|kind| kind.split(';').next().is_some_and(|kind| kind.trim() == "text/html"))
+            })
+        })
 }
 
-fn new_state(origin: String, secure_cookie: bool) -> WebState {
+#[cfg_attr(all(feature = "native", desktop), allow(dead_code))]
+fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
+    let index = dist.join("index.html");
+    let pages = Router::new().fallback(get(move |request: Request| {
+        let index = index.clone();
+        async move {
+            if !is_page_navigation(&request) {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            match tokio::fs::read_to_string(index).await {
+                Ok(html) => ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response(),
+                Err(_) => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+    }));
+    let assets = Router::new().fallback_service(ServeDir::new(dist).fallback(pages));
+    router_with_assets(state, assets, Router::new())
+}
+
+fn new_state(desktop_origin: Option<String>) -> WebState {
     WebState {
-        origin,
-        secure_cookie,
+        desktop_origin,
         sessions: Mutex::new(HashMap::new()),
         desktop: None,
         session_dir: None,
@@ -846,7 +875,7 @@ pub async fn start_desktop(
         None
     };
     let origin = format!("http://{address}");
-    let url = format!("{origin}/#/");
+    let url = format!("{origin}/");
     let shared_client = Arc::new(tokio::sync::Mutex::new(client));
     let assets_app = app.clone();
     let assets = Router::new().fallback(get(move |request: Request| {
@@ -854,16 +883,19 @@ pub async fn start_desktop(
         async move {
             let path = request.uri().path();
             let asset_path = if path == "/" { "/index.html" } else { path };
-            let Some(asset) = app.asset_resolver().get(asset_path.to_owned()) else {
+            let resolver = app.asset_resolver();
+            let asset = resolver.get(asset_path.to_owned());
+            let is_index = asset_path == "/index.html" || (asset.is_none() && is_page_navigation(&request));
+            let asset = if is_index { resolver.get("/index.html".to_owned()) } else { asset };
+            let Some(asset) = asset else {
                 return StatusCode::NOT_FOUND.into_response();
             };
-            let bytes = if asset_path == "/index.html" {
+            if is_index {
                 let html = String::from_utf8_lossy(&asset.bytes);
-                html.replacen("<head>", "<head><meta name=\"coolapk-desktop-web\">", 1).into_bytes()
-            } else {
-                asset.bytes
-            };
-            ([(header::CONTENT_TYPE, asset.mime_type)], bytes).into_response()
+                let html = html.replacen("<head>", "<head><meta name=\"coolapk-desktop-web\">", 1);
+                return ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response();
+            }
+            ([(header::CONTENT_TYPE, asset.mime_type)], asset.bytes).into_response()
         }
     }));
     let drafts = Router::new().route(
@@ -872,7 +904,7 @@ pub async fn start_desktop(
             .layer(DefaultBodyLimit::max(384 * 1024 * 1024)),
     );
     let router_for = |origin| {
-        let mut state = new_state(origin, false);
+        let mut state = new_state(Some(origin));
         state.desktop = Some(Arc::clone(&shared_client));
         router_with_assets(Arc::new(state), assets.clone(), drafts.clone())
     };
@@ -887,7 +919,7 @@ pub async fn start_desktop(
     let local = serve(listener, router_for(origin), stopped.clone());
     let (lan_url, lan) = if let Some(listener) = lan_listener {
         let origin = format!("http://{}", listener.local_addr().map_err(|err| err.to_string())?);
-        let lan_url = format!("{origin}/#/");
+        let lan_url = format!("{origin}/");
         (Some(lan_url), Some(serve(listener, router_for(origin), stopped)))
     } else {
         (None, None)
@@ -950,70 +982,19 @@ pub async fn run() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "127.0.0.1:17521".into())
         .parse()
         .context("COOLAPK_WEB_BIND 无效")?;
-    let origin = std::env::var("COOLAPK_WEB_ORIGIN").unwrap_or_else(|_| format!("http://{bind}"));
-    let url = reqwest::Url::parse(&origin).context("COOLAPK_WEB_ORIGIN 无效")?;
-    ensure!(
-        url.origin().ascii_serialization() == origin,
-        "COOLAPK_WEB_ORIGIN 必须是站点源，不能包含路径"
-    );
-    let secure_cookie = url.scheme() == "https";
-    let local_origin = url
-        .host_str()
-        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
-    let allow_local_container =
-        std::env::var("COOLAPK_WEB_ALLOW_LOCAL_CONTAINER").as_deref() == Ok("1");
-    ensure!(
-        secure_cookie
-            || (url.scheme() == "http"
-                && local_origin
-                && (bind.ip().is_loopback() || allow_local_container)),
-        "非本机访问需要 HTTPS"
-    );
     let dist =
         PathBuf::from(std::env::var_os("COOLAPK_WEB_DIST").unwrap_or_else(|| "dist-web".into()));
     ensure!(
         dist.join("index.html").is_file(),
         "找不到 Web 构建产物，请先执行 npm run build:web"
     );
-    let mut state = new_state(origin, secure_cookie);
+    let mut state = new_state(None);
     if let Some(dir) = std::env::var_os("COOLAPK_WEB_DATA_DIR").map(PathBuf::from) {
         std::fs::create_dir_all(&dir).context("无法创建 Web 会话目录")?;
         state.session_dir = Some(dir);
     }
     let state = Arc::new(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    let cleanup_state = Arc::downgrade(&state);
-    tokio::spawn(async move {
-        let mut timer = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            timer.tick().await;
-            let Some(state) = cleanup_state.upgrade() else {
-                break;
-            };
-            state
-                .sessions
-                .lock()
-                .expect("web sessions lock")
-                .retain(|_, entry| entry.last_seen.elapsed() < SESSION_TTL);
-            if let Some(dir) = &state.session_dir
-                && let Ok(entries) = std::fs::read_dir(dir)
-            {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "json")
-                        && path.file_stem().and_then(|name| name.to_str()).is_some_and(|key| {
-                            key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
-                        })
-                        && entry.metadata().and_then(|metadata| metadata.modified()).is_ok_and(|time| {
-                            time.elapsed().is_ok_and(|age| age >= SESSION_TTL + Duration::from_secs(60))
-                        })
-                    {
-                        let _ = std::fs::remove_file(path);
-                    }
-                }
-            }
-        }
-    });
     println!("Coolapk Web listening on {bind}");
     axum::serve(listener, router(state, dist)).await?;
     Ok(())
@@ -1024,10 +1005,11 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
+    const ORIGIN: &str = "https://coolapk.example";
+
     fn state() -> Arc<WebState> {
         Arc::new(WebState {
-            origin: "https://coolapk.example".into(),
-            secure_cookie: true,
+            desktop_origin: None,
             sessions: Mutex::new(HashMap::new()),
             desktop: None,
             session_dir: None,
@@ -1044,6 +1026,7 @@ mod tests {
             .oneshot(
                 Request::post(path)
                     .header(header::ORIGIN, origin)
+                    .header("sec-fetch-site", "same-origin")
                     .header(header::COOKIE, cookie)
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(args.to_string()))
@@ -1070,7 +1053,7 @@ mod tests {
     async fn public_media_does_not_wait_for_account_requests() {
         let state = state();
         let app = router(Arc::clone(&state), PathBuf::from("dist-web"));
-        let cookie = open_session(&app, &state.origin).await;
+        let cookie = open_session(&app, ORIGIN).await;
         let mut headers = HeaderMap::new();
         headers.insert(header::COOKIE, HeaderValue::from_str(&cookie).unwrap());
         let (session, _) = state.session(&headers, false).unwrap();
@@ -1081,7 +1064,7 @@ mod tests {
             post(
                 &app,
                 "/api/command/get_image_data_url",
-                &state.origin,
+                ORIGIN,
                 &cookie,
                 json!({"url":"https://example.invalid/image.png"}),
             ),
@@ -1108,21 +1091,21 @@ mod tests {
 
     #[tokio::test]
     async fn replaces_legacy_cookie_and_accepts_the_new_cookie_even_if_both_are_sent() {
-        let mut state = state();
-        Arc::get_mut(&mut state).unwrap().secure_cookie = false;
+        let state = state();
+        let origin = "http://127.0.0.1:17521";
         let app = router(Arc::clone(&state), PathBuf::from("dist-web"));
         let stale = format!("{SESSION_COOKIE}=stale");
         let rejected = post(
             &app,
             "/api/command/list_accounts",
-            &state.origin,
+            origin,
             &stale,
             json!({}),
         )
         .await;
         assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
 
-        let renewed = post(&app, "/api/session", &state.origin, &stale, json!({})).await;
+        let renewed = post(&app, "/api/session", origin, &stale, json!({})).await;
         assert_eq!(renewed.status(), StatusCode::NO_CONTENT);
         let mut cookies = renewed.headers().get_all(header::SET_COOKIE).iter();
         let fresh = cookies
@@ -1146,7 +1129,7 @@ mod tests {
         let recovered = post(
             &app,
             "/api/command/list_accounts",
-            &state.origin,
+            origin,
             &mixed,
             json!({}),
         )
@@ -1158,13 +1141,13 @@ mod tests {
     async fn accounts_are_scoped_to_the_browser_session() {
         let state = state();
         let app = router(Arc::clone(&state), PathBuf::from("dist-web"));
-        let a = open_session(&app, &state.origin).await;
-        let b = open_session(&app, &state.origin).await;
+        let a = open_session(&app, ORIGIN).await;
+        let b = open_session(&app, ORIGIN).await;
         assert_ne!(a, b);
         let guest = post(
             &app,
             "/api/command/check_login_status",
-            &state.origin,
+            ORIGIN,
             &b,
             json!({}),
         )
@@ -1190,7 +1173,7 @@ mod tests {
             let response = post(
                 &app,
                 "/api/command/list_accounts",
-                &state.origin,
+                ORIGIN,
                 cookie,
                 json!({}),
             )
@@ -1211,8 +1194,14 @@ mod tests {
         let state = state();
         let app = router(Arc::clone(&state), PathBuf::from("dist-web"));
         assert_eq!(
-            post(&app, "/api/session", "https://wrong.example", "", json!({}))
+            app.clone()
+                .oneshot(Request::post("/api/session")
+                    .header(header::ORIGIN, "https://wrong.example")
+                    .header("sec-fetch-site", "cross-site")
+                    .body(Body::empty())
+                    .unwrap())
                 .await
+                .unwrap()
                 .status(),
             StatusCode::FORBIDDEN
         );
@@ -1220,7 +1209,7 @@ mod tests {
             post(
                 &app,
                 "/api/command/list_accounts",
-                &state.origin,
+                ORIGIN,
                 "",
                 json!({})
             )
@@ -1228,7 +1217,7 @@ mod tests {
             .status(),
             StatusCode::UNAUTHORIZED
         );
-        let cookie = open_session(&app, &state.origin).await;
+        let cookie = open_session(&app, ORIGIN).await;
         for (name, args) in [
             ("get_user_cookie", json!({})),
             ("set_network_proxy", json!({})),
@@ -1246,7 +1235,7 @@ mod tests {
             let response = post(
                 &app,
                 &format!("/api/command/{name}"),
-                &state.origin,
+                ORIGIN,
                 &cookie,
                 args,
             )

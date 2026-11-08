@@ -1220,7 +1220,7 @@ function sendMessage() {
     showToast('暂时无法获取该用户 UID', 'error');
     return;
   }
-  window.location.hash = `#/messages?uid=${encodeURIComponent(uid)}&open=${Date.now()}`;
+  void router.push({ path: '/messages', query: { uid, open: String(Date.now()) } });
 }
 
 async function showUserQr() {

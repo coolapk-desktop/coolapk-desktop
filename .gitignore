@@ -17,6 +17,7 @@ src-tauri/icons/Square*Logo.png
 src-tauri/icons/StoreLogo.png
 
 # Credentials and local state
+/data/web/
 .env
 .env.*
 !.env.example
