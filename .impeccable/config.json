@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-11-03T01:24:34.676Z",
         "reason": "Codex review: existing .notify-card.unread border marks unread notifications; preserve the established notification state indicator during issue 36 fixes"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/App.vue"
+        ],
+        "createdAt": "2026-11-09T09:52:55.822Z",
+        "reason": "Agent: .startup-update-notes blockquote marks quoted Markdown release notes; this is a quotation marker. Git blame traces the style to 628c308e."
       }
     ]
   }

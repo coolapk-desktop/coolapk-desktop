@@ -7,10 +7,12 @@ import { useNotificationStore } from '../../stores/notifications';
 import { useAppStore } from '../../stores/app';
 
 const mocks = vi.hoisted(() => ({ notifications: vi.fn(), feedFullText: vi.fn(), reply: vi.fn(), likeReply: vi.fn(), unlikeReply: vi.fn(), unlikeFeed: vi.fn(), likeFeed: vi.fn(), openFeed: vi.fn(), push: vi.fn(), anchor: vi.fn(), clear: vi.fn(), deleteAll: vi.fn(), confirm: vi.fn(), report: vi.fn(), read: vi.fn(), count: vi.fn(), toast: vi.fn() }));
+const openUrl = vi.hoisted(() => vi.fn());
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }), useRouter: () => ({ push: mocks.push }) }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: {
   getNotifications: mocks.notifications, getReplyDetail: mocks.reply, clearNotificationCount: mocks.clear, deleteAllNotifications: mocks.deleteAll, reportNotificationClick: mocks.report, readNotification: mocks.read, getNotificationCount: mocks.count,
   likeFeed: mocks.likeFeed, likeReply: mocks.likeReply, unlikeReply: mocks.unlikeReply, unlikeFeed: mocks.unlikeFeed,
+  openUrl,
 } }));
 vi.mock('../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: true, user: { uid: 'notification-test' } }) }));
 vi.mock('../../utils/confirm', () => ({ requestConfirmation: mocks.confirm }));
@@ -367,6 +369,23 @@ describe('通知评论点击入口', () => {
       expect(mocks.push).not.toHaveBeenCalled();
       expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
       expect(store.unreadCount).toBe(1);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('外链打开失败时保留未读，打开成功后才上报已读', async () => {
+    const url = 'https://account.coolapk.com/account/settings?notificationV18Id=777&notificationV18Type=feedlike';
+    openUrl.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const wrapper = await mountPage({ id: 'external', message: '账户通知', isnew: 1, url });
+    try {
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(openUrl).toHaveBeenCalledWith(url);
+      expect(mocks.read).not.toHaveBeenCalled();
+      expect(wrapper.find('.notify-card.unread').exists()).toBe(true);
+
+      await wrapper.get('.notify-message').trigger('click');
+      await flushPromises();
+      expect(mocks.read).toHaveBeenCalledWith('777', 'feedlike');
     } finally { wrapper.unmount(); }
   });
 

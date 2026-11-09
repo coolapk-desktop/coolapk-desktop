@@ -343,10 +343,11 @@ import { getNotificationActor } from '../../utils/notificationItem';
 import { markNotificationRead } from '../../utils/notificationRead';
 import { getNotificationExternalUrl, getNotificationFeedId, resolveNotificationTargetRoute } from '../../utils/notificationNavigation';
 import { syncWindowsNotificationIcons } from '../../utils/taskbarNotificationDot';
-import { openFeedDetail } from '../../utils/feedNavigation';
+import { showToast } from '../../utils/toast';
 import {
   canNavigateBack,
   canNavigateForward,
+  didNavigate,
   navigateBack,
   navigateForward,
 } from '../../utils/navigation';
@@ -755,42 +756,50 @@ function openNotificationCenter() {
 }
 
 async function openNotificationPreview(preview: NotificationPreview) {
-  // 先解析目标再置读：解析失败/跳转失败的通知不应被算作已读，也不能静默消失。
-  let navigate: (() => void) | null = null;
+  const viewerUid = authStore.user?.uid;
   const fromUid = String(preview.item.fromuid ?? preview.item.from_uid ?? '');
   const externalUrl = getNotificationExternalUrl(preview.item);
   const feedId = getNotificationFeedId(preview.item);
   try {
+    let target: Parameters<typeof router.push>[0] | null = null;
     if (/^\d+$/.test(fromUid) && Number(fromUid) < 9999 && preview.item.note_type) {
-      const noteType = String(preview.item.note_type);
-      navigate = () => { void router.push({ path: '/notifications', query: { noteType } }); };
+      target = { path: '/notifications', query: { noteType: String(preview.item.note_type) } };
     } else if (externalUrl) {
-      navigate = () => { void CoolapkTauriAPI.openUrl(externalUrl); };
+      if (!await CoolapkTauriAPI.openUrl(externalUrl)) throw new Error('链接打开失败');
     } else if (feedId) {
-      navigate = () => openFeedDetail(router, feedId, preview.item);
+      // 路由存在也可能对应已删除的动态，先确认接口还能返回详情。
+      const response = await CoolapkTauriAPI.getFeedDetail(feedId);
+      if (!response?.data) throw new Error('动态详情不可用');
+      if (authStore.user?.uid !== viewerUid) return;
+      appStore.setFeedDetailContext(feedId, preview.item);
+      target = `/feed/${feedId}`;
     } else {
-      const targetRoute = await resolveNotificationTargetRoute(
+      target = await resolveNotificationTargetRoute(
         preview.item,
         (name) => CoolapkTauriAPI.getProductDetailByName(name),
       );
-      const tab = preview.apiType;
-      navigate = targetRoute
-        ? () => { void router.push(targetRoute); }
-        : () => { void router.push({ path: '/notifications', query: { tab } }); };
+      if (!target) {
+        if (authStore.user?.uid === viewerUid) {
+          await router.push({ path: '/notifications', query: { tab: preview.apiType } });
+          isNotificationPopoverVisible.value = false;
+        }
+        return;
+      }
+    }
+    if (authStore.user?.uid !== viewerUid) return;
+    if (target) {
+      const failure = await router.push(target);
+      if (!didNavigate(failure)) throw failure;
     }
   } catch (error) {
     console.warn('打开通知失败:', error);
-    navigate = null;
-  }
-  if (!navigate) {
-    isNotificationPopoverVisible.value = false;
-    openNotificationCenter();
+    if (authStore.user?.uid === viewerUid) showToast('打开通知失败', 'error');
     return;
   }
-  markNotificationRead(preview.item, preview.category, authStore.user?.uid, true);
+  if (authStore.user?.uid !== viewerUid) return;
+  markNotificationRead(preview.item, preview.category, viewerUid, true);
   notificationPreviews.value = notificationPreviews.value.filter((item) => item.key !== preview.key);
   isNotificationPopoverVisible.value = false;
-  navigate();
 }
 
 function getNotificationPollIntervalMs(): number {

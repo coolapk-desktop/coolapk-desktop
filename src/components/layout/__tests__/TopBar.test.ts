@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
@@ -9,6 +9,11 @@ const state = vi.hoisted(() => ({
   history: {} as { back: string | null; forward: string | null },
   back: vi.fn(),
   forward: vi.fn(),
+  push: vi.fn(),
+  auth: { isLoggedIn: false, user: null as { uid: string } | null },
+  getNotifications: vi.fn(),
+  getFeedDetail: vi.fn(),
+  markRead: vi.fn(),
 }));
 
 vi.mock('vue-router', async (importOriginal) => {
@@ -18,13 +23,13 @@ vi.mock('vue-router', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof import('vue-router')>()),
     useRoute: () => state.route,
-    useRouter: () => ({ options: { history: { state: state.history } }, back: state.back, forward: state.forward, push: vi.fn(), replace: vi.fn() }),
+    useRouter: () => ({ options: { history: { state: state.history } }, back: state.back, forward: state.forward, push: state.push, replace: vi.fn() }),
   };
 });
-vi.mock('../../../stores/app', () => ({ useAppStore: () => ({ openSearch: vi.fn(), openPublish: vi.fn() }) }));
-vi.mock('../../../stores/auth', () => ({ useAuthStore: () => ({ isLoggedIn: false, user: null, openLoginModal: vi.fn(), logout: vi.fn() }) }));
+vi.mock('../../../stores/app', () => ({ useAppStore: () => ({ openSearch: vi.fn(), openPublish: vi.fn(), setFeedDetailContext: vi.fn() }) }));
+vi.mock('../../../stores/auth', () => ({ useAuthStore: () => state.auth }));
 vi.mock('../../../stores/notifications', () => ({
-  useNotificationStore: () => ({ notificationCount: 0, messageCount: 0, unreadCount: 0, categoryCounts: {}, notificationStateVersion: 0, reset: vi.fn(), applyServerResponse: vi.fn(), suppressMessageCount: vi.fn() }),
+  useNotificationStore: () => ({ notificationCount: Number(state.auth.isLoggedIn), messageCount: 0, unreadCount: 0, categoryCounts: { like: 1 }, notificationStateVersion: 0, reset: vi.fn(), applyServerResponse: vi.fn(), applyNotifyCount: vi.fn(), suppressMessageCount: vi.fn() }),
 }));
 vi.mock('../../../stores/pageTabs', () => ({ usePageTabsStore: () => ({ tabs: [] }) }));
 vi.mock('../../../stores/settings', () => ({
@@ -34,7 +39,8 @@ vi.mock('../../../stores/settings', () => ({
     setTheme: vi.fn(),
   }),
 }));
-vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: { getNotificationCount: vi.fn(), openUrl: vi.fn() } }));
+vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: { getNotificationCount: vi.fn(), openUrl: vi.fn(), getNotifications: state.getNotifications, getFeedDetail: state.getFeedDetail } }));
+vi.mock('../../../utils/notificationRead', () => ({ markNotificationRead: state.markRead }));
 vi.mock('../../../composables/useDesktopWindow', () => ({
   useDesktopWindow: () => ({ isMaximized: ref(false), usesMacOverlay: ref(false), showWindowControls: ref(false), minimize: vi.fn(), toggleMaximize: vi.fn(), close: vi.fn() }),
 }));
@@ -69,4 +75,39 @@ describe('顶部导航按钮状态', () => {
       expect(wrapper.get('[aria-label="后退"]').attributes('disabled')).toBeUndefined();
     } finally { wrapper.unmount(); }
   });
+});
+
+it('通知目标不可用时保留预览，重新打开成功后才置读', async () => {
+  setActivePinia(createPinia());
+  state.auth.isLoggedIn = true;
+  state.auth.user = { uid: '12345' };
+  const item = { id: '1', feedId: '42', fromuid: '12346' };
+  state.getNotifications.mockResolvedValue({ data: [item] });
+  state.getFeedDetail.mockRejectedValueOnce(new Error('动态已删除'));
+  const wrapper = mount(TopBar);
+  try {
+    await wrapper.get('.notification-wrapper').trigger('mouseenter');
+    await flushPromises();
+    await wrapper.get('.notification-preview-item').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.notification-preview-item').exists()).toBe(true);
+    expect(state.push).not.toHaveBeenCalled();
+    expect(state.markRead).not.toHaveBeenCalled();
+
+    state.getFeedDetail.mockResolvedValueOnce({ data: { id: '42' } });
+    let finishNavigation!: () => void;
+    state.push.mockImplementationOnce(() => new Promise<void>(resolve => { finishNavigation = resolve; }));
+    await wrapper.get('.notification-preview-item').trigger('click');
+    await flushPromises();
+    expect(state.push).toHaveBeenCalledWith('/feed/42');
+    expect(state.markRead).not.toHaveBeenCalled();
+    finishNavigation();
+    await flushPromises();
+    expect(state.markRead).toHaveBeenCalledWith(item, 'like', '12345', true);
+    expect(wrapper.find('.notification-preview-item').exists()).toBe(false);
+  } finally {
+    wrapper.unmount();
+    state.auth.isLoggedIn = false;
+    state.auth.user = null;
+  }
 });

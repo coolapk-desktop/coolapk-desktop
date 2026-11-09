@@ -92,6 +92,8 @@ export function getPageComponentKey(route: TabRoute, generation: number): string
   // 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁。
   if (route.path === '/topics') return `/topics:${generation}`;
   if (route.path === '/search') return getSearchPageComponentKey(route, generation);
+  // 设置页共用一个页签，但不同子页面分别保留滚动位置。
+  if (isSettingsPagePath(route.path)) return `${route.path}:${generation}`;
   return `${getPageInstanceKey(route)}:${generation}`;
 }
 

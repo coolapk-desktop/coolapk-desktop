@@ -79,7 +79,7 @@ describe('batch11：enqueue 匹配键与批量清理/重启/取消', () => {
     expect(store.isUpdateVersionDeleted('1.9.0')).toBe(true);
   });
 
-  it('restart 先删除原生断点文件（只传 partial），失败不阻塞重新排队', async () => {
+  it('restart 先删除原生断点文件，删除失败时保留原进度', async () => {
     // 让原生下载挂起，避免 enqueue 触发的 pump 在断言前把任务推进到 completed。
     mocks.startApkDownload.mockReturnValue(new Promise(() => {}));
     const store = useDownloadStore();
@@ -93,10 +93,21 @@ describe('batch11：enqueue 匹配键与批量清理/重启/取消', () => {
     await store.restart(task.id);
     // 只删断点：targetPath/publicPath 必须传空，避免误删已完成的安装包。
     expect(mocks.deleteApkDownloadFile).toHaveBeenCalledWith('', partialBefore, task.downloadDir, '');
-    // 删断点失败也要提示，且不阻塞排队。
     expect(mocks.showToast).toHaveBeenCalled();
-    // 重新排队后 pump 可能立即把它提升为 downloading；关键是进度与断点已清、不再是旧状态。
-    expect(['queued', 'downloading']).toContain(task.status);
+    expect(task.status).toBe('paused');
+    expect(task.downloaded).toBe(500);
+    expect(task.partialPath).toBe(partialBefore);
+  });
+
+  it('取消已暂停的下载时先删除断点，再清空进度', async () => {
+    const store = useDownloadStore();
+    const { task } = store.enqueue({ title: '暂停应用', packageName: 'com.demo.paused' });
+    task.status = 'paused';
+    task.partialPath = '/data/paused.apk.part';
+    task.downloaded = 500;
+    await store.cancel(task.id);
+    expect(mocks.deleteApkDownloadFile).toHaveBeenCalledWith('', '/data/paused.apk.part', task.downloadDir, '');
+    expect(task.status).toBe('canceled');
     expect(task.downloaded).toBe(0);
     expect(task.partialPath).toBe('');
   });

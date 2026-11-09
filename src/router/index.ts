@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory, createWebHistory, type RouteLocationNormalized } from 'vue-router';
 import { isWebBuild } from '../api/runtime';
 import HomePage from '../pages/HomePage.vue';
 import ProductSelectorPage from '../pages/ProductSelectorPage.vue';
@@ -85,7 +85,7 @@ const routes = [
   { path: '/games', name: 'Games', component: GamesPage },
   { path: '/downloads', name: 'Downloads', component: DownloadsPage },
   { path: '/topics', name: 'Topics', component: TopicsHubPage },
-  { path: '/favorites', name: 'Favorites', component: FavoritesPage },
+  { path: '/favorites', name: 'Favorites', component: FavoritesPage, props: (route: RouteLocationNormalized) => ({ collectionQuery: route.query }) },
   { path: '/collection/:collectionId', redirect: (to: any) => ({ path: '/favorites', query: { collectionId: to.params.collectionId } }) },
   { path: '/my-likes', name: 'MyLikes', component: MyLikesPage },
   { path: '/more', name: 'More', component: MorePage },

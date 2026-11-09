@@ -316,14 +316,13 @@ export const useAuthStore = defineStore('auth', () => {
       bio: data.bio || data.sign || data.user?.bio || ''
     };
 
-    user.value = profile;
-    isLoggedIn.value = true;
-    // 登录成功即换账号视角，先清掉上一个账号的用户资料缓存。
-    clearUserProfileCache();
-    localStorage.setItem('coolapk_user', JSON.stringify(profile));
-
     const tokenStr = `SESSID=${sessid}; uid=${uid}`;
     await CoolapkTauriAPI.saveCookie(tokenStr);
+    // 原生凭据保存成功后再切换前端账号及其缓存。
+    clearFrontendAuthState();
+    user.value = profile;
+    isLoggedIn.value = true;
+    localStorage.setItem('coolapk_user', JSON.stringify(profile));
     await saveProfileToAccounts(profile, tokenStr);
     rawCookie.value = '';
 
@@ -369,14 +368,12 @@ export const useAuthStore = defineStore('auth', () => {
       bio: data.bio || data.sign || data.user?.bio || ''
     };
 
-    user.value = profile;
-    isLoggedIn.value = true;
-    // 登录成功即换账号视角，先清掉上一个账号的用户资料缓存。
-    clearUserProfileCache();
-    localStorage.setItem('coolapk_user', JSON.stringify(profile));
-
     const tokenStr = `SESSID=${sessid}; uid=${uid}`;
     await CoolapkTauriAPI.saveCookie(tokenStr);
+    clearFrontendAuthState();
+    user.value = profile;
+    isLoggedIn.value = true;
+    localStorage.setItem('coolapk_user', JSON.stringify(profile));
     await saveProfileToAccounts(profile, tokenStr);
     rawCookie.value = '';
 

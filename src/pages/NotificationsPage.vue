@@ -132,6 +132,7 @@ import { getNotificationActionTarget, getNotificationActor, getNotificationImage
 import { isCoarsePointer, isTouchMobilePlatform } from '../utils/platform';
 import { renderCoolapkRichText, renderNotificationRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
+import { didNavigate } from '../utils/navigation';
 import { openFeedDetail } from '../utils/feedNavigation';
 import { getNotificationExternalUrl, getNotificationFeedId, getNotificationFeedTarget, getNotificationReplyId, getNotificationProductName, getNotificationTargetRoute, resolveNotificationTargetRoute } from '../utils/notificationNavigation';
 import { markNotificationRead } from '../utils/notificationRead';
@@ -630,34 +631,23 @@ async function ensureFeedOpenable(feedId: string): Promise<boolean> {
 async function openFeedAfterProbe(feedId: string, context?: any, replyId?: string): Promise<boolean> {
   if (!(await ensureFeedOpenable(feedId))) return false;
   // 按调用方参数转发，保持 openFeedDetail 的既有上下文缓存行为。
-  if (replyId !== undefined) openFeedDetail(router, feedId, context, replyId);
-  else if (context !== undefined) openFeedDetail(router, feedId, context);
-  else openFeedDetail(router, feedId);
-  return true;
+  if (replyId !== undefined) return didNavigate(await openFeedDetail(router, feedId, context, replyId));
+  if (context !== undefined) return didNavigate(await openFeedDetail(router, feedId, context));
+  return didNavigate(await openFeedDetail(router, feedId));
 }
 
 async function openNotificationTarget(item: any): Promise<boolean> {
   const externalUrl = getNotificationExternalUrl(item);
-  if (externalUrl) {
-    void CoolapkTauriAPI.openUrl(externalUrl);
-    return true;
-  }
+  if (externalUrl) return await CoolapkTauriAPI.openUrl(externalUrl);
   if (await openNotificationComment(item)) return true;
   const feedId = getNotificationFeedId(item);
   // 已知动态 ID 时以探活结果为准：目标已删除不得回落到其它入口置读。
   if (feedId) return await openFeedAfterProbe(feedId, item);
   const targetRoute = await resolveNotificationTarget(item);
-  if (targetRoute) {
-    void router.push(targetRoute);
-    return true;
-  }
+  if (targetRoute) return didNavigate(await router.push(targetRoute));
   // 活动/系统通知有时只在正文富文本里带唯一目标链接，可安全映射时才跳转。
   const bodyRoute = resolveNotificationBodyRoute(item);
-  if (bodyRoute) {
-    void router.push(bodyRoute);
-    return true;
-  }
-  return false;
+  return bodyRoute ? didNavigate(await router.push(bodyRoute)) : false;
 }
 
 /** 正文只含一个站内链接时返回其路由；多个链接无法判断意图，保持不跳转。 */
@@ -677,14 +667,16 @@ function resolveNotificationBodyRoute(item: any): string | null {
 }
 
 /** 打开通知目标；只有确实打开成功才置读，失败时保留未读并给出反馈。 */
-async function openNotificationTargetWithFeedback(item: any, href?: string): Promise<boolean> {
-  const opened = await openNotificationTarget(item).catch(() => false);
+async function completeNotificationOpen(item: any, open: () => Promise<boolean>, href?: string): Promise<void> {
+  const uid = authStore.user?.uid;
+  const category = getCurrentCategory();
+  const opened = await open().catch(() => false);
+  if (authStore.user?.uid !== uid) return;
   if (!opened) {
     reportNotificationUnopenable(item, href);
-    return false;
+    return;
   }
-  markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-  return true;
+  markNotificationRead(item, category, uid);
 }
 
 /** 解析失败或没有目标时保留未读，并给出明确反馈；通知带链接时可一键复制。 */
@@ -839,28 +831,18 @@ async function handleNotifyClick(e: Event, item: any) {
   // 正文链接只打开其自身；空白正文点击才进入通知所属动态和评论。
   // 置读必须发生在确认能打开目标之后，无法打开的通知保留未读。
   if (!anchor?.href || !href || href === '#' || /^javascript:/i.test(href.trim())) {
-    await openNotificationTargetWithFeedback(item);
+    await completeNotificationOpen(item, () => openNotificationTarget(item));
     return;
   }
   // 使用链接自身的动态 ID，避免把所属通知的评论定位带到分享链接上。
   const feedRoute = normalizeCoolapkRoute(href);
   const linkedFeedId = feedRoute?.match(/^\/feed\/(\d+)(?:\?|$)/)?.[1];
   if (linkedFeedId) {
-    // 先探活再置读：动态被删/被屏蔽时保留未读，并复用「可复制链接」提示范式。
-    if (await openFeedAfterProbe(linkedFeedId)) {
-      markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    } else {
-      reportNotificationUnopenable(item, href);
-    }
+    await completeNotificationOpen(item, () => openFeedAfterProbe(linkedFeedId), href);
     return;
   }
   if (/(?:\/feed\/reply\/\d+|\/reply\/\d+)/i.test(href)) {
-    // 评论链接同样先解析并确认目标动态存在，才上报服务端已读。
-    if (await openNotificationComment(item, href)) {
-      markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    } else {
-      reportNotificationUnopenable(item, href);
-    }
+    await completeNotificationOpen(item, () => openNotificationComment(item, href), href);
     return;
   }
   const notification = {
@@ -871,25 +853,15 @@ async function handleNotifyClick(e: Event, item: any) {
   e.preventDefault();
   // 系统账号安全通知有时把“点击查看”渲染为普通 /u/:uid 链接。
   // 不能让该链接先走用户页路由，否则会落到“用户资料加载失败”。
-  const externalUrl = getNotificationExternalUrl(notification);
-  if (externalUrl) {
-    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    void CoolapkTauriAPI.openUrl(externalUrl);
-    return;
-  }
-  const targetRoute = await resolveNotificationTarget(notification);
-  if (targetRoute) {
-    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    void router.push(targetRoute);
-    return;
-  }
-  // 链接能交给统一入口处理时才算打开了目标。
-  if (!getNotificationProductName(notification)) {
-    markNotificationRead(item, getCurrentCategory(), authStore.user?.uid);
-    handleAnchorClick(e);
-    return;
-  }
-  reportNotificationUnopenable(notification, href);
+  await completeNotificationOpen(item, async () => {
+    const externalUrl = getNotificationExternalUrl(notification);
+    if (externalUrl) return await CoolapkTauriAPI.openUrl(externalUrl);
+    const targetRoute = await resolveNotificationTarget(notification);
+    if (targetRoute) return didNavigate(await router.push(targetRoute));
+    if (getNotificationProductName(notification)) return false;
+    const result = await handleAnchorClick(e);
+    return typeof result === 'boolean' ? result : didNavigate(result);
+  }, href);
 }
 
 onActivated(() => {

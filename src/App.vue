@@ -164,7 +164,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import EquipmentProductPicker from './components/profile/EquipmentProductPicker.vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from 'vue-router';
 import { listen } from '@tauri-apps/api/event';
 import { isWebBuild } from './api/runtime';
 import AppShell from './components/layout/AppShell.vue';
@@ -213,7 +213,7 @@ import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
 
 const { isSidebarTransitionActive, resetSidebarTransition } = useSidebarTransition();
 
-function getRouteKey(route: any): string {
+function getRouteKey(route: RouteLocationNormalizedLoaded): string {
   // 组件 key 与「页面身份」对齐：同一实体的临时 query（排序、筛选、定位、标题）不再各自占用
   // keep-alive 槽位，否则长浏览后缓存被挤出，返回时滚动位置与已加载分页一起丢失。
   // /topics 仍单实例常驻，/search 仍按「搜索词 + 搜索范围」复用实例，Ctrl+R 代数仍生效。
@@ -285,7 +285,7 @@ let downloadToastHintShown = false;
 // 下载中心里更新包镜像记录是「用户还想要这个更新包」的单一真值：
 // 记录被用户删除（单条删除 / 批量删除记录）时，更新器必须同步放弃，
 // 不能等下载完成后再弹安装窗或写入待安装键（下次启动又会弹）。
-// 注意 restorePendingUpdate 从待安装键恢复时不经过镜像记录，不设置该跟踪值。
+// 启动恢复时也关联已有镜像，旧版本留下的无镜像待安装包仍可安装。
 const trackedUpdateMirrorVersion = ref('');
 // 「被跟踪版本的镜像记录是否仍存在」写成一个 computed，由一个常驻 watcher 观察：
 // 若在 watcher 回调里再新建 watcher，每次版本变化都会留下一个不会销毁的监听器。
@@ -712,6 +712,12 @@ async function restorePendingUpdate(): Promise<boolean> {
     }
     const releaseNotes = typeof pending.releaseNotes === 'string' ? pending.releaseNotes.trim() : '';
     if (!isVersionAllowedInChannel(version, settingsStore.settings.updateChannel)) return false;
+    if (downloadStore.isUpdateVersionDeleted(version) || downloadStore.isUpdateVersionDeleted(`v${version}`)) {
+      await clearInvalidPending();
+      return false;
+    }
+    const mirror = downloadStore.tasks.find((task) => isUpdateTask(task) && normalizeVersion(task.versionName || '') === version);
+    trackedUpdateMirrorVersion.value = mirror?.versionName || '';
     readyInfo.value = { version, path, fileName, packageType, releaseNotes };
     readyUpdateVisible.value = true;
     try {

@@ -13,48 +13,40 @@ import { openFeedDetail } from './feedNavigation';
  */
 export function handleAnchorClick(e: Event, feedId?: string | number) {
   const anchor = (e.target as HTMLElement).closest('a');
-  if (!anchor) return;
+  if (!anchor) return false;
   const href = anchor.getAttribute('href') || '';
   const text = anchor.textContent?.trim() || '';
   e.preventDefault();
 
   if (text.includes('查看更多') || !href || href === '#' || /^javascript:/i.test(href.trim())) {
     const targetId = feedId || href.match(/\d+/)?.[0];
-    if (targetId) {
-      openFeedDetail(router, targetId);
-    }
-    return;
+    return targetId ? openFeedDetail(router, targetId) : false;
   }
 
   // 显式协议仅允许正常网页和系统链接，禁止执行脚本或打开本地文件。
   const scheme = href.trim().match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
-  if (scheme && !['http', 'https', 'mailto', 'tel', 'coolmarket'].includes(scheme)) return;
+  if (scheme && !['http', 'https', 'mailto', 'tel', 'coolmarket'].includes(scheme)) return false;
   const feedMatch = href.match(/^\/feed\/(\d+)/);
   if (feedMatch?.[1]) {
-    openFeedDetail(router, feedMatch[1]);
-    return;
+    return openFeedDetail(router, feedMatch[1]);
   }
 
   if (getCoolapkUserLinkName(href)) {
-    void CoolapkTauriAPI.openUrl(new URL(href, 'https://www.coolapk.com').href, 'internal');
-    return;
+    return CoolapkTauriAPI.openUrl(new URL(href, 'https://www.coolapk.com').href, 'internal');
   }
 
   const normalizedRoute = normalizeCoolapkRoute(href);
   if (normalizedRoute && router.resolve(normalizedRoute).matched.length) {
-    void router.push(normalizedRoute);
-    return;
+    return router.push(normalizedRoute);
   }
 
   if (href.startsWith('/') && !href.startsWith('//')) {
     const target = !/^\/feed\//i.test(href) ? href : '';
     if (target && router.resolve(target).matched.length) {
-      router.push(target);
-      return;
+      return router.push(target);
     }
-    CoolapkTauriAPI.openUrl(`https://www.coolapk.com${href}`);
-    return;
+    return CoolapkTauriAPI.openUrl(`https://www.coolapk.com${href}`);
   }
 
-  CoolapkTauriAPI.openUrl(href.startsWith('//') ? href : anchor.href, useSettingsStore().settings.externalLinkMode);
+  return CoolapkTauriAPI.openUrl(href.startsWith('//') ? href : anchor.href, useSettingsStore().settings.externalLinkMode);
 }

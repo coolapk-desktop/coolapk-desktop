@@ -674,7 +674,9 @@ import {
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
-const ownerRoutePath = route.fullPath;
+const props = defineProps<{ collectionQuery?: typeof route.query }>();
+// RouterView 只更新当前实例的参数，后台收藏页继续保留各自的内容和阅读位置。
+const collectionQuery = computed(() => props.collectionQuery ?? (route.path === '/favorites' ? route.query : {}));
 
 const favoriteExportOpen = ref(false);
 // 本次导出来源列表：列表页「导出收藏」传全部，详情页「导出此收藏单」只传当前收藏单，二者互不污染。
@@ -1268,7 +1270,8 @@ async function deleteCollection(collection: any) {
     collections.value = collections.value.filter(item => collectionId(item) !== id);
     if (activeCollectionId.value === id) {
       resetCollectionState();
-      if (route.fullPath === ownerRoutePath) backToCollections();
+      const currentId = route.query.collectionId;
+      if (route.path === '/favorites' && (Array.isArray(currentId) ? currentId[0] : currentId) === id) backToCollections();
     }
     showToast('收藏单已删除', 'success');
   } catch (err) {
@@ -1421,15 +1424,17 @@ function resetCollectionState() {
 }
 
 watch(
-  () => route.fullPath,
-  (path) => {
-    // 缓存页仍能看到全局路由变化，只处理当前实例对应的地址。
-    if (path !== ownerRoutePath) return;
-    const value = route.query.collectionId;
+  collectionQuery,
+  (query) => {
+    const value = query.collectionId;
     const collectionIdValue = Array.isArray(value) ? value[0] : value;
-    if (!collectionIdValue || activeCollectionId.value === String(collectionIdValue)) return;
+    if (!collectionIdValue) {
+      if (activeCollectionId.value) resetCollectionState();
+      return;
+    }
+    if (activeCollectionId.value === String(collectionIdValue)) return;
 
-    const titleValue = route.query.collectionTitle;
+    const titleValue = query.collectionTitle;
     const collectionTitle = Array.isArray(titleValue) ? titleValue[0] : titleValue;
     const source = collections.value.find(item => collectionId(item) === String(collectionIdValue)) || {
       id: String(collectionIdValue),

@@ -71,18 +71,12 @@ const FavoriteExportDialogStub = {
 
 /** 条件等待用的超时预算：慢机器/并发跑时固定 tick 次数不够。 */
 const WAIT = { timeout: 15000, interval: 25 };
-// 暂时停用（2026-11-09）：main 的 14e3d55 给收藏页加了 ownerRoutePath 守卫
-// （watch route.fullPath，且只处理 path === 挂载时快照 的情况），导致同一实例内的
-// 「点收藏单卡片 / 点返回收藏单列表」不再生效（进入 A 后 fullPath 已不等于快照）。
-// 已向上游提 issue 并附复现；这些用例在该行为确定后再启用，避免用测试锁死一个错误行为。
 // CI 上的单测机器明显更慢（要多次挂载/切换），整文件放宽用例超时，
 // 避免 waitFor 预算与用例默认 5s 互相顶死。
 vi.setConfig({ testTimeout: 60000, hookTimeout: 30000 });
 
 /**
- * 挂载页面。collectionId 必须在 mount 之前写进 route.query：
- * 组件对 route.query 的 watch 带 immediate，挂载时直接按当前 query 进入详情，
- * 不依赖挂载后再改 query 能触发响应式更新（CI 上不可靠，见下）。
+ * 需要直接进入详情时，在挂载前传入收藏单查询参数。
  */
 async function mountPage(query: Record<string, string> = { collectionId: '', collectionTitle: '' }) {
   mocks.route.query = { ...query };
@@ -243,9 +237,14 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     wrapper.unmount();
   });
 
-  it.skip('点击「取消」退出多选并清空选择；切换收藏单/刷新同样清空多选状态', async () => {
-    mocks.getCollectionList.mockResolvedValue({
-      data: [collection, { id: 'B', title: '收藏单B', itemNum: 2, uid: '10001' }],
+  it('点击「取消」退出多选并清空选择；切换收藏单/刷新同样清空多选状态', async () => {
+    mocks.getCollectionList.mockImplementation(async (_uid, page) => ({
+      data: page === 1 ? [collection, { id: 'B', title: '收藏单B', itemNum: 2, uid: '10001' }] : [],
+    }));
+    mocks.getCollectionItemList.mockResolvedValue({ data: items(['f1', 'f2', 'f3']) });
+    mocks.router.push.mockImplementation(async ({ path, query }) => {
+      mocks.route.path = path;
+      mocks.route.query = query;
     });
     // 从列表点收藏单进入详情：切换收藏单也走同一条页面内路径，
     // 不依赖「挂载后改 route.query 能否触发响应式更新」。

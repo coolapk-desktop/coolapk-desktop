@@ -7,9 +7,9 @@ export function openFeedDetail(
   feedId: string | number,
   context?: any,
   replyId?: string
-): void {
+) {
   const id = String(feedId || '').trim();
   if (!id) return;
   if (context) useAppStore().setFeedDetailContext(id, context);
-  void router.push(replyId ? { path: `/feed/${id}`, query: { replyId } } : `/feed/${id}`);
+  return router.push(replyId ? { path: `/feed/${id}`, query: { replyId } } : `/feed/${id}`);
 }

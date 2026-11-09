@@ -337,6 +337,22 @@ describe('桌面自动更新交互', () => {
     expect(localStorage.getItem('coolapk_pending_update')).toBeNull();
   });
 
+  it('重启恢复后删除更新记录，同步清理待安装包', async () => {
+    const fileName = 'coolapk-desktop_9.9.9_aarch64.dmg';
+    const path = `/cache/${fileName}`;
+    mocks.storeTasks = reactive([{ id: 'restored-update', kind: 'update', versionName: 'v9.9.9' }]);
+    localStorage.setItem('coolapk_pending_update', JSON.stringify({ version: '9.9.9', path, fileName, packageType: 'installer' }));
+    wrapper = mountApp();
+    await flushPromises();
+    expect(wrapper.text()).toContain('更新包已下载');
+    mocks.cleanup.mockClear();
+    mocks.storeTasks.splice(0);
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('更新包已下载');
+    expect(localStorage.getItem('coolapk_pending_update')).toBeNull();
+    expect(mocks.cleanup).toHaveBeenCalledWith();
+  });
+
   it('下载途中关闭测试渠道后，不保存测试包并重新检查正式版', async () => {
     let finishDownload!: (path: string) => void;
     mocks.downloadUpdate.mockImplementation(() => new Promise<string>((resolve) => { finishDownload = resolve; }));

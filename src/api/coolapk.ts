@@ -14,6 +14,7 @@ import { getOriginalImageUrl } from '../utils/image';
 import { getMemoryCachedResourceSync, retainResourceUrl } from '../utils/resourceCache';
 import { invalidateFeedFullText } from '../utils/feedFullTextCache';
 import { useSettingsStore } from '../stores/settings';
+import { didNavigate } from '../utils/navigation';
 
 function tauriInvokeAvailable(): boolean {
   return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
@@ -39,7 +40,7 @@ async function safeFetchOnce(pythonEndpoint: string, tauriCmd: string, tauriArgs
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1500);
-    
+
     const resp = await fetch(`http://127.0.0.1:8080/api${pythonEndpoint}`, {
       signal: controller.signal
     });
@@ -1605,8 +1606,7 @@ export class CoolapkTauriAPI {
             showToast(`未找到用户「${username}」，请在用户搜索中确认。`, 'warning');
             return false;
           }
-          await router.push(`/user/${normalizeUserUid(user.uid)}`);
-          return true;
+          return didNavigate(await router.push(`/user/${normalizeUserUid(user.uid)}`));
         } catch {
           showToast('用户主页打开失败，请稍后重试。', 'error');
           return false;
@@ -1616,14 +1616,12 @@ export class CoolapkTauriAPI {
       // 等酷安内容降级成抓取后的纯文本网页。
       const nativeRoute = normalizeCoolapkRoute(url);
       if (nativeRoute && router.resolve(nativeRoute).matched.length > 0) {
-        await router.push(nativeRoute);
-        return true;
+        return didNavigate(await router.push(nativeRoute));
       }
 
       // 未适配的酷安网页仍可在应用内查看。
       if (!isWebBuild && /^https?:\/\//i.test(url)) {
-        await router.push({ path: '/external', query: { url } });
-        return true;
+        return didNavigate(await router.push({ path: '/external', query: { url } }));
       }
     }
     if (isWebBuild) {

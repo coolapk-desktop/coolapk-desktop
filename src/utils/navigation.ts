@@ -1,4 +1,9 @@
-import type { Router } from 'vue-router';
+import { isNavigationFailure, NavigationFailureType, type NavigationFailure, type Router } from 'vue-router';
+
+/** 目标已经显示时，重复导航也视为打开成功。 */
+export function didNavigate(failure: NavigationFailure | void): boolean {
+  return !failure || isNavigationFailure(failure, NavigationFailureType.duplicated);
+}
 
 /** 当前是否存在应用内上一页。 */
 export function canNavigateBack(router: Router): boolean {

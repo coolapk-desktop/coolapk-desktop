@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { computed, defineComponent, h, KeepAlive } from 'vue';
@@ -7,6 +5,7 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getKeepAliveMax, getPageComponentKey } from '../utils/pageTabs';
 import { usePageTabsStore } from '../stores/pageTabs';
+import appSource from '../App.vue?raw';
 
 /**
  * App.vue 的 keep-alive 接线：槽位跟随页签增长，组件 key 按页面实例身份生成。
@@ -86,10 +85,9 @@ describe('App keep-alive 槽位', () => {
   });
 
   it('App.vue 使用随页签增长的缓存上限和页面实例 key', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8');
-    expect(source).toContain(':max="keepAliveMax"');
-    expect(source).not.toContain(':max="15"');
-    expect(source).toContain('getKeepAliveMax(pageTabsStore.tabs.length)');
-    expect(source).toContain('getPageComponentKey(route, pageTabsStore.getGeneration(route))');
+    expect(appSource).toContain(':max="keepAliveMax"');
+    expect(appSource).not.toContain(':max="15"');
+    expect(appSource).toContain('getKeepAliveMax(pageTabsStore.tabs.length)');
+    expect(appSource).toContain('getPageComponentKey(route, pageTabsStore.getGeneration(route))');
   });
 });

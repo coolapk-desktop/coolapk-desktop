@@ -70,6 +70,24 @@ describe('auth 清理覆盖层注册表（切号/登出防串号）', () => {
     expect(getFeedFavoriteState('f1')?.favnum).toBeUndefined();
   });
 
+  it.each([
+    ['loginWithAccount', 'loginByAccount', 'account'],
+    ['loginWithMobile', 'loginByMobile', '13800138000'],
+  ] as const)('%s 换号时清理旧账号覆盖层', async (login, request, account) => {
+    const store = useAuthStore();
+    store.user = { uid: 'u1', username: '账号A' } as any;
+    store.isLoggedIn = true;
+    seedOverlays();
+    vi.spyOn(CoolapkTauriAPI, request).mockResolvedValue({ data: { uid: 'u2', sessid: 'session' } });
+    vi.spyOn(CoolapkTauriAPI, 'saveCookie').mockResolvedValue(undefined as any);
+    vi.spyOn(CoolapkTauriAPI, 'saveAccount').mockResolvedValue(undefined as any);
+    vi.spyOn(CoolapkTauriAPI, 'listAccounts').mockResolvedValue({ code: 200, data: [] });
+    await store[login](account, '123456');
+    expect(store.user?.uid).toBe('u2');
+    expect(getFeedFavoriteState('f1')).toBeUndefined();
+    expect(getGoodsRowState('g1')).toBeUndefined();
+  });
+
   it('loginAs 失败（凭据无效）时不误清前端状态', async () => {
     seedOverlays();
     const store = useAuthStore();

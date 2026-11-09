@@ -143,6 +143,7 @@ function buildFileName(options: {
 export const useDownloadStore = defineStore('downloads', () => {
   const tasks = ref<DownloadTask[]>(readTasks());
   const runningIds = new Set<string>();
+  const partialCleanupIds = new Set<string>();
   let initialized = false;
   let eventUnlisten: UnlistenFn | null = null;
   let saveErrorUnlisten: UnlistenFn | null = null;
@@ -384,7 +385,7 @@ export const useDownloadStore = defineStore('downloads', () => {
       : 3;
     while (runningIds.size < limit) {
       // 更新包由 App.vue 的更新器驱动（Rust 侧独立命令），不走 apk 原生下载队列。
-      const task = tasks.value.find((item) => item.status === 'queued' && !isUpdateTask(item) && !runningIds.has(item.id));
+      const task = tasks.value.find((item) => item.status === 'queued' && !isUpdateTask(item) && !runningIds.has(item.id) && !partialCleanupIds.has(item.id));
       if (!task) break;
       runningIds.add(task.id);
       patchTask(task.id, { status: 'downloading', error: '' });
@@ -534,7 +535,7 @@ export const useDownloadStore = defineStore('downloads', () => {
   async function resume(taskId: string) {
     const task = findTask(taskId);
     // 更新包的重试通过 coolapk:retry-update 事件交给 App.vue 重新发起下载，不进 apk 队列。
-    if (!task || isUpdateTask(task) || !['paused', 'failed', 'canceled'].includes(task.status)) return;
+    if (!task || isUpdateTask(task) || partialCleanupIds.has(taskId) || !['paused', 'failed', 'canceled'].includes(task.status)) return;
     patchTask(taskId, { status: 'queued', error: '', speed: 0 });
     await pump();
   }
@@ -543,18 +544,25 @@ export const useDownloadStore = defineStore('downloads', () => {
   async function restart(taskId: string) {
     const task = findTask(taskId);
     if (!task || isUpdateTask(task) || !['paused', 'failed', 'canceled'].includes(task.status)) return;
-    // 语义是「从头下载」，必须先删原生 .part 断点文件，否则原生续传会从旧进度继续，
-    // 与注释承诺不符。只删断点（partial），targetPath/publicPath 留空避免误删已完成的安装包。
-    if (task.partialPath) {
-      try {
-        await CoolapkTauriAPI.deleteApkDownloadFile('', task.partialPath, task.downloadDir, '');
-      } catch (error) {
-        // 删断点失败不阻塞重新排队，但必须让用户知道可能从旧断点继续而不是真正从头。
-        showToast(`删除断点文件失败，可能从旧进度继续下载：${error instanceof Error ? error.message : String(error)}`, 'error');
-      }
-    }
+    if (!await deletePartial(task)) return;
     patchTask(taskId, { status: 'queued', downloaded: 0, speed: 0, partialPath: '', error: '' });
     await pump();
+  }
+
+  async function deletePartial(task: DownloadTask): Promise<boolean> {
+    if (partialCleanupIds.has(task.id)) return false;
+    if (!task.partialPath || isUpdateTask(task)) return true;
+    partialCleanupIds.add(task.id);
+    try {
+      // 只删除断点。失败时保留路径和进度，允许用户重新操作。
+      await CoolapkTauriAPI.deleteApkDownloadFile('', task.partialPath, task.downloadDir, '');
+      return true;
+    } catch (error) {
+      showToast(`删除断点文件失败：${error instanceof Error ? error.message : String(error)}`, 'error');
+      return false;
+    } finally {
+      partialCleanupIds.delete(task.id);
+    }
   }
 
   async function cancel(taskId: string) {
@@ -562,6 +570,7 @@ export const useDownloadStore = defineStore('downloads', () => {
     if (!task) return;
     // 取消后安装包不再完整：进度与断点路径都要清空，避免下次继续时进度虚高。
     if (task.status === 'queued' || task.status === 'paused' || task.status === 'failed') {
+      if (!await deletePartial(task)) return;
       patchTask(taskId, { status: 'canceled', downloaded: 0, speed: 0, partialPath: '', error: '' });
       return;
     }
