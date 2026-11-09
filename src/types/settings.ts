@@ -139,6 +139,8 @@ export interface AppSettings {
   officialMobileFeedDetail: boolean;
   /** 宽窗口下点击动态是否直接进入详情页；关闭时在当前页展开评论。 */
   desktopFeedDetailOnClick: boolean;
+  /** 已应用"点击动态进入详情页"默认开启的一次性迁移；之后保留用户自己的选择。 */
+  desktopFeedDetailDefaultOnMigrated: boolean;
   /** 桌面端评论显示在右侧，与点击动态进入详情页独立控制。 */
   desktopCommentsOnRight: boolean;
   /** 已应用右侧评论默认关闭的一次性迁移；重启后保留用户的新选择。 */

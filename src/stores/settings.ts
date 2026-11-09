@@ -6,6 +6,7 @@ import { invoke as invokeRuntime } from '../api/runtime';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { resolveDeviceIdentity } from '../utils/devicePresets';
 import { resolveDesktopCommentsOnRight } from '../utils/desktopCommentsPreference';
+import { resolveDesktopFeedDetailOnClick } from '../utils/desktopFeedDetailPreference';
 import { normalizeSearchTabOrder } from '../utils/searchTabOrder';
 import { normalizeLightBackground, buildLightBackground } from '../utils/lightBackground';
 import { isLinuxDesktopRuntime, observeLinuxSystemTheme, type SystemTheme } from '../utils/linuxSystemTheme';
@@ -130,7 +131,8 @@ const defaultSettings: AppSettings = {
   showPageTabBar: true,
   disableAutoMobileMode: false,
   officialMobileFeedDetail: true,
-  desktopFeedDetailOnClick: false,
+  desktopFeedDetailOnClick: true,
+  desktopFeedDetailDefaultOnMigrated: true,
   desktopCommentsOnRight: false,
   desktopCommentsDefaultOffMigrated: true,
   myRecentPinned: false,
@@ -308,7 +310,9 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.showPageTabBar = readBoolean(source.showPageTabBar, result.showPageTabBar);
   result.disableAutoMobileMode = readBoolean(source.disableAutoMobileMode, result.disableAutoMobileMode);
   result.officialMobileFeedDetail = readBoolean(source.officialMobileFeedDetail, result.officialMobileFeedDetail);
-  result.desktopFeedDetailOnClick = readBoolean(source.desktopFeedDetailOnClick, result.desktopFeedDetailOnClick);
+  // 旧版本默认写入关闭：首次升级统一开启，之后尊重用户手动调整。
+  result.desktopFeedDetailOnClick = resolveDesktopFeedDetailOnClick(source.desktopFeedDetailOnClick, source.desktopFeedDetailDefaultOnMigrated);
+  result.desktopFeedDetailDefaultOnMigrated = true;
   // 旧版本可能已把默认开启写入磁盘：首次升级统一关闭，之后尊重用户手动调整。
   result.desktopCommentsOnRight = resolveDesktopCommentsOnRight(source.desktopCommentsOnRight, source.desktopCommentsDefaultOffMigrated);
   result.desktopCommentsDefaultOffMigrated = true;
