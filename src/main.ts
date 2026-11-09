@@ -9,6 +9,7 @@ import App from './App.vue';
 import { initializeAndroidSafeArea } from './utils/androidSafeArea';
 import { router } from './router';
 import { CoolapkTauriAPI } from './api/coolapk';
+import { isWebBuild } from './api/runtime';
 import { useSettingsStore } from './stores/settings';
 import { setupGlobalAlertProxy } from './utils/toast';
 import { normalizeCoolapkDeepLink } from './utils/coolapkRoute';
@@ -145,7 +146,30 @@ async function setupDeepLinkHandling() {
   }
 }
 
+async function prepareWebImageRequests() {
+  if (!isWebBuild || !navigator.serviceWorker) return;
+  const workers = navigator.serviceWorker;
+  let timeout: number | undefined;
+  let onControllerChange: (() => void) | undefined;
+  try {
+    const controlled = new Promise<void>(resolve => {
+      onControllerChange = () => { if (workers.controller) resolve(); };
+      workers.addEventListener('controllerchange', onControllerChange);
+      onControllerChange();
+      // 首次加载时等 Worker 接管，注册受限时仍允许页面启动。
+      timeout = window.setTimeout(resolve, 1500);
+    });
+    await Promise.race([controlled, workers.register('/coolapk-image-worker.js').then(() => controlled)]);
+  } catch (error) {
+    logDiagnostic('warn', 'app', 'image_worker_registration_failed', summarizeDiagnosticError(error));
+  } finally {
+    if (timeout !== undefined) window.clearTimeout(timeout);
+    if (onControllerChange) workers.removeEventListener('controllerchange', onControllerChange);
+  }
+}
+
 async function bootstrap() {
+  const webImageRequestsReady = prepareWebImageRequests();
   await androidIconStylesReady;
   await initializeAndroidSafeArea();
   await settingsStore.initializeSettings();
@@ -155,6 +179,7 @@ async function bootstrap() {
     catch { logDiagnostic('warn', 'device', 'identity_initialization_failed'); }
   }
   logDiagnostic('info', 'app', 'settings-ready');
+  await webImageRequestsReady;
   app.mount('#app');
   // 设置文件在应用挂载前读取；缩放等依赖 #app 的外观设置需在挂载后再应用一次。
   settingsStore.applyAppearance();
