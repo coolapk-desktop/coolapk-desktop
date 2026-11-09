@@ -228,7 +228,7 @@
         @write-comment="writeMobileComment"
         :feed-id="actionFeedId"
         :likenum="feed.likenum"
-        :replynum="feed.replynum"
+        :replynum="feedReplyCount"
         :favnum="replyMode ? 0 : favnum"
         :sharenum="feed.sharenum"
         :favorited="isFav"
@@ -251,7 +251,7 @@
         :feed-uid="authorUid"
         :feed-username="feed.username"
         :default-sort-mode="commentsSortMode"
-        :total-comment-count="feed.replynum"
+        :total-comment-count="feedReplyCount"
         :comments="comments"
         :pinned-comments="feed.topReplyRows || []"
         :loading="commentsLoading"
@@ -499,6 +499,14 @@ const authorFollowing = computed(() => {
   return cached ? cached.isFollow : authorFollowFallback.value;
 });
 const authorFollowPending = computed(() => (authorUid.value ? userRelations.isPending(authorUid.value) : false));
+
+// 搜索结果可能用字符串返回评论数；缺失值仍由评论区按已加载条数显示。
+const feedReplyCount = computed(() => {
+  const raw = props.feed.replynum;
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const count = Number(raw);
+  return Number.isFinite(count) && count >= 0 ? count : undefined;
+});
 const officialHotReply = computed(() => { const rows = (props.feed as any).hotReplyRows; if (!Array.isArray(rows)) return null; return rows.flatMap(row => row?.entities || [row]).find(row => row && row.message && (row.username || row.userInfo?.username)) || null; });
 const publishedLocation = computed(() => String((props.feed as any).ip_location || (props.feed as any).ipLocation || (props.feed as any).location || '').replace(/^发布于/, '').trim());
 function isProductTarget(target: any) { return /product|device/.test(String(target.targetType || target.target_type || target.entityType)) || /^\/product\//.test(String(target.url || '')); }

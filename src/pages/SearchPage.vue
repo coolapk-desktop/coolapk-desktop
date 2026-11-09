@@ -29,7 +29,7 @@
           </div>
         </div>
 
-        <div v-if="queryStr && !isScopedSearch" class="search-tabs custom-scrollbar">
+        <div v-if="queryStr && !isScopedSearch" class="search-tabs custom-scrollbar" @wheel="handleSearchTabsWheel">
           <button v-for="tab in searchTabs" :key="tab.key" type="button" :class="['search-tab-item', { active: activeTab === tab.key }]" @click="switchTab(tab.key)">
             <i v-if="tab.icon" :class="tab.icon"></i><span>{{ tab.label }}</span>
           </button>
@@ -513,6 +513,17 @@ function doSearch(value: string, requestedSearchType = '') {
   void router.push({ path: '/search', query });
 }
 
+// 分类超出可见范围时，用鼠标滚轮横向浏览；保留触控板原生横滑。
+function handleSearchTabsWheel(event: WheelEvent) {
+  const tabs = event.currentTarget as HTMLElement;
+  const maxScrollLeft = tabs.scrollWidth - tabs.clientWidth;
+  if (event.ctrlKey || maxScrollLeft <= 0 || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  const next = Math.max(0, Math.min(maxScrollLeft, tabs.scrollLeft + event.deltaY));
+  if (next === tabs.scrollLeft) return;
+  event.preventDefault();
+  tabs.scrollLeft = next;
+}
+
 function switchTab(key: string) {
   if (isScopedSearch.value) return;
   if (activeTab.value === key) return;
@@ -660,7 +671,8 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
 .search-page-layout { container-type: inline-size; container-name: search-layout; display: flex; width: 100%; height: 100%; overflow: hidden; }
 .search-main-column { display: flex; flex: 1; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; background: var(--surface); }
 .search-toolbar-frame { position: relative; z-index: 2; display: grid; grid-template-rows: 1fr; flex: 0 0 auto; }
-.search-toolbar-clip { min-height: 0; }
+/* 让分类栏在工具栏内横向滚动，避免 Grid 按标签总宽度撑开。 */
+.search-toolbar-clip { min-width: 0; min-height: 0; }
 .search-toolbar { position: relative; z-index: 2; flex: 0 0 auto; background: var(--surface); border-bottom: 1px solid var(--border-light, rgba(0, 0, 0, .06)); }
 .search-toolbar-content { padding: 14px 20px 12px; }
 .search-input-area { position: relative; margin: 0; }
