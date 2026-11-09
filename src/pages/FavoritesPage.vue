@@ -603,6 +603,7 @@ import {
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
+const ownerRoutePath = route.fullPath;
 
 const favoriteExportOpen = ref(false);
 
@@ -950,7 +951,6 @@ function collectionItemId(item: any): string {
 function responseData(response: any): any { return response?.data?.data ?? response?.data ?? response; }
 
 function backToCollections() {
-  resetCollectionState();
   const { collectionId: _collectionId, collectionTitle: _collectionTitle, ...query } = route.query;
   void router.push({ path: route.path, query });
 }
@@ -1067,7 +1067,10 @@ async function deleteCollection(collection: any) {
   try {
     await CoolapkTauriAPI.deleteCollection(id);
     collections.value = collections.value.filter(item => collectionId(item) !== id);
-    if (activeCollectionId.value === id) backToCollections();
+    if (activeCollectionId.value === id) {
+      resetCollectionState();
+      if (route.fullPath === ownerRoutePath) backToCollections();
+    }
     showToast('收藏单已删除', 'success');
   } catch (err) {
     showToast(getErrorMessage(err, '删除收藏单失败'), 'error');
@@ -1115,7 +1118,6 @@ async function removeCollectionItem(item: any) {
 function openCollection(collection: any) {
   const id = collectionId(collection);
   if (!id) return;
-  activateCollection(collection);
   void router.push({
     path: route.path,
     query: {
@@ -1161,14 +1163,13 @@ function resetCollectionState() {
 }
 
 watch(
-  () => route.query.collectionId,
-  (value) => {
+  () => route.fullPath,
+  (path) => {
+    // 缓存页仍能看到全局路由变化，只处理当前实例对应的地址。
+    if (path !== ownerRoutePath) return;
+    const value = route.query.collectionId;
     const collectionIdValue = Array.isArray(value) ? value[0] : value;
-    if (!collectionIdValue) {
-      if (activeCollectionId.value) resetCollectionState();
-      return;
-    }
-    if (activeCollectionId.value === String(collectionIdValue)) return;
+    if (!collectionIdValue || activeCollectionId.value === String(collectionIdValue)) return;
 
     const titleValue = route.query.collectionTitle;
     const collectionTitle = Array.isArray(titleValue) ? titleValue[0] : titleValue;
