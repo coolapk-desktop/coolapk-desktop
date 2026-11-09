@@ -118,6 +118,7 @@
           :load-more-error="commentsLoadMoreError"
           :normalize-img="(u) => u"
           :format-rich-text="formatRichText"
+          @comment-created="handleCommentCreated"
           @retry-comments="loadComments(true)"
           @load-more-comments="loadMoreComments"
           @retry-more-comments="loadMoreComments"
@@ -186,6 +187,8 @@ import { handleAnchorClick } from '../../utils/anchorClick';
 import {
   getCommentReplyRequestOptions,
   getExpectedCommentCount,
+  // 复用 commentList 的统一标识：楼中楼/游标/合并共用同一优先级，避免宿主各自实现互相矛盾
+  getReplyEntityId as commentRowId,
   getReplyData,
   getReplyPageCursor,
   hasMoreReplyPages,
@@ -194,9 +197,11 @@ import {
   type CommentSortSelection,
 } from '../../utils/commentList';
 import { useAuthStore } from '../../stores/auth';
+import { setGoodsRowState } from '../../stores/goodsRows';
 import { useSettingsStore } from '../../stores/settings';
 import { showToast } from '../../utils/toast';
 import { getErrorMessage } from '../../utils/errors';
+import { syncFavoriteToFeed } from '../../utils/feedFavorite';
 
 const props = withDefaults(
   defineProps<{
@@ -277,17 +282,74 @@ async function openComments() {
   await loadComments();
   repliesElement.value?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
+/**
+ * 发表评论成功后只在本地累加回复数，不再整页 loadFeed()：
+ * 评论列表由 comment-created 就地插入，条目（goodsListItem）与 goodsListInfo 的
+ * item_num / vote_num / follow_num 都是好物相关统计，与发表评论无关，重拉只会浪费一次
+ * 请求并打断已加载的分页与滚动位置。reply_num 走 replyNum 计算属性（本处已更新 feed.replynum），
+ * 清单页列表卡片持有的是另一份对象，这里重拉也刷不到它。
+ */
 async function commentPosted() {
-  await loadFeed();
-  await loadComments(true);
+  if (!feed.value) return;
+  feed.value.replynum = Math.max(0, replyNum.value) + 1;
+  // 同一份回复数要同步给列表页那份副本，否则返回榜单还是旧数字。
+  setGoodsRowState(String(props.feedId), { replynum: feed.value.replynum });
+}
+
+/** 合并后续页时按 id 去重：本地插入的评论可能又出现在服务端回包里。 */
+function dedupeCommentsById(list: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of list) {
+    const id = commentRowId(item);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
+ * 就地插入接口返回的新评论，保留已加载的分页和滚动位置。
+ * 楼中楼回复（payload.replyId 有值）的楼层由 FeedCommentSection 自己补齐，这里不再插入主列表。
+ */
+function handleCommentCreated(payload: { comment?: any; replyId?: string } = {}) {
+  if (payload?.replyId) return;
+  const raw = payload?.comment;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  const id = row && typeof row === 'object' ? commentRowId(row) : '';
+  if (!row || typeof row !== 'object' || !id) return;
+  if (comments.value.some((c: any) => commentRowId(c) === id)) return;
+  comments.value = [row, ...comments.value];
+  // 分页游标仍由服务端已加载页的首尾 ID 维护，本地插入不参与。
 }
 async function toggleFavorite() {
   if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; }
   if (favoriteBusy.value) return;
+  const target = !favorite.value;
   favoriteBusy.value = true;
   try {
-    await CoolapkTauriAPI.setFeedCloudFavorite(props.feedId, !favorite.value, 'goodsList');
-    favorite.value = !favorite.value;
+    const response: any = await CoolapkTauriAPI.setFeedCloudFavorite(props.feedId, target, 'goodsList');
+    favorite.value = target;
+    // 服务端返回真实计数时以它为准：重复收藏/取消会被服务端去重，纯本地 ±1 会长期漂移。
+    const serverFavnum = Number(response?.data?.favnum ?? response?.data?.fav_num ?? response?.favnum);
+    // 回写详情实体：动作栏的收藏态与 favnum 都从 feed 读，收藏后必须同步计数。
+    // 注意：本页只拿到 feedId，feed 详情是自己拉的一份副本（清单页列表持有另一份对象），
+    // 因此这里只能保证本页一致，跨页面同步需列表页自身刷新。
+    if (feed.value) {
+      const nextFavnum = Number.isFinite(serverFavnum) && serverFavnum >= 0
+        ? serverFavnum
+        : Math.max(0, Number(feed.value.favnum || 0) + (target ? 1 : -1));
+      syncFavoriteToFeed(feed.value, { favorited: target, favnum: nextFavnum });
+      // 跨页同步：清单/榜单页持有另一份行对象，经行状态注册表按 id 共享最新收藏态与计数，
+      // 返回列表时不必等静默刷新落地就能看到正确状态。
+      setGoodsRowState(String(props.feedId), {
+        favorited: target,
+        favnum: Number(feed.value.favnum || 0),
+      });
+    }
   } catch (err) { showToast(getErrorMessage(err, '收藏失败'), 'error'); }
   finally { favoriteBusy.value = false; }
 }
@@ -366,7 +428,8 @@ async function loadMoreComments() {
     if (!isCurrentCommentRequest(currentRequest)) return;
     updateCommentCursor(pageReplies);
     const previousReplies = comments.value;
-    const mergedReplies = mergeReplies(previousReplies, pageReplies);
+    // 后续页回包可能带上刚就地插入的新评论，按 id 去重避免重复显示。
+    const mergedReplies = dedupeCommentsById(mergeReplies(previousReplies, pageReplies));
     if (mergedReplies.length > previousReplies.length) {
       comments.value = mergedReplies;
       commentsPage.value = page;
@@ -428,6 +491,12 @@ function handleCommentSortChange(selection: CommentSortSelection) {
   void loadComments(true);
 }
 
+// 同一组件复用于 /goods/lists/:feedId：路由参数变化时 Vue 会复用实例，
+// 不监听 feedId 会让页面继续显示上一个清单的内容而地址栏已变成新清单。
+watch(() => props.feedId, () => {
+  loadAll(true);
+});
+
 watch(() => settingsStore.settings.commentDefaultSortMode, (sortMode) => {
   commentsSortMode.value = sortMode;
   commentsAuthorOnly.value = false;
@@ -458,6 +527,14 @@ async function removeItem(item: any) {
   try {
     await CoolapkTauriAPI.deleteGoodsListItems(cancelFeedId, goodsId);
     items.value = items.value.filter((i) => itemKey(i) !== itemKey(item));
+    // 顶部「N 件好物」读的是 goodsListInfo.item_num，列表卡片读的是行注册表：
+    // 只改本地 items 会让两处都停在移除前的数字，直到下一次静默刷新。
+    const nextCount = Math.max(0, itemNum.value - 1);
+    if (feed.value) {
+      const stats: any = feed.value.goodsListInfo || feed.value;
+      if (stats && typeof stats === 'object') stats.item_num = nextCount;
+    }
+    setGoodsRowState(String(props.feedId), { itemNum: nextCount });
     showToast('已移除该好物', 'success');
   } catch (err) {
     showToast(getErrorMessage(err, '移除失败'), 'error');

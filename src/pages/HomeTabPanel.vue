@@ -1253,8 +1253,24 @@ async function loadFeeds(isRefresh: boolean = false) {
       if (isRefresh) {
         pageEntities.value = incoming;
       } else {
-        const existingKeys = new Set(pageEntities.value.map((item, index) => getEntityKey(item, index)));
-        pageEntities.value = [...pageEntities.value, ...incoming.filter((item, index) => !existingKeys.has(getEntityKey(item, pageEntities.value.length + index)))];
+        // 去重只对有稳定键（entityId/id/url）的实体生效：getEntityKey 无稳定键时
+        // 回退 entityTemplate-index，而两侧索引基数不同（0..n-1 vs n..）永远不相等，
+        // 混入索引键既挡不住重复也可能误伤，因此无稳定键的实体直接放行不去重。
+        const entityStableKey = (item: any): string => {
+          const key = (item?.entityId ?? item?.id ?? item?.url);
+          return key === undefined || key === null ? '' : String(key);
+        };
+        const existingKeys = new Set(pageEntities.value.map(entityStableKey).filter(Boolean));
+        pageEntities.value = [
+          ...pageEntities.value,
+          ...incoming.filter((item: any) => {
+            const key = entityStableKey(item);
+            if (!key) return true;
+            if (existingKeys.has(key)) return false;
+            existingKeys.add(key);
+            return true;
+          }),
+        ];
       }
       pageEntityCursor.firstItem = parsed.firstItem;
       pageEntityCursor.lastItem = parsed.lastItem;
@@ -1264,10 +1280,14 @@ async function loadFeeds(isRefresh: boolean = false) {
       return;
     }
 
+    // 预取缓冲区里存的是过滤后的条目，服务端原始条数已不可知；
+    // 该路径不能参与 noMore 判定，终止与否交给下一次真实请求收敛。
+    let fromPrefetchBuffer = false;
     if (!isRefresh && !isHeadlineTab.value && prefetchBuffer.value.length > 0) {
       validItems = prefetchBuffer.value;
       prefetchBuffer.value = [];
       page.value = prefetchPage.value;
+      fromPrefetchBuffer = true;
     } else {
       const res: any = await fetchTabApi(activeTab.value, page.value);
       if (sequence !== feedRequestSequence) return;
@@ -1323,10 +1343,14 @@ async function loadFeeds(isRefresh: boolean = false) {
 
     if (isHeadlineTab.value) {
       if (rawItems.length === 0) noMore.value = true;
-      else updateHeadlineCursor(validItems, page.value === 2);
+      // 游标必须取服务端原始条目（rawItems）：validItems 是过滤后的展示集，
+      // 页末恰好是被隐藏动态时用它会把游标停在错误位置，加载更多会跳过或重复。
+      else updateHeadlineCursor(rawItems, page.value === 2);
     } else if (isHotTab.value) {
       noMore.value = !rawItems.some(hasFeedRenderableContent);
-    } else if (validItems.length < 3) {
+    } else if (!fromPrefetchBuffer && rawItems.length === 0) {
+      // 终止条件只依据服务端原始条数：展示侧过滤后剩 1-2 条不代表服务端没有下一页，
+      // 用 validItems 计数会把「过滤掉了几条」误判成「没有更多内容了」。
       noMore.value = true;
     }
 

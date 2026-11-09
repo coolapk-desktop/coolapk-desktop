@@ -77,7 +77,9 @@
           :has-more-comments="hasMoreComments"
           :loading-more-comments="commentsLoadingMore"
           :load-more-error="commentsLoadMoreError"
-          @retry-comments="loadComments"
+          @send-comment="handleSendComment"
+          @comment-created="handleCommentCreated"
+          @retry-comments="loadComments(true)"
           @load-more-comments="loadMoreComments"
           @retry-more-comments="loadMoreComments"
           @comment-sort-change="handleCommentSortChange"
@@ -107,6 +109,8 @@ import { getUserUid, normalizeUserUid } from '../../utils/userRoute';
 import {
   getCommentReplyRequestOptions,
   getExpectedCommentCount,
+  // 复用 commentList 的统一标识：楼中楼/游标/合并共用同一优先级，避免宿主各自实现互相矛盾
+  getReplyEntityId as commentRowId,
   getReplyData,
   getReplyPageCursor,
   hasMoreReplyPages,
@@ -271,6 +275,42 @@ function isCurrentCommentRequest(requestedFeedId: string, currentRequest: number
     && requestedFeedId === String(props.feed?.id || '');
 }
 
+/** 发表评论成功后本地累加计数，标题立即一致，不再整页重拉评论列表。 */
+function handleSendComment() {
+  if (!props.feed) return;
+  props.feed.replynum = Math.max(0, Number(props.feed.replynum || props.feed.commentnum) || 0) + 1;
+}
+
+/** 合并后续页时按 id 去重：本地插入的评论可能又出现在服务端回包里。 */
+function dedupeCommentsById(list: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of list) {
+    const id = commentRowId(item);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
+ * 就地插入接口返回的新评论，保留已加载的分页和滚动位置。
+ * 楼中楼回复（payload.replyId 有值）的楼层由 FeedCommentSection 自己补齐，这里不再插入主列表。
+ */
+function handleCommentCreated(payload: { comment?: any; replyId?: string } = {}) {
+  if (payload?.replyId) return;
+  const raw = payload?.comment;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  const id = row && typeof row === 'object' ? commentRowId(row) : '';
+  if (!row || typeof row !== 'object' || !id) return;
+  if (comments.value.some((c: any) => commentRowId(c) === id)) return;
+  comments.value = [row, ...comments.value];
+  // 分页游标仍由服务端已加载页的首尾 ID 维护，本地插入不参与。
+}
+
 function updateCommentCursor(pageReplies: any[], resetFirst = false) {
   const cursor = getReplyPageCursor(pageReplies);
   if (resetFirst || !commentsFirstItem) commentsFirstItem = cursor.firstItem;
@@ -295,7 +335,8 @@ async function loadMoreComments() {
     if (!isCurrentCommentRequest(requestedFeedId, currentRequest)) return;
     updateCommentCursor(pageReplies);
     const previousReplies = comments.value;
-    const mergedReplies = mergeReplies(previousReplies, pageReplies);
+    // 后续页回包可能带上刚就地插入的新评论，按 id 去重避免重复显示。
+    const mergedReplies = dedupeCommentsById(mergeReplies(previousReplies, pageReplies));
     if (mergedReplies.length > previousReplies.length) {
       comments.value = mergedReplies;
       commentsPage.value = page;

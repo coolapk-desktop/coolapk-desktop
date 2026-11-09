@@ -284,6 +284,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useSettingsStore } from '../stores/settings';
 import { useTopicHubStore, type CategoryItem } from '../stores/topicHub';
+import { navigateBack } from '../utils/navigation';
 import TopicCard from '../components/topic/TopicCard.vue';
 import TopicPage from './TopicPage.vue';
 import TopicFeedCommentAside from '../components/topic/TopicFeedCommentAside.vue';
@@ -665,13 +666,10 @@ function handleSelectSubtopicMobile(topic: any) {
 function handleBackToGrid() {
   topicHubStore.closeTopicSplit();
   if (route.query.tag) {
-    if (window.history.state?.back) {
-      router.back();
-    } else {
-      const nextQuery = { ...route.query };
-      delete nextQuery.tag;
-      router.replace({ path: '/topics', query: nextQuery });
-    }
+    // 深链直接打开带 tag 的话题时没有上一页，退回不带 tag 的话题中心。
+    const nextQuery = { ...route.query };
+    delete nextQuery.tag;
+    navigateBack(router, router.resolve({ path: '/topics', query: nextQuery }).fullPath);
   }
 }
 

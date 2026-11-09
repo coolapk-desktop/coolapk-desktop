@@ -143,6 +143,44 @@ describe('分栏详情页右栏', () => {
     wrapper.unmount();
   });
 
+  it('发表评论后列表就地 +1，且不再整页重拉评论', async () => {
+    mocks.getFeedReplies.mockResolvedValue({ data: [{ id: 'old-1', message: '旧评论' }] });
+    const wrapper = mountAside('replies', { id: '42', uid: '456', username: '作者', message: '正文', replynum: 1 });
+    await flushPromises();
+
+    const section = wrapper.findComponent({ name: 'FeedCommentSection' });
+    expect(section.props('comments').map((c: any) => c.id)).toEqual(['old-1']);
+    const requestCount = mocks.getFeedReplies.mock.calls.length;
+
+    section.vm.$emit('send-comment', '新评论');
+    section.vm.$emit('comment-created', { comment: { id: 'new-1', message: '新评论' } });
+    await flushPromises();
+
+    expect(section.props('comments').map((c: any) => c.id)).toEqual(['new-1', 'old-1']);
+    // 计数本地累加，评论列表不整页重拉。
+    expect(wrapper.props('feed').replynum).toBe(2);
+    expect(mocks.getFeedReplies).toHaveBeenCalledTimes(requestCount);
+
+    // 楼中楼回复只由评论组件自己补楼层，不插入主列表。
+    section.vm.$emit('comment-created', { comment: { id: 'sub-1', message: '楼中楼' }, replyId: 'old-1' });
+    await flushPromises();
+    expect(section.props('comments').map((c: any) => c.id)).toEqual(['new-1', 'old-1']);
+    wrapper.unmount();
+  });
+
+  it('显式重试（retry-comments）仍会重取第一页', async () => {
+    mocks.getFeedReplies.mockResolvedValue({ data: [{ id: 'old-1', message: '旧评论' }] });
+    const wrapper = mountAside();
+    await flushPromises();
+    const requestCount = mocks.getFeedReplies.mock.calls.length;
+
+    wrapper.findComponent({ name: 'FeedCommentSection' }).vm.$emit('retry-comments');
+    await flushPromises();
+    expect(mocks.getFeedReplies).toHaveBeenCalledTimes(requestCount + 1);
+    expect(mocks.getFeedReplies).toHaveBeenLastCalledWith('42', 1, expect.any(Object));
+    wrapper.unmount();
+  });
+
   it('切到点赞/转发 tab 时隐藏评论组件及其筛选按钮', async () => {
     const likes = mountAside('likes');
     await flushPromises();

@@ -150,6 +150,18 @@ function isDyhTab(tab: DiscoveryTab) {
   });
 }
 
+// 去重键不能依赖列表下标：全集与增量两套 index 基准不同，无 id 实体会生成不同键而重复插入。
+// 无 id 时回退到稳定的模板+标题+链接内容键。
+function entityDedupeKey(item: DiscoveryEntity): string {
+  const id = item.entityId ?? item.id ?? item.url;
+  if (id !== undefined && id !== null && String(id).trim()) return String(id);
+  return JSON.stringify([
+    item.entityTemplate ?? item.entityType ?? '',
+    item.title ?? '',
+    item.url ?? '',
+  ]);
+}
+
 function fallbackTab(title: string, url: string): DiscoveryTab {
   return { key: url, title, url, visible: true, order: 0, raw: { title, url } };
 }
@@ -245,8 +257,8 @@ async function loadSelected(reset = false, loadMore = false, tab = selectedTab.v
       });
     const parsed = parseDiscoveryPage(response, state.page);
     if (requestId !== state.requestId) return;
-    const known = new Set(state.items.map((item, index) => getEntityKey(item, index)));
-    const nextItems = parsed.items.filter((item, index) => !known.has(getEntityKey(item, index)));
+    const known = new Set(state.items.map(entityDedupeKey));
+    const nextItems = parsed.items.filter((item) => !known.has(entityDedupeKey(item)));
     state.items.push(...nextItems);
     state.raw = parsed.raw;
     state.firstItem = parsed.firstItem;

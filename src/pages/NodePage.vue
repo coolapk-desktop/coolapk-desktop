@@ -325,6 +325,12 @@ watch(() => [route.params.nodeType, route.params.nodeId], () => {
   void fetchFeeds(false);
 }, { immediate: true });
 
+// 同一节点被不同入口打开时地址栏 title 不同：复用实例也要跟随更新兜底标题，
+// 否则节点信息接口失败时会一直显示上一次入口的旧标题。
+watch(() => (typeof route.query.title === 'string' ? route.query.title : ''), (title) => {
+  fallbackTitle.value = title;
+});
+
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
 const mobileRefreshBusy = computed(() => feedsLoading.value || headerLoading.value);
 async function refreshMobilePage() { resetState(); await fetchNodeHeader(); await fetchFeeds(false); }

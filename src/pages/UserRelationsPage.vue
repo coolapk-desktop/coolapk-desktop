@@ -2,7 +2,7 @@
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="relations-page-container custom-scrollbar" @scroll="handleScroll">
     <!-- 官方移动端使用独立标题栏和四个酷友分类。 -->
     <header class="relations-header">
-      <button class="back-btn" title="返回" @click="router.back()"><i class="fas fa-arrow-left"></i></button>
+      <button class="back-btn" title="返回" @click="goBack"><i class="fas fa-arrow-left"></i></button>
       <span class="header-title">酷友列表</span>
     </header>
 
@@ -60,16 +60,16 @@
 
           <!-- 关注 / 取消关注交互按钮 -->
           <div v-if="showFollowAction(user)" class="user-card-action" @click.stop>
-            <button v-if="isFollowed(user) && category !== 'fans'" class="special-action-btn" :disabled="user._specialLoading" :title="isSpecial(user) ? '取消特别关注' : '设为特别关注'" :aria-label="isSpecial(user) ? '取消特别关注' : '设为特别关注'" @click="handleSpecialToggle(user)"><i :class="isSpecial(user) ? 'fas fa-star' : 'far fa-star'"></i></button>
+            <button v-if="isFollowed(user) && category !== 'fans'" class="special-action-btn" :disabled="isSpecialPending(user)" :title="isSpecial(user) ? '取消特别关注' : '设为特别关注'" :aria-label="isSpecial(user) ? '取消特别关注' : '设为特别关注'" @click="handleSpecialToggle(user)"><i :class="isSpecial(user) ? 'fas fa-star' : 'far fa-star'"></i></button>
             <button
               :class="['follow-action-btn', { 'is-following': isFollowed(user) }]"
-              :disabled="user._followingLoading"
+              :disabled="isFollowPending(user)"
               @click="handleFollowToggle(user)"
             >
-              <i v-if="user._followingLoading" class="fas fa-circle-notch fa-spin"></i>
+              <i v-if="isFollowPending(user)" class="fas fa-circle-notch fa-spin"></i>
               <i v-else-if="isFollowed(user)" class="fas fa-check"></i>
               <i v-else class="fas fa-plus"></i>
-              <span>{{ user._followingLoading ? '处理中' : (isFollowed(user) ? (isFriend(user) ? '互相关注' : '已关注') : '关注') }}</span>
+              <span>{{ isFollowPending(user) ? '处理中' : (isFollowed(user) ? (isFriend(user) ? '互相关注' : '已关注') : '关注') }}</span>
             </button>
           </div>
         </div>
@@ -94,15 +94,18 @@ import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
+import { useUserRelationsStore } from '../stores/userRelations';
 import AppAvatar from '../components/common/AppAvatar.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import { normalizeEntityPage, relationUserBio } from '../types/userSpace';
+import { navigateBack } from '../utils/navigation';
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const userRelations = useUserRelationsStore();
 
 const users = ref<any[]>([]);
 const page = ref(1);
@@ -111,6 +114,8 @@ const loading = ref(false);
 const error = ref('');
 
 const uid = computed(() => String(route.params.uid || ''));
+/** 深链直接打开酷友列表时没有上一页，退回该用户主页而不是退出应用。 */
+function goBack() { navigateBack(router, uid.value ? `/user/${uid.value}` : '/'); }
 const relation = computed(() => route.params.relation === 'fans' ? 'fans' : 'follow');
 type Category = 'follow' | 'special' | 'friend' | 'fans';
 const isOwnList = computed(() => !!authStore.user?.uid && String(authStore.user.uid) === uid.value);
@@ -183,7 +188,25 @@ function showFollowAction(user: any): boolean {
   return isOwnList.value && String(user.uid || user.fuid || '') !== uid.value;
 }
 
+/** 关系缓存键：优先 uid，其次列表接口里的目标 uid 字段。 */
+function relationUid(user: any): string {
+  return String(user?.uid || user?.fuid || user?.id || '').trim();
+}
+
+function isFollowPending(user: any): boolean {
+  const targetUid = relationUid(user);
+  return Boolean(targetUid) && userRelations.isPending(targetUid);
+}
+
+function isSpecialPending(user: any): boolean {
+  const targetUid = relationUid(user);
+  return Boolean(targetUid) && userRelations.isSpecialPending(targetUid);
+}
+
 function isFollowed(user: any): boolean {
+  // store 缓存优先，缺失时回落到列表接口返回的关系字段。
+  const relation = userRelations.getRelation(relationUid(user));
+  if (relation) return relation.isFollow;
   const val = user.isFollow ?? user.is_follow ?? user.fUserInfo?.isFollow ?? user.userInfo?.isFollow;
   return val === 1 || val === '1' || val === true;
 }
@@ -194,26 +217,23 @@ function isFriend(user: any): boolean {
 }
 
 function isSpecial(user: any): boolean {
+  const relation = userRelations.getRelation(relationUid(user));
+  if (relation && relation.isSpecialFollow !== undefined) return relation.isSpecialFollow;
   return [user.isSpecial, user.isSpecialFollow, user.is_special_follow, user.fUserInfo?.isSpecialFollow, user.userInfo?.isSpecialFollow].some(val => val === 1 || val === '1' || val === true);
 }
 
 async function handleSpecialToggle(user: any) {
   const targetUid = String(user.uid || user.fuid || '');
-  if (!targetUid || user._specialLoading) return;
+  if (!targetUid || isSpecialPending(user)) return;
   const next = !isSpecial(user);
-  user._specialLoading = true;
-  try {
-    await CoolapkTauriAPI.specialFollowUser(targetUid, next);
-    user.isSpecial = next ? 1 : 0;
-    user.isSpecialFollow = next ? 1 : 0;
-    if (user.fUserInfo) user.fUserInfo.isSpecialFollow = next ? 1 : 0;
-    if (user.userInfo) user.userInfo.isSpecialFollow = next ? 1 : 0;
-    if (category.value === 'special' && !next) users.value = users.value.filter(item => item !== user);
-  } catch (err: any) {
-    alert(err?.message || '特别关注操作失败');
-  } finally {
-    user._specialLoading = false;
-  }
+  // 失败由 store 统一提示并回滚，这里只处理列表过滤。
+  const ok = await userRelations.specialFollow(targetUid, next);
+  if (!ok) return;
+  user.isSpecial = next ? 1 : 0;
+  user.isSpecialFollow = next ? 1 : 0;
+  if (user.fUserInfo) user.fUserInfo.isSpecialFollow = next ? 1 : 0;
+  if (user.userInfo) user.userInfo.isSpecialFollow = next ? 1 : 0;
+  if (category.value === 'special' && !next) users.value = users.value.filter(item => item !== user);
 }
 
 async function handleFollowToggle(user: any) {
@@ -222,33 +242,27 @@ async function handleFollowToggle(user: any) {
     return;
   }
   const targetUid = String(user.uid || user.fuid || user.id || '');
-  if (!targetUid || user._followingLoading) return;
+  if (!targetUid || isFollowPending(user)) return;
 
   const current = isFollowed(user);
-  user._followingLoading = true;
-  try {
-    if (current) {
-      await CoolapkTauriAPI.unfollowUser(targetUid);
-      user.isFollow = 0;
-      user.isFriend = 0;
-      user.isSpecial = 0;
-      user.isSpecialFollow = 0;
-      if (user.fUserInfo) user.fUserInfo.isFollow = 0;
-      if (user.userInfo) user.userInfo.isFollow = 0;
-      if (user.fUserInfo) user.fUserInfo.isSpecialFollow = 0;
-      if (user.userInfo) user.userInfo.isSpecialFollow = 0;
-      if (category.value !== 'fans') users.value = users.value.filter(item => item !== user);
-    } else {
-      await CoolapkTauriAPI.followUser(targetUid);
-      user.isFollow = 1;
-      if (relation.value === 'fans') user.isFriend = 1;
-      if (user.fUserInfo) user.fUserInfo.isFollow = 1;
-      if (user.userInfo) user.userInfo.isFollow = 1;
-    }
-  } catch (err: any) {
-    alert(err?.message || '操作失败，请重试');
-  } finally {
-    user._followingLoading = false;
+  // 关注状态由 store 统一维护，失败时已回滚并提示，这里只同步列表字段与过滤。
+  const ok = await userRelations.toggle(targetUid, current);
+  if (!ok) return;
+  if (current) {
+    user.isFollow = 0;
+    user.isFriend = 0;
+    user.isSpecial = 0;
+    user.isSpecialFollow = 0;
+    if (user.fUserInfo) user.fUserInfo.isFollow = 0;
+    if (user.userInfo) user.userInfo.isFollow = 0;
+    if (user.fUserInfo) user.fUserInfo.isSpecialFollow = 0;
+    if (user.userInfo) user.userInfo.isSpecialFollow = 0;
+    if (category.value !== 'fans') users.value = users.value.filter(item => item !== user);
+  } else {
+    user.isFollow = 1;
+    if (relation.value === 'fans') user.isFriend = 1;
+    if (user.fUserInfo) user.fUserInfo.isFollow = 1;
+    if (user.userInfo) user.userInfo.isFollow = 1;
   }
 }
 

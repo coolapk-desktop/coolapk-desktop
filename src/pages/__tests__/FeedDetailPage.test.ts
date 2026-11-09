@@ -5,13 +5,15 @@ import { mobileDetailActionsHiddenKey } from '../../composables/useMobileReading
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { feedPageVisibleKey } from '../../utils/feedPageVisibility';
 
-const mocks = vi.hoisted(() => ({ routeFullPath: { value: '/feed/42' }, detail: vi.fn(), context: vi.fn(), save: vi.fn(), back: vi.fn(), replace: vi.fn(), query: { replyId: '123' } as Record<string, string>, history: { back: '/' as string | null }, mobile: { value: true } as { value: boolean } }));
+const mocks = vi.hoisted(() => ({ routeFullPath: { value: '/feed/42' }, routeParams: { value: { feedId: '42' } as Record<string, string> }, detail: vi.fn(), context: vi.fn(), save: vi.fn(), back: vi.fn(), replace: vi.fn(), query: { replyId: '123' } as Record<string, string>, history: { back: '/' as string | null }, mobile: { value: true } as { value: boolean } }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: { getFeedDetail: mocks.detail } }));
 vi.mock('../../stores/app', () => ({ useAppStore: () => ({ getFeedDetailContext: mocks.context, setFeedDetailContext: mocks.save }) }));
+// 实例归属改看「路径 + 动态 id」，因此路由 mock 需要可变的 path 与 params（不再是纯 fullPath 比对）。
 vi.mock('vue-router', async () => {
   const { ref } = await import('vue');
   mocks.routeFullPath = ref('/feed/42');
-  return { useRoute: () => ({ get fullPath() { return mocks.routeFullPath.value; }, params: { feedId: '42' }, query: mocks.query }), useRouter: () => ({ back: mocks.back, replace: mocks.replace, options: { history: { state: mocks.history } } }) };
+  mocks.routeParams = ref({ feedId: '42' });
+  return { useRoute: () => ({ get fullPath() { return mocks.routeFullPath.value; }, get path() { return mocks.routeFullPath.value.split('?')[0]; }, get params() { return mocks.routeParams.value; }, query: mocks.query }), useRouter: () => ({ back: mocks.back, replace: mocks.replace, options: { history: { state: mocks.history } } }) };
 });
 vi.mock('../../router', () => ({ router: { push: vi.fn(), resolve: vi.fn(() => ({ matched: [] })) } }));
 vi.mock('../../composables/usePageTabTitle', () => ({ usePageTabTitle: () => {} }));
@@ -41,9 +43,15 @@ describe('官方详情评论加载', () => {
       expect(document.querySelector('.test-owned-actions')).toBeNull();
       mocks.routeFullPath.value = '/feed/42?scrollTo=comments'; await flushPromises();
       expect(document.querySelectorAll('.test-owned-actions')).toHaveLength(1);
+      // 同一动态换入口参数（replyId/scrollTo）时实例仍归它所有，页面内容不能消失。
       mocks.routeFullPath.value = '/feed/42?scrollTo=top'; await flushPromises();
+      expect(document.querySelectorAll('.test-owned-actions')).toHaveLength(1);
+      mocks.routeFullPath.value = '/feed/42?replyId=9'; await flushPromises();
+      expect(document.querySelectorAll('.test-owned-actions')).toHaveLength(1);
+      // 换成另一个动态（params 变化）或被复用到别的路由时才判为失活。
+      mocks.routeParams.value = { feedId: '43' }; await flushPromises();
       expect(document.querySelector('.test-owned-actions')).toBeNull();
-      mocks.routeFullPath.value = '/digital'; await flushPromises();
+      mocks.routeParams.value = { feedId: '42' }; mocks.routeFullPath.value = '/digital'; await flushPromises();
       expect(document.querySelector('.test-owned-actions')).toBeNull();
     } finally { wrapper.unmount(); }
   });
@@ -73,6 +81,7 @@ describe('官方详情评论加载', () => {
   });
   beforeEach(() => {
     mocks.routeFullPath.value = '/feed/42';
+    mocks.routeParams.value = { feedId: '42' };
     routeNavigationIsHistory.value = false;
     mocks.query = { replyId: '123' };
     mocks.mobile.value = true;
@@ -186,6 +195,49 @@ describe('官方详情评论加载', () => {
     expect(wrapper.find('feed-card-stub').attributes('autoopencomments')).toBe('true');
     expect(wrapper.find('feed-card-stub').attributes('targetreplyid')).toBe('123');
     wrapper.unmount();
+  });
+});
+
+describe('缓存页重新激活的静默刷新', () => {
+  it('首次挂载不重复请求，TTL 内激活不刷新，超过 30 秒只回写互动数据', async () => {
+    mocks.detail.mockClear();
+    mocks.context.mockReturnValue(null);
+    mocks.detail.mockResolvedValue({ data: { id: '42', username: '作者', message: '正文', likenum: 3, userAction: { like: 0 } } });
+    const seen: any[] = [];
+    const capture = defineComponent({ props: { feed: { type: Object, required: true } }, setup(props) { seen.push(props.feed); return () => null; } });
+    const host = defineComponent({
+      components: { FeedDetailPage },
+      data: () => ({ show: true }),
+      template: '<KeepAlive><FeedDetailPage v-if="show" feed-id="42" /></KeepAlive>',
+    });
+    let now = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const wrapper = mount(host, { global: { stubs: { FeedCard: capture } } });
+    try {
+      await flushPromises();
+      // 首次挂载由 onMounted 请求，onActivated 不再补一次。
+      expect(mocks.detail).toHaveBeenCalledTimes(1);
+      const feed = seen[seen.length - 1];
+      expect(feed.message).toBe('正文');
+
+      // 30 秒内从缓存激活：不刷新。
+      await wrapper.setData({ show: false }); await flushPromises();
+      await wrapper.setData({ show: true }); await flushPromises();
+      expect(mocks.detail).toHaveBeenCalledTimes(1);
+
+      // 超过 TTL 后激活：静默刷新计数与本人互动状态，正文与滚动保持不动。
+      now += 31_000;
+      mocks.detail.mockResolvedValueOnce({ data: { id: '42', username: '作者', message: '服务端新正文', likenum: 9, userAction: { like: 1 } } });
+      await wrapper.setData({ show: false }); await flushPromises();
+      await wrapper.setData({ show: true }); await flushPromises();
+      expect(mocks.detail).toHaveBeenCalledTimes(2);
+      expect(feed.likenum).toBe(9);
+      expect(feed.userAction.like).toBe(1);
+      expect(feed.message).toBe('正文');
+    } finally {
+      nowSpy.mockRestore();
+      wrapper.unmount();
+    }
   });
 });
 

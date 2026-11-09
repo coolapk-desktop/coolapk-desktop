@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getReplyDetail: vi.fn(),
   openUrl: vi.fn(),
   routerPush: vi.fn(),
+  setFeedCloudFavorite: vi.fn(),
 }));
 
 vi.mock('vue-router', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../../api/coolapk', () => ({
     getFeedReplies: mocks.getFeedReplies,
     getReplyDetail: mocks.getReplyDetail,
     openUrl: mocks.openUrl,
+    setFeedCloudFavorite: mocks.setFeedCloudFavorite,
   },
 }));
 
@@ -629,6 +631,72 @@ describe('动态卡片编辑记录', () => {
       },
     );
     expect(wrapper.find('.stub-comments span').text()).toBe('25');
+  });
+
+  it('后续页回包带上刚发表的新评论时按 id 去重，且分页游标仍取已加载页首尾', async () => {
+    let resolvePage2: any = null;
+    mocks.getFeedReplies.mockImplementation(async (_feedId: string, page: number) => {
+      if (page === 1) {
+        return { data: Array.from({ length: 10 }, (_, index) => ({ id: `reply-${index + 1}`, message: `第1页` })) };
+      }
+      return await new Promise((resolve) => { resolvePage2 = resolve; });
+    });
+
+    const wrapper = mount(FeedCard, {
+      props: {
+        feed: { id: 'dedupe-feed', uid: '456', username: '测试用户', message: '动态正文', replynum: 21 },
+        detailMode: true,
+        autoOpenComments: true,
+      },
+      global: {
+        stubs: {
+          FeedHeader: true,
+          FeedContent: true,
+          FeedImageGrid: true,
+          FeedActionBar: true,
+          FeedCommentSection: {
+            props: ['comments', 'hasMoreComments', 'loadingMoreComments'],
+            emits: ['load-more-comments'],
+            template: '<div class="stub-comments"><span>{{ comments.length }}</span></div>',
+          },
+          ForwardDialog: true,
+          LoadingState: true,
+          AppDialog: true,
+        },
+      },
+    });
+    await flushPromises();
+
+    // 对象 stub 会渲染成自身模板根节点，这里按 class 取组件实例。
+    const section = () => wrapper.findComponent('.stub-comments') as any;
+    expect(section().props('comments')).toHaveLength(10);
+    // 第 2 页请求已经在飞：先就地插入新评论，再让服务端回包把它带回来。
+    section().vm.$emit('comment-created', { comment: { id: 'new-1', message: '新评论' } });
+    await flushPromises();
+    expect(section().props('comments').map((item: any) => item.id)[0]).toBe('new-1');
+
+    // 分页游标仍来自服务端已加载页的首尾 ID，本地插入的评论不参与。
+    expect(mocks.getFeedReplies).toHaveBeenCalledWith('dedupe-feed', 2, {
+      listType: 'lastupdate_desc',
+      fromFeedAuthor: 0,
+      firstItem: 'reply-1',
+      lastItem: 'reply-10',
+    });
+
+    resolvePage2?.({
+      data: [
+        { id: 'new-1', message: '新评论' },
+        ...Array.from({ length: 10 }, (_, index) => ({ id: `reply-${index + 11}`, message: '第2页' })),
+      ],
+    });
+    await flushPromises();
+
+    const ids = section().props('comments').map((item: any) => item.id);
+    // 新评论只出现一次，其余页数据正常并入。
+    expect(ids.filter((id: string) => id === 'new-1')).toHaveLength(1);
+    expect(ids).toHaveLength(21);
+    expect(new Set(ids).size).toBe(21);
+    wrapper.unmount();
   });
 
   it('少量评论只请求第一页，不为确认末页额外等待', async () => {
@@ -1321,6 +1389,138 @@ describe('个人主页动态置顶', () => {
       expect(wrapper.get('.feed-pinned-label').text()).toBe('置顶');
       await wrapper.get('.pin-test-more').trigger('click');
       expect(wrapper.findAll('.more-menu-item').some(item => /置顶/.test(item.text()))).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+});
+
+describe('卡片与操作栏的状态同步', () => {
+  const actionBarStub = {
+    name: 'FeedActionBar',
+    props: ['feedId', 'replyId', 'replyMode', 'allowFav', 'likenum', 'replynum', 'favnum', 'favorited'],
+    template: '<div class="action-bar-stub"></div>',
+  };
+  const commentSectionStub = {
+    name: 'FeedCommentSection',
+    props: ['totalCommentCount', 'feedId', 'comments'],
+    template: '<div class="comment-section-stub"></div>',
+  };
+  const stubs = { FeedHeader: true, FeedContent: true, FeedActionBar: actionBarStub, FeedCommentSection: commentSectionStub, FeedDyhShareDialog: true, FeedShareImageDialog: true, FeedInteractionListDialog: true, FeedCollectionPickerDialog: true, AppDialog: true, ForwardDialog: true };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getFeedReplies.mockResolvedValue({ data: [] });
+    mocks.setFeedCloudFavorite.mockResolvedValue({ code: 200 });
+    setActivePinia(createPinia());
+  });
+
+  it('我的评论卡片把所属动态 id 传给操作栏，评论 id 单独保留给点赞', () => {
+    const wrapper = mount(FeedCard, {
+      props: { feed: { id: '222', feedId: '333', message: '我的回复', username: '作者' } as any, replyMode: true },
+      global: { stubs },
+    });
+    try {
+      const bar = wrapper.findComponent({ name: 'FeedActionBar' });
+      expect(bar.props('feedId')).toBe('333');
+      expect(bar.props('replyId')).toBe('222');
+      expect(bar.props('replyMode')).toBe(true);
+      expect(bar.props('allowFav')).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('操作栏点赞成功后的结果回写到实体，列表与详情共享同一份状态', async () => {
+    const feed = { id: '42', uid: '456', username: '作者', message: '正文', likenum: 12, userAction: { like: 0 } } as any;
+    const wrapper = mount(FeedCard, { props: { feed }, global: { stubs } });
+    try {
+      await wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('like-changed', { feedId: '42', liked: true, count: 13 });
+      expect(feed.likenum).toBe(13);
+      expect(feed.userAction.like).toBe(1);
+      // 再次进入详情（同一对象）时状态仍然已赞。
+      const again = mount(FeedCard, { props: { feed }, global: { stubs } });
+      expect(again.findComponent({ name: 'FeedActionBar' }).props('likenum')).toBe(13);
+      expect(again.findComponent({ name: 'FeedActionBar' }).props('favorited')).toBe(false);
+      again.unmount();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('取消收藏后把状态回写到实体，列表与其它卡片共享同一份收藏态', async () => {
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    auth.user = { uid: '456', username: '作者' } as any;
+    const feed = { id: '42', uid: '456', username: '作者', message: '正文', favnum: 5, userAction: { collect: 1 } } as any;
+    const wrapper = mount(FeedCard, { props: { feed }, global: { stubs } });
+    try {
+      expect(wrapper.findComponent({ name: 'FeedActionBar' }).props('favorited')).toBe(true);
+      await wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('toggle-fav');
+      await flushPromises();
+
+      // 实体字段被就地改写：同一 feed 对象在收藏页/详情页/其它列表里自动同步。
+      expect(feed.userAction.collect).toBe(0);
+      expect(feed.favnum).toBe(4);
+      expect(wrapper.emitted('favorite-changed')?.[0]).toEqual([{ id: '42', favorited: false }]);
+
+      const again = mount(FeedCard, { props: { feed }, global: { stubs } });
+      expect(again.findComponent({ name: 'FeedActionBar' }).props('favorited')).toBe(false);
+      expect(again.findComponent({ name: 'FeedActionBar' }).props('favnum')).toBe(4);
+      again.unmount();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('发表评论后本地累加评论数，标题与底栏计数同步 +1', async () => {
+    const feed = { id: '42', uid: '456', username: '作者', message: '正文', replynum: 7 } as any;
+    // 评论成功后仍会重新拉取评论列表，这里需要展开评论区才能收到 send-comment。
+    const wrapper = mount(FeedCard, { props: { feed, autoOpenComments: true }, global: { stubs } });
+    await flushPromises();
+    try {
+      expect(wrapper.findComponent({ name: 'FeedActionBar' }).props('replynum')).toBe(7);
+      await wrapper.findComponent({ name: 'FeedCommentSection' }).vm.$emit('send-comment', '新评论');
+      expect(feed.replynum).toBe(8);
+      expect(wrapper.findComponent({ name: 'FeedActionBar' }).props('replynum')).toBe(8);
+      expect(wrapper.findComponent({ name: 'FeedCommentSection' }).props('totalCommentCount')).toBe(8);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('收到新评论时插入列表顶部并只更新计数，不重拉整页评论', async () => {
+    const feed = { id: '42', uid: '456', username: '作者', message: '正文', replynum: 7 } as any;
+    mocks.getFeedReplies.mockResolvedValue({ data: [{ id: 'old-1', message: '旧评论' }] });
+    const wrapper = mount(FeedCard, { props: { feed, autoOpenComments: true }, global: { stubs } });
+    await flushPromises();
+    try {
+      const section = () => wrapper.findComponent({ name: 'FeedCommentSection' });
+      expect(section().props('comments').map((item: any) => item.id)).toEqual(['old-1']);
+      const requestCount = mocks.getFeedReplies.mock.calls.length;
+
+      await section().vm.$emit('send-comment', '新评论');
+      await section().vm.$emit('comment-created', { comment: { id: 'new-1', message: '新评论' } });
+      await flushPromises();
+
+      // 计数立即 +1，列表就地插入且不重拉第 1 页。
+      expect(feed.replynum).toBe(8);
+      expect(wrapper.findComponent({ name: 'FeedActionBar' }).props('replynum')).toBe(8);
+      expect(wrapper.findComponent({ name: 'FeedCommentSection' }).props('totalCommentCount')).toBe(8);
+      expect(section().props('comments').map((item: any) => item.id)).toEqual(['new-1', 'old-1']);
+      expect(mocks.getFeedReplies).toHaveBeenCalledTimes(requestCount);
+
+      // 重复回包不重复插入；楼中楼回复只更新计数。
+      await section().vm.$emit('comment-created', { comment: { id: 'new-1', message: '新评论' } });
+      await section().vm.$emit('comment-created', { comment: { id: 'sub-1', message: '楼中楼' }, replyId: 'old-1' });
+      await flushPromises();
+      expect(section().props('comments').map((item: any) => item.id)).toEqual(['new-1', 'old-1']);
+    } finally { wrapper.unmount(); }
+  });
+
+  it('我的评论卡片不把评论 id 当动态 id 去收藏', async () => {
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    auth.user = { uid: '456', username: '作者' } as any;
+    const wrapper = mount(FeedCard, {
+      props: { feed: { id: '222', feedId: '333', message: '我的回复', username: '作者' } as any, replyMode: true },
+      global: { stubs },
+    });
+    try {
+      await wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('toggle-fav');
+      await flushPromises();
+      expect(mocks.setFeedCloudFavorite).not.toHaveBeenCalled();
+      expect(wrapper.emitted('favorite-changed')).toBeUndefined();
     } finally { wrapper.unmount(); }
   });
 });

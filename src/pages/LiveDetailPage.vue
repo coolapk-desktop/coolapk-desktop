@@ -2,7 +2,7 @@
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="live-detail-page custom-scrollbar">
     <div class="live-detail-shell">
       <header class="live-detail-header">
-        <button type="button" class="live-back-button" aria-label="返回" @click="router.back()"><i class="fas fa-arrow-left"></i></button>
+        <button type="button" class="live-back-button" aria-label="返回" @click="navigateBack(router, '/discover')"><i class="fas fa-arrow-left"></i></button>
         <div class="live-detail-heading">
           <span class="live-detail-kicker"><i class="fas fa-tower-broadcast"></i> 直播</span>
           <h1>{{ title || '直播详情' }}</h1>
@@ -15,12 +15,13 @@
       <EmptyState v-else-if="!liveDetail" title="直播不存在" description="这场直播可能已经下线" />
       <section v-else class="live-detail-content">
         <div v-if="!settingsStore.settings.noImageMode" class="live-player-shell">
-          <video v-if="videoUrl && !videoFailed" class="live-player" :src="videoUrl" controls playsinline preload="metadata" @error="videoFailed = true"></video>
+          <video v-if="videoUrl && !videoFailed" :key="videoAttempt" class="live-player" :src="videoUrl" controls playsinline preload="metadata" @error="videoFailed = true"></video>
           <div v-else class="live-player-placeholder">
             <AppImage v-if="image" :src="image" :alt="title || '直播封面'" fit="cover" image-class="live-detail-cover" />
             <div class="live-player-placeholder-mask">
               <i :class="status === 1 ? 'fas fa-circle-play' : 'fas fa-video-slash'"></i>
               <span>{{ status === 1 ? '暂未返回可播放的视频地址' : status === -1 ? '暂无可用回放地址' : '直播尚未开始' }}</span>
+              <button v-if="videoFailed" type="button" class="live-retry-button" @click="retryPlayback">重新加载</button>
             </div>
           </div>
           <span :class="['live-detail-status', statusClass]"><i :class="statusIcon"></i>{{ statusLabel }}</span>
@@ -63,6 +64,8 @@ import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
 import { getErrorMessage } from '../utils/errors';
 import { showToast } from '../utils/toast';
+// 直播卡片主要出现在发现页，深链进入时退回该栏目。
+import { navigateBack } from '../utils/navigation';
 import type { DiscoveryEntity } from '../types/discovery';
 import {
   formatLiveCount,
@@ -94,6 +97,7 @@ const liveDetail = ref<DiscoveryEntity | null>(null);
 const loading = ref(false);
 const error = ref('');
 const videoFailed = ref(false);
+const videoAttempt = ref(0);
 const followed = ref(false);
 const pending = ref(false);
 const reservationCount = ref<number | null>(null);
@@ -169,6 +173,13 @@ async function toggleReservation() {
   }
 }
 
+// 播放失败后用户可触发的重试：重新拉取详情（即重新请求一次直播地址），并强制 video 元素重建。
+function retryPlayback() {
+  videoFailed.value = false;
+  videoAttempt.value += 1;
+  void loadDetail();
+}
+
 function openInBrowser() {
   if (openUrl.value) void CoolapkTauriAPI.openUrl(openUrl.value, 'system');
 }
@@ -221,6 +232,8 @@ async function refreshMobilePage() { await loadDetail(); }
 .live-reservation-button:disabled { cursor: wait; opacity: .7; }
 .live-system-button { background: var(--brand-soft, rgba(16, 185, 129, .1)); color: var(--brand-primary); }
 .live-video-hint { margin: 0; color: var(--text-tertiary); font-size: 12px; }
+.live-retry-button { border: 1px solid rgba(255, 255, 255, .6); border-radius: 8px; padding: 6px 16px; background: rgba(15, 23, 42, .55); color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
+.live-retry-button:hover { background: rgba(15, 23, 42, .8); }
 
 @media (max-width: 640px) {
   .live-detail-shell { padding: 14px 12px 28px; }

@@ -30,7 +30,7 @@
         class="comment-toolbar-collapse-btn"
         :title="showShortcutHints ? '收起评论 (Esc)' : '收起评论'"
         aria-label="收起评论"
-        @click.stop="$emit('collapse')"
+        @click.stop="handleCollapse"
       >
         <i class="fa-solid fa-chevron-up"></i>
         <span>收起评论</span>
@@ -74,6 +74,7 @@
         @input="handleEditorInput"
         @paste="handlePaste"
         @keydown="handleKeydown"
+        @blur="flushDraft"
         @pointerdown="handleEditorPointerDown"
         @focus="handleEditorFocus"
       ></div>
@@ -532,7 +533,7 @@
 
 <script setup lang="ts">
 import { createEditorTextNodes } from "../../utils/editorTextNodes";
-import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, getCurrentInstance } from 'vue';
 import { trackInitialScrollAnchor } from '../../utils/initialScrollAnchor';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { useRouter } from 'vue-router';
@@ -650,9 +651,19 @@ function formatCommentText(text: string): string {
   return props.formatRichText ? props.formatRichText(text) : renderCoolapkRichText(text);
 }
 
+/** 新评论创建结果：宿主据此就地插入列表/更新计数，无需整页重拉评论。 */
+type CommentCreatedPayload = {
+  /** 接口返回的新评论；服务端未回包时为 undefined。 */
+  comment?: any;
+  /** 有值时表示这是一条楼中楼回复，只更新计数，不插入主评论列表。 */
+  replyId?: string;
+};
+
 const emit = defineEmits<{
   (e: 'send-comment', text: string): void;
+  (e: 'comment-created', payload: CommentCreatedPayload): void;
   (e: 'delete-comment', id: string | number): void;
+  /** 仅用于「显式重试」：发表评论成功时改为发 comment-created，不再整页重拉。 */
   (e: 'retry-comments'): void;
   (e: 'load-more-comments'): void;
   (e: 'retry-more-comments'): void;
@@ -661,6 +672,13 @@ const emit = defineEmits<{
   (e: 'close-composer'): void;
 }>();
 
+const instance = getCurrentInstance();
+/** 宿主是否监听了 comment-created：老宿主只认 retry-comments，需要回退到整页刷新。 */
+function hasCommentCreatedListener(): boolean {
+  const vnodeProps = instance?.vnode.props;
+  if (!vnodeProps) return false;
+  return Boolean(vnodeProps.onCommentCreated || vnodeProps['onComment-created']);
+}
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const { formatShortcut } = usePlatformShortcuts();
@@ -677,7 +695,11 @@ const systemBarDimOwner = Symbol('comment-composer');
 watch([composerOpen, () => props.officialDetail], ([open, official]) => {
   settingsStore.setAndroidSystemBarDimmed(systemBarDimOwner, Boolean(open && official));
 }, { flush: 'sync', immediate: !!props.standaloneTarget });
-onUnmounted(() => { settingsStore.setAndroidSystemBarDimmed(systemBarDimOwner, false); });
+onUnmounted(() => {
+  settingsStore.setAndroidSystemBarDimmed(systemBarDimOwner, false);
+  // 卸载前补一次落盘，避免最后 400ms 的输入随组件销毁丢失。
+  flushDraft();
+});
 async function openComposer() { if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; } composerOpen.value = true; await nextTick(); syncMsgToEditor(inputMsg.value); inputRef.value?.focus({ preventScroll: true }); }
 watch(composerOpen, async visible => { if (visible) { await nextTick(); syncMsgToEditor(inputMsg.value); } });
 onDeactivated(closeComposer);
@@ -769,7 +791,16 @@ const showEmojiPicker = ref(false);
 const emojiContainerRef = ref<HTMLElement | null>(null);
 const officialEmojiPanelRef = ref<HTMLElement | null>(null);
 const { addRecent } = useRecentEmojis();
-let restoringDraft = false;
+// 恢复草稿时程序写入的正文：只跳过这一次写回，不影响后续输入落盘。
+let draftJustRestored: string | null = null;
+// 草稿按防抖落盘：逐字写入会每次全量重写整个草稿文件，既费 I/O 又容易卡输入。
+const DRAFT_SAVE_DELAY = 400;
+type PendingDraft = { account: string; feedId: string | number; replyId?: string; text: string };
+let pendingDraft: PendingDraft | null = null;
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// 本次编辑是否已产生过用户输入，用于阻止异步恢复的草稿覆盖已输入内容。
+let draftDirty = false;
+let draftRestoreToken = 0;
 
 function createEmojiImg(name: string, _filename?: string): HTMLImageElement {
   const img = document.createElement('img');
@@ -821,35 +852,84 @@ function syncMsgToEditor(text: string) {
 function handleEditorInput() {
   const el = inputRef.value;
   if (!el) return;
-  inputMsg.value = getEditorText(el);
+  const text = getEditorText(el);
+  // 用户直接在编辑器里打字时立即标记 dirty，抢在异步草稿返回前生效。
+  if (text.trim()) draftDirty = true;
+  inputMsg.value = text;
 }
 
 function currentDraftAccount(): string {
   return String(authStore.user?.uid || 'guest');
 }
 
+/** 丢弃仍在防抖窗口内的草稿写入（发表成功、目标切换后重新开始时使用）。 */
+function cancelPendingDraft() {
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  pendingDraft = null;
+}
+
+/** 立即落盘仍在防抖窗口内的草稿：失焦、收起评论、切换动态与卸载时调用。 */
+function flushDraft() {
+  if (draftSaveTimer) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  const pending = pendingDraft;
+  pendingDraft = null;
+  if (!pending) return;
+  void saveCommentDraft(pending.account, pending.feedId, pending.replyId, pending.text);
+}
+
 async function restoreDraft() {
   if (!props.feedId) return;
-  restoringDraft = true;
-  try {
-    const draft = await loadCommentDraft(currentDraftAccount(), props.feedId, replyTargetId.value || undefined);
-    if (draft) {
-      inputMsg.value = draft;
-      syncMsgToEditor(draft);
-    }
-  } finally {
-    restoringDraft = false;
+  // 每次恢复都取一个新 token：目标切换或连续触发时，只让最后一次结果生效。
+  const token = ++draftRestoreToken;
+  const account = currentDraftAccount();
+  const feedId = props.feedId;
+  const replyId = replyTargetId.value || undefined;
+  const draft = await loadCommentDraft(account, feedId, replyId);
+  if (token !== draftRestoreToken) return;
+  // 编辑器已有内容或本次编辑已产生输入时不覆盖，避免异步返回的草稿盖掉用户刚打的字。
+  if (draftDirty || inputMsg.value.trim()) return;
+  if (String(props.feedId) !== String(feedId)) return;
+  if ((replyTargetId.value || undefined) !== replyId) return;
+  if (draft && inputMsg.value !== draft) {
+    // 恢复草稿自身的赋值不写回磁盘，其余任何输入仍照常防抖落盘。
+    draftJustRestored = draft;
+    inputMsg.value = draft;
+    syncMsgToEditor(draft);
   }
 }
 
 watch([() => props.feedId, replyTargetId, () => authStore.user?.uid], () => {
+  // 先把旧目标尚未落盘的草稿写掉，再按新目标恢复。
+  flushDraft();
+  draftDirty = false;
   void restoreDraft();
 });
 
 watch(inputMsg, (val) => {
-  if (!restoringDraft && props.feedId) {
-    void saveCommentDraft(currentDraftAccount(), props.feedId, replyTargetId.value || undefined, val);
+  if (draftJustRestored !== null) {
+    const restored = draftJustRestored;
+    draftJustRestored = null;
+    if (val === restored) return;
   }
+  if (!props.feedId) return;
+  draftDirty = val.trim().length > 0;
+  pendingDraft = {
+    account: currentDraftAccount(),
+    feedId: props.feedId,
+    replyId: replyTargetId.value || undefined,
+    text: val,
+  };
+  if (draftSaveTimer) clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    flushDraft();
+  }, DRAFT_SAVE_DELAY);
 });
 
 function isAbsoluteTimeVisible(item: any): boolean {
@@ -1149,6 +1229,8 @@ async function toggleLike(item: any) {
   } catch (error) {
     likeStates.value = { ...likeStates.value, [key]: previous };
     console.error('Failed to toggle comment like', error);
+    // 与动态点赞一致：失败必须显式反馈，否则按钮只是悄悄回弹。
+    showToast(getErrorMessage(error, '点赞失败'), 'error');
   } finally {
     const pending = { ...likePending.value };
     delete pending[key];
@@ -1521,6 +1603,11 @@ function removeImage(index: number) {
   images.value.splice(index, 1);
 }
 
+function handleCollapse() {
+  flushDraft();
+  emit('collapse');
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
@@ -1532,7 +1619,7 @@ function handleKeydown(e: KeyboardEvent) {
     } else if (replyTargetUser.value) {
       clearReplyTarget();
     } else if (!props.hideCollapseButton) {
-      emit('collapse');
+      handleCollapse();
     }
   }
 }
@@ -1596,6 +1683,8 @@ function closeComposer() {
 }
 
 function clearReplyTarget() {
+  // 收起输入框/取消回复目标时，把仍在防抖窗口内的草稿立即落盘。
+  flushDraft();
   if (floatingReplyComposer.value) { floatingReplyComposer.value = false; composerOpen.value = false; }
   replyTargetUser.value = '';
   replyTargetId.value = '';
@@ -2066,6 +2155,8 @@ async function handleSend() {
       }
 
       if (res && res.code === 200) {
+      // 发表成功后草稿已作废：先丢弃待写入的防抖任务，避免旧正文被写回。
+      cancelPendingDraft();
       await clearCommentDraft(props.standaloneTarget ? draftAccount : currentDraftAccount(), currentFeedId, targetRid);
       inputMsg.value = '';
       if (inputRef.value) {
@@ -2078,9 +2169,19 @@ async function handleSend() {
       showToast('评论发表成功');
       emit('send-comment', rawMsg);
       if (props.standaloneTarget) return;
-      // 楼中楼回复只补齐当前楼层，保留主评论分页和已展开的楼层。
-      if (targetRid) await updateRepliedFloor(String(currentFeedId), targetRid, res.data);
-      else emit('retry-comments');
+      // 楼中楼回复只补齐当前楼层，保留主评论分页和已展开的楼层；
+      // 主评论把接口返回的新评论交给宿主就地插入，不再 emit retry-comments 整页重拉。
+      const createdComment = res.data && typeof res.data === 'object'
+        ? (Array.isArray(res.data) ? res.data[0] : res.data)
+        : undefined;
+      if (targetRid) {
+        await updateRepliedFloor(String(currentFeedId), targetRid, res.data);
+        emit('comment-created', { comment: createdComment, replyId: String(targetRid) });
+      } else {
+        emit('comment-created', { comment: createdComment });
+        // 兼容只监听 retry-comments 的老宿主（详情页/话题/商品等），否则新评论要手动刷新才出现。
+        if (!hasCommentCreatedListener()) emit('retry-comments');
+      }
     } else {
       showToast(res?.message || '评论发表失败', 'error');
     }

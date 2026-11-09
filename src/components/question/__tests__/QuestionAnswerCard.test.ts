@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { nextTick, ref } from 'vue';
 import { useSettingsStore } from '../../../stores/settings';
@@ -13,9 +13,14 @@ vi.mock('vue-router', async (importOriginal) => {
   return { ...actual, useRouter: () => ({ push: navigation.push }) };
 });
 
+const favorites = vi.hoisted(() => ({ setFeedCloudFavorite: vi.fn(), updateFeedCloudCollections: vi.fn(), getFeedCollectionOptions: vi.fn() }));
+
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
     getFeedReplies: vi.fn().mockResolvedValue({ data: [] }),
+    setFeedCloudFavorite: favorites.setFeedCloudFavorite,
+    updateFeedCloudCollections: favorites.updateFeedCloudCollections,
+    getFeedCollectionOptions: favorites.getFeedCollectionOptions,
   },
 }));
 
@@ -199,6 +204,54 @@ describe('问答回答卡', () => {
 
     expect(wrapper.find('.answer-reply-summary').exists()).toBe(true);
     expect(wrapper.findAll('.answer-reply-sort-tab').map((item) => item.text())).toEqual(['默认', '最新', '热门', '楼主']);
+  });
+
+  it('取消收藏与收藏夹收藏后都回写同一份回答实体', async () => {
+    favorites.setFeedCloudFavorite.mockResolvedValue({ code: 200 });
+    favorites.updateFeedCloudCollections.mockResolvedValue({ code: 200 });
+    favorites.getFeedCollectionOptions.mockResolvedValue([{ id: 'c1', title: '默认收藏夹', isBeCollected: 0 }]);
+    const pinia = createPinia();
+    useAuthStore(pinia).isLoggedIn = true;
+    // 问题页/首页列表传下来的就是这份 answer 对象。
+    const answer: any = { id: 'answer-45', message: '回答正文', feedType: 'answer', favnum: 2, userAction: { collect: 1 } };
+    const wrapper = mount(QuestionAnswerCard, {
+      props: { answer },
+      global: {
+        plugins: [pinia],
+        stubs: {
+          FeedHeader: true,
+          FeedContent: true,
+          FeedVideoCard: true,
+          FeedImageGrid: true,
+          VoteCard: true,
+          AppImage: true,
+          FeedActionBar: true,
+          FeedCommentSection: true,
+          ForwardDialog: true,
+          FeedInteractionListDialog: true,
+          FeedCollectionPickerDialog: true,
+        },
+      },
+    });
+    try {
+      const actions = wrapper.findComponent({ name: 'FeedActionBar' });
+
+      actions.vm.$emit('toggle-fav');
+      await flushPromises();
+      expect(favorites.setFeedCloudFavorite).toHaveBeenCalledWith('answer-45', false, 'answer', '');
+      expect(answer.userAction.collect).toBe(0);
+      expect(answer.favnum).toBe(1);
+
+      // 再次点击走收藏夹面板，确认选择后收藏态与计数一起回写。
+      actions.vm.$emit('toggle-fav');
+      await flushPromises();
+      expect(favorites.getFeedCollectionOptions).toHaveBeenCalledWith('answer-45');
+      wrapper.findComponent({ name: 'FeedCollectionPickerDialog' }).vm.$emit('confirm', ['c1']);
+      await flushPromises();
+      expect(favorites.updateFeedCloudCollections).toHaveBeenCalled();
+      expect(answer.userAction.collect).toBe(1);
+      expect(answer.favnum).toBe(2);
+    } finally { wrapper.unmount(); }
   });
 
   it('问题详情的回答列表可以隐藏回复统计和排序栏', () => {

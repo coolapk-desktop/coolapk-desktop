@@ -1,5 +1,5 @@
 <template>
-  <FeedCard v-if="isFeedEntity" :feed="entity" :profile-uid="profileUid" @pin-changed="emit('pin-changed')" :reply-mode="tab === 'reply' || /reply|comment/.test(type)" @deleted="(id) => emit('deleted', id)" />
+  <FeedCard v-if="isFeedEntity" :feed="feedForCard" :profile-uid="profileUid" @pin-changed="emit('pin-changed')" :reply-mode="replyMode" @deleted="(id) => emit('deleted', id)" />
   <RatingCard v-else-if="isRatingEntity" :feed="entity" />
   <article v-else class="user-entity-card" :class="`entity-${variant}`" @click="openEntity">
     <template v-if="variant === 'collection'">
@@ -99,6 +99,25 @@ const avatarFromUid = computed(() => {
 });
 const price = computed(() => String(entity.value.price ?? entity.value.priceMin ?? entity.value.price_min ?? ''));
 const rating = computed(() => String(entity.value.ratingAverageScore ?? entity.value.rating_average_score ?? entity.value.score ?? ''));
+// 回复/评论记录：id 属于评论而不是动态，卡片上的动态级操作不能直接作用在 feed.id 上。
+// 除了 tab 与实体类型，接口还会用 entityTemplate/entityTypeName 标记回复，需要一并识别，
+// 否则会退回「删除动态」等只有动态才有意义的操作。
+const replyMode = computed(() => props.tab === 'reply'
+  || /reply|comment/.test(type.value)
+  || /reply|comment/.test(template.value));
+/** 回复卡片交给 FeedCard 的实体：保留评论 id，显式带上父动态 id 并禁用动态编辑入口。 */
+const feedForCard = computed(() => {
+  if (!replyMode.value) return entity.value;
+  const source = entity.value;
+  return {
+    ...source,
+    // 评论没有「重新编辑动态」语义，禁用比调用动态编辑接口更安全。
+    enableModify: 0,
+    // 父动态 id 供「打开原动态」与点赞目标使用（点赞走评论接口由 FeedCard 判定）。
+    feedId: source.feedId ?? source.feed_id ?? '',
+    feed_id: source.feed_id ?? source.feedId ?? '',
+  };
+});
 const isFeedEntity = computed(() => {
   if (props.tab === 'rating' || props.tab === 'collection') return false;
   if (['goods_store', 'goods_rank', 'developer_apps', 'apk_follow', 'collection', 'album'].includes(props.tab || '')) return false;

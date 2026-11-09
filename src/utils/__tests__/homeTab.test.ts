@@ -4,6 +4,7 @@ import {
   HOME_TAB_REFRESH_EVENT,
   HOME_TAB_SCROLL_TOP_EVENT,
   activateHomeTab,
+  activateRootTab,
   isHomeTabDoubleClick,
   resetHomeTabClickState,
 } from '../homeTab';
@@ -121,5 +122,47 @@ describe('首页单击 / 双击判据', () => {
   it('拿不到路由器时安全降级，不抛异常', () => {
     expect(activateHomeTab(undefined)).toBe('navigate');
     expect(scrollTopCount).toBe(0);
+  });
+
+  it('数码 / 发现 / 我的 入口与首页共用同一套判据', () => {
+    const digital = createRouterStub('/');
+    expect(activateRootTab(digital as never, '/digital')).toBe('navigate');
+    expect(digital.push).toHaveBeenCalledWith('/digital');
+    expect(scrollTopCount).toBe(0);
+
+    const active = createRouterStub('/discover');
+    expect(activateRootTab(active as never, '/discover')).toBe('single');
+    expect(active.push).not.toHaveBeenCalled();
+    expect(scrollTopCount).toBe(1);
+    expect(refreshCount).toBe(0);
+
+    resetHomeTabClickState();
+    const me = createRouterStub('/me');
+    expect(activateRootTab(me as never, '/me')).toBe('single');
+    expect(scrollTopCount).toBe(2);
+    expect(me.push).not.toHaveBeenCalled();
+  });
+
+  it('非首页栏目已激活时把页面滚动容器滚回顶部', () => {
+    const router = createRouterStub('/digital');
+    const main = document.createElement('div');
+    main.className = 'app-main-content';
+    const scroller = document.createElement('div');
+    scroller.className = 'digital-content';
+    scroller.scrollTop = 480;
+    main.appendChild(scroller);
+    document.body.appendChild(main);
+    try {
+      expect(activateRootTab(router as never, '/digital')).toBe('single');
+      expect(scroller.scrollTop).toBe(0);
+    } finally {
+      main.remove();
+    }
+  });
+
+  it('activateHomeTab 作为首页别名保留旧行为', () => {
+    const router = createRouterStub('/');
+    expect(activateHomeTab(router as never)).toBe('single');
+    expect(scrollTopCount).toBe(1);
   });
 });

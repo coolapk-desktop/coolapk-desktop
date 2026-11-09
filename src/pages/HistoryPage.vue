@@ -94,6 +94,10 @@
 
           <div class="pagination-footer">
             <LoadingState v-if="loadingMore" text="正在读取更多历史足迹..." />
+            <div v-else-if="paginationError" class="footer-error">
+              <span class="footer-error-text">翻页加载失败：{{ paginationError }}</span>
+              <AppButton size="sm" @click="fetchHistory(false)">重试</AppButton>
+            </div>
             <div v-else-if="noMore" class="no-more">已加载全部历史记录</div>
             <AppButton v-else size="sm" @click="fetchHistory(false)">加载更多浏览记录</AppButton>
           </div>
@@ -131,12 +135,14 @@ const noMore = ref(false);
 const feeds = ref<any[]>([]);
 const page = ref(1);
 const error = ref('');
+const paginationError = ref('');
 const historyPageCursor = ref<{ firstItem?: string; lastItem?: string }>({});
 const feedDetails = ref<Record<string, any>>({});
 let metadataGeneration = 0;
 let metadataQueue: any[] = [];
 let metadataRequests = 0;
 const requestedMetadata = new Set<string>();
+const failedMetadata = new Set<string>();
 
 function itemFeedId(item: any): string {
   return firstText(item?.url, item?.targetUrl).match(/\/?feed\/(\d+)/)?.[1]
@@ -151,7 +157,8 @@ function itemFeed(item: any): any {
 function loadHistoryMetadata(items: any[]) {
   for (const item of items) {
     const id = itemFeedId(item);
-    if (!id || requestedMetadata.has(id)) continue;
+    // 已请求成功的不重复入队；请求失败的保留失败标记，刷新后仍可再次补全。
+    if (!id || (requestedMetadata.has(id) && !failedMetadata.has(id))) continue;
     requestedMetadata.add(id);
     const cached = useAppStore().getFeedDetailContext(id);
     if (cached?.username && cached?.entityType !== 'history') {
@@ -166,9 +173,14 @@ function drainMetadataQueue() {
     const { id, generation } = metadataQueue.shift();
     metadataRequests++;
     void CoolapkTauriAPI.getPublicFeedDetail(id).then((response) => {
-      if (generation === metadataGeneration && String(response?.data?.id) === id) feedDetails.value[id] = response.data;
+      if (generation === metadataGeneration && String(response?.data?.id) === id) {
+        failedMetadata.delete(id);
+        feedDetails.value[id] = response.data;
+      }
     }).catch(() => {
-      // 已删除、私密或暂不可访问的帖子仍展示历史摘要，不阻塞列表。
+      // 已删除、私密或暂不可访问的帖子仍展示历史摘要，不阻塞列表；
+      // 标记失败占位，下拉刷新时允许再次尝试补全详情。
+      failedMetadata.add(id);
     }).finally(() => { metadataRequests--; drainMetadataQueue(); });
   }
 }
@@ -177,6 +189,7 @@ function resetMetadata() {
   metadataGeneration++;
   metadataQueue = [];
   requestedMetadata.clear();
+  failedMetadata.clear();
   feedDetails.value = {};
 }
 
@@ -441,6 +454,12 @@ function openItem(item: any) {
       openFeedDetail(router, feedId, item);
       return;
     }
+    // /apk/<包名>、/product/<id> 与 getItemType 的 apk 类型保持一致，优先走内部应用详情路由。
+    const apkMatch = url.match(/^\/(?:apk|product)\/([^/?#]+)/);
+    if (apkMatch?.[1]) {
+      router.push(url.startsWith('/product/') ? `/product/${apkMatch[1]}` : `/app/${apkMatch[1]}`);
+      return;
+    }
   }
 
   if (id) {
@@ -490,12 +509,14 @@ async function fetchHistory(isRefresh = false) {
     noMore.value = false;
     feeds.value = [];
     historyPageCursor.value = {};
+    // 失败占位标记保留，重载后失败条目会再次进入补全队列；已成功数据保留避免闪烁。
     loading.value = true;
   } else {
     if (noMore.value) return;
     loadingMore.value = true;
   }
   error.value = '';
+  paginationError.value = '';
 
   try {
     // 与官方 HistoryTimeV9Fragment 一致：空 type 才返回带浏览时间的 history 实体。
@@ -517,7 +538,10 @@ async function fetchHistory(isRefresh = false) {
       if (newFeeds.length) break;
     }
   } catch (err: any) {
-    error.value = err?.message || '加载失败，请检查网络';
+    const message = err?.message || '加载失败，请检查网络';
+    error.value = message;
+    // 翻页失败不能静默吞掉：footer 展示错误并允许手动重试，滚动触底不自动重刷循环。
+    if (!isRefresh) paginationError.value = message;
   } finally {
     loading.value = false;
     loadingMore.value = false;
@@ -529,7 +553,8 @@ function handleScroll(e: Event) {
   const target = e.target as HTMLElement;
   const { scrollTop, clientHeight, scrollHeight } = target;
   if (scrollTop + clientHeight >= scrollHeight - 120) {
-    if (!loading.value && !loadingMore.value && !noMore.value) {
+    // 翻页失败后留给用户手动点重试，避免滚动触底触发自动重刷循环。
+    if (!loading.value && !loadingMore.value && !noMore.value && !paginationError.value) {
       void fetchHistory(false);
     }
   }
@@ -883,6 +908,17 @@ async function refreshMobilePage() { await fetchHistory(true); }
   text-align: center;
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.footer-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.footer-error-text {
+  color: var(--danger, #ef4444);
 }
 
 /* 手机缩略图保留在右侧，缩小占位以给标题和正文留出阅读宽度。 */

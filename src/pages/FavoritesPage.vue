@@ -235,6 +235,18 @@
               <span>编辑</span>
             </button>
 
+            <!-- 多选操作：仅对当前有管理权限的收藏单展示（官方 APK 的批量移除入口） -->
+            <button
+              v-if="canManageCollection(collectionDetail) && !collectionMultiSelectMode"
+              type="button"
+              class="toolbar-btn btn-multi-select"
+              title="批量选择内容"
+              @click="enterCollectionMultiSelect"
+            >
+              <i class="fas fa-check-double"></i>
+              <span>多选</span>
+            </button>
+
             <!-- 方案 B：更多操作下拉菜单 (···) -->
             <div v-if="hasCollectionMoreActions" class="hero-more-menu-wrap">
               <button
@@ -264,6 +276,15 @@
                   >
                     <i class="fas fa-share-nodes"></i>
                     <span>分享收藏单</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="dropdown-menu-item"
+                    @click="handleMenuExportCollection"
+                  >
+                    <i class="fas fa-file-export"></i>
+                    <span>导出此收藏单</span>
                   </button>
 
                   <template v-if="isOwnerCollection(collectionDetail)">
@@ -313,6 +334,19 @@
           </span>
         </div>
 
+        <div v-if="collectionMultiSelectMode" class="collection-multi-select-bar">
+          <button
+            type="button"
+            class="multi-select-toggle-all"
+            :disabled="collectionMultiSelectTotal === 0"
+            @click="toggleAllCollectionItems"
+          >
+            <i :class="allCollectionItemsSelected ? 'fas fa-times-circle' : 'fas fa-check-circle'"></i>
+            <span>{{ allCollectionItemsSelected ? '取消全选' : ('全选 ' + collectionMultiSelectTotal + ' 条') }}</span>
+          </button>
+          <span class="multi-select-bar-count">已加载 {{ collectionMultiSelectTotal }} 条</span>
+        </div>
+
         <div v-if="collectionItemsLoading && collectionItems.length === 0" class="loading-wrapper">
           <LoadingState text="正在获取收藏单内容..." />
         </div>
@@ -331,6 +365,18 @@
 
         <div v-else class="feed-list">
           <div v-for="item in filteredCollectionItems" :key="item.id" class="collection-feed-item">
+            <!-- 多选模式：遮罩整张卡片，点击即勾选/取消，且不会触发卡片自身跳转 -->
+            <div
+              v-if="collectionMultiSelectMode && collectionItemId(item)"
+              class="multi-select-hitbox"
+              role="checkbox"
+              :aria-checked="collectionSelectedIds.has(collectionItemId(item))"
+              :class="{ 'is-selected': collectionSelectedIds.has(collectionItemId(item)) }"
+              @click.stop="toggleCollectionItemSelect(item)"
+            >
+              <i class="multi-select-checkbox" :class="collectionSelectedIds.has(collectionItemId(item)) ? 'fas fa-check-square' : 'far fa-square'"></i>
+              <span>{{ collectionSelectedIds.has(collectionItemId(item)) ? '已选' : '未选' }}</span>
+            </div>
             <RatingCard
               v-if="isRatingFeedEntity(item)"
               :feed="item"
@@ -346,7 +392,7 @@
               @deleted="handleFeedDeleted"
               @favorite-changed="handleFavoriteChanged"
             />
-            <div v-if="collectionItemId(item)" class="collection-item-quick-action">
+            <div v-if="collectionItemId(item) && !collectionMultiSelectMode" class="collection-item-quick-action">
               <button
                 type="button"
                 class="btn-remove-collection-item"
@@ -364,6 +410,29 @@
             <LoadingState v-if="collectionItemsLoadingMore" text="加载更多中..." />
             <div v-else-if="collectionItemsNoMore" class="no-more">没有更多内容了</div>
           </div>
+        </div>
+
+        <!-- 多选模式：底部固定操作条 -->
+        <div v-if="collectionMultiSelectMode" class="collection-multi-select-actionbar">
+          <span class="multi-select-selected-count">已选 {{ collectionSelectedIds.size }} 项</span>
+          <button
+            type="button"
+            class="btn-batch-remove"
+            :disabled="collectionSelectedIds.size === 0 || collectionBatchRemoving"
+            @click="removeSelectedCollectionItems"
+          >
+            <i v-if="collectionBatchRemoving" class="fas fa-spinner fa-spin"></i>
+            <i v-else class="fas fa-folder-minus"></i>
+            <span>移出收藏单</span>
+          </button>
+          <button
+            type="button"
+            class="btn-batch-cancel"
+            :disabled="collectionBatchRemoving"
+            @click="exitCollectionMultiSelect"
+          >
+            取消
+          </button>
         </div>
       </div>
 
@@ -563,7 +632,7 @@
     <FavoriteExportDialog
       :is-open="favoriteExportOpen"
       mode="collections"
-      :collections="collections"
+      :collections="favoriteExportSourceCollections"
       @close="favoriteExportOpen = false"
     />
   </div>
@@ -593,11 +662,13 @@ import { requestConfirmation } from '../utils/confirm';
 import { getErrorMessage } from '../utils/errors';
 import { showToast } from '../utils/toast';
 import { isRatingFeedEntity } from '../utils/rating';
-import { favoriteFeedCursorId, loadAllFavoriteCollections } from '../utils/favoriteFeeds';
+import { favoriteFeedCursorId, favoriteFeedId, loadAllFavoriteCollections } from '../utils/favoriteFeeds';
 import {
   normalizeFavoriteSearchText,
   removeFavoriteContentIndexEntry,
   searchFavoriteContentIndex,
+  syncFavoriteContentIndex,
+  syncFavoriteContentIndexIfNeeded,
 } from '../utils/favoriteContentIndex';
 
 const authStore = useAuthStore();
@@ -605,8 +676,22 @@ const route = useRoute();
 const router = useRouter();
 
 const favoriteExportOpen = ref(false);
+// 本次导出来源列表：列表页「导出收藏」传全部，详情页「导出此收藏单」只传当前收藏单，二者互不污染。
+const favoriteExportSourceCollections = ref<any[]>([]);
 
 function openFavoriteExport() {
+  favoriteExportSourceCollections.value = collections.value;
+  favoriteExportOpen.value = true;
+}
+
+function handleMenuExportCollection() {
+  collectionMoreMenuOpen.value = false;
+  const detail = collectionDetail.value || {};
+  favoriteExportSourceCollections.value = [{
+    id: collectionId(detail) || activeCollectionId.value,
+    title: detail.title || activeCollectionTitle.value || '收藏单',
+    itemNum: collectionItemNum.value,
+  }];
   favoriteExportOpen.value = true;
 }
 
@@ -623,6 +708,9 @@ const collectionItemsPage = ref(1);
 const collectionItemsNoMore = ref(false);
 const collectionItemsFirstItem = ref('');
 const collectionItemsLastItem = ref('');
+// 收藏单快速切换竞态：详情与条目请求各自递增序号，只有最新一次请求的响应允许回填。
+let collectionDetailRequestSequence = 0;
+let collectionItemsRequestSequence = 0;
 const collectionContentSearchKeyword = ref('');
 const collectionContentSearchIds = ref<Set<string>>(new Set());
 const collectionContentSearchLoading = ref(false);
@@ -717,6 +805,11 @@ async function runCollectionContentSearch() {
     const results = await searchFavoriteContentIndex(accountId, keyword, 10_000);
     if (requestVersion !== collectionContentSearchVersion) return;
     collectionContentSearchIds.value = new Set(results.map(entry => entry.feedId));
+    // 历史收藏没有正文索引，搜索只覆盖已缓存索引与已加载条目；
+    // 条目较多且一条都没命中时提示用户，避免误以为没有收藏。
+    if (collectionItems.value.length >= 50 && !collectionItems.value.some(item => itemMatchesContentSearch(item, keyword))) {
+      showToast('仅搜索已缓存内容，较早的历史收藏可能未包含在结果中', 'warning');
+    }
   } catch (error) {
     if (requestVersion === collectionContentSearchVersion) console.warn('搜索收藏单正文索引失败:', error);
   } finally {
@@ -764,16 +857,22 @@ const filteredCollections = computed(() => {
   });
 });
 
+// 单条内容是否命中搜索：命中正文索引 id，或标题/摘要包含全部关键词。
+function itemMatchesContentSearch(item: any, rawKeyword: string): boolean {
+  const keywords = normalizeFavoriteSearchText(rawKeyword).split(' ').filter(Boolean);
+  if (keywords.length === 0) return true;
+  // 正文索引按 favoriteFeedId 建键（id → feedId → entityId），这里必须用同一口径：
+  // 实体包装条目只有 entityId 时，按 id/feedId 比对永远命中不了索引。
+  const itemId = favoriteFeedId(item);
+  if (itemId && collectionContentSearchIds.value.has(itemId)) return true;
+  const summary = normalizeFavoriteSearchText(`${item?.title || ''}\n${item?.message || item?.description || ''}`);
+  return keywords.every(keyword => summary.includes(keyword));
+}
+
 const filteredCollectionItems = computed(() => {
-  const query = normalizeFavoriteSearchText(collectionContentSearchKeyword.value);
-  if (!query) return collectionItems.value;
-  const keywords = query.split(' ').filter(Boolean);
-  return collectionItems.value.filter((item) => {
-    const itemId = String(item?.id || item?.feedId || '').trim();
-    if (itemId && collectionContentSearchIds.value.has(itemId)) return true;
-    const summary = normalizeFavoriteSearchText(`${item?.title || ''}\n${item?.message || item?.description || ''}`);
-    return keywords.every(keyword => summary.includes(keyword));
-  });
+  const keyword = collectionContentSearchKeyword.value.trim();
+  if (!keyword) return collectionItems.value;
+  return collectionItems.value.filter((item) => itemMatchesContentSearch(item, keyword));
 });
 
 const COLLECTION_GRADIENTS = [
@@ -797,17 +896,69 @@ function getCollectionGradient(titleOrId?: string): string {
   return COLLECTION_GRADIENTS[Math.abs(hash) % COLLECTION_GRADIENTS.length];
 }
 
+// 条目主键可能是 feed 的 id/entityId，也可能是收藏单条目的 collectionItemId，只按 f.id 过滤会漏删实体包装条目。
+function feedMatchesItemKey(item: any, key: string | number): boolean {
+  const target = String(key);
+  if (!target) return false;
+  for (const field of ['id', 'entityId', 'entity_id', 'feedId', 'feed_id', 'collectionItemId', 'collection_item_id']) {
+    const value = item?.[field];
+    if (value !== undefined && value !== null && String(value) === target) return true;
+  }
+  return false;
+}
+
+function removeCollectionItemsByKey(key: string | number): number {
+  const before = collectionItems.value.length;
+  collectionItems.value = collectionItems.value.filter((item: any) => !feedMatchesItemKey(item, key));
+  return before - collectionItems.value.length;
+}
+
+/** 条目被移出列表后同步收藏单条目数（详情头部与收藏单列表共用），避免计数与列表不一致。 */
+function syncCollectionItemCount(removed: number) {
+  if (removed <= 0) return;
+  collectionItemNum.value = Math.max(0, collectionItemNum.value - removed);
+  const current = collections.value.find(collection => collectionId(collection) === activeCollectionId.value);
+  if (current) current.itemNum = collectionItemNum.value;
+}
+
+// 正文索引清理的失败可见性：这里处于热点路径（列表滚动逐条联动、批量删除连打），
+// 不能每条失败都弹 toast；策略是失败先重试一次，仍失败写诊断日志，只有连续多次
+// 失败（索引大概率整体不可用，如断网）才聚合提示一次，成功后复位计数与提示闸门。
+let contentIndexRemoveConsecutiveFailures = 0;
+let contentIndexRemoveFailureNotified = false;
+async function removeContentIndexEntryWithVisibility(accountId: string | number, feedId: string | number) {
+  const reset = () => {
+    contentIndexRemoveConsecutiveFailures = 0;
+    contentIndexRemoveFailureNotified = false;
+  };
+  try {
+    await removeFavoriteContentIndexEntry(accountId, feedId);
+    reset();
+  } catch {
+    try {
+      await removeFavoriteContentIndexEntry(accountId, feedId);
+      reset();
+    } catch (error) {
+      contentIndexRemoveConsecutiveFailures += 1;
+      console.error('[FavoritesPage] 收藏正文索引清理失败（已重试 1 次，内容可能残留在正文搜索中）:', { feedId: String(feedId), consecutiveFailures: contentIndexRemoveConsecutiveFailures }, error);
+      if (!contentIndexRemoveFailureNotified && contentIndexRemoveConsecutiveFailures >= 3) {
+        contentIndexRemoveFailureNotified = true;
+        showToast('收藏正文索引清理失败，已移除的内容可能仍出现在正文搜索中', 'warning', 5000);
+      }
+    }
+  }
+}
+
 function handleFeedDeleted(id: string | number) {
-  const filter = (list: any[]) => list.filter((f: any) => String(f.id) !== String(id));
-  collectionItems.value = filter(collectionItems.value);
-  void removeFavoriteContentIndexEntry(favoriteAccountId(), id).catch((error) => console.warn('移除删除动态的正文索引失败:', error));
+  // 删除动态与取消收藏都是「条目从收藏单消失」，计数口径必须一致。
+  syncCollectionItemCount(removeCollectionItemsByKey(id));
+  void removeContentIndexEntryWithVisibility(favoriteAccountId(), id);
 }
 
 function handleFavoriteChanged(payload: { id: string | number; favorited: boolean }) {
   if (payload.favorited) return;
-  const filter = (list: any[]) => list.filter((f: any) => String(f.id) !== String(payload.id));
-  collectionItems.value = filter(collectionItems.value);
-  void removeFavoriteContentIndexEntry(favoriteAccountId(), payload.id).catch((error) => console.warn('移除取消收藏的正文索引失败:', error));
+  syncCollectionItemCount(removeCollectionItemsByKey(payload.id));
+  void removeContentIndexEntryWithVisibility(favoriteAccountId(), payload.id);
 }
 const collectionLiked = ref(false);
 const collectionFollowPending = ref(false);
@@ -818,6 +969,9 @@ const collectionActionLoading = ref(false);
 const collectionCoverUploading = ref(false);
 const collectionCleanupPending = ref(false);
 const collectionItemActionId = ref('');
+const collectionMultiSelectMode = ref(false);
+const collectionSelectedIds = ref<Set<string>>(new Set());
+const collectionBatchRemoving = ref(false);
 const collectionActionError = ref('');
 const collectionMoreMenuOpen = ref(false);
 const collectionForm = ref({ title: '', description: '', cover: '', isOpen: true });
@@ -934,6 +1088,48 @@ function handleMenuDelete() {
   collectionMoreMenuOpen.value = false;
   void deleteCollection(collectionDetail.value);
 }
+// 全选只作用于当前可见（含搜索过滤后）的条目：隐藏条目被静默选中会让用户误删。
+const collectionMultiSelectTotal = computed(() => filteredCollectionItems.value.filter((item: any) => collectionItemId(item)).length);
+const allCollectionItemsSelected = computed(() => collectionMultiSelectTotal.value > 0 && collectionSelectedIds.value.size >= collectionMultiSelectTotal.value);
+
+/** 清空多选状态（含选择集合），切换单、刷新、退出详情时必须调用，避免选择跨收藏单残留。 */
+function clearCollectionMultiSelect() {
+  collectionMultiSelectMode.value = false;
+  collectionSelectedIds.value = new Set();
+  collectionBatchRemoving.value = false;
+}
+
+function enterCollectionMultiSelect() {
+  collectionMoreMenuOpen.value = false;
+  collectionMultiSelectMode.value = true;
+}
+
+function exitCollectionMultiSelect() {
+  collectionMultiSelectMode.value = false;
+  collectionSelectedIds.value = new Set();
+}
+
+function toggleCollectionItemSelect(item: any) {
+  const id = collectionItemId(item);
+  if (!id) return;
+  const next = new Set(collectionSelectedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collectionSelectedIds.value = next;
+}
+
+function toggleAllCollectionItems() {
+  if (allCollectionItemsSelected.value) {
+    collectionSelectedIds.value = new Set();
+    return;
+  }
+  collectionSelectedIds.value = new Set(
+    filteredCollectionItems.value
+      .map((item: any) => collectionItemId(item))
+      .filter((id: string) => Boolean(id))
+  );
+}
+
 function collectionItemId(item: any): string {
   return String(
     item?.collectionItem?.id ||
@@ -1066,6 +1262,9 @@ async function deleteCollection(collection: any) {
   collectionActionLoading.value = true;
   try {
     await CoolapkTauriAPI.deleteCollection(id);
+    // 删除收藏单会取消其中内容的归属（确认文案口径）：触发一次全量同步，
+    // 由 removed 剪枝统一清理这些条目的正文索引，聚合为一次列表遍历而非逐条写盘。
+    void syncFavoriteContentIndex(favoriteAccountId()).catch((error) => console.warn('删除收藏单后同步正文索引失败:', error));
     collections.value = collections.value.filter(item => collectionId(item) !== id);
     if (activeCollectionId.value === id) backToCollections();
     showToast('收藏单已删除', 'success');
@@ -1084,11 +1283,31 @@ async function clearInvalidCollectionItems() {
   try {
     await CoolapkTauriAPI.clearCollectionInvalidItems(activeCollectionId.value);
     showToast('清理请求已提交', 'success');
+    // 失效内容被服务端移出收藏后同样需要剪枝正文索引：复用全量同步的 removed 剪枝，聚合一次完成。
+    void syncFavoriteContentIndex(favoriteAccountId()).catch((error) => console.warn('清理失效内容后同步正文索引失败:', error));
     await fetchCollectionItems(true);
   } catch (err) {
     showToast(getErrorMessage(err, '清理失效内容失败'), 'error');
   } finally {
     collectionCleanupPending.value = false;
+  }
+}
+
+/** 单条移除核心：列表移除、计数同步与正文索引清理的唯一口径，单条与批量路径共用。 */
+async function removeCollectionItemCore(item: any): Promise<{ ok: boolean; error?: unknown }> {
+  const itemId = collectionItemId(item);
+  if (!itemId) return { ok: false, error: new Error('收藏内容缺少条目标识') };
+  try {
+    await CoolapkTauriAPI.removeCollectionItem(itemId);
+    collectionItems.value = collectionItems.value.filter(current => collectionItemId(current) !== itemId);
+    // 与取消收藏/删除动态共用同一条计数口径，避免三处各写一份。
+    syncCollectionItemCount(1);
+    // 与取消收藏/删除动态路径一致：移除条目后同步清理正文索引，避免搜索命中已移除内容。
+    const feedKey = favoriteFeedId(item) || itemId;
+    void removeContentIndexEntryWithVisibility(favoriteAccountId(), feedKey);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err };
   }
 }
 
@@ -1098,18 +1317,45 @@ async function removeCollectionItem(item: any) {
   const confirmed = await requestConfirmation({ title: '移除收藏内容', message: '确定只从当前收藏单移除这条内容吗？原内容不会被删除。', confirmText: '移除', danger: true });
   if (!confirmed) return;
   collectionItemActionId.value = itemId;
-  try {
-    await CoolapkTauriAPI.removeCollectionItem(itemId);
-    collectionItems.value = collectionItems.value.filter(current => collectionItemId(current) !== itemId);
-    collectionItemNum.value = Math.max(0, collectionItemNum.value - 1);
-    const current = collections.value.find(collection => collectionId(collection) === activeCollectionId.value);
-    if (current) current.itemNum = collectionItemNum.value;
-    showToast('已从收藏单移除', 'success');
-  } catch (err) {
-    showToast(getErrorMessage(err, '移除收藏内容失败'), 'error');
-  } finally {
-    collectionItemActionId.value = '';
+  const result = await removeCollectionItemCore(item);
+  if (result.ok) showToast('已从收藏单移除', 'success');
+  else showToast(getErrorMessage(result.error, '移除收藏内容失败'), 'error');
+  collectionItemActionId.value = '';
+}
+
+/** 批量移除：串行逐条复用单条核心逻辑，单条失败不中断，结束后统一汇报并退出多选。 */
+async function removeSelectedCollectionItems() {
+  if (collectionBatchRemoving.value || collectionSelectedIds.value.size === 0) return;
+  collectionBatchRemoving.value = true;
+  const targetIds = Array.from(collectionSelectedIds.value);
+  let removed = 0;
+  let failed = 0;
+  for (const itemId of targetIds) {
+    const item = collectionItems.value.find(current => collectionItemId(current) === itemId);
+    if (!item) {
+      // 条目已不在列表（无法重试）：计入失败并取消其勾选。
+      failed += 1;
+      collectionSelectedIds.value.delete(itemId);
+      continue;
+    }
+    const result = await removeCollectionItemCore(item);
+    if (result.ok) {
+      removed += 1;
+      collectionSelectedIds.value.delete(itemId);
+    } else {
+      // 失败项保留勾选与多选模式，用户可直接重试，不必重新逐条勾选。
+      failed += 1;
+    }
   }
+  if (failed === 0) {
+    showToast('已移除 ' + removed + ' 条', 'success');
+    clearCollectionMultiSelect();
+    return;
+  }
+  collectionBatchRemoving.value = false;
+  showToast('已移除 ' + removed + ' 条，失败 ' + failed + ' 条', 'error', 5000, [
+    { label: '重试失败项', onClick: () => { void removeSelectedCollectionItems(); } },
+  ]);
 }
 
 function openCollection(collection: any) {
@@ -1137,6 +1383,17 @@ function activateCollection(collection: any) {
   collectionItemNum.value = getCollectionItemCount(collection);
   collectionFollowed.value = toBool(firstValue(collection, ['isFollowed', 'isFollow', 'is_followed']));
   collectionLiked.value = toBool(firstValue(collection, ['isLiked', 'isLike', 'is_liked']));
+  // 切号时同步清空上一个收藏单的列表与分页状态，避免旧内容/旧 loading 影响新收藏单。
+  collectionItems.value = [];
+  collectionItemsPage.value = 1;
+  collectionItemsNoMore.value = false;
+  collectionItemsFirstItem.value = '';
+  collectionItemsLastItem.value = '';
+  collectionItemsError.value = '';
+  collectionItemsLoading.value = false;
+  collectionItemsLoadingMore.value = false;
+  collectionItemActionId.value = '';
+  clearCollectionMultiSelect();
   void fetchCollectionDetail();
   void fetchCollectionItems(true);
 }
@@ -1158,6 +1415,7 @@ function resetCollectionState() {
   collectionContentSearchKeyword.value = '';
   collectionContentSearchIds.value = new Set();
   collectionMoreMenuOpen.value = false;
+  clearCollectionMultiSelect();
 }
 
 watch(
@@ -1183,6 +1441,9 @@ watch(
 
 function applyCollectionDetail(detail: any, fallback: any) {
   const source = detail && Object.keys(detail).length > 0 ? detail : fallback;
+  // 只接受属于当前收藏单的详情数据，防止切号时旧响应覆盖新收藏单的标题/封面/条目数。
+  const sourceCollectionId = collectionId(source) || collectionId(fallback);
+  if (sourceCollectionId && activeCollectionId.value && sourceCollectionId !== String(activeCollectionId.value)) return;
   const fav = firstValue(source, ['fav_num', 'favnum', 'favNum', 'like_num', 'likeNum'])
     ?? firstValue(fallback, ['fav_num', 'favnum', 'favNum', 'like_num', 'likeNum']);
   if (fav !== undefined && fav !== null) {
@@ -1223,15 +1484,20 @@ function applyCollectionDetail(detail: any, fallback: any) {
 }
 
 async function fetchCollectionDetail() {
-  if (!activeCollectionId.value) return;
+  const collectionIdValue = String(activeCollectionId.value || '');
+  if (!collectionIdValue) return;
+  const requestId = ++collectionDetailRequestSequence;
+  const isStale = () => requestId !== collectionDetailRequestSequence || String(activeCollectionId.value || '') !== collectionIdValue;
   try {
-    const res = await CoolapkTauriAPI.getCollectionDetail(activeCollectionId.value);
+    const res = await CoolapkTauriAPI.getCollectionDetail(collectionIdValue);
+    if (isStale()) return;
     const detail = res && res.data ? res.data : {};
     collectionDetail.value = { ...collectionDetail.value, ...detail };
-    applyCollectionDetail(detail, collections.value.find(c => collectionId(c) === activeCollectionId.value) || {});
+    applyCollectionDetail(detail, collections.value.find(c => collectionId(c) === collectionIdValue) || {});
   } catch (err) {
+    if (isStale()) return;
     console.warn('获取收藏单详情失败', err);
-    applyCollectionDetail({}, collections.value.find(c => collectionId(c) === activeCollectionId.value) || {});
+    applyCollectionDetail({}, collections.value.find(c => collectionId(c) === collectionIdValue) || {});
   }
 }
 
@@ -1246,11 +1512,11 @@ async function toggleFollowCollection() {
       collectionFollownum.value = Math.max(0, collectionFollownum.value + (collectionFollowed.value ? 1 : -1));
     } else {
       console.warn('关注操作失败', res);
-      alert('操作失败，请稍后重试');
+      showToast('操作失败，请稍后重试', 'error');
     }
   } catch (err) {
     console.warn('关注操作失败', err);
-    alert('操作失败，请检查网络');
+    showToast('操作失败，请检查网络', 'error');
   } finally {
     collectionFollowPending.value = false;
   }
@@ -1267,35 +1533,46 @@ async function toggleLikeCollection() {
       collectionFavnum.value = Math.max(0, collectionFavnum.value + (collectionLiked.value ? 1 : -1));
     } else {
       console.warn('点赞操作失败', res);
-      alert('操作失败，请稍后重试');
+      showToast('操作失败，请稍后重试', 'error');
     }
   } catch (err) {
     console.warn('点赞操作失败', err);
-    alert('操作失败，请检查网络');
+    showToast('操作失败，请检查网络', 'error');
   } finally {
     collectionLikePending.value = false;
   }
 }
 
 async function fetchCollectionItems(isRefresh = false) {
-  if (!activeCollectionId.value) return;
-  if (collectionItemsLoading.value || (collectionItemsLoadingMore.value && !isRefresh)) return;
+  const collectionIdValue = String(activeCollectionId.value || '');
+  if (!collectionIdValue) return;
 
   if (isRefresh) {
+    // 刷新（含切换收藏单）不再被进行中的旧请求阻塞，旧请求的响应会因序号过期被丢弃。
+    // 刷新后列表会被替换，多选状态必须同步清空，避免残留选择指向新列表的条目。
+    clearCollectionMultiSelect();
     collectionItemsPage.value = 1;
     collectionItemsNoMore.value = false;
     collectionItemsFirstItem.value = '';
     collectionItemsLastItem.value = '';
     collectionItems.value = [];
     collectionItemsLoading.value = true;
+    collectionItemsLoadingMore.value = false;
   } else {
-    if (collectionItemsNoMore.value) return;
+    if (collectionItemsLoading.value || collectionItemsLoadingMore.value || collectionItemsNoMore.value) return;
     collectionItemsLoadingMore.value = true;
   }
   collectionItemsError.value = '';
 
+  const requestId = ++collectionItemsRequestSequence;
+  const isStale = () => requestId !== collectionItemsRequestSequence || String(activeCollectionId.value || '') !== collectionIdValue;
+  const page = collectionItemsPage.value;
+  const firstItem = collectionItemsFirstItem.value;
+  const lastItem = collectionItemsLastItem.value;
+
   try {
-    const res = await CoolapkTauriAPI.getCollectionItemList(activeCollectionId.value, collectionItemsPage.value, collectionItemsFirstItem.value, collectionItemsLastItem.value);
+    const res = await CoolapkTauriAPI.getCollectionItemList(collectionIdValue, page, firstItem, lastItem);
+    if (isStale()) return;
     const newItems = (res && res.data && Array.isArray(res.data)) ? res.data : [];
     if (newItems.length === 0) {
       collectionItemsNoMore.value = true;
@@ -1303,18 +1580,29 @@ async function fetchCollectionItems(isRefresh = false) {
       if (isRefresh) {
         collectionItems.value = newItems;
       } else {
-        const existingIds = new Set(collectionItems.value.map(i => i.id));
-        collectionItems.value.push(...newItems.filter((i: any) => !existingIds.has(i.id)));
+        // 去重键必须与分页游标用同一函数（favoriteFeedCursorId，entityId 优先）：
+        // 实体包装条目只有 entityId 时 i.id 全为 undefined，按 id 去重会导致每页只剩 1 条。
+        const existingIds = new Set(collectionItems.value.map((i: any) => favoriteFeedCursorId(i)));
+        collectionItems.value.push(...newItems.filter((i: any) => {
+          const key = favoriteFeedCursorId(i);
+          // 键为空的条目无法判断重复，保留以免误删。
+          return !key || !existingIds.has(key);
+        }));
       }
       if (!collectionItemsFirstItem.value) collectionItemsFirstItem.value = favoriteFeedCursorId(collectionItems.value[0]);
-      collectionItemsLastItem.value = favoriteFeedCursorId(collectionItems.value[collectionItems.value.length - 1]);
-      collectionItemsPage.value++;
+      // 游标取本页原始 newItems 末条：若取去重后列表末条，服务端分页重叠时会游标回退、重复拉同一页。
+      collectionItemsLastItem.value = favoriteFeedCursorId(newItems[newItems.length - 1]);
+      collectionItemsPage.value = page + 1;
     }
   } catch (err: any) {
+    if (isStale()) return;
     collectionItemsError.value = err?.message || '加载失败，请检查网络';
   } finally {
-    collectionItemsLoading.value = false;
-    collectionItemsLoadingMore.value = false;
+    // 过期请求不能改动当前收藏单的 loading 状态，否则新请求的转圈会被旧响应提前关掉。
+    if (!isStale()) {
+      collectionItemsLoading.value = false;
+      collectionItemsLoadingMore.value = false;
+    }
   }
 }
 
@@ -1344,6 +1632,8 @@ watch(collectionContentSearchKeyword, () => scheduleCollectionContentSearch());
 onMounted(() => {
   if (authStore.isLoggedIn) {
     void fetchCollections();
+    // 回填历史收藏的正文索引并剪枝已移除内容：24h 门控 + 内部增量补齐，重复进入页面不产生请求风暴。
+    void syncFavoriteContentIndexIfNeeded(favoriteAccountId()).catch((error) => console.warn('收藏正文索引同步失败:', error));
   }
 });
 
@@ -2677,5 +2967,118 @@ async function refreshMobilePage() { if (activeCollectionId.value) { await fetch
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+/* 收藏单多选：顶部条 + 卡片勾选遮罩 + 底部操作条 */
+.collection-multi-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary, var(--color-bg));
+}
+
+.multi-select-toggle-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+}
+
+.multi-select-toggle-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.multi-select-bar-count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.collection-feed-item {
+  position: relative;
+}
+
+.multi-select-hitbox {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  padding: var(--space-3);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.multi-select-hitbox.is-selected {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.multi-select-checkbox {
+  font-size: 20px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.collection-multi-select-actionbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  margin-top: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated, var(--color-bg));
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.multi-select-selected-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-right: auto;
+}
+
+.btn-batch-remove,
+.btn-batch-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-4);
+  min-height: 40px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-batch-remove {
+  background: var(--color-danger, #e5484d);
+  color: #fff;
+}
+
+.btn-batch-cancel {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn-batch-remove:disabled,
+.btn-batch-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

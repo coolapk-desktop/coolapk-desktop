@@ -29,7 +29,7 @@
     <!-- 闲置实体列表：保留 APK 的分类、型号和动态卡片。 -->
     <div v-else class="feed-list-wrapper">
       <div class="feed-list discovery-page-list">
-        <DiscoveryEntityCard v-for="(item, index) in dynamicItems" :key="getEntityKey(item, index)" :entity="item" @open="openEntity" />
+        <DiscoveryEntityCard v-for="item in dynamicItems" :key="stableEntityKey(item)" :entity="item" @open="openEntity" />
       </div>
       <div v-if="loadingMore" class="loading-more-footer">
         <i class="fas fa-circle-notch fa-spin"></i> 正在加载更多闲置...
@@ -50,9 +50,9 @@ import DiscoveryEntityCard from '../components/discovery/DiscoveryEntityCard.vue
 import DiscoverySkeleton from '../components/discovery/DiscoverySkeleton.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
-import { getEntityKey, parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
+import { parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
 import { normalizeCoolapkRoute } from '../utils/coolapkRoute';
-import { secondHandPageCache as pageCache } from '../utils/secondHandCache';
+import { getSecondHandViewerUid, isSecondHandPageCacheFresh, secondHandPageCache as pageCache } from '../utils/secondHandCache';
 import type { DiscoveryEntity } from '../types/discovery';
 
 const router = useRouter();
@@ -61,11 +61,23 @@ const dynamicItems = ref<DiscoveryEntity[]>(pageCache.initialized ? [...pageCach
 const page = ref(pageCache.page);
 const loading = ref(false);
 const loadingMore = ref(false);
+// 后台静默刷新：保留旧列表继续展示，不显示骨架屏和加载更多提示。
+const silentRefreshing = ref(false);
 const noMore = ref(pageCache.noMore);
 const dynamicFirstItem = ref(pageCache.firstItem);
 const dynamicLastItem = ref(pageCache.lastItem);
 const dynamicPageContext = ref(pageCache.pageContext);
 const error = ref('');
+// 静默刷新失败后的退避窗口：窗口内的 onActivated 不再重复打接口。
+const SILENT_REFRESH_RETRY_MS = 30 * 1000;
+let lastSilentAttemptAt = 0;
+
+// 去重与模板 :key 共用同一基准：有稳定 id 用 id，无 id 用内容键；不把下标混入键派生，避免跨页键空间错位、:key 漂移。
+function stableEntityKey(entity: DiscoveryEntity): string {
+  const stable = entity.entityId ?? entity.id ?? entity.url;
+  if (stable !== undefined && stable !== null && String(stable).trim() !== '') return `id-${String(stable)}`;
+  return `content-${JSON.stringify([entity.title ?? '', entity.subTitle ?? '', entity.description ?? '', entity.pic ?? '', entity.price ?? ''])}`;
+}
 
 function syncPageCache() {
   pageCache.initialized = true;
@@ -75,34 +87,69 @@ function syncPageCache() {
   pageCache.lastItem = dynamicLastItem.value;
   pageCache.pageContext = dynamicPageContext.value;
   pageCache.noMore = noMore.value;
+  pageCache.updatedAt = Date.now();
+  pageCache.viewerUid = getSecondHandViewerUid();
 }
 
-async function loadFeeds(isRefresh: boolean = false) {
-  if (loading.value || loadingMore.value) return;
+// 游标失效（服务端丢弃了上一页的首末项或上下文）时，清空缓存并回到第一页重来。
+function isCursorInvalidError(err: any): boolean {
+  const message = String(err?.message || err || '');
+  if (!message) return false;
+  return /page[\s_-]?context|page[\s_-]?code|first[\s_-]?item|last[\s_-]?item|游标|分页|上下文|参数错误|invalid[\s_-]?param/i.test(message);
+}
+
+function resetPageState() {
+  page.value = 1;
+  noMore.value = false;
+  dynamicFirstItem.value = '';
+  dynamicLastItem.value = '';
+  dynamicPageContext.value = '';
+  dynamicItems.value = [];
+  pageCache.initialized = false;
+  pageCache.items = [];
+  pageCache.page = 1;
+  pageCache.firstItem = '';
+  pageCache.lastItem = '';
+  pageCache.pageContext = '';
+  pageCache.noMore = false;
+  pageCache.updatedAt = 0;
+  pageCache.viewerUid = '';
+}
+
+async function loadFeeds(isRefresh: boolean = false, options: { silent?: boolean } = {}) {
+  const silent = isRefresh && options.silent === true;
+  if (loading.value || loadingMore.value || silentRefreshing.value) return;
   if (!isRefresh && noMore.value) return;
 
   if (isRefresh) {
     page.value = 1;
     noMore.value = false;
-    dynamicItems.value = [];
     dynamicFirstItem.value = '';
     dynamicLastItem.value = '';
     dynamicPageContext.value = '';
-    loading.value = true;
+    if (silent) {
+      // 先渲染旧列表：不清空 items、不出骨架屏，新数据回来后整体替换。
+      silentRefreshing.value = true;
+    } else {
+      dynamicItems.value = [];
+      loading.value = true;
+    }
   } else {
     loadingMore.value = true;
   }
   error.value = '';
+  const requestPage = page.value;
+  let cursorResetNeeded = false;
 
   try {
-    const response = await CoolapkTauriAPI.getDiscoveryPageData({ url: SECOND_HAND_PAGE_URL, title: '二手市场', page: page.value, firstItem: dynamicFirstItem.value, lastItem: dynamicLastItem.value, pageContext: dynamicPageContext.value || JSON.stringify({ source: 'desktop-secondhand' }) });
-    const parsed = parseDiscoveryPage(response, page.value);
+    const response = await CoolapkTauriAPI.getDiscoveryPageData({ url: SECOND_HAND_PAGE_URL, title: '二手市场', page: requestPage, firstItem: dynamicFirstItem.value, lastItem: dynamicLastItem.value, pageContext: dynamicPageContext.value || JSON.stringify({ source: 'desktop-secondhand' }) });
+    const parsed = parseDiscoveryPage(response, requestPage);
     const incoming = parsed.items;
     if (isRefresh) {
       dynamicItems.value = incoming;
     } else {
-      const existingKeys = new Set(dynamicItems.value.map((item, index) => getEntityKey(item, index)));
-      dynamicItems.value = [...dynamicItems.value, ...incoming.filter((item, index) => !existingKeys.has(getEntityKey(item, dynamicItems.value.length + index)))];
+      const existingKeys = new Set(dynamicItems.value.map(stableEntityKey));
+      dynamicItems.value = [...dynamicItems.value, ...incoming.filter((item) => !existingKeys.has(stableEntityKey(item)))];
     }
     dynamicFirstItem.value = parsed.firstItem;
     dynamicLastItem.value = parsed.lastItem;
@@ -111,11 +158,21 @@ async function loadFeeds(isRefresh: boolean = false) {
     page.value++;
     syncPageCache();
   } catch (err: any) {
-    error.value = err?.message || '加载失败，请检查网络';
+    // 加载更多时游标失效：清空缓存回到第一页，避免列表卡在半截且再也翻不动。
+    if (!isRefresh && requestPage > 1 && isCursorInvalidError(err)) {
+      resetPageState();
+      cursorResetNeeded = true;
+    } else if (!silent) {
+      // 静默刷新失败时保留旧列表，不把错误盖到已有内容上。
+      error.value = err?.message || '加载失败，请检查网络';
+    }
   } finally {
     loading.value = false;
     loadingMore.value = false;
+    silentRefreshing.value = false;
   }
+  // 忙碌标记已复位，这里重新拉第一页。
+  if (cursorResetNeeded) void loadFeeds(true);
 }
 
 function openEntity(entity: DiscoveryEntity) {
@@ -158,16 +215,30 @@ function unbindGlobalListeners() {
   window.removeEventListener('scroll', onScrollEvent, true);
 }
 
-onMounted(() => {
-  if (!pageCache.initialized) void loadFeeds(true);
-});
+// 命中缓存时先渲染旧列表；超过 5 分钟或账号变化则后台静默刷新。
+function ensureFeedsFresh() {
+  if (!pageCache.initialized) {
+    void loadFeeds(true);
+    return;
+  }
+  if (isSecondHandPageCacheFresh()) return;
+  // 失败或成功都记录尝试时间：刚尝试过的短时间内不再重复静默刷新。
+  if (Date.now() - lastSilentAttemptAt < SILENT_REFRESH_RETRY_MS) return;
+  lastSilentAttemptAt = Date.now();
+  void loadFeeds(true, { silent: true });
+}
 
-onActivated(bindGlobalListeners);
+onMounted(ensureFeedsFresh);
+
+onActivated(() => {
+  bindGlobalListeners();
+  ensureFeedsFresh();
+});
 onDeactivated(unbindGlobalListeners);
 onUnmounted(unbindGlobalListeners);
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
-const mobileRefreshBusy = computed(() => loading.value || loadingMore.value);
+const mobileRefreshBusy = computed(() => loading.value || loadingMore.value || silentRefreshing.value);
 async function refreshMobilePage() { await loadFeeds(true); }
 </script>
 

@@ -109,30 +109,35 @@ import SearchHotListCard from '../components/search/SearchHotListCard.vue';
 import SearchResultItem from '../components/search/SearchResultItem.vue';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
+import { useUserRelationsStore } from '../stores/userRelations';
 import { orderSearchTabs } from '../utils/searchTabOrder';
 import type { SearchEntity, SearchTabDefinition, SearchTabState } from '../types/search';
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, removeSearchHistory, searchHistory } from '../utils/searchHistory';
-import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityKind, getSearchEntitySearchTarget, getSearchEntityTitle, getSearchEntityUid, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
+import { extractSearchEntities, extractSearchTabs, getSearchEntityId, getSearchEntityIdentity, getSearchEntityKind, getSearchEntityRoute, getSearchEntitySearchTarget, getSearchEntityTitle, isSponsorSearchEntity, normalizeSearchEntityForTab } from '../utils/searchEntities';
 import { fetchSearchSuggestions } from '../utils/searchSuggestions';
 import { readSearchUsersCollapsed, writeSearchUsersCollapsed } from '../utils/searchUserGroup';
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
 import { useMobileLayout } from '../composables/useOfficialMobileFeedDetail';
 import { mobileReadingNavigationKey } from '../composables/useMobileReadingNavigation';
 import { navigateBack } from '../utils/navigation';
+import { getSearchPageScopeKey, getSearchScopeFromComponentKey } from '../utils/pageTabs';
+import { showToast } from '../utils/toast';
 import backIcon from '../assets/icons/search/ic_back_gray_24dp.png';
 import clearIcon from '../assets/icons/search/ic_clear_gray_24dp.png';
 import searchIcon from '../assets/icons/search/ic_magnify_white_24dp.png';
 
 const route = useRoute();
-// App 按完整地址缓存搜索页；带路由键的旧实例不能响应另一组搜索条件。
-const instanceKey = getCurrentInstance()?.vnode.key;
-const cachedSearchPath = instanceKey === route.fullPath || String(instanceKey).startsWith(`${route.fullPath}:`) ? route.fullPath : '';
+// App 按「搜索词 + 搜索范围」缓存搜索页实例；范围不同的常驻实例不能响应别的搜索条件。
+// 页签、排序、问答筛选属于同一实例内部状态，由下面的路由 watch 就地更新，不重建整页。
+const instanceScopeKey = getSearchScopeFromComponentKey(getCurrentInstance()?.vnode.key);
 const router = useRouter();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const mobileLayout = useMobileLayout();
 const readingNavigation = inject(mobileReadingNavigationKey, undefined);
+// 关注关系以 store 为单一真源，搜索结果与个人页/动态卡片共享同一份状态。
+const userRelations = useUserRelationsStore();
 
 function readQueryString(value: unknown): string {
   return Array.isArray(value) ? String(value[0] ?? '').trim() : String(value ?? '').trim();
@@ -230,22 +235,17 @@ function switchAskFeedType(value: string) {
   const nextFeedType = normalizeAskFeedType(value);
   if (askFeedType.value === nextFeedType && readQueryString(route.query.feedType) === nextFeedType) return;
   askFeedType.value = nextFeedType;
+  // 与切页签/切排序一致：保留输入框里已输入但尚未提交的关键词。
+  const nextQuery = pendingSearchValue();
+  if (nextQuery && nextQuery !== queryStr.value) addSearchHistory(nextQuery);
   void router.push({
     path: '/search',
-    query: { q: queryStr.value, tab: activeTab.value, feedType: nextFeedType },
+    query: { q: nextQuery, tab: activeTab.value, feedType: nextFeedType },
   });
 }
 
 function entityKey(entity: SearchEntity, index: number): string {
   return `${getSearchEntityId(entity) || getSearchEntityTitle(entity) || 'entity'}-${index}`;
-}
-
-// 不同类型可能复用同一 ID，用户结果也可能只提供 UID。
-function entityIdentity(entity: SearchEntity): string {
-  const kind = getSearchEntityKind(entity);
-  const id = (kind === 'user' ? getSearchEntityUid(entity) : '') || getSearchEntityId(entity);
-  const title = getSearchEntityTitle(entity);
-  return id ? JSON.stringify([kind, 'id', id]) : title ? JSON.stringify([kind, 'title', title]) : '';
 }
 
 const usersCollapsed = ref(readSearchUsersCollapsed());
@@ -270,6 +270,15 @@ function toggleUserGroup() {
 function resetTabStates() {
   tabStates.clear();
   searchTabs.value.forEach((tab) => ensureTabState(tab.key));
+}
+
+// 排序与问答类型只影响使用它们的页签，其它页签（用户/应用/数码等）已翻页的结果继续复用。
+const filterDependentTabKeys = new Set(['all', 'feed', 'ask']);
+
+function resetFilterDependentTabStates() {
+  searchTabs.value.forEach((tab) => {
+    if (filterDependentTabKeys.has(tab.key) || filterDependentTabKeys.has(tab.searchType)) tabStates.set(tab.key, newTabState());
+  });
 }
 
 function syncActiveTab(requested: string) {
@@ -363,9 +372,9 @@ async function fetchTab(tabKey: string, loadMore = false) {
       rows = extractRows(response);
     }
     // 翻页追加时才与旧列表去重，刷新首页时应以新结果替换旧列表。
-    const existing = new Set(loadMore ? state.items.map(entityIdentity) : []);
+    const existing = new Set(loadMore ? state.items.map(getSearchEntityIdentity) : []);
     const uniqueRows = rows.filter((item) => {
-      const key = entityIdentity(item);
+      const key = getSearchEntityIdentity(item);
       if (key && existing.has(key)) return false;
       if (key) existing.add(key);
       return true;
@@ -397,6 +406,12 @@ async function fetchTab(tabKey: string, loadMore = false) {
 function onInputFocus() {
   showHistory.value = !searchQuery.value.trim();
   showSuggestions.value = !isScopedSearch.value && searchSuggestions.value.length > 0;
+  // 输入框已有内容但联想被清空（清空后又聚焦等）时补一次联想，避免下拉永远不再出现。
+  if (!isScopedSearch.value && searchQuery.value.trim() && !searchSuggestions.value.length) {
+    if (suggestTimer) clearTimeout(suggestTimer);
+    suggestTimer = null;
+    void fetchSuggestions(searchQuery.value, suggestionSequence);
+  }
 }
 
 function handleClickOutside(event: MouseEvent) {
@@ -419,7 +434,10 @@ function clearSearch() {
   if (mobileLayout.value) {
     searchInputRef.value?.focus();
     showHistory.value = true;
+    return;
   }
+  // 清空后重新展开最近搜索，与聚焦空输入框时的下拉保持一致。
+  showHistory.value = searchHistory.value.length > 0;
 }
 
 function handleSearchEnter(event: KeyboardEvent) {
@@ -437,14 +455,34 @@ function selectHistory(value: string) {
 function removeHistory(value: string) { removeSearchHistory(value); }
 function clearHistory() { clearSearchHistory(); showHistory.value = false; }
 
+// 与 Ctrl+K 面板一致：联想词有实体路由就直达详情，否则按关键词搜索；searchTab 联想按关键词+页签搜索。
 function selectSuggestion(item: SearchEntity) {
   const searchTarget = getSearchEntitySearchTarget(item);
   if (searchTarget) {
     doSearch(searchTarget.keyword, searchTarget.searchType);
     return;
   }
+  const entityRoute = getSearchEntityRoute(item);
+  if (entityRoute && !entityRoute.startsWith('/search?')) {
+    closeSearchDropdowns();
+    void router.push(entityRoute);
+    return;
+  }
   const title = getSearchEntityTitle(item);
   if (title) doSearch(title);
+}
+
+// 同条件再按回车不会改变路由，watch 不触发；这里主动重置页签数据并重新搜索。
+const SEARCH_ROUTE_QUERY_KEYS = ['q', 'tab', 'pageType', 'pageParam', 'feedType', 'sort'] as const;
+
+function searchRouteSignature(query: Record<string, string>): string {
+  return JSON.stringify(SEARCH_ROUTE_QUERY_KEYS.map((key) => String(query[key] ?? '')));
+}
+
+function currentSearchRouteSignature(): string {
+  const query: Record<string, string> = {};
+  SEARCH_ROUTE_QUERY_KEYS.forEach((key) => { query[key] = readQueryString(route.query[key]); });
+  return searchRouteSignature(query);
 }
 
 function doSearch(value: string, requestedSearchType = '') {
@@ -466,6 +504,12 @@ function doSearch(value: string, requestedSearchType = '') {
     if (targetDefinition?.searchType === 'ask' || targetTab === 'ask') query.feedType = askFeedType.value;
   }
   if (query.tab === 'feed' || (query.tab === 'all' && feedSearchSort.value !== 'default')) query.sort = feedSearchSort.value;
+  if (searchRouteSignature(query) === currentSearchRouteSignature()) {
+    resetTabStates();
+    void fetchTab(activeTab.value);
+    showToast('已按当前条件重新搜索', 'info');
+    return;
+  }
   void router.push({ path: '/search', query });
 }
 
@@ -503,23 +547,28 @@ function removeEntity(id: string | number) {
   state.items = state.items.filter((item) => String(getSearchEntityId(item)) !== String(id));
 }
 
+function getUserRelationUid(user: SearchEntity): string {
+  return String(user.uid ?? user.userId ?? user.user_id ?? '');
+}
+
 function isUserFollowed(user: SearchEntity): boolean {
+  const uid = getUserRelationUid(user);
+  const cached = uid ? userRelations.getRelation(uid) : undefined;
+  if (cached) return cached.isFollow;
   const value = user.follow ?? user.following;
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
 async function toggleFollow(user: SearchEntity) {
-  const uid = String(user.uid ?? user.userId ?? user.user_id ?? '');
+  const uid = getUserRelationUid(user);
   if (!uid) return;
   if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; }
   const followed = isUserFollowed(user);
-  try {
-    if (followed) await CoolapkTauriAPI.unfollowUser(uid);
-    else await CoolapkTauriAPI.followUser(uid);
+  // store 内部做乐观更新、并发去重与失败回滚 + toast，这里只同步列表实体字段兜底。
+  const ok = await userRelations.toggle(uid, followed);
+  if (ok) {
     user.follow = !followed;
     user.following = !followed;
-  } catch (error) {
-    console.error('关注操作失败', error);
   }
 }
 
@@ -549,7 +598,8 @@ function onSearchInput() {
 }
 
 let appliedSearchKey = '';
-let appliedSearchContextKey = '';
+let appliedQueryKey = '';
+let appliedFilterKey = '';
 let searchPageActive = true;
 watch(() => [
   route.path,
@@ -560,15 +610,19 @@ watch(() => [
   readQueryString(route.query.feedType),
   readQueryString(route.query.sort),
 ], ([path, nextQuery, nextTab, , , nextFeedType, nextSort]) => {
-  // 缓存页仍能收到全局路由变化；离开搜索及返回相同条件时不能清空结果和分页。
-  if (path !== '/search' || !searchPageActive || (cachedSearchPath && cachedSearchPath !== route.fullPath)) return;
-  // 查询条件与页签分开记录：只切页签时保留各页签已加载的结果和分页，不重新请求。
-  const contextKey = JSON.stringify([nextQuery, readQueryString(route.query.pageType), readQueryString(route.query.pageParam), nextFeedType, nextSort]);
-  const routeKey = JSON.stringify([contextKey, nextTab]);
+  // 缓存页仍能收到全局路由变化；离开搜索、属于其它搜索范围及返回相同条件时不能清空结果和分页。
+  if (path !== '/search' || !searchPageActive || (instanceScopeKey && instanceScopeKey !== getSearchPageScopeKey(route))) return;
+  // 搜索词+范围、筛选（排序/问答类型）和页签分开记录：
+  // 只切页签时保留各页签已加载的结果和分页；只改筛选时只重置受影响的页签。
+  const queryKey = JSON.stringify([nextQuery, readQueryString(route.query.pageType), readQueryString(route.query.pageParam)]);
+  const filterKey = JSON.stringify([nextFeedType, nextSort]);
+  const routeKey = JSON.stringify([queryKey, filterKey, nextTab]);
   if (routeKey === appliedSearchKey) return;
-  const contextChanged = contextKey !== appliedSearchContextKey;
+  const queryChanged = queryKey !== appliedQueryKey;
+  const filterChanged = filterKey !== appliedFilterKey;
   appliedSearchKey = routeKey;
-  appliedSearchContextKey = contextKey;
+  appliedQueryKey = queryKey;
+  appliedFilterKey = filterKey;
   const normalizedQuery = nextQuery;
   queryStr.value = normalizedQuery;
   searchQuery.value = normalizedQuery;
@@ -579,12 +633,13 @@ watch(() => [
   } else if (configLoaded) {
     syncActiveTab(nextTab || activeTab.value || 'all');
   }
-  if (contextChanged) searchSequence += 1;
+  if (queryChanged) searchSequence += 1;
   closeSearchDropdowns();
-  if (contextChanged) resetTabStates();
+  if (queryChanged) resetTabStates();
+  else if (filterChanged) resetFilterDependentTabStates();
   // 等页签配置就绪再发起首次搜索，避免初始化重置使空首页补查失效；
-  // 仅切换页签时只在目标页签还没有数据时补拉。
-  if (normalizedQuery && configLoaded && (contextChanged || !ensureTabState(activeTab.value).items.length)) void fetchTab(activeTab.value);
+  // 仅切换页签时只在目标页签还没有数据（或被筛选重置）时补拉，已有数据的页签直接复用缓存。
+  if (normalizedQuery && configLoaded && (queryChanged || !ensureTabState(activeTab.value).items.length)) void fetchTab(activeTab.value);
 }, { immediate: true });
 
 function bindGlobalListeners() {
