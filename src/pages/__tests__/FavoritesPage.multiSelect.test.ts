@@ -69,7 +69,16 @@ const FavoriteExportDialogStub = {
   template: '<div class="export-dialog-stub"></div>',
 };
 
-async function mountPage() {
+/** 条件等待用的超时预算：慢机器/并发跑时固定 tick 次数不够。 */
+const WAIT = { timeout: 5000, interval: 20 };
+
+/**
+ * 挂载页面。collectionId 必须在 mount 之前写进 route.query：
+ * 组件对 route.query 的 watch 带 immediate，挂载时直接按当前 query 进入详情，
+ * 不依赖挂载后再改 query 能触发响应式更新（CI 上不可靠，见下）。
+ */
+async function mountPage(query: Record<string, string> = { collectionId: '', collectionTitle: '' }) {
+  mocks.route.query = { ...query };
   const pinia = createPinia();
   setActivePinia(pinia);
   const authStore = useAuthStore(pinia);
@@ -96,17 +105,16 @@ async function mountPage() {
   return wrapper;
 }
 
-async function openDetail(wrapper: Awaited<ReturnType<typeof mountPage>>, itemIds: string[]) {
-  // 必须先就位 mock 响应再切路由，否则 activateCollection 触发的请求会撞上未就绪的 mock。
+/** 直接以「收藏单 A 详情」的 query 挂载，并等到条目渲染完成。 */
+async function mountPageInDetail(itemIds: string[]) {
   mocks.getCollectionDetail.mockResolvedValue({ data: { id: 'A', title: '测试收藏单', uid: '10001', item_num: 20 } });
   mocks.getCollectionItemList.mockResolvedValue({ data: items(itemIds) });
-  mocks.route.query = { collectionId: 'A', collectionTitle: '测试收藏单' };
-  // 不按固定 tick 次数等待：路由 watch 触发的加载链在慢机器上需要更多次调度，
-  // 以「详情列表已渲染出条目」为就绪条件，避免并发跑时偶发取不到元素。
+  const wrapper = await mountPage({ collectionId: 'A', collectionTitle: '测试收藏单' });
   await vi.waitFor(() => {
     expect(wrapper.findAll('.collection-feed-item')).toHaveLength(itemIds.length);
-  }, { timeout: 5000, interval: 20 });
+  }, WAIT);
   await flushPromises();
+  return wrapper;
 }
 
 describe('FavoritesPage 收藏单详情多选批量移除', () => {
@@ -120,8 +128,7 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
   });
 
   it('勾选 2 条移除后：头部条目数 20→18、列表剩 1 条、正文索引清理各调用一次', async () => {
-    const wrapper = await mountPage();
-    await openDetail(wrapper, ['f1', 'f2', 'f3']);
+    const wrapper = await mountPageInDetail(['f1', 'f2', 'f3']);
 
     expect(wrapper.findAll('.stat-value')[0].text()).toBe('20');
     expect(wrapper.findAll('.collection-feed-item')).toHaveLength(3);
@@ -161,8 +168,7 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
   });
 
   it('移除 1 条成功、1 条失败时提示失败并保留失败项的勾选与多选模式', async () => {
-    const wrapper = await mountPage();
-    await openDetail(wrapper, ['f1', 'f2', 'f3']);
+    const wrapper = await mountPageInDetail(['f1', 'f2', 'f3']);
 
     mocks.removeCollectionItem.mockImplementation(async (itemId: string) => {
       if (itemId === 'ci-f1') return { code: 200 };
@@ -186,8 +192,7 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
   });
 
   it('部分失败后点击 toast 里的「重试失败项」仅重发失败条目，成功后退出多选', async () => {
-    const wrapper = await mountPage();
-    await openDetail(wrapper, ['f1', 'f2', 'f3']);
+    const wrapper = await mountPageInDetail(['f1', 'f2', 'f3']);
 
     mocks.removeCollectionItem.mockImplementation(async (itemId: string) => {
       if (itemId === 'ci-f1') return { code: 200 };
@@ -217,8 +222,7 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
   });
 
   it('全选后按钮变「取消全选」，点击取消全选清空选择；底部「移出收藏单」在 0 项时禁用', async () => {
-    const wrapper = await mountPage();
-    await openDetail(wrapper, ['f1', 'f2', 'f3']);
+    const wrapper = await mountPageInDetail(['f1', 'f2', 'f3']);
 
     await wrapper.get('.btn-multi-select').trigger('click');
     const toggleAll = wrapper.get('.multi-select-toggle-all');
@@ -233,8 +237,18 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
   });
 
   it('点击「取消」退出多选并清空选择；切换收藏单/刷新同样清空多选状态', async () => {
+    mocks.getCollectionList.mockResolvedValue({
+      data: [collection, { id: 'B', title: '收藏单B', itemNum: 2, uid: '10001' }],
+    });
+    // 从列表点收藏单进入详情：切换收藏单也走同一条页面内路径，
+    // 不依赖「挂载后改 route.query 能否触发响应式更新」。
     const wrapper = await mountPage();
-    await openDetail(wrapper, ['f1', 'f2', 'f3']);
+    await wrapper.findAll('.collection-card')
+      .find(card => card.text().includes('测试收藏单'))!
+      .trigger('click');
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.collection-feed-item')).toHaveLength(3);
+    }, WAIT);
 
     // 进入多选并勾选后点「取消」
     await wrapper.get('.btn-multi-select').trigger('click');
@@ -249,8 +263,11 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     await wrapper.findAll('.multi-select-hitbox')[1].trigger('click');
     mocks.getCollectionItemList.mockResolvedValue({ data: [] });
     mocks.getCollectionDetail.mockResolvedValue({ data: { id: 'B', title: '收藏单B', uid: '10001', item_num: 0 } });
-    mocks.route.query = { collectionId: 'B', collectionTitle: '收藏单B' };
+    await wrapper.get('.breadcrumb-back-btn').trigger('click');
     await flushPromises();
+    await wrapper.findAll('.collection-card')
+      .find(card => card.text().includes('收藏单B'))!
+      .trigger('click');
     await flushPromises();
     expect(wrapper.find('.multi-select-hitbox').exists()).toBe(false);
     expect(wrapper.find('.collection-multi-select-actionbar').exists()).toBe(false);
@@ -278,20 +295,22 @@ describe('FavoritesPage 收藏单详情内导出', () => {
     await dialog.vm.$emit('close');
     await flushPromises();
 
-    // 进入收藏单 A 详情，详情页入口：只传当前收藏单 A
-    await openDetail(wrapper, ['f1']);
-    await wrapper.get('.btn-more').trigger('click');
-    const menuItems = wrapper.findAll('.dropdown-menu-item');
+    wrapper.unmount();
+
+    // 详情页入口：以收藏单 A 的 query 挂载（immediate 路径），只传当前收藏单 A
+    const detailWrapper = await mountPageInDetail(['f1']);
+    await detailWrapper.get('.btn-more').trigger('click');
+    const menuItems = detailWrapper.findAll('.dropdown-menu-item');
     const exportItem = menuItems.find(node => node.text().includes('导出此收藏单'));
     expect(exportItem).toBeDefined();
     await exportItem!.trigger('click');
     await flushPromises();
-    dialog = wrapper.findComponent(FavoriteExportDialogStub);
+    dialog = detailWrapper.findComponent(FavoriteExportDialogStub);
     const exported = dialog.props('collections') as any[];
     expect(exported).toHaveLength(1);
     expect(String(exported[0].id)).toBe('A');
     expect(exported[0].title).toBe('测试收藏单');
     expect(exported[0].itemNum).toBe(20);
-    wrapper.unmount();
+    detailWrapper.unmount();
   });
 });

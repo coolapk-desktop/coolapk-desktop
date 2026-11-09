@@ -124,16 +124,18 @@ describe('FavoritesPage 收藏单快速切换', () => {
   });
 
   it('切换收藏单后旧收藏单的迟到响应不回填标题、条目数与列表', async () => {
+    // beforeEach 已把 route.query 设为 A；组件对 query 的 watch 带 immediate，
+    // 挂载即进入收藏单 A 详情（不依赖挂载后改 query 的响应式更新）。
     const wrapper = mountPage();
-    await flushPromises();
-
-    // 进入收藏单 A：详情与条目请求均已发出。按条件等待而不是固定 tick 次数，
-    // 慢机器/并发跑时路由 watch 的调度次数会变，固定 nextTick+flushPromises 会偶发落空。
     await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('A'), WAIT);
     expect(mocks.getCollectionItemList.mock.calls.map(call => call[0])).toEqual(['A']);
 
-    // A 还在加载中立刻切到 B，B 的请求不能被丢弃。
-    mocks.route.query = { collectionId: 'B', collectionTitle: '收藏单B' };
+    // A 还在加载中立刻切到 B（走页面入口：返回列表 → 点收藏单 B 卡片），B 的请求不能被丢弃。
+    await wrapper.get('.breadcrumb-back-btn').trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.collection-card')
+      .find(card => card.text().includes('收藏单B'))!
+      .trigger('click');
     await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B'), WAIT);
     expect(mocks.getCollectionItemList.mock.calls.map(call => call[0])).toEqual(['A', 'B']);
     // 切换瞬间不再展示上一个收藏单的内容。
@@ -162,9 +164,13 @@ describe('FavoritesPage 收藏单快速切换', () => {
 
   it('旧收藏单的失败响应不会干扰新收藏单的错误提示', async () => {
     const wrapper = mountPage();
-    await flushPromises();
+    await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('A'), WAIT);
 
-    mocks.route.query = { collectionId: 'B', collectionTitle: '收藏单B' };
+    await wrapper.get('.breadcrumb-back-btn').trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.collection-card')
+      .find(card => card.text().includes('收藏单B'))!
+      .trigger('click');
     await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B'), WAIT);
 
     detailRequests.get('A')!.reject(new Error('收藏单A详情失败'));
