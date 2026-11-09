@@ -992,6 +992,9 @@ describe('评论区收起定位', () => {
       data: [{ id: 'comment-1', username: '评论用户', message: '评论内容' }],
     });
     setActivePinia(createPinia());
+    // 这些用例验证内联评论区的收起定位，与"点击动态进入详情页"无关：
+    // 显式关闭详情入口，保持点击后在当前卡片展开评论的前提。
+    useSettingsStore().settings.desktopFeedDetailOnClick = false;
   });
 
   afterEach(() => {
@@ -1225,6 +1228,62 @@ describe('桌面端点击动态的行为', () => {
     wrapper.unmount();
   });
 
+  const pressAt = (element: Element, x: number, y: number) => {
+    // jsdom 没有 PointerEvent：用 MouseEvent 走同名事件即可触发 Vue 的 pointerdown 监听。
+    element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+  };
+  const stubSelection = () => {
+    const removeAllRanges = vi.fn();
+    const spy = vi.spyOn(window, 'getSelection').mockReturnValue({
+      isCollapsed: false, rangeCount: 1, toString: () => '正文', removeAllRanges,
+      containsNode: () => false,
+    } as unknown as Selection);
+    return { removeAllRanges, restore: () => spy.mockRestore() };
+  };
+
+  it('正文微小抖动产生的选区不再吞掉点击，仍然进入详情页', async () => {
+    const wrapper = await mountCard(true);
+    const article = wrapper.get('article').element;
+    const selection = stubSelection();
+    try {
+      pressAt(article, 100, 100);
+      await wrapper.get('article').trigger('click', { clientX: 101, clientY: 102 });
+      await flushPromises();
+      expect(mocks.routerPush).toHaveBeenCalledWith({ path: '/feed/42', query: { scrollTo: 'top' } });
+      // 抖动选区不是复制意图，顺手清掉，避免界面留着半截高亮。
+      expect(selection.removeAllRanges).toHaveBeenCalled();
+    } finally {
+      selection.restore();
+      wrapper.unmount();
+    }
+  });
+
+  it('真正的选字拖动仍然不触发卡片点击', async () => {
+    const wrapper = await mountCard(true);
+    const article = wrapper.get('article').element;
+    const selection = stubSelection();
+    try {
+      pressAt(article, 100, 100);
+      await wrapper.get('article').trigger('click', { clientX: 160, clientY: 118 });
+      await flushPromises();
+      expect(mocks.routerPush).not.toHaveBeenCalled();
+      expect(wrapper.find('.inline-comment-wrapper').exists()).toBe(false);
+    } finally {
+      selection.restore();
+      wrapper.unmount();
+    }
+  });
+
+  it('没有选区时小幅位移依旧按点击处理', async () => {
+    const wrapper = await mountCard(true);
+    const article = wrapper.get('article').element;
+    pressAt(article, 100, 100);
+    await wrapper.get('article').trigger('click', { clientX: 130, clientY: 110 });
+    await flushPromises();
+    expect(mocks.routerPush).toHaveBeenCalledWith({ path: '/feed/42', query: { scrollTo: 'top' } });
+    wrapper.unmount();
+  });
+
   it('开启详情入口时回复图标携带评论区落点', async () => {
     const wrapper = await mountCard(true);
     await wrapper.findComponent({ name: 'FeedActionBar' }).vm.$emit('open-comment');
@@ -1288,6 +1347,21 @@ describe('桌面端点击动态的行为', () => {
     await flushPromises();
     expect(openRight).not.toHaveBeenCalled();
     expect(wrapper.find('.inline-comment-wrapper').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('桌面端默认（未改过开关）点击卡片直接进入详情页', async () => {
+    // 不显式设置 desktopFeedDetailOnClick：锁住"默认点击动态进详情"的产品默认值。
+    expect(useSettingsStore().settings.desktopFeedDetailOnClick).toBe(true);
+    const wrapper = mount(FeedCard, {
+      props: { feed: { id: '42', uid: '456', username: '作者', message: '正文' } },
+      global: { stubs: { FeedHeader: true, FeedContent: true, FeedActionBar: true, FeedCommentSection: true, FeedDyhShareDialog: true, FeedShareImageDialog: true, FeedInteractionListDialog: true, FeedCollectionPickerDialog: true, AppDialog: true, ForwardDialog: true } },
+    });
+    await flushPromises();
+    await wrapper.find('article').trigger('click');
+    await flushPromises();
+    expect(mocks.routerPush).toHaveBeenCalledWith({ path: '/feed/42', query: { scrollTo: 'top' } });
+    expect(wrapper.find('.inline-comment-wrapper').exists()).toBe(false);
     wrapper.unmount();
   });
 
