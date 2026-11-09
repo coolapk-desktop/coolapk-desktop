@@ -29,7 +29,7 @@
           </div>
         </div>
 
-        <div v-if="queryStr && !isScopedSearch" class="search-tabs custom-scrollbar">
+        <div v-if="queryStr && !isScopedSearch" class="search-tabs custom-scrollbar" @wheel="handleSearchTabsWheel">
           <button v-for="tab in searchTabs" :key="tab.key" type="button" :class="['search-tab-item', { active: activeTab === tab.key }]" @click="switchTab(tab.key)">
             <i v-if="tab.icon" :class="tab.icon"></i><span>{{ tab.label }}</span>
           </button>
@@ -467,6 +467,17 @@ function doSearch(value: string, requestedSearchType = '') {
   }
   if (query.tab === 'feed' || (query.tab === 'all' && feedSearchSort.value !== 'default')) query.sort = feedSearchSort.value;
   void router.push({ path: '/search', query });
+}
+
+// 分类超出可见范围时，用鼠标滚轮横向浏览；保留触控板原生横滑。
+function handleSearchTabsWheel(event: WheelEvent) {
+  const tabs = event.currentTarget as HTMLElement;
+  const maxScrollLeft = tabs.scrollWidth - tabs.clientWidth;
+  if (event.ctrlKey || maxScrollLeft <= 0 || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  const next = Math.max(0, Math.min(maxScrollLeft, tabs.scrollLeft + event.deltaY));
+  if (next === tabs.scrollLeft) return;
+  event.preventDefault();
+  tabs.scrollLeft = next;
 }
 
 function switchTab(key: string) {

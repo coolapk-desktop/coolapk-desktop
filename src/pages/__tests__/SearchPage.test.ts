@@ -119,6 +119,28 @@ describe('搜索联想弹层生命周期', () => {
     }
   });
 
+  it('分类栏溢出时将鼠标滚轮转换为横向滚动', async () => {
+    const { wrapper } = await mountCachedSearch();
+    try {
+      const tabs = wrapper.get<HTMLElement>('.search-tabs').element;
+      Object.defineProperties(tabs, { clientWidth: { value: 343 }, scrollWidth: { value: 643 } });
+      const wheel = (deltaY: number, deltaX = 0) => {
+        const event = new WheelEvent('wheel', { deltaY, deltaX, bubbles: true, cancelable: true });
+        tabs.firstElementChild!.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      expect(wheel(120)).toBe(true);
+      expect(tabs.scrollLeft).toBe(120);
+      expect(wheel(0, 80)).toBe(false);
+      expect(tabs.scrollLeft).toBe(120);
+      expect(wheel(240)).toBe(true);
+      expect(tabs.scrollLeft).toBe(300);
+      expect(wheel(120)).toBe(false);
+      expect(wheel(-120)).toBe(true);
+      expect(tabs.scrollLeft).toBe(180);
+    } finally { wrapper.unmount(); }
+  });
+
   it.each(['submit', 'leave', 'blur', 'clear', 'edit'])('旧联想响应在 %s 后不能重新打开弹层', async (action) => {
     const { wrapper, router } = await mountCachedSearch();
     try {
