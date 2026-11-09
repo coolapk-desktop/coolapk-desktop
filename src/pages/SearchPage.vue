@@ -605,7 +605,8 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
 .search-page-layout { container-type: inline-size; container-name: search-layout; display: flex; width: 100%; height: 100%; overflow: hidden; }
 .search-main-column { display: flex; flex: 1; flex-direction: column; min-width: 0; height: 100%; overflow: hidden; background: var(--surface); }
 .search-toolbar-frame { position: relative; z-index: 2; display: grid; grid-template-rows: 1fr; flex: 0 0 auto; }
-.search-toolbar-clip { min-height: 0; }
+/* 让分类栏在工具栏内横向滚动，避免 Grid 按标签总宽度撑开。 */
+.search-toolbar-clip { min-width: 0; min-height: 0; }
 .search-toolbar { position: relative; z-index: 2; flex: 0 0 auto; background: var(--surface); border-bottom: 1px solid var(--border-light, rgba(0, 0, 0, .06)); }
 .search-toolbar-content { padding: 14px 20px 12px; }
 .search-input-area { position: relative; margin: 0; }
