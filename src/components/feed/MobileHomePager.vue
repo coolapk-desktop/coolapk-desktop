@@ -210,13 +210,30 @@ function blockSwipeClick(event: MouseEvent) {
   if (performance.now() < clickUntil) { event.preventDefault(); event.stopPropagation(); }
 }
 let wheelDelta = 0, wheelTimer: ReturnType<typeof setTimeout> | undefined;
+// 只有明确的横向滚轮才算切栏目手势：触控板纵向滚动会混入横向分量，
+// 旧判据只要有 |deltaX| 略大于 |deltaY| 就吞掉滚动刻度并累计切页，
+// 表现为列表滚动"抽搐/回弹"（切到相邻栏目再切回来）。
+const HORIZONTAL_WHEEL_MIN = 12, HORIZONTAL_WHEEL_RATIO = 1.5;
+function resetWheelGesture() { wheelDelta = 0; clearTimeout(wheelTimer); wheelTimer = undefined; }
 function wheel(event: WheelEvent) {
-  if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) || nestedScroller(event.target)) return;
-  event.preventDefault();
-  if (frame) return;
+  const deltaX = Math.abs(event.deltaX), deltaY = Math.abs(event.deltaY);
+  if (deltaX < HORIZONTAL_WHEEL_MIN || deltaX < deltaY * HORIZONTAL_WHEEL_RATIO || nestedScroller(event.target) || frame) {
+    resetWheelGesture();
+    return;
+  }
+  // 反向滚动重新累计，避免两次相反的手势互相抵消后突然成页。
+  if (Math.sign(event.deltaX) !== Math.sign(wheelDelta)) wheelDelta = 0;
   wheelDelta += event.deltaX;
-  if (Math.abs(wheelDelta) >= 56) { settle(activeIndex.value + (wheelDelta > 0 ? 1 : -1)); wheelDelta = 0; }
-  clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { wheelDelta = 0; }, 260);
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(() => { wheelDelta = 0; }, 260);
+  if (Math.abs(wheelDelta) < 56) return;
+  wheelDelta = 0;
+  const target = activeIndex.value + (event.deltaX > 0 ? 1 : -1);
+  // 首尾没有相邻栏目时不拦截滚动，列表继续按用户意图滚动。
+  if (target < 0 || target >= tabs.value.length) return;
+  // 只在真正切页的这一下阻止默认滚动，纵向浏览不会再丢掉滚动刻度。
+  if (event.cancelable) event.preventDefault();
+  settle(target);
 }
 function measure() {
   const nextWidth = Math.max(1, viewport.value?.clientWidth || 1);

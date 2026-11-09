@@ -674,6 +674,7 @@ import {
 const authStore = useAuthStore();
 const route = useRoute();
 const router = useRouter();
+const ownerRoutePath = route.fullPath;
 
 const favoriteExportOpen = ref(false);
 // 本次导出来源列表：列表页「导出收藏」传全部，详情页「导出此收藏单」只传当前收藏单，二者互不污染。
@@ -1146,7 +1147,6 @@ function collectionItemId(item: any): string {
 function responseData(response: any): any { return response?.data?.data ?? response?.data ?? response; }
 
 function backToCollections() {
-  resetCollectionState();
   const { collectionId: _collectionId, collectionTitle: _collectionTitle, ...query } = route.query;
   void router.push({ path: route.path, query });
 }
@@ -1266,7 +1266,10 @@ async function deleteCollection(collection: any) {
     // 由 removed 剪枝统一清理这些条目的正文索引，聚合为一次列表遍历而非逐条写盘。
     void syncFavoriteContentIndex(favoriteAccountId()).catch((error) => console.warn('删除收藏单后同步正文索引失败:', error));
     collections.value = collections.value.filter(item => collectionId(item) !== id);
-    if (activeCollectionId.value === id) backToCollections();
+    if (activeCollectionId.value === id) {
+      resetCollectionState();
+      if (route.fullPath === ownerRoutePath) backToCollections();
+    }
     showToast('收藏单已删除', 'success');
   } catch (err) {
     showToast(getErrorMessage(err, '删除收藏单失败'), 'error');
@@ -1361,7 +1364,6 @@ async function removeSelectedCollectionItems() {
 function openCollection(collection: any) {
   const id = collectionId(collection);
   if (!id) return;
-  activateCollection(collection);
   void router.push({
     path: route.path,
     query: {
@@ -1419,14 +1421,13 @@ function resetCollectionState() {
 }
 
 watch(
-  () => route.query.collectionId,
-  (value) => {
+  () => route.fullPath,
+  (path) => {
+    // 缓存页仍能看到全局路由变化，只处理当前实例对应的地址。
+    if (path !== ownerRoutePath) return;
+    const value = route.query.collectionId;
     const collectionIdValue = Array.isArray(value) ? value[0] : value;
-    if (!collectionIdValue) {
-      if (activeCollectionId.value) resetCollectionState();
-      return;
-    }
-    if (activeCollectionId.value === String(collectionIdValue)) return;
+    if (!collectionIdValue || activeCollectionId.value === String(collectionIdValue)) return;
 
     const titleValue = route.query.collectionTitle;
     const collectionTitle = Array.isArray(titleValue) ? titleValue[0] : titleValue;
