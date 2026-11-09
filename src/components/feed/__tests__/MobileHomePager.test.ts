@@ -219,6 +219,40 @@ describe('移动首页一体滑动', () => {
     pointer(nested, 'pointerdown', 300); pointer(window, 'pointermove', 80); pointer(window, 'pointerup', 80);
     finish(); await flushPromises(); expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('digest'); w.unmount();
   });
+  it('触控板纵向滚动混入的横向分量不切栏目、也不吞掉滚动刻度', async () => {
+    const w = mount(MobileHomePager, { props: { mobile: false }, global: { stubs: { HomeTabPanel: Panel, FeedTabs: Tabs, FeedLayoutToggle: true, RightSidebar: true } } });
+    await flushPromises();
+    const viewport = w.get('.pager-viewport').element;
+    const wheel = (deltaX: number, deltaY: number) => {
+      const event = new WheelEvent('wheel', { deltaX, deltaY, bubbles: true, cancelable: true });
+      viewport.dispatchEvent(event);
+      return event;
+    };
+    // 斜向手势：横向分量略大，但整体仍是纵向浏览。
+    const diagonal = [wheel(40, 30), wheel(30, 26), wheel(45, 28)];
+    expect(diagonal.every(event => event.defaultPrevented)).toBe(false);
+    expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('digest');
+    // 明确的横向手势仍然使用同一功能切到相邻栏目。
+    const horizontal = wheel(60, 0);
+    expect(horizontal.defaultPrevented).toBe(true);
+    await flushPromises();
+    expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('hot');
+    w.unmount();
+  });
+
+  it('首尾没有相邻栏目时不拦截滚轮滚动', async () => {
+    const w = mount(MobileHomePager, { props: { mobile: false }, global: { stubs: { HomeTabPanel: Panel, FeedTabs: Tabs, FeedLayoutToggle: true, RightSidebar: true } } });
+    await flushPromises();
+    const viewport = w.get('.pager-viewport').element;
+    w.findComponent({ name: 'FeedTabs' }).vm.$emit('update:activeKey', 'follow');
+    await flushPromises();
+    const event = new WheelEvent('wheel', { deltaX: -120, deltaY: 0, bubbles: true, cancelable: true });
+    viewport.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('follow');
+    w.unmount();
+  });
+
   it('点击栏目使用相同动画，返回栏目保留原内容页实例', async () => {
     const w = await render(), original = w.find('.pager-page[data-tab-key="digest"] .panel-stub').element;
     const tabs = w.findComponent({ name: 'FeedTabs' }); tabs.vm.$emit('update:activeKey', 'hot');
