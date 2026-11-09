@@ -38,7 +38,7 @@ function mountGrid() {
 }
 
 describe('FeedImageGrid 点击打开方式', () => {
-  it('按宫格中 GIF 数量限制预览，单张 GIF 混合普通图片时仍自动播放', async () => {
+  it('只自动播放第一张 GIF，即使前面有普通图片', async () => {
     const settings = useSettingsStore();
     settings.settings.autoPlayGif = true;
     const wrapper = mount(FeedImageGrid, {
@@ -47,8 +47,8 @@ describe('FeedImageGrid 点击打开方式', () => {
     });
     try {
       expect(wrapper.findComponent({ name: 'LivePhotoPreview' }).props('gifAutoPlay')).toBe(true);
-      await wrapper.setProps({ images: ['https://image.coolapk.com/1.gif', 'https://image.coolapk.com/2.gif'] });
-      expect(wrapper.findAllComponents({ name: 'LivePhotoPreview' }).every(preview => !preview.props('gifAutoPlay'))).toBe(true);
+      await wrapper.setProps({ images: ['https://image.coolapk.com/2.jpg', 'https://image.coolapk.com/1.gif', 'https://image.coolapk.com/3.gif'] });
+      expect(wrapper.findAllComponents({ name: 'LivePhotoPreview' }).map(preview => preview.props('gifAutoPlay'))).toEqual([false, true, false]);
       await wrapper.setProps({ images: ['https://image.coolapk.com/1.gif'] });
       settings.settings.autoPlayGif = false;
       await flushPromises();

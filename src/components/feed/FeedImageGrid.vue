@@ -25,7 +25,7 @@
         :is-single="gridCount === 1"
         :is-long="gridCount === 1 && isLongImage"
         :auto-play-gif="settingsStore.settings.autoPlayGif"
-        :gif-auto-play="settingsStore.settings.autoPlayGif && (isComment ? index === firstGifIndex : gifCount === 1)"
+        :gif-auto-play="settingsStore.settings.autoPlayGif && index === firstGifIndex"
         :gif-viewport-only="isComment"
         @load="handleImageLoad(item.key, $event)"
       />
@@ -81,7 +81,7 @@ const imageRatios = defineModel<Record<string, number>>('imageRatios', { default
 const processedImages = computed(() => normalizeFeedImageItems(props.images));
 const isComment = computed(() => variant.value === 'comment' && contentType.value === 'reply');
 const isGif = (item: (typeof processedImages.value)[number]) => !item.isLivePhoto && isAnimatedImageUrl(item.sourceUrl);
-const gifCount = computed(() => processedImages.value.filter(isGif).length);
+// 每组图片只自动播放第一张 GIF，跳过排在前面的静态图和实况图。
 const firstGifIndex = computed(() => processedImages.value.findIndex(isGif));
 
 const gridCount = computed(() => {
