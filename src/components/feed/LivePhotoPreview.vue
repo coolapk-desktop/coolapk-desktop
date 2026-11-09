@@ -387,16 +387,12 @@ watch(() => props.gifAutoPlay, enabled => {
   overflow: hidden;
 }
 
-.live-photo-preview.is-single :deep(.app-image-container) {
+/* 单图封面负责撑开布局，GIF 播放层继续绝对定位在封面上。 */
+.live-photo-preview.is-single :deep(.app-image-container:not(.gif-preview-image)) {
   position: relative;
   inset: auto;
   width: 100%;
   height: 100%;
-}
-
-.live-photo-preview :deep(.gif-preview-image) {
-  position: absolute !important;
-  inset: 0;
 }
 
 .live-photo-preview :deep(.grid-img img) {
