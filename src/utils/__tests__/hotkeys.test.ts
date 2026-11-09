@@ -1,21 +1,39 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { registerGlobalHotkeys } from '../hotkeys';
+import { registerGlobalHotkeys, REGISTERED_HOTKEY_IDS, EXTERNAL_HOTKEY_IDS } from '../hotkeys';
+import { SHORTCUT_BRANCH_IDS, SHORTCUT_DEFINITIONS } from '../shortcuts';
 import * as commentTracker from '../activeCommentTracker';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
 
-const { replace, cycle } = vi.hoisted(() => ({ replace: vi.fn(), cycle: vi.fn() }));
+const { push, replace, back, cycle, closeTab, historyState, currentRoute } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  back: vi.fn(),
+  cycle: vi.fn(),
+  closeTab: vi.fn(),
+  historyState: { state: { back: null as string | null, forward: null as string | null } },
+  currentRoute: { path: '/' },
+}));
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push,
     replace,
-    back: vi.fn(),
+    back,
     forward: vi.fn(),
-    currentRoute: { value: { path: '/' } },
+    options: { history: historyState },
+    get currentRoute() { return { value: currentRoute }; },
   }),
 }));
 
-vi.mock('../../stores/pageTabs', () => ({ usePageTabsStore: () => ({ tabs: [{ id: 'home', generation: 0 }], cycle }) }));
+vi.mock('../../stores/pageTabs', () => ({
+  usePageTabsStore: () => ({
+    tabs: [{ id: 'home', generation: 0 }],
+    activeId: 'home',
+    cycle,
+    // Ctrl+W 走带守卫的异步关闭入口。
+    closeTab,
+  }),
+}));
 
 vi.mock('../../stores/app', () => ({
   useAppStore: () => ({
@@ -34,6 +52,47 @@ vi.mock('../../stores/settings', () => ({
   }),
 }));
 
+describe('快捷键清单与注册表单一真源', () => {
+  const listedBranches = new Set(SHORTCUT_DEFINITIONS.map(d => d.branchId));
+
+  it('清单覆盖 hotkeys.ts 全部已注册分支', () => {
+    // 每个实际生效的 keydown 分支都必须在帮助清单里登记，防止快捷键页漏项。
+    for (const id of REGISTERED_HOTKEY_IDS) {
+      expect(listedBranches.has(id), `分支 ${id} 未收录进 SHORTCUT_DEFINITIONS`).toBe(true);
+    }
+    for (const id of EXTERNAL_HOTKEY_IDS) {
+      expect(listedBranches.has(id), `外部分支 ${id} 未收录进 SHORTCUT_DEFINITIONS`).toBe(true);
+    }
+  });
+
+  it('每个登记的分支 id 都有帮助页条目（漏登记直接失败）', () => {
+    // 新增 keydown 分支时必须先在 SHORTCUT_BRANCH_IDS 登记（类型层强制），
+    // 这条断言再强制它必须出现在帮助清单里，两步都漏不掉。
+    for (const id of SHORTCUT_BRANCH_IDS) {
+      expect(listedBranches.has(id), `分支 ${id} 已登记但没有帮助页条目`).toBe(true);
+    }
+  });
+
+  it('清单不含没有分支背书的条目（不捏造未注册的快捷键）', () => {
+    for (const d of SHORTCUT_DEFINITIONS) {
+      expect(
+        REGISTERED_HOTKEY_IDS.has(d.branchId) || EXTERNAL_HOTKEY_IDS.has(d.branchId),
+        `清单条目 ${d.branchId}（${d.key}）没有任何注册分支背书`,
+      ).toBe(true);
+    }
+  });
+
+  it('缩放快捷键已收录进清单（此前清单遗漏）', () => {
+    // 用户可见：快捷键帮助页能看到「放大界面 / 缩小界面」两行。
+    const zoomIn = SHORTCUT_DEFINITIONS.filter(d => d.branchId === 'zoomIn');
+    const zoomOut = SHORTCUT_DEFINITIONS.filter(d => d.branchId === 'zoomOut');
+    expect(zoomIn.length).toBeGreaterThanOrEqual(1);
+    expect(zoomOut.length).toBeGreaterThanOrEqual(1);
+    expect(zoomIn.some(d => d.key.includes('Ctrl+='))).toBe(true);
+    expect(zoomOut.some(d => d.key.includes('Ctrl+-'))).toBe(true);
+  });
+});
+
 describe('registerGlobalHotkeys', () => {
   it('Ctrl+R 刷新首页当前栏目', () => {
     const listener = vi.fn();
@@ -47,6 +106,10 @@ describe('registerGlobalHotkeys', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    historyState.state.back = null;
+    // `vi.clearAllMocks` 会清掉实现，这里每个用例重新给出关闭结果。
+    closeTab.mockResolvedValue('/feed/123');
+    currentRoute.path = '/';
     cycle.mockReturnValue('/feed/123');
     commentTracker.resetActiveComments();
     unregister = registerGlobalHotkeys();
@@ -66,11 +129,13 @@ describe('registerGlobalHotkeys', () => {
     [{ key: '{', code: 'BracketLeft', metaKey: true, shiftKey: true }, -1],
     [{ key: ']', metaKey: true, shiftKey: true }, 1],
     [{ key: '[', metaKey: true, shiftKey: true }, -1],
-  ] as const)('标签切换 %j 使用方向 %i 并替换当前路由', (init, direction) => {
+  ] as const)('标签切换 %j 使用方向 %i 并入栈当前路由', (init, direction) => {
     const event = new KeyboardEvent('keydown', { ...init, cancelable: true });
     window.dispatchEvent(event);
     expect(cycle).toHaveBeenCalledExactlyOnceWith(direction);
-    expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123');
+    // 切换页签用 push，保证随后后退能回到刚看过的那一页。
+    expect(push).toHaveBeenCalledExactlyOnceWith('/feed/123');
+    expect(replace).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -95,8 +160,51 @@ describe('registerGlobalHotkeys', () => {
       cycle.mockReturnValueOnce(null);
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', ctrlKey: true, bubbles: true }));
       expect(cycle).toHaveBeenCalledExactlyOnceWith(1);
-      expect(replace).not.toHaveBeenCalled();
+      expect(push).not.toHaveBeenCalled();
     } finally { input.remove(); }
+  });
+
+  it('关闭当前页签仍走 replace，历史里不留下已关闭的页面', async () => {
+    const event = new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true });
+    window.dispatchEvent(event);
+    expect(closeTab).toHaveBeenCalledExactlyOnceWith('home');
+    // 关闭入口是带守卫的异步方法，确认通过后才 replace。
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123'));
+    expect(push).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('关闭守卫拒绝时不离开当前页面', async () => {
+    closeTab.mockResolvedValue(null);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, cancelable: true }));
+    await vi.waitFor(() => expect(closeTab).toHaveBeenCalledOnce());
+    await Promise.resolve();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('Alt+← 有应用内上一页时后退', () => {
+    historyState.state.back = '/feed/1';
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
+    expect(back).toHaveBeenCalledOnce();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('Alt+← 深链进入且没有上一页时走语义兜底页面', () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
+    expect(back).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledExactlyOnceWith('/');
+  });
+
+  it.each([
+    ['/user/12345', '/user/12345'],
+    ['/topic/摄影', '/topics'],
+    ['/live/88', '/discover'],
+    ['/settings/network', '/settings'],
+  ])('Alt+← 在 %s 深链进入时回到语义上级栏目 %s', (path, fallback) => {
+    currentRoute.path = path;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, cancelable: true }));
+    expect(back).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledExactlyOnceWith(fallback);
   });
 
   it('尊重已处理的键盘事件，注销后不再切换标签', () => {
@@ -146,6 +254,27 @@ describe('registerGlobalHotkeys', () => {
     expect(collapseFn).toHaveBeenCalledTimes(1);
     expect(commentTracker.hasActiveComments()).toBe(false);
   });
+
+  it.each(['dialog-wrapper', 'image-viewer-backdrop', 'login-overlay', 'app-context-menu'])(
+    '浮层 .%s 打开时 Esc 不再穿透收起背后评论区',
+    (className) => {
+      const collapseFn = vi.fn();
+      commentTracker.registerOpenComments('feed-1', collapseFn);
+      const overlay = document.createElement('div');
+      overlay.className = className;
+      document.body.appendChild(overlay);
+      try {
+        const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        window.dispatchEvent(event);
+        expect(collapseFn).not.toHaveBeenCalled();
+        expect(commentTracker.hasActiveComments()).toBe(true);
+        expect(event.defaultPrevented).toBe(false);
+      } finally {
+        overlay.remove();
+        commentTracker.resetActiveComments();
+      }
+    }
+  );
 
   it('连续两次 Esc 不会收起屏幕外先前展开的评论', () => {
     const oldCollapse = vi.fn();

@@ -472,6 +472,22 @@ function handleClose() {
 
 useAndroidBackButton(() => authStore.isLoginModalOpen, handleClose);
 
+// 全局 Esc 守卫会把 Esc 让给浮层，登录框自己负责响应，否则 Esc 在登录框上完全没有效果。
+function handleLoginModalKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !authStore.isLoginModalOpen || isLoading.value || isRebinding.value) return;
+  event.preventDefault();
+  handleClose();
+}
+
+watch(
+  () => authStore.isLoginModalOpen,
+  (isOpen) => {
+    if (typeof window === 'undefined') return;
+    if (isOpen) window.addEventListener('keydown', handleLoginModalKeydown);
+    else window.removeEventListener('keydown', handleLoginModalKeydown);
+  },
+);
+
 // Cookie 凭据导入登录
 async function handleCookieLogin() {
   if (!rawCookieInput.value.trim() || isLoading.value) return;
@@ -504,6 +520,7 @@ async function handleLogout() {
 }
 
 onUnmounted(() => {
+  if (typeof window !== 'undefined') window.removeEventListener('keydown', handleLoginModalKeydown);
   stopStatusPolling();
   if (closeModalTimer) clearTimeout(closeModalTimer);
   if (unlistenFn) unlistenFn();

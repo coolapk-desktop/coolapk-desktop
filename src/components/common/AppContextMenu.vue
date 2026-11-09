@@ -33,6 +33,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { navigateBack } from '../../utils/navigation';
 import { useAppStore } from '../../stores/app';
 import { usePageTabsStore } from '../../stores/pageTabs';
 import { useSettingsStore } from '../../stores/settings';
@@ -443,7 +444,8 @@ function createItems(state: ContextState): MenuItem[] {
   const nextDensity = density === 'compact' ? 'comfortable' : density === 'comfortable' ? 'standard' : 'compact';
   const fontSize = settingsStore.settings.fontSize || 15;
   return [
-    item('back', '返回', 'fas fa-arrow-left', () => router.back(), { shortcut: formatShortcut('Alt+←') }),
+    // 右键返回与 Android 返回键共用 navigateBack 的语义兜底（resolveBackFallback），任意页面口径一致。
+    item('back', '返回', 'fas fa-arrow-left', () => navigateBack(router), { shortcut: formatShortcut('Alt+←') }),
     item('forward', '前进', 'fas fa-arrow-right', () => router.go(1), { shortcut: formatShortcut('Alt+→') }),
     item('refresh', '刷新页面', 'fas fa-sync-alt', () => refreshPageTabGeneration(pageTabsStore.tabs, route), { shortcut: formatShortcut('Ctrl+R') }),
     separator('page-separator-1'),

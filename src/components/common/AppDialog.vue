@@ -4,7 +4,8 @@
       <div v-if="isOpen" class="dialog-backdrop" :style="{ zIndex: layer }" @click="handleBackdropClick"></div>
     </Transition>
     <Transition name="scale-dialog">
-      <div v-if="isOpen" class="dialog-wrapper" :style="{ zIndex: layer + 1 }">
+      <!-- keepContent 时用 v-show 隐藏而非卸载，保留插槽内的 DOM 与组件实例；其他弹窗仍是 v-if 销毁。 -->
+      <div v-if="isOpen || keepContent" v-show="!keepContent || isOpen" class="dialog-wrapper" :style="{ zIndex: layer + 1 }">
         <div class="dialog-container" :class="dialogClass" :style="{ width: `${width}px` }">
           <div v-if="title" class="dialog-header">
             <slot name="header">
@@ -43,11 +44,14 @@ const props = withDefaults(
     dialogClass?: string;
     width?: number;
     closeOnBackdrop?: boolean;
+    /** 关闭时保留插槽内容（仅隐藏），默认为 false 以维持原有的销毁行为。 */
+    keepContent?: boolean;
   }>(),
   {
     title: '',
     width: 600,
-    closeOnBackdrop: true
+    closeOnBackdrop: true,
+    keepContent: false
   }
 );
 

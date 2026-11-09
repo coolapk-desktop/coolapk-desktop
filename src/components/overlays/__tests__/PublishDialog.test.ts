@@ -1,11 +1,11 @@
 import { mount, flushPromises } from '@vue/test-utils';
-import { reactive } from 'vue';
+import { nextTick, reactive } from 'vue';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { preparePublishVideo } from '../../../utils/publishVideo';
 import PublishDialog from '../PublishDialog.vue';
 import { CoolapkTauriAPI } from '../../../api/coolapk';
 import { listFullPublishDrafts, saveFullPublishDraft } from '../../../utils/publishDrafts';
-import { hasActiveShuzilmDeviceId } from '../../../utils/shuzilmDeviceGuide';
+import { hasActiveShuzilmDeviceId, shuzilmGuideState } from '../../../utils/shuzilmDeviceGuide';
 
 vi.mock('../../../utils/publishVideo', () => ({ preparePublishVideo: vi.fn() }));
 const stores = vi.hoisted(() => ({ app: null as any, settings: null as any, auth: null as any }));
@@ -14,11 +14,12 @@ vi.mock('../../../stores/settings', () => ({ useSettingsStore: () => stores.sett
 vi.mock('../../../stores/auth', () => ({ useAuthStore: () => stores.auth }));
 vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: { getDeviceInfo: vi.fn(), createFeed: vi.fn(), getEditableFeed: vi.fn(), updateFeed: vi.fn(), uploadPublishVideo: vi.fn(), uploadImage: vi.fn() } }));
 vi.mock('../../../utils/publishDrafts', async (original) => ({ ...await original<any>(), listFullPublishDrafts: vi.fn(async () => []), saveFullPublishDraft: vi.fn(), deleteFullPublishDraft: vi.fn() }));
-vi.mock('../../../utils/shuzilmDeviceGuide', () => ({ shuzilmGuideState: { visible: false }, openShuzilmGuide: vi.fn(), isRiskControlError: () => false, hasActiveShuzilmDeviceId: vi.fn(async () => false) }));
+// 保留真实的 reactive 指引状态，便于断言指引开关对发布页的影响。
+vi.mock('../../../utils/shuzilmDeviceGuide', async (original) => ({ ...await original<any>(), openShuzilmGuide: vi.fn(), hasActiveShuzilmDeviceId: vi.fn(async () => false) }));
 
 function mountDialog() {
   return mount(PublishDialog, { global: { stubs: {
-    AppDialog: { props: ['isOpen'], template: '<div v-if="isOpen"><slot/><slot name="footer"/></div>' },
+    AppDialog: { props: ['isOpen', 'keepContent'], template: '<div v-if="isOpen || keepContent" v-show="isOpen"><slot/><slot name="footer"/></div>' },
     AppButton: { props: ['disabled'], template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot/></button>' },
     teleport: true, AppImage: true, PublishTargetPicker: true, PublishTopicPicker: true, PublishTopicRecommendations: { name: 'PublishTopicRecommendations', props: ['nodeType', 'nodeName', 'uid', 'text', 'cursor', 'refresh'], template: '<div/>' }, PublishMentionPicker: true, PublishProductOptions: true, PublishExtras: true,
   } } });
@@ -146,6 +147,36 @@ describe('完整发帖流程', () => {
     expect(CoolapkTauriAPI.createFeed).toHaveBeenCalledWith('正文', undefined, undefined, expect.objectContaining({ targetType: 'product_phone', targetId: '7', subTypeId: '1', subData: '8.5', visibleStatus: -1, originalType: 2, dyhId: '9', extraUrl: '/goods/detail?id=8' }));
     expect(wrapper.text()).toContain('测试停止发送');
     wrapper.unmount();
+  });
+  it('设备指引开关后正文与编辑器内容保持一致，并阻止指引期间发布', async () => {
+    vi.mocked(CoolapkTauriAPI.createFeed).mockResolvedValue({ code: 400, message: '测试停止发送' });
+    const wrapper = await openDialog();
+    try {
+      const text = '长期草稿正文 #摄影#';
+      await typeText(wrapper, text);
+      const editor = wrapper.get('[role=textbox]').element;
+      // 指引弹窗打开：发布页只是被隐藏，编辑器 DOM 与内容都不能被销毁。
+      shuzilmGuideState.visible = true;
+      await flushPromises();
+      expect(wrapper.get('[role=textbox]').isVisible()).toBe(false);
+      expect(wrapper.get('[role=textbox]').element).toBe(editor);
+      await wrapper.findAll('button').find(button => button.text() === '立即发布')!.trigger('click');
+      await flushPromises();
+      expect(CoolapkTauriAPI.createFeed).not.toHaveBeenCalled();
+      // 指引关闭后重新可见，编辑器仍是同一个实例且正文完整。
+      shuzilmGuideState.visible = false;
+      await flushPromises();
+      await nextTick();
+      expect(wrapper.get('[role=textbox]').element).toBe(editor);
+      expect(wrapper.get('[role=textbox]').text()).toBe(text);
+      expect(wrapper.get('.publish-topic').text()).toBe('#摄影#');
+      // 继续输入后发布的必须是「原文 + 新输入」，而不是旧正文。
+      wrapper.get('[role=textbox]').element.textContent = `${text}继续输入`;
+      await wrapper.get('[role=textbox]').trigger('input', { inputType: 'insertText' });
+      await wrapper.findAll('button').find(button => button.text() === '立即发布')!.trigger('click');
+      await flushPromises();
+      expect(CoolapkTauriAPI.createFeed).toHaveBeenCalledWith(`${text}继续输入`, undefined, undefined, expect.any(Object));
+    } finally { shuzilmGuideState.visible = false; wrapper.unmount(); }
   });
   it('关闭前保存完整状态而非仅保存文字', async () => {
     const wrapper = await openDialog();
