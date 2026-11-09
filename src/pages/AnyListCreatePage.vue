@@ -89,6 +89,9 @@
               <i class="fas fa-plus result-add"></i>
             </button>
           </div>
+          <div v-else-if="searchError" class="search-empty">
+            <span>{{ searchError }}</span>
+          </div>
           <div v-else-if="searchTried" class="search-empty">
             <span>未找到相关商品，可直接手动填写下方条目</span>
           </div>
@@ -143,6 +146,7 @@ import AppImage from '../components/common/AppImage.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import { useAuthStore } from '../stores/auth';
+import { getErrorMessage } from '../utils/errors';
 import type { AnyListItem } from '../types/anylist';
 
 const router = useRouter();
@@ -158,6 +162,7 @@ const searchMode = ref(false);
 const searchQuery = ref('');
 const searching = ref(false);
 const searchTried = ref(false);
+const searchError = ref('');
 const searchResults = ref<any[]>([]);
 
 function addEmptyItem() {
@@ -180,6 +185,7 @@ async function runSearch() {
   if (!query || searching.value) return;
   searching.value = true;
   searchTried.value = false;
+  searchError.value = '';
   searchResults.value = [];
   try {
     const res = await CoolapkTauriAPI.searchAll(query, 1);
@@ -189,7 +195,9 @@ async function runSearch() {
       return type === 'product' || type === 'goods' || (item.id && item.title && (item.pic || item.logo));
     }).slice(0, 12);
   } catch (err) {
+    // 网络错误 ≠ 没有匹配商品：直接展示真实原因，避免用户白改关键词。
     console.warn('搜索商品失败', err);
+    searchError.value = getErrorMessage(err, '搜索商品失败，请检查网络后重试');
   } finally {
     searching.value = false;
     searchTried.value = true;

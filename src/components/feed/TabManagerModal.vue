@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="channel-manager-overlay" @click.self="$emit('close')">
+  <div v-if="visible" class="channel-manager-overlay" @click.self="handleClose">
     <div class="channel-manager-dialog">
       <!-- 弹窗顶栏 -->
       <div class="dialog-header">
@@ -15,7 +15,7 @@
           </div>
         </div>
 
-        <button class="close-btn" title="关闭" @click="$emit('close')">
+        <button class="close-btn" title="关闭" @click="handleClose">
           <i class="fas fa-times"></i>
         </button>
       </div>
@@ -175,6 +175,8 @@ import { CoolapkTauriAPI } from '../../api/coolapk';
 import type { ConfigPageTab } from '../../types/settings';
 import { getHomeSubChannelGroupTitle, getHomeSubChannels, isFollowingHomeTab, type HomeSubChannel, type HomeSubChannelSelection } from '../../utils/homeTabs';
 import { showToast } from '../../utils/toast';
+import { useAndroidBackButton } from '../../utils/androidBackButton';
+import { requestConfirmation } from '../../utils/confirm';
 
 const props = defineProps<{
   visible: boolean;
@@ -195,6 +197,10 @@ const settingsStore = useSettingsStore();
 const isEditing = ref(false);
 const activeChannels = ref<ConfigPageTab[]>([]);
 const hiddenChannels = ref<ConfigPageTab[]>([]);
+// 打开弹窗时的频道配置快照，用于判断关闭前是否存在未保存的排序/可见性改动
+const baselineKeys = ref<string[]>([]);
+// 二次确认进行中，避免 Esc / 返回键重复触发
+const isConfirmingReset = ref(false);
 
 const dynamicChannelGroups = computed(() => activeChannels.value.map((parent) => {
   if (!isFollowingHomeTab(parent, getTabKey(parent))) return null;
@@ -302,6 +308,22 @@ function initChannels() {
   hiddenChannels.value = hiddens;
 }
 
+let escListenerAttached = false;
+
+function onWindowKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape' && e.key !== 'Esc') return;
+  // 二次确认弹窗自行处理 Esc，避免两个弹窗同时关闭
+  if (isConfirmingReset.value) return;
+  e.stopPropagation();
+  handleClose();
+}
+
+function stopEscListener() {
+  if (!escListenerAttached) return;
+  window.removeEventListener('keydown', onWindowKeydown);
+  escListenerAttached = false;
+}
+
 watch(
   () => props.visible,
   (v) => {
@@ -309,6 +331,13 @@ watch(
       isEditing.value = false;
       cleanupDrag();
       initChannels();
+      baselineKeys.value = buildResultKeys();
+      if (!escListenerAttached) {
+        window.addEventListener('keydown', onWindowKeydown);
+        escListenerAttached = true;
+      }
+    } else {
+      stopEscListener();
     }
   },
   { immediate: true }
@@ -434,25 +463,53 @@ function cleanupDrag() {
 
 onUnmounted(() => {
   cleanupDrag();
+  stopEscListener();
 });
 
-function resetToDefault() {
-  settingsStore.settings.homeTabOrder = [];
-  isEditing.value = false;
-  cleanupDrag();
-  initChannels();
-  emit('updated');
-}
-
-function saveAndClose() {
-  if (activeChannels.value.length === 0) {
-    showToast('至少保留一个可见频道', 'warning');
-    return;
-  }
+// 当前的频道配置（可见顺序 + 隐藏项），与 baselineKeys 比较即可判断有无未保存改动
+function buildResultKeys(): string[] {
   const resultKeys = activeChannels.value.map(t => getTabKey(t));
   for (const h of hiddenChannels.value) {
     resultKeys.push(`__hidden__${getTabKey(h)}`);
   }
+  return resultKeys;
+}
+
+function hasPendingChanges(): boolean {
+  if (props.selectionOnly) return false;
+  return JSON.stringify(buildResultKeys()) !== JSON.stringify(baselineKeys.value);
+}
+
+/** 恢复默认只重置草稿并保持弹窗打开，真正写设置统一走关闭/保存路径。 */
+async function resetToDefault() {
+  if (isConfirmingReset.value) return;
+  isConfirmingReset.value = true;
+  let confirmed = false;
+  try {
+    confirmed = await requestConfirmation({
+      title: '恢复默认频道',
+      message: '将把首页频道恢复为默认顺序并显示全部频道，确定继续吗？',
+      confirmText: '恢复默认',
+    });
+  } finally {
+    isConfirmingReset.value = false;
+  }
+  if (!confirmed) return;
+
+  isEditing.value = false;
+  cleanupDrag();
+  activeChannels.value = [...props.tabs];
+  hiddenChannels.value = [];
+  showToast('已恢复默认顺序，关闭弹窗或点击保存后生效', 'info');
+}
+
+/** 把当前草稿写入设置并同步酷安云端；返回是否写入成功。 */
+function persistChannels(): boolean {
+  if (activeChannels.value.length === 0) {
+    showToast('至少保留一个可见频道', 'warning');
+    return false;
+  }
+  const resultKeys = buildResultKeys();
   settingsStore.settings.homeTabOrder = resultKeys;
 
   // 官方格式：构造 home_tab_config 数组同步至酷安云端账号
@@ -475,9 +532,31 @@ function saveAndClose() {
     console.warn('云端同步频道配置失败', e);
   }
 
+  baselineKeys.value = resultKeys;
   emit('updated');
+  return true;
+}
+
+function saveAndClose() {
+  if (!persistChannels()) return;
   emit('close');
 }
+
+/**
+ * 关闭统一入口（× / 点击遮罩 / Esc / Android 返回键）。
+ * 有未保存的排序或可见性改动时按“关闭即保存”落盘，避免静默丢弃。
+ */
+function handleClose() {
+  cleanupDrag();
+  if (hasPendingChanges()) {
+    if (!persistChannels()) return;
+    showToast('已保存频道顺序');
+  }
+  emit('close');
+}
+
+// Android 返回键在弹窗可见时拦截，行为与关闭按钮一致
+useAndroidBackButton(() => props.visible, handleClose);
 </script>
 
 <style scoped>

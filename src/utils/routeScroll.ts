@@ -1,4 +1,7 @@
 import { nextTick, ref } from 'vue';
+import type { RouteLocationNormalized } from 'vue-router';
+import { getPageComponentKey, type TabRoute } from './pageTabs';
+import { usePageTabsStore } from '../stores/pageTabs';
 
 /** 浏览器/原生返回和前进应恢复阅读位置，不重放卡片入口的定位。 */
 export const routeNavigationIsHistory = ref(false);
@@ -8,22 +11,50 @@ type ScrollPosition = {
   left: number;
 };
 
-// 位置随容器一起回收；路由表不能反向强引用已被 KeepAlive 淘汰的整棵页面。
-const elementScrollPositions = new WeakMap<HTMLElement, Map<string, ScrollPosition>>();
-// 外框由多个路由共用，只保留近期位置；页面缓存最多 15 个，留足嵌套页面余量。
-const MAX_POSITIONS_PER_ELEMENT = 100;
+type RouteScrollRecord = {
+  /** 容器槽位 → 位置；槽位是相对 .app-main-content 的元素路径。 */
+  slots: Map<string, ScrollPosition>;
+  at: number;
+};
+
+// 位置按「页面实例 key + 容器槽位」保存：KeepAlive 淘汰或页面重建后仍能找回原来的容器，
+// 也不会像 WeakMap 那样随旧节点一起回收；用 TTL 与数量上限避免记录无限增长。
+const routeScrollRecords = new Map<string, RouteScrollRecord>();
+// 页面缓存上限随页签增长（至少 15、页签数 + 5），位置记录留出更多余量。
+const MAX_ROUTE_RECORDS = 80;
+const POSITION_TTL_MS = 30 * 60 * 1000;
 const SCROLL_CONTAINER_SELECTOR = '[data-route-scroll], .custom-scrollbar';
 // 外框虽然禁止用户滚动，scrollIntoView/输入聚焦仍可能改变其滚动偏移。
 const SCROLL_FRAME_SELECTOR = '.app-page-content, .route-transition-stage';
+const CONTENT_ROOT_CLASS = 'app-main-content';
+const CONTENT_ROOT_SELECTOR = `.${CONTENT_ROOT_CLASS}`;
+const ROOT_SLOT = '#root';
 let restoreGeneration = 0;
 let firstRestoreFrame: number | null = null;
 let secondRestoreFrame: number | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 滚动位置与 App.vue 的 keep-alive 组件 key 使用同一个「页面实例身份」：
+ * 同一实体（含结构化查询）共用一份位置，实例被淘汰重建后仍能恢复。
+ */
+export function getRouteScrollKey(route: TabRoute): string {
+  let generation = 0;
+  try {
+    generation = usePageTabsStore().getGeneration(route as RouteLocationNormalized);
+  } catch {
+    // 路由可能在 Pinia 就绪前完成首次导航，此时按初始代数记录即可。
+    generation = 0;
+  }
+  return getPageComponentKey(route, generation);
+}
 
 /** 路由切换或新恢复开始时，使已排队的旧页面回调失效。 */
 function cancelPendingRestore() {
   ++restoreGeneration;
   if (firstRestoreFrame !== null) { cancelAnimationFrame(firstRestoreFrame); firstRestoreFrame = null; }
   if (secondRestoreFrame !== null) { cancelAnimationFrame(secondRestoreFrame); secondRestoreFrame = null; }
+  if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
 }
 
 /**
@@ -34,7 +65,7 @@ function cancelPendingRestore() {
  */
 function getScrollContainers(): HTMLElement[] {
   if (typeof document === 'undefined') return [];
-  const root = document.querySelector<HTMLElement>('.app-main-content');
+  const root = document.querySelector<HTMLElement>(CONTENT_ROOT_SELECTOR);
   if (!root) return [];
 
   const candidates = [
@@ -55,18 +86,74 @@ function getScrollContainers(): HTMLElement[] {
   return [...new Set([...candidates, ...frames])];
 }
 
+/**
+ * 用元素路径代替节点身份：同一路由的页面重建后 DOM 结构一致，就能把位置写回对应容器。
+ * 只取标签名与元素下标，避免动态 class 变化导致槽位漂移。
+ */
+function containerSlot(element: HTMLElement): string {
+  if (element.classList.contains(CONTENT_ROOT_CLASS)) return ROOT_SLOT;
+  const parts: string[] = [];
+  let node: HTMLElement | null = element;
+  while (node && !node.classList.contains(CONTENT_ROOT_CLASS)) {
+    const parent: HTMLElement | null = node.parentElement;
+    if (!parent) return '';
+    parts.unshift(`${node.tagName.toLowerCase()}[${Array.prototype.indexOf.call(parent.children, node)}]`);
+    node = parent;
+  }
+  return node ? parts.join('>') : '';
+}
+
+/** 按槽位找回当前 DOM 中的容器；结构不符时返回 null，交给重试判定。 */
+function findSlotElement(slot: string): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  const root = document.querySelector<HTMLElement>(CONTENT_ROOT_SELECTOR);
+  if (!root) return null;
+  if (slot === ROOT_SLOT) return root;
+  let node: Element = root;
+  for (const part of slot.split('>')) {
+    const match = /^([a-z0-9-]+)\[(\d+)\]$/.exec(part);
+    if (!match) return null;
+    const child = node.children[Number(match[2])];
+    if (!child || child.tagName.toLowerCase() !== match[1]) return null;
+    node = child;
+  }
+  return node instanceof HTMLElement ? node : null;
+}
+
+/** 过期与超量的记录在下一次保存时清理，避免长会话里无限增长。 */
+function pruneRecords(now: number) {
+  for (const [key, record] of routeScrollRecords) {
+    if (now - record.at > POSITION_TTL_MS) routeScrollRecords.delete(key);
+  }
+  while (routeScrollRecords.size > MAX_ROUTE_RECORDS) {
+    let oldestKey: string | null = null;
+    let oldestAt = Number.POSITIVE_INFINITY;
+    for (const [key, record] of routeScrollRecords) {
+      if (record.at < oldestAt) { oldestAt = record.at; oldestKey = key; }
+    }
+    if (oldestKey === null) break;
+    routeScrollRecords.delete(oldestKey);
+  }
+}
+
 /** 在路由离开前保存页面内各滚动容器的位置。 */
 export function saveRouteScrollPosition(routeKey: string): void {
   // 评论入口有独立定位并跳过通用恢复，也要在离开旧页面时取消其待执行回调。
   cancelPendingRestore();
   if (!routeKey) return;
-  for (const element of getScrollContainers()) {
-    let positions = elementScrollPositions.get(element);
-    if (!positions) { positions = new Map(); elementScrollPositions.set(element, positions); }
-    positions.delete(routeKey);
-    positions.set(routeKey, { top: element.scrollTop, left: element.scrollLeft });
-    if (positions.size > MAX_POSITIONS_PER_ELEMENT) positions.delete(positions.keys().next().value!);
+  const now = Date.now();
+  let record = routeScrollRecords.get(routeKey);
+  if (!record) {
+    record = { slots: new Map(), at: now };
+    routeScrollRecords.set(routeKey, record);
   }
+  record.at = now;
+  for (const element of getScrollContainers()) {
+    const slot = containerSlot(element);
+    if (!slot) continue;
+    record.slots.set(slot, { top: element.scrollTop, left: element.scrollLeft });
+  }
+  pruneRecords(now);
 }
 
 /** 在缓存页面重新显示后恢复全部滚动位置。 */
@@ -77,31 +164,43 @@ export async function restoreRouteScrollPosition(routeKey: string): Promise<void
   await nextTick();
   if (generation !== restoreGeneration) return;
 
-  // 缓存页面接回后按原节点身份查找，不把旧实例的位置套到新创建的同路由页面。
-  const positions = getScrollContainers().flatMap(element => {
-    const position = elementScrollPositions.get(element)?.get(routeKey);
-    return position ? [{ element, ...position }] : [];
-  });
-  if (!positions.length) return;
+  const record = routeKey ? routeScrollRecords.get(routeKey) : undefined;
+  if (!record || !record.slots.size) return;
+  record.at = Date.now();
+  const entries = [...record.slots];
+  let retried = false;
 
-  const restore = () => {
-    if (generation !== restoreGeneration) return;
-    positions.forEach(({ element, top, left }) => {
-      // keep-alive 会暂时移出非活动页面；仅在节点重新挂载后恢复。
-      if (!element.isConnected) return;
+  // 返回写入位置；内容还没撑开（异步分页未到）时返回 true，交给一次重试。
+  const restore = (): boolean => {
+    if (generation !== restoreGeneration) return false;
+    let insufficient = false;
+    for (const [slot, { top, left }] of entries) {
+      const element = findSlotElement(slot);
+      if (!element || !element.isConnected) { insufficient = true; continue; }
       element.scrollTop = top;
       element.scrollLeft = left;
-    });
+      // 内容高度不足时浏览器会把 scrollTop 截断到上限。
+      if (top > 0 && Math.abs(element.scrollTop - top) > 1) insufficient = true;
+    }
+    return insufficient;
   };
 
-  // 缓存节点接回后立即恢复，避免首帧先显示列表顶部；后两帧只补偿布局调整。
-  restore();
+  // 恢复到位的容器立即生效，避免首帧先显示列表顶部；后两帧只补偿布局调整。
+  const needsRetry = restore();
   firstRestoreFrame = requestAnimationFrame(() => {
     firstRestoreFrame = null;
-    restore();
+    if (generation !== restoreGeneration) return;
     secondRestoreFrame = requestAnimationFrame(() => {
       secondRestoreFrame = null;
-      restore();
+      if (generation !== restoreGeneration) return;
+      const stillInsufficient = restore() || needsRetry;
+      if (!stillInsufficient || retried) return;
+      retried = true;
+      // 页面实例刚被淘汰重建时，已加载分页要等异步数据回填才会撑开内容，只补一次。
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (generation === restoreGeneration) restore();
+      }, 120);
     });
   });
 }

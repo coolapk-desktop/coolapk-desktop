@@ -50,7 +50,8 @@ const activeTab = computed<GoodsTabKey>(() => {
 
 function selectTab(key: GoodsTabKey) {
   if (key === activeTab.value) return;
-  router.replace({ path: '/goods', query: { tab: key } });
+  // 保留好物搜索的 q/sort/coupon 等条件：切走再切回来仍能按原条件恢复结果。
+  router.replace({ path: '/goods', query: { ...(route.query as Record<string, string>), tab: key } });
 }
 </script>
 

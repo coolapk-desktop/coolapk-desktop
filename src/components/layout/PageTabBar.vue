@@ -98,7 +98,19 @@ function visibleTitle(tab: { title: string; icon: string }): string {
   return title.startsWith('#') && title.endsWith('#') ? title.slice(1, -1).trim() || '话题' : title || '话题';
 }
 
+/**
+ * 激活已打开的页签：用 push 而不是 replace，
+ * 否则「首页 → 页签跳到明细 → 后退」会跳过刚看过的那一页。
+ */
 function navigate(route: string | null) {
+  if (route) void router.push(route);
+}
+
+/**
+ * 关闭页签后落到相邻页签：这里保留 replace，
+ * 历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
+ */
+function replaceRoute(route: string | null) {
   if (route) void router.replace(route);
 }
 
@@ -106,7 +118,7 @@ function openTab(id: string) {
   if (suppressClick) return;
   // 固定首页标签：已在首页时不再重复导航，改为回到顶部（双击再刷新当前栏目）。
   if (id === 'home') {
-    activateHomeTab(router, { replace: true });
+    activateHomeTab(router);
     closeMenus();
     return;
   }
@@ -179,9 +191,10 @@ function removeFavorite(id: string) {
   tabsStore.removeFavorite(id);
 }
 
-function closeTab(id: string) {
-  navigate(tabsStore.close(id));
+// 关闭页签先经过 store 的关闭守卫（如代理页未应用修改的确认），拒绝时页签保持原样。
+async function closeTab(id: string) {
   closeMenus();
+  replaceRoute(await tabsStore.closeTab(id));
 }
 
 function toggleTabList() {
@@ -200,15 +213,15 @@ function openContextMenu(event: MouseEvent, id: string) {
   };
 }
 
-function runContextAction(action: 'favorite' | 'pin' | 'close' | 'others' | 'right') {
+async function runContextAction(action: 'favorite' | 'pin' | 'close' | 'others' | 'right') {
   const id = contextMenu.value?.id;
   if (!id) return;
+  closeMenus();
   if (action === 'favorite') tabsStore.toggleFavorite(id);
   else if (action === 'pin') tabsStore.togglePin(id);
-  else if (action === 'close') navigate(tabsStore.close(id));
-  else if (action === 'others') navigate(tabsStore.closeOthers(id));
-  else navigate(tabsStore.closeRight(id));
-  closeMenus();
+  else if (action === 'close') replaceRoute(await tabsStore.closeTab(id));
+  else if (action === 'others') replaceRoute(await tabsStore.closeOtherTabs(id));
+  else replaceRoute(await tabsStore.closeRightTabs(id));
 }
 
 function closeMenus() {

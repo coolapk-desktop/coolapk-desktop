@@ -419,7 +419,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import FeedCard from '../components/feed/FeedCard.vue';
@@ -761,7 +761,9 @@ async function fetchFeeds(isLoadMore = false) {
       noMore.value = true;
     } else {
       if (isLoadMore) {
-        productFeeds.value.push(...newFeeds);
+        // 与其他列表一致：加载更多按实体键去重，服务端游标重复时不出现重复卡片。
+        const existingKeys = new Set(productFeeds.value.map((feed: any, index: number) => getEntityKey(feed, index)));
+        productFeeds.value.push(...newFeeds.filter((feed: any, index: number) => !existingKeys.has(getEntityKey(feed, productFeeds.value.length + index))));
       } else {
         productFeeds.value = newFeeds;
       }
@@ -883,6 +885,8 @@ async function selectConfig(configId: string) {
 async function loadConfigDetail(configId: string) {
   try {
     const res = await CoolapkTauriAPI.getProductConfig(configId);
+    // 竞态保护：快速连续切换配置时，先发且较慢的响应不得覆盖后选中的配置。
+    if (configId !== selectedConfigId.value) return;
     if (res?.data && typeof res.data === 'object') {
       selectedConfig.value = res.data;
     }
@@ -1243,11 +1247,13 @@ function loadActiveTab() {
   }
 }
 
-watch(productId, () => {
+// productId 在 setup 时一次性取自路由参数（多实例页签固定参数，实例内不会变化），
+// 页面数据只在挂载时加载一次，不使用永不触发的 watch。
+onMounted(() => {
   resetFeeds();
   void fetchProductHeader();
   loadActiveTab();
-}, { immediate: true });
+});
 
 watch(
   () => route.query.tab,

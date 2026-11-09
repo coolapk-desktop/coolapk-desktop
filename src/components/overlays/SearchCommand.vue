@@ -69,7 +69,12 @@
 
           <div class="search-results custom-scrollbar">
             <div v-if="loading && query" class="loading-wrapper">
-              <LoadingState text="正在获取搜索建议..." />
+              <LoadingState text="正在搜索..." />
+            </div>
+
+            <div v-else-if="query && searchError" class="empty-wrapper">
+              <EmptyState title="搜索失败" :description="searchError" />
+              <button type="button" class="retry-button" @click="retrySearch">重试</button>
             </div>
 
             <div v-else-if="!query" class="quick-suggestions">
@@ -137,6 +142,7 @@ import EmptyState from '../common/EmptyState.vue';
 import { addSearchHistory, clearSearchHistory, loadSearchHistory, searchHistory } from '../../utils/searchHistory';
 import type { SearchEntity } from '../../types/search';
 import {
+  deduplicateSearchEntities,
   extractHotSearchKeywords,
   extractSearchEntities,
   getSearchEntityKind,
@@ -149,6 +155,7 @@ import {
 } from '../../utils/searchEntities';
 import { normalizeCoolapkCollectionLink, normalizeCoolapkDeepLink, normalizeCoolapkFeedLink, normalizeCoolapkRoute } from '../../utils/coolapkRoute';
 import { fetchSearchSuggestions } from '../../utils/searchSuggestions';
+import { describeApiError } from '../../utils/apiErrorMessage';
 
 const appStore = useAppStore();
 const showShortcutHints = useShortcutHints();
@@ -156,6 +163,7 @@ const router = useRouter();
 
 const query = ref('');
 const loading = ref(false);
+const searchError = ref('');
 const results = ref<SearchEntity[]>([]);
 const searchSuggestions = ref<SearchEntity[]>([]);
 const searchInput = ref<HTMLInputElement | null>(null);
@@ -193,46 +201,84 @@ watch(() => appStore.isSearchOpen, (open) => {
     });
   } else {
     searchInput.value?.blur();
+    // 关闭面板立即作废防抖任务和在途请求，避免关闭后仍打接口、旧响应又回写面板。
+    cancelPendingSearch();
+    loading.value = false;
   }
 });
 
 let timer: any = null;
+const SEARCH_DEBOUNCE_MS = 300;
+
+// 输入、关闭面板、点击历史/热搜/联想、重复搜索前统一作废防抖任务与在途请求。
+function cancelPendingSearch(): number {
+  if (timer) clearTimeout(timer);
+  timer = null;
+  searchRequestVersion += 1;
+  return searchRequestVersion;
+}
+
+async function runSearch(keyword: string, requestVersion: number) {
+  loading.value = true;
+  searchError.value = '';
+  try {
+    // 结果区与联想区互不牵连：任一失败都不能把另一块伪装成“没有结果”。
+    const [searchOutcome, suggestionOutcome] = await Promise.allSettled([
+      // 与搜索页保持一致：走同一个 searchByType(all) 接口，保证面板里看到的结果点击后落地页结果相同。
+      CoolapkTauriAPI.searchByType({ searchType: 'all', query: keyword, page: 1 }),
+      fetchSearchSuggestions(keyword),
+    ]);
+    if (requestVersion !== searchRequestVersion) return;
+    if (searchOutcome.status === 'fulfilled') {
+      results.value = deduplicateSearchEntities(extractSearchEntities(searchOutcome.value).filter(isNavigableSearchEntity)).slice(0, 8);
+      // 联想项与即时结果同屏展示，先去掉标题重复的条目，避免同一个目标出现两次。
+      const resultTitles = new Set(results.value.map(getSearchEntityTitle));
+      const suggestions = suggestionOutcome.status === 'fulfilled' ? suggestionOutcome.value : [];
+      searchSuggestions.value = suggestions.filter((item) => !resultTitles.has(getSearchEntityTitle(item)));
+    } else {
+      // 结果区失败明确提示并可重试；联想区失败静默降级（只保留结果）。
+      results.value = [];
+      searchSuggestions.value = [];
+      searchError.value = describeApiError(searchOutcome.reason, '搜索失败').message;
+    }
+  } finally {
+    if (requestVersion === searchRequestVersion) loading.value = false;
+  }
+}
+
+function retrySearch() {
+  const keyword = query.value.trim();
+  if (!keyword) return;
+  const requestVersion = cancelPendingSearch();
+  void runSearch(keyword, requestVersion);
+}
+
 // 保留联想和即时结果两栏，联想项按 APK 返回的跳转地址执行。
 watch(query, (val) => {
-  if (timer) clearTimeout(timer);
-  const requestVersion = ++searchRequestVersion;
+  const requestVersion = cancelPendingSearch();
   results.value = [];
   searchSuggestions.value = [];
+  searchError.value = '';
   activeSuggestionIndex.value = -1;
   activeResultIndex.value = -1;
-  loading.value = false;
-  if (!val.trim()) {
-    return;
-  }
-  timer = setTimeout(async () => {
+  const keyword = val.trim();
+  // 非空输入立即进入加载态：防抖窗口内不能再先闪一次“未找到相关结果”。
+  // 面板已关闭时不再排期，避免关闭后仍有残留请求。
+  loading.value = Boolean(keyword) && appStore.isSearchOpen;
+  if (!keyword || !appStore.isSearchOpen) return;
+  timer = setTimeout(() => {
+    timer = null;
     if (directFeedRoute.value || directCollectionRoute.value) {
       results.value = [];
       searchSuggestions.value = [];
       loading.value = false;
       return;
     }
-    loading.value = true;
-    try {
-      const [searchRes, suggestions] = await Promise.all([CoolapkTauriAPI.searchAll(val.trim(), 1), fetchSearchSuggestions(val.trim())]);
-      if (requestVersion !== searchRequestVersion) return;
-      results.value = deduplicateSearchResults(searchRes).slice(0, 8);
-      // 联想项与即时结果同屏展示，先去掉标题重复的条目，避免同一个目标出现两次。
-      const resultTitles = new Set(results.value.map(getSearchEntityTitle));
-      searchSuggestions.value = suggestions.filter((item) => !resultTitles.has(getSearchEntityTitle(item)));
-    } catch (err) {
-      console.error('Search error', err);
-    } finally {
-      if (requestVersion === searchRequestVersion) loading.value = false;
-    }
-  }, 300);
+    void runSearch(keyword, requestVersion);
+  }, SEARCH_DEBOUNCE_MS);
 });
 
-// 将搜索结果链接归一为桌面路由后去重，同一话题优先保留明确的话题实体。
+// 将搜索结果链接归一为桌面路由，用于跳转与话题判定；去重仍统一按「类型:id」，与搜索页共用同一实现。
 function getSearchResultRoute(item: SearchEntity): string | null {
   const url = getSearchEntityUrl(item);
   const route = getSearchEntityRoute(item) || normalizeCoolapkDeepLink(url) || normalizeCoolapkRoute(url);
@@ -243,44 +289,30 @@ function isTopicSearchResult(item: SearchEntity): boolean {
   return getSearchEntityKind(item) === 'topic' || /^\/topic\//i.test(getSearchResultRoute(item) || '');
 }
 
-function deduplicateSearchResults(response: unknown): SearchEntity[] {
-  const unique: SearchEntity[] = [];
-  const routeIndexes = new Map<string, number>();
-  for (const item of extractSearchEntities(response).filter(isNavigableSearchEntity)) {
-    const route = getSearchResultRoute(item);
-    if (!route) {
-      unique.push(item);
-      continue;
-    }
-    const existingIndex = routeIndexes.get(route);
-    if (existingIndex === undefined) {
-      routeIndexes.set(route, unique.length);
-      unique.push(item);
-    } else if (getSearchEntityKind(item) === 'topic' && getSearchEntityKind(unique[existingIndex]) !== 'topic') {
-      unique[existingIndex] = item;
-    }
-  }
-  return unique;
-}
-
 // 与搜索页一致：点击历史/热门词直接发起搜索，不再要求用户再按一次回车。
 function applySearch(tag: string) {
+  // 先作废防抖任务，避免“已跳转搜索页”后旧输入再补发一次即时搜索。
+  cancelPendingSearch();
   query.value = tag;
   handleEnterSearch(tag);
 }
 
+// 与搜索页一致：searchTab 联想按“关键词 + 页签”搜索，有实体路由的联想直达详情。
 function selectSuggestion(item: SearchEntity) {
+  cancelPendingSearch();
   const searchTarget = getSearchEntitySearchTarget(item);
   const title = getSearchEntityTitle(item);
   const historyValue = searchTarget?.keyword || title || query.value.trim();
-  const route = getSearchResultRoute(item);
   searchSuggestions.value = [];
   activeSuggestionIndex.value = -1;
-  if (route) {
-    if (historyValue) addSearchHistory(historyValue);
-    appStore.closeSearch();
-    void router.push(route);
-    return;
+  if (!searchTarget) {
+    const entityRoute = getSearchResultRoute(item);
+    if (entityRoute && !entityRoute.startsWith('/search?')) {
+      if (historyValue) addSearchHistory(historyValue);
+      appStore.closeSearch();
+      void router.push(entityRoute);
+      return;
+    }
   }
   handleEnterSearch(searchTarget?.keyword || title || query.value, searchTarget?.searchType || '');
 }
@@ -288,6 +320,7 @@ function selectSuggestion(item: SearchEntity) {
 function handleEnterSearch(value = query.value, searchType = '') {
   const trimmed = value.trim();
   if (!trimmed) return;
+  cancelPendingSearch();
   addSearchHistory(trimmed);
   appStore.closeSearch();
   const routeQuery: Record<string, string> = { q: trimmed };
@@ -328,6 +361,7 @@ function handleInputKeydown(e: KeyboardEvent) {
 function openDirectFeed() {
   const route = directFeedRoute.value;
   if (!route) return;
+  cancelPendingSearch();
   appStore.closeSearch();
   void router.push(route);
 }
@@ -335,6 +369,7 @@ function openDirectFeed() {
 function openDirectCollection() {
   const route = directCollectionRoute.value;
   if (!route) return;
+  cancelPendingSearch();
   appStore.closeSearch();
   void router.push(route);
 }
@@ -344,6 +379,7 @@ function clearHistory() {
 }
 
 function selectResult(item: SearchEntity) {
+  cancelPendingSearch();
   const route = getSearchResultRoute(item);
   appStore.closeSearch();
   if (route) void router.push(route);
@@ -509,6 +545,9 @@ onUnmounted(() => window.removeEventListener('keydown', handleGlobalKeydown));
 .result-title { font-size: var(--font-size-sub); font-weight: var(--font-weight-medium); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .result-sub { font-size: var(--font-size-caption); color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-submit-prompt { padding: 8px 4px; color: var(--text-tertiary); font-size: var(--font-size-caption); text-align: center; }
+
+.empty-wrapper { padding: var(--space-4) 0; text-align: center; }
+.retry-button { margin-top: 10px; padding: 6px 14px; color: var(--brand-primary); background: var(--brand-soft); border: 0; border-radius: var(--radius-control); cursor: pointer; }
 
 .suggestion-list {
   max-height: 200px;

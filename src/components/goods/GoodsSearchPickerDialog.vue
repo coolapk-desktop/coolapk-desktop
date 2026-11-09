@@ -107,6 +107,8 @@ const page = ref(1);
 const searching = ref(false);
 const searched = ref(false);
 const noMore = ref(false);
+// 搜索请求序号：重复回车与加载更多并发时只认最新请求，旧响应不会覆盖新关键词的结果。
+let requestVersion = 0;
 // 外层转换商品期间禁止重复选择和关闭，避免后返回的结果覆盖新选择。
 const submitting = computed(() => !!props.busy);
 
@@ -114,11 +116,14 @@ watch(
   () => props.isOpen,
   (open) => {
     if (open) {
+      // 重新打开时作废上一次残留的在途请求。
+      requestVersion += 1;
       keyword.value = '';
       results.value = [];
       page.value = 1;
       searched.value = false;
       noMore.value = false;
+      searching.value = false;
     }
   },
 );
@@ -146,16 +151,21 @@ function goodsMall(goods: any): string {
 async function search(isFresh = true) {
   const kw = keyword.value.trim();
   if (!kw) return;
+  // 新关键词搜索（含加载中重复回车）直接作废旧请求后重发，不再因 searching 被静默丢弃。
   if (isFresh) {
+    requestVersion += 1;
     page.value = 1;
     noMore.value = false;
     results.value = [];
-  } else if (noMore.value) {
+  } else if (searching.value || noMore.value) {
     return;
   }
+  const token = requestVersion;
   searching.value = true;
   try {
     const res = await CoolapkTauriAPI.searchGoods({ keyword: kw, page: page.value });
+    // 序号不匹配说明期间已发起新搜索，本次响应必须丢弃。
+    if (token !== requestVersion) return;
     const list = (res?.data && Array.isArray(res.data)) ? res.data : [];
     if (list.length === 0) {
       noMore.value = true;
@@ -170,9 +180,10 @@ async function search(isFresh = true) {
     }
     searched.value = true;
   } catch (err) {
+    if (token !== requestVersion) return;
     showToast(getErrorMessage(err, '搜索失败'), 'error');
   } finally {
-    searching.value = false;
+    if (token === requestVersion) searching.value = false;
   }
 }
 

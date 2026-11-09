@@ -1,5 +1,5 @@
 import type { Router } from 'vue-router';
-import { navigateBack } from './navigation';
+import { navigateBack, resolveBackFallback } from './navigation';
 
 const EXIT_INTERVAL_MS = 2000;
 
@@ -17,7 +17,8 @@ export function createAndroidRootBackHandler(
     if (exiting) return;
     if (router.currentRoute.value.path !== '/') {
       reset();
-      navigateBack(router);
+      // 显式按语义兜底，不依赖 navigateBack 的默认参数；深链详情页无历史时回到上级栏目。
+      navigateBack(router, resolveBackFallback(router.currentRoute.value.path));
       return;
     }
     const time = now();

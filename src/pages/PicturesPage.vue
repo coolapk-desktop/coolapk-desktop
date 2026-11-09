@@ -68,7 +68,7 @@
         <!-- 底部加载状态 -->
         <div class="pagination-footer">
           <LoadingState v-if="loading && page > 1" text="正在加载更多酷图..." />
-          <button v-else-if="error" class="retry-inline" @click="fetchPictures(true)">加载失败，点击重试</button>
+          <button v-else-if="error" class="retry-inline" @click="retryPagination">加载失败，点击重试</button>
           <div v-else-if="noMore" class="no-more">已加载全部酷图</div>
         </div>
       </template>
@@ -150,21 +150,28 @@ function switchTag(tag: string) {
   void fetchPictures(true);
 }
 
+// 请求序号：切标签发出的新请求会让在途旧请求整体失效，
+// 慢的旧标签响应返回后不得覆盖新标签的列表（R3-2.2）。
+let fetchSequence = 0;
+
 async function fetchPictures(isRefresh = false) {
-  if (loading.value) return;
+  // 只有「加载更多」仍受 loading/noMore 守卫，避免滚动重复触发；
+  // 刷新类请求（首载/切标签/下拉刷新）不被在途 loading 拦截，用序号作废旧响应。
+  if (!isRefresh && (loading.value || noMore.value)) return;
   if (isRefresh) {
+    fetchSequence += 1;
     page.value = 1;
     noMore.value = false;
     pictures.value = [];
   }
-  if (noMore.value && !isRefresh) return;
-
+  const sequence = fetchSequence;
   loading.value = true;
   error.value = '';
 
   try {
     const tag = activeTag.value === '全部' ? '' : activeTag.value;
     const res: any = await CoolapkTauriAPI.getPictureList(tag, page.value);
+    if (sequence !== fetchSequence) return;
     const list = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
 
     if (list.length === 0) {
@@ -177,17 +184,21 @@ async function fetchPictures(isRefresh = false) {
         const newItems = list.filter((it: any) => !existingIds.has(pictureIdOf(it)));
         pictures.value.push(...newItems);
       }
-      if (list.length < 10) {
-        noMore.value = true;
-      } else {
-        page.value++;
-      }
+      // 不用魔法数猜服务端页大小：只有空页才判定到底，页大小不符时不再提前截断（R3-2.4）。
+      page.value++;
     }
   } catch (err: any) {
-    error.value = err?.message || '获取酷图失败，请检查网络';
+    if (sequence === fetchSequence) error.value = err?.message || '获取酷图失败，请检查网络';
   } finally {
-    loading.value = false;
+    if (sequence === fetchSequence) loading.value = false;
   }
+}
+
+// footer 重试语义与 AlbumsPage.retryPagination 一致：页码只在成功后前进，
+// 上次「加载更多」失败时页码未前进，重试仍以当前页走非刷新分支补齐该页，
+// 不清空已加载的瀑布流，也不重置回首页（R3-2.3）。
+function retryPagination() {
+  void fetchPictures(false);
 }
 
 function handleScroll(e: Event) {

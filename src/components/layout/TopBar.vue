@@ -387,8 +387,20 @@ function toggleTheme() {
 
 // 由路由器维护桌面端页面栈。
 // 通过当前路由的变化触发计算，保证页面进入、替换和返回后按钮状态同步更新。
-const canGoBack = computed(() => Boolean(route.fullPath && canNavigateBack(router)));
-const canGoForward = computed(() => Boolean(route.fullPath && canNavigateForward(router)));
+// 上一次历史项与当前页面相同时（重复进入同一明细页）后退会「亮着但点了没反应」，此时禁用按钮。
+const canGoBack = computed(() => {
+  if (!route.fullPath || !canNavigateBack(router)) return false;
+  const back = router.options.history.state.back;
+  return typeof back !== 'string' || back !== route.fullPath;
+});
+// 前进按钮同类隐患：history.state.forward 指向的页面就是当前页时（重复进入同一页/
+// 前进目标被替换成当前路由），按钮会亮着但 navigateForward 看不到位置变化。
+// 与 canGoBack 使用同一判据：目标位置等于当前 fullPath 时禁用。
+const canGoForward = computed(() => {
+  if (!route.fullPath || !canNavigateForward(router)) return false;
+  const forward = router.options.history.state.forward;
+  return typeof forward !== 'string' || forward !== route.fullPath;
+});
 
 function goBack() {
   navigateBack(router);
@@ -743,33 +755,42 @@ function openNotificationCenter() {
 }
 
 async function openNotificationPreview(preview: NotificationPreview) {
+  // 先解析目标再置读：解析失败/跳转失败的通知不应被算作已读，也不能静默消失。
+  let navigate: (() => void) | null = null;
+  const fromUid = String(preview.item.fromuid ?? preview.item.from_uid ?? '');
+  const externalUrl = getNotificationExternalUrl(preview.item);
+  const feedId = getNotificationFeedId(preview.item);
+  try {
+    if (/^\d+$/.test(fromUid) && Number(fromUid) < 9999 && preview.item.note_type) {
+      const noteType = String(preview.item.note_type);
+      navigate = () => { void router.push({ path: '/notifications', query: { noteType } }); };
+    } else if (externalUrl) {
+      navigate = () => { void CoolapkTauriAPI.openUrl(externalUrl); };
+    } else if (feedId) {
+      navigate = () => openFeedDetail(router, feedId, preview.item);
+    } else {
+      const targetRoute = await resolveNotificationTargetRoute(
+        preview.item,
+        (name) => CoolapkTauriAPI.getProductDetailByName(name),
+      );
+      const tab = preview.apiType;
+      navigate = targetRoute
+        ? () => { void router.push(targetRoute); }
+        : () => { void router.push({ path: '/notifications', query: { tab } }); };
+    }
+  } catch (error) {
+    console.warn('打开通知失败:', error);
+    navigate = null;
+  }
+  if (!navigate) {
+    isNotificationPopoverVisible.value = false;
+    openNotificationCenter();
+    return;
+  }
   markNotificationRead(preview.item, preview.category, authStore.user?.uid, true);
   notificationPreviews.value = notificationPreviews.value.filter((item) => item.key !== preview.key);
   isNotificationPopoverVisible.value = false;
-  const fromUid = String(preview.item.fromuid ?? preview.item.from_uid ?? '');
-  if (/^\d+$/.test(fromUid) && Number(fromUid) < 9999 && preview.item.note_type) {
-    void router.push({ path: '/notifications', query: { noteType: String(preview.item.note_type) } });
-    return;
-  }
-  const externalUrl = getNotificationExternalUrl(preview.item);
-  if (externalUrl) {
-    void CoolapkTauriAPI.openUrl(externalUrl);
-    return;
-  }
-  const feedId = getNotificationFeedId(preview.item);
-  if (feedId) {
-    openFeedDetail(router, feedId, preview.item);
-    return;
-  }
-  const targetRoute = await resolveNotificationTargetRoute(
-    preview.item,
-    (name) => CoolapkTauriAPI.getProductDetailByName(name),
-  );
-  if (targetRoute) {
-    void router.push(targetRoute);
-    return;
-  }
-  void router.push({ path: '/notifications', query: { tab: preview.apiType } });
+  navigate();
 }
 
 function getNotificationPollIntervalMs(): number {

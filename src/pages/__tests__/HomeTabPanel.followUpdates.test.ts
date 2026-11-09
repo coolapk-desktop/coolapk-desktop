@@ -37,10 +37,13 @@ it.each([390, 1280])('宽度 %s 的首页全部关注展示更新名单，其他
     await wrapper.get('.follow-updates-expand').trigger('click');
     expect(wrapper.get('.updated-follow-users').text()).toContain('关注酷友');
     expect(wrapper.find('.follow-updates-expand').exists()).toBe(false);
-    const refreshCalls = api.getFollowingFeeds.mock.calls.length;
+    // 只统计第 1 页请求：数据落地后代码会 setTimeout(200) 预取下一页，
+    // 机器慢时预取可能在断言前就发出，用总调用数断言会偶发多计一次。
+    const firstPageCalls = () => api.getFollowingFeeds.mock.calls.filter(call => (call[0] ?? 1) === 1).length;
+    const refreshCalls = firstPageCalls();
     mobilePull(wrapper.get('.feed-scroll-container').element as HTMLElement);
     await flushPromises();
-    expect(api.getFollowingFeeds).toHaveBeenCalledTimes(refreshCalls + (width <= 720 ? 1 : 0));
+    expect(firstPageCalls()).toBe(refreshCalls + (width <= 720 ? 1 : 0));
     expect(wrapper.get('.follow-subchannel-item.active').text()).toBe('全部关注');
     const channels = wrapper.findAll('.follow-subchannel-item');
     await channels[2]!.trigger('click');

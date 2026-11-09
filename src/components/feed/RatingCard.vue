@@ -118,7 +118,9 @@
         :normalize-img="(u) => u"
         :format-rich-text="formatRichText"
         @collapse="handleCollapseComments"
-        @retry-comments="loadComments"
+        @send-comment="handleSendComment"
+        @comment-created="handleCommentCreated"
+        @retry-comments="loadComments(true)"
         @load-more-comments="loadMoreComments"
         @retry-more-comments="loadMoreComments"
         @comment-sort-change="handleCommentSortChange"
@@ -182,6 +184,8 @@ import { renderCoolapkRichText } from '../../utils/richText';
 import {
   getCommentReplyRequestOptions,
   getExpectedCommentCount,
+  // 复用 commentList 的统一标识：楼中楼/游标/合并共用同一优先级，避免宿主各自实现互相矛盾
+  getReplyEntityId as commentRowId,
   getReplyData,
   getReplyPageCursor,
   hasMoreReplyPages,
@@ -197,6 +201,7 @@ import { getErrorMessage } from '../../utils/errors';
 import { extractFeedImageInputs } from '../../utils/livePhoto';
 import { registerOpenComments, touchActiveComments } from '../../utils/activeCommentTracker';
 import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from '../../utils/favoriteContentIndex';
+import { syncFavoriteToFeed } from '../../utils/feedFavorite';
 
 const settingsStore = useSettingsStore();
 const showDeviceInfo = computed(() => settingsStore.settings.showDeviceInfo);
@@ -240,6 +245,41 @@ let commentsFirstItem = '';
 let commentsLastItem = '';
 let commentsRequestVersion = 0;
 
+/** 发表评论成功后本地累加计数，评论区标题立即一致，不再整页重拉列表。 */
+function handleSendComment() {
+  props.feed.replynum = Math.max(0, Number(props.feed?.replynum) || 0) + 1;
+}
+
+/** 合并后续页时按 id 去重：本地插入的评论可能又出现在服务端回包里。 */
+function dedupeCommentsById(list: any[]): any[] {
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of list) {
+    const id = commentRowId(item);
+    if (id) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    result.push(item);
+  }
+  return result;
+}
+
+/**
+ * 就地插入接口返回的新评论，保留已加载的分页和滚动位置。
+ * 楼中楼回复（payload.replyId 有值）的楼层由 FeedCommentSection 自己补齐，这里不再插入主列表。
+ */
+function handleCommentCreated(payload: { comment?: any; replyId?: string } = {}) {
+  if (payload?.replyId) return;
+  const raw = payload?.comment;
+  const row = Array.isArray(raw) ? raw[0] : raw;
+  const id = row && typeof row === 'object' ? commentRowId(row) : '';
+  if (!row || typeof row !== 'object' || !id) return;
+  if (comments.value.some((c: any) => commentRowId(c) === id)) return;
+  comments.value = [row, ...comments.value];
+  // 分页游标仍由服务端已加载页的首尾 ID 维护，本地插入不参与。
+}
+
 async function toggleFav() {
   if (!authStore.isLoggedIn) {
     authStore.openLoginModal();
@@ -265,6 +305,8 @@ async function toggleFav() {
     if (target) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(target ? '已收藏到云端' : '已取消云端收藏', 'success');
+    // 回写实体：父级列表持有的是同一个 feed 对象，收藏态与计数随之同步。
+    syncFavoriteToFeed(props.feed, { favorited: isFav.value, favnum: favnum.value });
     emit('favorite-changed', { id: props.feed.id, favorited: target });
   } catch (err) {
     showToast(getErrorMessage(err, target ? '收藏失败' : '取消收藏失败'), 'error');
@@ -352,6 +394,7 @@ async function confirmCollectionSelection(selectedIds: string[]) {
     if (remainsFavorited) void queueFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed).catch((error) => console.warn('更新收藏正文索引失败:', error));
     else void removeFavoriteContentIndexEntry(authStore.user?.uid || '', props.feed.id).catch((error) => console.warn('移除收藏正文索引失败:', error));
     showToast(remainsFavorited ? '收藏夹已更新' : '已取消全部云端收藏', 'success');
+    syncFavoriteToFeed(props.feed, { favorited: isFav.value, favnum: favnum.value });
     collectionPickerOpen.value = false;
     emit('favorite-changed', { id: props.feed.id, favorited: remainsFavorited });
   } catch (err) {
@@ -699,7 +742,8 @@ async function loadMoreComments() {
 
     updateCommentCursor(pageReplies);
     const previousReplies = comments.value;
-    const mergedReplies = mergeReplies(previousReplies, pageReplies);
+    // 后续页回包可能带上刚就地插入的新评论，按 id 去重避免重复显示。
+    const mergedReplies = dedupeCommentsById(mergeReplies(previousReplies, pageReplies));
     if (mergedReplies.length > previousReplies.length) {
       comments.value = mergedReplies;
       commentsPage.value = page;

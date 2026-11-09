@@ -9,13 +9,13 @@
           type="text"
           placeholder="搜索京东/淘宝/拼多多好物"
           maxlength="40"
-          @keyup.enter="doSearch"
+          @keyup.enter="searchFromUi"
         />
         <button v-if="keyword" class="clear-btn" type="button" title="清空" @click="clearKeyword">
           <i class="fas fa-times-circle"></i>
         </button>
       </div>
-      <AppButton size="sm" :loading="searching" @click="doSearch">搜索</AppButton>
+      <AppButton size="sm" :loading="searching" @click="searchFromUi">搜索</AppButton>
     </div>
 
     <div v-if="!hasSearched" class="idle-content">
@@ -88,7 +88,7 @@
       </div>
 
       <div v-else-if="searchError && goods.length === 0" class="state-wrapper">
-        <ErrorState title="搜索失败" :message="searchError" @retry="doSearch" />
+        <ErrorState title="搜索失败" :message="searchError" @retry="searchFromUi" />
       </div>
 
       <div v-else-if="goods.length === 0" class="state-wrapper">
@@ -125,7 +125,8 @@
 
       <div class="pagination-footer">
         <LoadingState v-if="searching && goods.length > 0" text="加载更多中..." />
-        <button v-else-if="searchError && goods.length > 0" class="retry-inline" @click="doSearch">加载失败，点击重试</button>
+        <button v-else-if="loadMoreFailed" class="retry-inline" @click="retryLoadMore">加载失败，点击重试</button>
+        <button v-else-if="searchError && goods.length > 0" class="retry-inline" @click="searchFromUi">加载失败，点击重试</button>
         <div v-else-if="noMore" class="no-more">没有更多好物了</div>
       </div>
     </template>
@@ -134,7 +135,8 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import AppButton from '../components/common/AppButton.vue';
 import AppImage from '../components/common/AppImage.vue';
@@ -145,18 +147,47 @@ import { showToast } from '../utils/toast';
 
 const HISTORY_KEY = 'coolapk_goods_search_history';
 
-const keyword = ref('');
+const route = useRoute();
+const router = useRouter();
+
+// 关键词、排序、优惠券都落在路由 query（q/sort/coupon）上：
+// 切换页签或进入详情再返回时按地址恢复，避免组件重建后搜索状态全部丢失。
+const SORT_KEYS = ['default', 'sell', 'price_asc', 'price_desc'];
+
+// 搜索请求序号：新请求自增即作废旧请求，过期响应直接丢弃，慢响应不会覆盖新结果。
+let requestVersion = 0;
+
+function queryText(value: unknown): string {
+  return (Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '')).trim();
+}
+
+/** 把地址栏 query 归一成可用的搜索条件（非法排序回落到综合）。 */
+function routeSearchState() {
+  const sort = queryText(route.query.sort);
+  return {
+    keyword: queryText(route.query.q),
+    sort: SORT_KEYS.includes(sort) ? sort : 'default',
+    coupon: ['1', 'true'].includes(queryText(route.query.coupon).toLowerCase()),
+  };
+}
+
+const initialRouteState = routeSearchState();
+
+const keyword = ref(initialRouteState.keyword);
 const searching = ref(false);
-const hasSearched = ref(false);
+const hasSearched = ref(Boolean(initialRouteState.keyword));
 const searchError = ref('');
 const noMore = ref(false);
 const page = ref(1);
+// 翻页失败必须停在错误态等用户点重试：失败后 searching/noMore 都恢复 false，
+// 若继续让 handleScroll 反复触发 loadMore，滚动一次就发一次请求。
+const loadMoreFailed = ref(false);
 
 const hotWords = ref<string[]>([]);
 const history = ref<string[]>([]);
 
-const activeSort = ref('default');
-const couponOnly = ref(false);
+const activeSort = ref(initialRouteState.sort);
+const couponOnly = ref(initialRouteState.coupon);
 
 const sortOptions = [
   { key: 'default', label: '综合', sortName: 'default', sort: 'default' },
@@ -171,8 +202,21 @@ const activeSortOption = computed(
   () => sortOptions.find((o) => o.key === activeSort.value) || sortOptions[0],
 );
 
+/**
+ * 行去重键：优先稳定 id；没有 id 时用「标题 + 商城 + 价格 + 购买链接」组合。
+ * 旧实现只拼标题和商城名，接口返回两条同标题占位行时会得到同一个键，
+ * 后续同键行会被去重逻辑整批丢弃。仍拼不出可用键时返回空串，调用方按「无键不过滤」处理。
+ */
 function goodsKey(goods: any): string {
-  return String(goods?.id ?? goods?.entityId ?? `${goods?.goods_title}-${goods?.mall_title}`);
+  const stable = goods?.id ?? goods?.entityId ?? goods?.product_goods_id;
+  if (stable !== undefined && stable !== null && String(stable).trim()) return String(stable);
+  const parts = [
+    goods?.goods_title,
+    goods?.mall_title,
+    goods?.goods_promo_price,
+    goods?.goods_buy_url || goods?.goods_url,
+  ].map((value) => String(value ?? '').trim());
+  return parts.some(Boolean) ? parts.join('|') : '';
 }
 
 function goodsPic(goods: any): string {
@@ -254,29 +298,63 @@ async function loadHotWords() {
   }
 }
 
-async function doSearch() {
+/** 把当前搜索条件写回地址栏；page 只在组件内维护，不参与路由。 */
+function syncRouteQuery(
+  keywordValue = keyword.value,
+  sortValue = activeSort.value,
+  couponValue = couponOnly.value,
+) {
+  const query: Record<string, string> = { ...(route.query as Record<string, string>) };
+  query.tab = 'search';
+  const kw = keywordValue.trim();
+  if (kw) query.q = kw;
+  else delete query.q;
+  if (sortValue && sortValue !== 'default') query.sort = sortValue;
+  else delete query.sort;
+  if (couponValue) query.coupon = '1';
+  else delete query.coupon;
+  const same = ['tab', 'q', 'sort', 'coupon'].every(
+    (key) => queryText(route.query[key]) === (query[key] ?? ''),
+  );
+  if (same) return;
+  // 页面内筛选变化用 replace，避免每次切排序都在历史里堆一条记录。
+  void router.replace({ path: '/goods', query });
+}
+
+/** 模板事件处理器：不把事件对象当成搜索选项传入。 */
+function searchFromUi() {
+  void doSearch();
+}
+
+async function doSearch(options?: { syncRoute?: boolean }) {
   const kw = keyword.value.trim();
   if (!kw) {
     showToast('请输入搜索关键词', 'warning');
     return;
   }
-  if (searching.value) return;
-  recordHistory(kw);
+  // 新请求一律自增序号并快照条件：加载中切排序/优惠券不再被静默丢弃，
+  // 而是作废旧请求重发，旧响应回来时序号不匹配直接丢弃。
+  const token = ++requestVersion;
+  const opt = activeSortOption.value;
+  const sortKey = activeSort.value;
+  const coupon = couponOnly.value;
+  if (options?.syncRoute !== false) syncRouteQuery(kw, sortKey, coupon);
   page.value = 1;
   noMore.value = false;
   searchError.value = '';
+  loadMoreFailed.value = false;
   goods.value = [];
   hasSearched.value = true;
   searching.value = true;
   try {
-    const opt = activeSortOption.value;
     const res = await CoolapkTauriAPI.searchGoods({
       keyword: kw,
       sortName: opt.sortName,
       sort: opt.sort,
-      isCoupon: couponOnly.value,
+      isCoupon: coupon,
       page: 1,
     });
+    if (token !== requestVersion) return;
     const list = (res?.data && Array.isArray(res.data)) ? res.data : [];
     if (list.length === 0) {
       noMore.value = true;
@@ -284,44 +362,55 @@ async function doSearch() {
       goods.value = list;
       page.value = 2;
     }
+    // 只有真正搜到结果才记入搜索历史：失败的词进历史，用户回头点它只会再撞一次失败。
+    recordHistory(kw);
   } catch (err: any) {
+    if (token !== requestVersion) return;
     searchError.value = err?.message || '搜索失败';
   } finally {
-    searching.value = false;
+    if (token === requestVersion) searching.value = false;
   }
 }
 
 async function loadMore() {
   const kw = keyword.value.trim();
-  if (!kw || searching.value || noMore.value) return;
+  if (!kw || searching.value || noMore.value || loadMoreFailed.value) return;
+  // 加载更多沿用当前请求代数（不自增），一旦发起新搜索就整体作废，避免新旧分页拼接。
+  const token = requestVersion;
+  const opt = activeSortOption.value;
+  const coupon = couponOnly.value;
   searching.value = true;
   try {
-    const opt = activeSortOption.value;
     const res = await CoolapkTauriAPI.searchGoods({
       keyword: kw,
       sortName: opt.sortName,
       sort: opt.sort,
-      isCoupon: couponOnly.value,
+      isCoupon: coupon,
       page: page.value,
     });
+    if (token !== requestVersion) return;
+    loadMoreFailed.value = false;
     const list = (res?.data && Array.isArray(res.data)) ? res.data : [];
     if (list.length === 0) {
       noMore.value = true;
     } else {
-      const existing = new Set(goods.value.map(goodsKey));
-      goods.value.push(...list.filter((i: any) => !existing.has(goodsKey(i))));
+      const existing = new Set(goods.value.map(goodsKey).filter(Boolean));
+      // 无稳定键的行不参与去重：宁可多显示一条，也不能把异常行当重复静默丢掉。
+      goods.value.push(...list.filter((i: any) => { const key = goodsKey(i); return !key || !existing.has(key); }));
       page.value++;
     }
   } catch (err: any) {
+    if (token !== requestVersion) return;
     searchError.value = err?.message || '加载更多失败';
+    loadMoreFailed.value = true;
   } finally {
-    searching.value = false;
+    if (token === requestVersion) searching.value = false;
   }
 }
 
 function useHotWord(word: string | any) {
   keyword.value = hotWordText(word);
-  doSearch();
+  void doSearch();
 }
 
 function clearKeyword() {
@@ -330,17 +419,59 @@ function clearKeyword() {
   goods.value = [];
   noMore.value = false;
   searchError.value = '';
+  // 作废在途请求，避免清空关键词后旧结果又回填到列表。
+  requestVersion += 1;
+  searching.value = false;
+  syncRouteQuery('', activeSort.value, couponOnly.value);
 }
 
 function selectSort(key: string) {
   if (activeSort.value === key) return;
   activeSort.value = key;
-  void doSearch();
+  // 加载中切换排序不再静默丢弃高亮与结果：直接作废旧请求按新排序重发。
+  if (hasSearched.value && keyword.value.trim()) void doSearch();
+  else syncRouteQuery();
 }
 
 function toggleCoupon() {
   couponOnly.value = !couponOnly.value;
-  void doSearch();
+  if (hasSearched.value && keyword.value.trim()) void doSearch();
+  else syncRouteQuery();
+}
+
+// 地址栏变化（前进/后退、切页签回来、外部跳转）以 query 为准恢复条件并自动搜索。
+watch(
+  () => `${queryText(route.query.q)}|${queryText(route.query.sort)}|${queryText(route.query.coupon)}`,
+  () => {
+    const next = routeSearchState();
+    if (
+      next.keyword === keyword.value.trim()
+      && next.sort === activeSort.value
+      && next.coupon === couponOnly.value
+    ) return;
+    keyword.value = next.keyword;
+    activeSort.value = next.sort;
+    couponOnly.value = next.coupon;
+    if (next.keyword) {
+      hasSearched.value = true;
+      void doSearch({ syncRoute: false });
+      return;
+    }
+    requestVersion += 1;
+    searching.value = false;
+    hasSearched.value = false;
+    goods.value = [];
+    noMore.value = false;
+    searchError.value = '';
+  },
+);
+
+/** 翻页失败后的唯一重试入口：清掉失败态再发一次，成功即恢复滚动加载。 */
+async function retryLoadMore() {
+  if (searching.value) return;
+  loadMoreFailed.value = false;
+  searchError.value = '';
+  await loadMore();
 }
 
 function handleScroll(e: Event) {
@@ -348,19 +479,25 @@ function handleScroll(e: Event) {
   const scrollDiff = el && el.scrollHeight
     ? el.scrollHeight - el.scrollTop - el.clientHeight
     : 999;
-  if (scrollDiff < 260 && hasSearched.value) {
+  if (scrollDiff < 260 && hasSearched.value && !loadMoreFailed.value) {
     void loadMore();
   }
 }
 
 function openGoods(goods: any) {
   const buyUrl = goods?.goods_buy_url || goods?.goods_url || '';
-  if (!buyUrl) return;
+  if (!buyUrl) {
+    // 卡片 cursor 是 pointer，静默 return 会让用户以为界面卡死。
+    showToast('该好物暂无可打开的购买链接', 'info');
+    return;
+  }
   void CoolapkTauriAPI.openUrl(buyUrl, 'system');
 }
 
 void loadHotWords();
 loadHistory();
+// 地址栏里带着关键词（切回好物搜索页签、从详情返回）时按原条件自动重搜。
+if (keyword.value) void doSearch({ syncRoute: false });
 
 // 下拉仅刷新当前栏目，不切换筛选、路由或页面实例。
 async function refreshMobilePage() { if (keyword.value.trim()) await doSearch(); else await loadHotWords(); }

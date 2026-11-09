@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deduplicateSearchEntities,
   extractHotSearchKeywords,
   extractSearchEntities,
   extractSearchTabs,
+  getSearchEntityIdentity,
   getSearchEntityKind,
   getSearchEntityRoute,
   getSearchEntitySearchTarget,
@@ -146,6 +148,32 @@ describe('搜索实体归一化', () => {
     ];
     expect(entities.map(getSearchEntityRoute)).toEqual(['/topic/%E5%B0%8F%E7%B1%B3', '/topic/%E5%B0%8F%E7%B1%B3', '/topic/%E5%B0%8F%E7%B1%B3']);
     expect(entities.every(isNavigableSearchEntity)).toBe(true);
+  });
+
+  it('去重键带类型：同一 ID 跨类型各自保留，同类型才算重复', () => {
+    const feed = { entityType: 'feed', id: '1', message: '同一 ID 的动态' };
+    const topic = { entityType: 'feedTopic', id: '1', title: '同一 ID 的话题', url: '/topic/1' };
+    const user = { entityType: 'user', id: '1', uid: '20002', username: '同一 ID 的用户' };
+
+    expect([feed, topic, user].map(getSearchEntityIdentity)).toEqual([
+      `feed:1`,
+      `topic:1`,
+      `user:20002`,
+    ]);
+    // 跨类型 ID 撞车不会被静默丢弃。
+    expect(deduplicateSearchEntities([feed, topic, user])).toEqual([feed, topic, user]);
+    // 同类型同 ID 才是重复，保留先出现的一条。
+    const duplicateFeed = { entityType: 'feed', id: '1', message: '重复的动态' };
+    expect(deduplicateSearchEntities([feed, duplicateFeed, topic])).toEqual([feed, topic]);
+  });
+
+  it('缺少 ID 时用户退回 UID、其它实体退回标题，避免整条结果被误判为重复', () => {
+    expect(getSearchEntityIdentity({ entityType: 'user', uid: '10086' })).toBe('user:10086');
+    expect(getSearchEntityIdentity({ entityType: 'feed', message_title: '无 ID 动态' })).toBe('feed:title:无 ID 动态');
+    // 没有身份键的实体原样保留。
+    const anonymous = { entityType: 'feed' } as any;
+    expect(getSearchEntityIdentity(anonymous)).toBe('');
+    expect(deduplicateSearchEntities([anonymous, { ...anonymous }])).toHaveLength(2);
   });
 
   it('优先使用服务端搜索页签配置，没有配置时使用协议默认页签', () => {

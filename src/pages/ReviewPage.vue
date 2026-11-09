@@ -98,11 +98,20 @@
 
     <!-- 动态列表 -->
     <div v-else class="feed-list-wrapper">
+      <!-- 板块接口失败回退热榜：内容能看，但必须告诉用户看到的不是所选板块 -->
+      <div v-if="fallbackNotice" class="board-fallback-notice" role="status">
+        <i class="fas fa-circle-info"></i>
+        <span>{{ fallbackNotice }}</span>
+        <button type="button" class="retry-inline" @click="fallbackNotice = ''">知道了</button>
+      </div>
       <div class="feed-list">
         <FeedCard v-for="item in feeds" :key="item.id" :feed="item" @deleted="handleFeedDeleted" />
       </div>
       <div v-if="loadingMore" class="loading-more-footer">
         <i class="fas fa-circle-notch fa-spin"></i> 正在加载更多评测...
+      </div>
+      <div v-else-if="error" class="loading-more-footer">
+        <button class="retry-inline" type="button" @click="retryLoadMore">加载失败，点击重试</button>
       </div>
       <div v-else-if="noMore && feeds.length > 5" class="no-more-footer">
         已加载全部评测动态
@@ -121,6 +130,7 @@ import LoadingState from '../components/common/LoadingState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import { hasFeedRenderableContent } from '../utils/feedFilter';
+import { getErrorMessage } from '../utils/errors';
 
 const reviewTabs = [
   { key: 'review', label: '数码测评', icon: 'fas fa-flask', boardTag: '#/board/数码测评' },
@@ -147,6 +157,15 @@ const loading = ref(false);
 const loadingMore = ref(false);
 const noMore = ref(false);
 const error = ref('');
+// 板块接口失败、回退到热榜时的可见提示：内容能看，但用户必须知道看到的不是所选板块。
+const fallbackNotice = ref('');
+
+/** 翻页失败后的重试入口：只补当前页，不回到第 1 页。 */
+function retryLoadMore() {
+  if (loading.value || loadingMore.value) return;
+  error.value = '';
+  void loadFeeds(false);
+}
 
 const router = useRouter();
 
@@ -184,11 +203,13 @@ async function loadFeeds(isRefresh: boolean = false) {
       list = extractList(res).filter(isValidFeed);
     } else {
       const tab = reviewTabs.find(t => t.key === activeTab.value);
+      let boardFailed = false;
       if (tab) {
         try {
           const res = await CoolapkTauriAPI.getBoardFeeds(tab.boardTag, page.value);
           list = extractList(res).filter(isValidFeed);
         } catch (e) {
+          boardFailed = true;
           console.warn(`获取板块(${tab.label})动态失败:`, e);
         }
       }
@@ -196,9 +217,18 @@ async function loadFeeds(isRefresh: boolean = false) {
         try {
           const fallback = await CoolapkTauriAPI.getHotFeeds(1);
           list = extractList(fallback).filter(isValidFeed);
+          if (list.length > 0) {
+            // 失败与「板块确实没内容」是两种语义，提示文案不能混。
+            fallbackNotice.value = boardFailed
+              ? `「${tab?.label ?? '当前'}」板块加载失败，当前展示的是推荐热榜内容`
+              : `「${tab?.label ?? '当前'}」板块暂无内容，当前展示的是推荐热榜内容`;
+          }
         } catch (e) {
           console.warn('回退热榜失败:', e);
         }
+      } else if (list.length > 0) {
+        // 板块请求恢复正常后清掉旧提示，避免长期挂着「已回退」的假状态。
+        fallbackNotice.value = '';
       }
     }
 
@@ -256,8 +286,9 @@ async function searchProduct(name: string) {
     }
     productError.value = notFoundMsg;
   } catch (err: any) {
+    // 网络错误不等于「查无此产品」：直接告诉用户真实原因，避免被误导去换关键词。
     console.warn('搜索产品失败:', err);
-    productError.value = notFoundMsg;
+    productError.value = getErrorMessage(err, '搜索产品失败，请检查网络后重试');
   } finally {
     searchingProduct.value = false;
   }
@@ -551,6 +582,27 @@ async function refreshMobilePage() { await loadFeeds(true); }
 .error-wrapper,
 .empty-wrapper {
   padding: var(--space-10) 0;
+}
+
+.board-fallback-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 var(--space-3);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--brand-soft);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.retry-inline {
+  border: 0;
+  background: transparent;
+  color: var(--brand-primary);
+  cursor: pointer;
+  font-size: var(--font-size-caption);
+  margin-left: auto;
 }
 
 .loading-more-footer,

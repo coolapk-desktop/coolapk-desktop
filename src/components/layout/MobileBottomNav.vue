@@ -40,7 +40,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../../stores/app';
 import { useSettingsStore } from '../../stores/settings';
 import OfficialNavIcon from './OfficialNavIcon.vue';
-import { activateHomeTab } from '../../utils/homeTab';
+import { activateRootTab } from '../../utils/homeTab';
 
 const route = useRoute();
 const router = useRouter();
@@ -65,15 +65,12 @@ function isActive(path: string): boolean {
 }
 
 /**
- * 「首页」交给共享判据：单击回到顶部，双击回到顶部并刷新当前栏目。
- * 已在首页时 router.push('/') 会被 vue-router 判为重复导航而中止，必须另行接管。
+ * 「首页 / 数码 / 发现 / 我的」四个入口都交给共享判据：
+ * 不在该栏目时跳转过去，已在该栏目时单击回到顶部、双击回到顶部并刷新当前栏目。
+ * 已在栏目时 router.push 会被 vue-router 判为重复导航而中止，必须另行接管。
  */
 function activate(path: string) {
-  if (path === '/') {
-    activateHomeTab(router);
-    return;
-  }
-  void router.push(path);
+  activateRootTab(router, path);
 }
 </script>
 

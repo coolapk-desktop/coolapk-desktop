@@ -168,16 +168,34 @@ async function loadDetail() {
 
     let album: AnyListAlbum | null = null;
     if (myUid.value) {
-      const res = await CoolapkTauriAPI.getUserProductAlbums(myUid.value, 1).catch(() => null);
-      const list = (res && res.data && Array.isArray(res.data)) ? res.data : [];
-      album = list.find((item: any) => String(item.id || item.entityId) === albumId.value) || null;
+      // 清单可能在「我的清单」第 2 页及以后：只扫第 1 页会让标题/封面整块缺席。
+      for (let albumPage = 1; albumPage <= 3 && !album; albumPage += 1) {
+        const res = await CoolapkTauriAPI.getUserProductAlbums(myUid.value, albumPage).catch(() => null);
+        const list = (res && res.data && Array.isArray(res.data)) ? res.data : [];
+        if (list.length === 0) break;
+        album = list.find((item: any) => String(item.id || item.entityId) === albumId.value) || null;
+      }
     }
     albumInfo.value = album;
 
     if (myUid.value) {
-      const itemsRes = await CoolapkTauriAPI.getGoodsListItems(myUid.value, albumId.value, 1).catch(() => null);
-      const items = (itemsRes && itemsRes.data && Array.isArray(itemsRes.data)) ? itemsRes.data : [];
-      goodsItems.value = items;
+      // 条目接口是分页的：只取第 1 页会把条目多的清单截断且无提示，这里顺序补到空页为止。
+      const collected: any[] = [];
+      const seen = new Set<string>();
+      for (let itemPage = 1; itemPage <= 10; itemPage += 1) {
+        const itemsRes = await CoolapkTauriAPI.getGoodsListItems(myUid.value, albumId.value, itemPage).catch(() => null);
+        const pageItems = (itemsRes && itemsRes.data && Array.isArray(itemsRes.data)) ? itemsRes.data : [];
+        if (pageItems.length === 0) break;
+        for (const item of pageItems) {
+          const key = String(item?.product_goods_id ?? item?.id ?? item?.entityId ?? '');
+          if (key && seen.has(key)) continue;
+          if (key) seen.add(key);
+          collected.push(item);
+        }
+        // 不足一页视为到底（接口未返回 pageSize 时的保守启发）。
+        if (pageItems.length < 20) break;
+      }
+      goodsItems.value = collected;
     }
 
     const feedRes = await feedPromise;

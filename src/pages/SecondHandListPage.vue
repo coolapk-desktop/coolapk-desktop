@@ -32,7 +32,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import DiscoverySecondHandGrid from '../components/discovery/DiscoverySecondHandGrid.vue';
@@ -42,7 +42,13 @@ import ErrorState from '../components/common/ErrorState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import { getEntityKey, parseDiscoveryPage, resolveDiscoveryRoute } from '../utils/discovery';
 import { normalizeCoolapkRoute } from '../utils/coolapkRoute';
-import { secondHandListCache } from '../utils/secondHandCache';
+import {
+  getSecondHandViewerUid,
+  isSecondHandCursorInvalidError,
+  isSecondHandListCacheFresh,
+  secondHandListCache,
+  type SecondHandListCache,
+} from '../utils/secondHandCache';
 import type { DiscoveryEntity } from '../types/discovery';
 
 const route = useRoute();
@@ -61,6 +67,8 @@ const pageContext = ref('');
 const error = ref('');
 const pageContainerRef = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
+// 后台静默刷新：保留旧列表继续展示，不显示骨架屏和加载更多提示。
+const silentRefreshing = ref(false);
 let requestVersion = 0;
 
 function queryValue(key: string): string {
@@ -83,12 +91,13 @@ const listTitle = computed(() => queryValue('productId') ? `闲置交易 · 型�
 const listCacheKey = computed(() => listTarget.value);
 
 function syncCache() {
-  secondHandListCache.set(listCacheKey.value, { initialized: true, items: [...items.value], page: page.value, firstItem: firstItem.value, lastItem: lastItem.value, pageContext: pageContext.value, noMore: noMore.value, scrollTop: scrollTop.value });
+  // 缓存带时间戳与账号维度，与首页 secondHandPageCache 的规则保持一致。
+  secondHandListCache.set(listCacheKey.value, { initialized: true, items: [...items.value], page: page.value, firstItem: firstItem.value, lastItem: lastItem.value, pageContext: pageContext.value, noMore: noMore.value, scrollTop: scrollTop.value, updatedAt: Date.now(), viewerUid: getSecondHandViewerUid() });
 }
 
-function restoreCachedState(): boolean {
+function restoreCachedState(): SecondHandListCache | null {
   const cached = secondHandListCache.get(listCacheKey.value);
-  if (!cached?.initialized) return false;
+  if (!cached?.initialized) return null;
   page.value = cached.page;
   items.value = [...cached.items];
   noMore.value = cached.noMore;
@@ -98,7 +107,7 @@ function restoreCachedState(): boolean {
   scrollTop.value = cached.scrollTop;
   error.value = '';
   void restoreScrollPosition();
-  return true;
+  return cached;
 }
 
 async function restoreScrollPosition() {
@@ -109,6 +118,9 @@ async function restoreScrollPosition() {
 function resetState() {
   requestVersion += 1;
   secondHandListCache.delete(listCacheKey.value);
+  silentRefreshing.value = false;
+  loading.value = false;
+  loadingMore.value = false;
   page.value = 1;
   items.value = [];
   noMore.value = false;
@@ -124,13 +136,33 @@ function appendItems(incoming: DiscoveryEntity[]) {
   items.value = [...items.value, ...incoming.filter((item, index) => !existingKeys.has(getEntityKey(item, items.value.length + index)))];
 }
 
-async function loadPage(isLoadMore = false) {
-  if (isLoadMore && (loading.value || loadingMore.value || noMore.value)) return;
-  if (isLoadMore) loadingMore.value = true;
-  else loading.value = true;
+async function loadPage(isLoadMore = false, options: { silent?: boolean } = {}) {
+  const silent = !isLoadMore && options.silent === true;
+  // 静默刷新不打断在途请求；加载更多则按原规则跳过。
+  if (silent && (loading.value || loadingMore.value || silentRefreshing.value)) return;
+  if (isLoadMore && (loading.value || loadingMore.value || silentRefreshing.value || noMore.value)) return;
+
+  // 静默刷新失败时回滚游标，避免旧列表与新游标错位。
+  const previousCursor = { page: page.value, firstItem: firstItem.value, lastItem: lastItem.value, pageContext: pageContext.value, noMore: noMore.value };
+
+  if (isLoadMore) {
+    loadingMore.value = true;
+  } else if (silent) {
+    // 先渲染旧列表：不清空 items、不出骨架屏，只重置分页游标。
+    silentRefreshing.value = true;
+    page.value = 1;
+    noMore.value = false;
+    firstItem.value = '';
+    lastItem.value = '';
+    pageContext.value = '';
+  } else {
+    silentRefreshing.value = false;
+    loading.value = true;
+  }
   error.value = '';
   const currentVersion = ++requestVersion;
   const currentPage = page.value;
+  let cursorResetNeeded = false;
   try {
     const response = await CoolapkTauriAPI.getDiscoveryPageData({ url: `#${listTarget.value}`, title: listTitle.value, page: currentPage, firstItem: firstItem.value, lastItem: lastItem.value, pageContext: pageContext.value || JSON.stringify({ source: 'desktop-secondhand-list', target: listTarget.value }) });
     if (currentVersion !== requestVersion) return;
@@ -144,13 +176,30 @@ async function loadPage(isLoadMore = false) {
     page.value += 1;
     syncCache();
   } catch (loadError: any) {
-    if (currentVersion === requestVersion) error.value = loadError?.message || '加载失败，请检查网络';
+    if (currentVersion !== requestVersion) return;
+    if (isLoadMore && currentPage > 1 && isSecondHandCursorInvalidError(loadError)) {
+      // 加载更多时游标失效：清空列表回到第一页重拉，避免卡在半截。
+      resetState();
+      cursorResetNeeded = true;
+    } else if (silent) {
+      // 静默刷新失败时保留旧列表和旧游标，不把错误盖到已有内容上。
+      page.value = previousCursor.page;
+      firstItem.value = previousCursor.firstItem;
+      lastItem.value = previousCursor.lastItem;
+      pageContext.value = previousCursor.pageContext;
+      noMore.value = previousCursor.noMore;
+    } else {
+      error.value = loadError?.message || '加载失败，请检查网络';
+    }
   } finally {
     if (currentVersion === requestVersion) {
       loading.value = false;
       loadingMore.value = false;
+      silentRefreshing.value = false;
     }
   }
+  // 忙碌标记已复位，再重新拉第一页。
+  if (cursorResetNeeded) void loadPage(false);
 }
 
 function reload() {
@@ -160,8 +209,18 @@ function reload() {
 
 function handleRouteChange() {
   if (route.path !== '/secondhand/list') return;
-  if (restoreCachedState()) return;
-  reload();
+  // 换号后缓存属于上一账号：不先渲染旧条目，直接清空缓存重新加载。
+  const cached = secondHandListCache.get(listCacheKey.value);
+  if (cached?.initialized && (cached.viewerUid || '') !== getSecondHandViewerUid()) {
+    reload();
+    return;
+  }
+  // 命中缓存（含过期）先渲染旧列表；新鲜就直接用，否则后台静默刷新。
+  if (!restoreCachedState()) {
+    reload();
+    return;
+  }
+  if (!isSecondHandListCacheFresh(secondHandListCache.get(listCacheKey.value))) void loadPage(false, { silent: true });
 }
 
 function goBack() {
@@ -183,17 +242,29 @@ function openEntity(entity: DiscoveryEntity) {
   void router.push({ path: '/page', query: { url: routeInfo.target, title: routeInfo.title || String(entity.title || ''), renderer: 'discovery' } });
 }
 
+// 滚动只记录位置；缓存同步挂在数据变化（loadPage 成功后）与离开页面时，避免高频滚动反复展开整个列表。
 function handleScroll(event: Event) {
   const element = event.currentTarget as HTMLElement;
   scrollTop.value = element.scrollTop;
-  syncCache();
   if (element.scrollHeight - element.scrollTop - element.clientHeight < 360) void loadPage(true);
 }
 
-watch(() => route.fullPath, handleRouteChange, { immediate: true });
+function persistCacheOnLeave() {
+  if (items.value.length > 0) syncCache();
+}
+
+watch(() => route.fullPath, () => {
+  if (route.path !== '/secondhand/list') {
+    persistCacheOnLeave();
+    return;
+  }
+  handleRouteChange();
+}, { immediate: true });
+
+onUnmounted(persistCacheOnLeave);
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
-const mobileRefreshBusy = computed(() => loading.value || loadingMore.value);
+const mobileRefreshBusy = computed(() => loading.value || loadingMore.value || silentRefreshing.value);
 async function refreshMobilePage() { resetState(); await loadPage(false); }
 </script>
 

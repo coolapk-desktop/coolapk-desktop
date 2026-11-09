@@ -149,7 +149,12 @@ async function fetchAlbums(isLoadMore = false) {
       noMore.value = true;
     } else {
       if (isLoadMore) {
-        albums.value.push(...newList);
+        // 服务端翻页游标会重叠：不去重会出现同一张清单卡片两次。
+        const existing = new Set(albums.value.map((album: any) => String(album?.id ?? album?.entityId ?? '')));
+        albums.value.push(...newList.filter((album: any) => {
+          const key = String(album?.id ?? album?.entityId ?? '');
+          return !key || !existing.has(key);
+        }));
       } else {
         albums.value = newList;
       }

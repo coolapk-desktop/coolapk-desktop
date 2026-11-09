@@ -292,6 +292,37 @@ export function isNavigableSearchEntity(entity: SearchEntity): boolean {
   return kind === 'feed' || kind === 'question' || kind === 'answer' ? Boolean(getSearchEntityId(entity)) : Boolean(getSearchEntityUrl(entity));
 }
 
+/**
+ * 搜索实体去重键：同类型内唯一，格式「类型:id」。
+ * 同一个 ID 常在不同类型间复用（动态/话题/用户/数码等），键里必须带类型，
+ * 否则跨类型会被当成重复而静默丢结果；用户实体只给 UID 时退回 UID，缺少 ID 时退回标题。
+ */
+export function getSearchEntityIdentity(entity: SearchEntity): string {
+  const kind = getSearchEntityKind(entity);
+  const id = (kind === 'user' ? getSearchEntityUid(entity) : '') || getSearchEntityId(entity) || getSearchEntityUid(entity);
+  if (id) return `${kind}:${id}`;
+  const title = getSearchEntityTitle(entity);
+  return title ? `${kind}:title:${title}` : '';
+}
+
+/**
+ * 按「类型:id」去重：同类型内保留先出现的实体，不同类型即使 ID 相同也各自保留。
+ * 没有身份键的实体无法判断是否重复，原样保留。
+ */
+export function deduplicateSearchEntities(entities: readonly SearchEntity[]): SearchEntity[] {
+  const seen = new Set<string>();
+  const unique: SearchEntity[] = [];
+  for (const entity of entities) {
+    const identity = getSearchEntityIdentity(entity);
+    if (identity) {
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+    }
+    unique.push(entity);
+  }
+  return unique;
+}
+
 export function getSearchEntityRoute(entity: SearchEntity): string | null {
   if (isSponsorSearchEntity(entity)) return null;
   const searchTarget = getSearchEntitySearchTarget(entity);
