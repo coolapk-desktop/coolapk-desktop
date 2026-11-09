@@ -225,7 +225,7 @@
         @write-comment="writeMobileComment"
         :feed-id="feed.id"
         :likenum="feed.likenum"
-        :replynum="feed.replynum"
+        :replynum="feedReplyCount"
         :favnum="favnum"
         :sharenum="feed.sharenum"
         :favorited="isFav"
@@ -246,7 +246,7 @@
         :feed-uid="authorUid"
         :feed-username="feed.username"
         :default-sort-mode="commentsSortMode"
-        :total-comment-count="feed.replynum"
+        :total-comment-count="feedReplyCount"
         :comments="comments"
         :pinned-comments="feed.topReplyRows || []"
         :loading="commentsLoading"
@@ -463,6 +463,14 @@ const props = defineProps<{
   /** 我的回复等列表中的记录 ID 属于评论，点击时需先定位所属动态。 */
   replyMode?: boolean;
 }>();
+
+// 搜索结果可能用字符串返回评论数；缺失值仍由评论区按已加载条数显示。
+const feedReplyCount = computed(() => {
+  const raw = props.feed.replynum;
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const count = Number(raw);
+  return Number.isFinite(count) && count >= 0 ? count : undefined;
+});
 
 const authorFollowing = ref(Number((props.feed.userAction as any)?.followAuthor) === 1);
 const authorFollowPending = ref(false);
