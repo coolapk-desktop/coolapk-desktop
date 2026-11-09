@@ -229,11 +229,14 @@ describe('移动首页一体滑动', () => {
       return event;
     };
     // 斜向手势：横向分量略大，但整体仍是纵向浏览。
-    const diagonal = [wheel(40, 30), wheel(30, 26), wheel(45, 28)];
+    const diagonal = [wheel(40, 30), wheel(30, 26), wheel(45, 28), wheel(0, 32)];
     expect(diagonal.every(event => event.defaultPrevented)).toBe(false);
     expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('digest');
-    // 明确的横向手势仍然使用同一功能切到相邻栏目。
-    const horizontal = wheel(60, 0);
+    // 慢速横划产生的小幅事件也应累计，达到切页距离前不拦截。
+    const slowHorizontal = Array.from({ length: 6 }, () => wheel(8, 0));
+    expect(slowHorizontal.every(event => !event.defaultPrevented)).toBe(true);
+    expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('digest');
+    const horizontal = wheel(8, 0);
     expect(horizontal.defaultPrevented).toBe(true);
     await flushPromises();
     expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('hot');

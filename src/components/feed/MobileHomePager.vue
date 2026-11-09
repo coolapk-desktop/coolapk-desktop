@@ -213,11 +213,11 @@ let wheelDelta = 0, wheelTimer: ReturnType<typeof setTimeout> | undefined;
 // 只有明确的横向滚轮才算切栏目手势：触控板纵向滚动会混入横向分量，
 // 旧判据只要有 |deltaX| 略大于 |deltaY| 就吞掉滚动刻度并累计切页，
 // 表现为列表滚动"抽搐/回弹"（切到相邻栏目再切回来）。
-const HORIZONTAL_WHEEL_MIN = 12, HORIZONTAL_WHEEL_RATIO = 1.5;
+const HORIZONTAL_WHEEL_RATIO = 1.5;
 function resetWheelGesture() { wheelDelta = 0; clearTimeout(wheelTimer); wheelTimer = undefined; }
 function wheel(event: WheelEvent) {
   const deltaX = Math.abs(event.deltaX), deltaY = Math.abs(event.deltaY);
-  if (deltaX < HORIZONTAL_WHEEL_MIN || deltaX < deltaY * HORIZONTAL_WHEEL_RATIO || nestedScroller(event.target) || frame) {
+  if (deltaX === 0 || deltaX < deltaY * HORIZONTAL_WHEEL_RATIO || nestedScroller(event.target) || frame) {
     resetWheelGesture();
     return;
   }

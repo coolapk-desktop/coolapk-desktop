@@ -300,12 +300,6 @@ describe('settings store', () => {
     expect(normalized.disableAutoMobileMode).toBe(true);
     expect(normalized.desktopCommentsOnRight).toBe(false);
     expect(normalized.messageEnterBehavior).toBe('newline');
-    const migratedDefaults = normalizeSettings({});
-    expect(migratedDefaults.desktopFeedDetailOnClick).toBe(true);
-    expect(migratedDefaults.desktopFeedDetailDefaultOnMigrated).toBe(true);
-    // 迁移完成后只认明确的布尔值，其它形态一律回落为关闭。
-    expect(normalizeSettings({ ...migratedDefaults, desktopFeedDetailOnClick: 'yes' }).desktopFeedDetailOnClick).toBe(false);
-    expect(normalizeSettings({ ...migratedDefaults, desktopFeedDetailOnClick: true }).desktopFeedDetailOnClick).toBe(true);
     expect(normalizeSettings({ rememberWindowState: false }).rememberWindowState).toBe(false);
   });
 
@@ -314,16 +308,12 @@ describe('settings store', () => {
     expect(Object.prototype.hasOwnProperty.call(normalizeSettings({ commentSort: 'latest' }), 'commentSort')).toBe(false);
   });
 
-  it('点击动态进入详情页默认开启，旧版已持久化的关闭状态在首次升级时被纠正', () => {
+  it('点击动态进入详情页默认开启，保留已保存的布尔值', () => {
     expect(normalizeSettings({}).desktopFeedDetailOnClick).toBe(true);
-    // 旧版本默认写入的 false 也必须在第一次升级时改为开启。
-    expect(normalizeSettings({ desktopFeedDetailOnClick: false }).desktopFeedDetailOnClick).toBe(true);
-    const migrated = normalizeSettings({ desktopFeedDetailOnClick: false });
-    expect(migrated.desktopFeedDetailOnClick).toBe(true);
-    expect(migrated.desktopFeedDetailDefaultOnMigrated).toBe(true);
-    // 标记完成后尊重用户此后主动的选择。
-    expect(normalizeSettings({ ...migrated, desktopFeedDetailOnClick: false }).desktopFeedDetailOnClick).toBe(false);
-    expect(normalizeSettings({ ...migrated, desktopFeedDetailOnClick: true }).desktopFeedDetailOnClick).toBe(true);
+    expect(normalizeSettings({ desktopFeedDetailOnClick: 'yes' }).desktopFeedDetailOnClick).toBe(true);
+    expect(normalizeSettings({ desktopFeedDetailOnClick: false }).desktopFeedDetailOnClick).toBe(false);
+    expect(normalizeSettings({ desktopFeedDetailOnClick: true }).desktopFeedDetailOnClick).toBe(true);
+    expect(normalizeSettings({ desktopFeedDetailOnClick: false, desktopFeedDetailDefaultOnMigrated: true }).desktopFeedDetailOnClick).toBe(false);
   });
 
   it('新安装与旧版升级均默认关闭右侧评论，首次迁移后保留用户的新选择', () => {
