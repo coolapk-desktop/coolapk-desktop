@@ -100,8 +100,17 @@ function mountPage() {
   });
 }
 
-/** 条件等待：路由 watch 触发的加载链在慢机器上需要更多次调度。 */
+/** 条件等待：异步加载链在慢机器上需要更多次调度。 */
 const WAIT = { timeout: 5000, interval: 20 };
+
+/** 返回收藏单列表并点击指定标题的收藏单卡片（等到列表真正渲染出来）。 */
+async function openCollectionByName(wrapper: Awaited<ReturnType<typeof mountPage>>, title: string) {
+  await vi.waitFor(() => {
+    expect(wrapper.findAll('.collection-card').some(card => card.text().includes(title))).toBe(true);
+  }, WAIT);
+  await wrapper.findAll('.collection-card').find(card => card.text().includes(title))!.trigger('click');
+}
+
 
 describe('FavoritesPage 收藏单快速切换', () => {
   let detailRequests: Map<string, Deferred<any>>;
@@ -132,10 +141,7 @@ describe('FavoritesPage 收藏单快速切换', () => {
 
     // A 还在加载中立刻切到 B（走页面入口：返回列表 → 点收藏单 B 卡片），B 的请求不能被丢弃。
     await wrapper.get('.breadcrumb-back-btn').trigger('click');
-    await flushPromises();
-    await wrapper.findAll('.collection-card')
-      .find(card => card.text().includes('收藏单B'))!
-      .trigger('click');
+    await openCollectionByName(wrapper, '收藏单B');
     await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B'), WAIT);
     expect(mocks.getCollectionItemList.mock.calls.map(call => call[0])).toEqual(['A', 'B']);
     // 切换瞬间不再展示上一个收藏单的内容。
@@ -167,10 +173,7 @@ describe('FavoritesPage 收藏单快速切换', () => {
     await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('A'), WAIT);
 
     await wrapper.get('.breadcrumb-back-btn').trigger('click');
-    await flushPromises();
-    await wrapper.findAll('.collection-card')
-      .find(card => card.text().includes('收藏单B'))!
-      .trigger('click');
+    await openCollectionByName(wrapper, '收藏单B');
     await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B'), WAIT);
 
     detailRequests.get('A')!.reject(new Error('收藏单A详情失败'));

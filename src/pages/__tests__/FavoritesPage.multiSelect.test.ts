@@ -243,9 +243,10 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     // 从列表点收藏单进入详情：切换收藏单也走同一条页面内路径，
     // 不依赖「挂载后改 route.query 能否触发响应式更新」。
     const wrapper = await mountPage();
-    await wrapper.findAll('.collection-card')
-      .find(card => card.text().includes('测试收藏单'))!
-      .trigger('click');
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.collection-card').some(card => card.text().includes('测试收藏单'))).toBe(true);
+    }, WAIT);
+    await wrapper.findAll('.collection-card').find(card => card.text().includes('测试收藏单'))!.trigger('click');
     await vi.waitFor(() => {
       expect(wrapper.findAll('.collection-feed-item')).toHaveLength(3);
     }, WAIT);
@@ -264,11 +265,13 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     mocks.getCollectionItemList.mockResolvedValue({ data: [] });
     mocks.getCollectionDetail.mockResolvedValue({ data: { id: 'B', title: '收藏单B', uid: '10001', item_num: 0 } });
     await wrapper.get('.breadcrumb-back-btn').trigger('click');
-    await flushPromises();
-    await wrapper.findAll('.collection-card')
-      .find(card => card.text().includes('收藏单B'))!
-      .trigger('click');
-    await flushPromises();
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.collection-card').some(card => card.text().includes('收藏单B'))).toBe(true);
+    }, WAIT);
+    await wrapper.findAll('.collection-card').find(card => card.text().includes('收藏单B'))!.trigger('click');
+    await vi.waitFor(() => {
+      expect(wrapper.find('.hero-title').text()).toBe('收藏单B');
+    }, WAIT);
     expect(wrapper.find('.multi-select-hitbox').exists()).toBe(false);
     expect(wrapper.find('.collection-multi-select-actionbar').exists()).toBe(false);
     wrapper.unmount();
