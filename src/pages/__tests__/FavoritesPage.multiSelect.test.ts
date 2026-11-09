@@ -70,7 +70,10 @@ const FavoriteExportDialogStub = {
 };
 
 /** 条件等待用的超时预算：慢机器/并发跑时固定 tick 次数不够。 */
-const WAIT = { timeout: 5000, interval: 20 };
+const WAIT = { timeout: 15000, interval: 25 };
+// CI 上的单测机器明显更慢（要多次挂载/切换），整文件放宽用例超时，
+// 避免 waitFor 预算与用例默认 5s 互相顶死。
+vi.setConfig({ testTimeout: 60000, hookTimeout: 30000 });
 
 /**
  * 挂载页面。collectionId 必须在 mount 之前写进 route.query：

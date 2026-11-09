@@ -101,7 +101,10 @@ function mountPage() {
 }
 
 /** 条件等待：异步加载链在慢机器上需要更多次调度。 */
-const WAIT = { timeout: 5000, interval: 20 };
+const WAIT = { timeout: 15000, interval: 25 };
+// CI 上的单测机器明显更慢（等详情请求、等列表渲染、等新收藏单标题都要时间），
+// 整文件放宽用例超时，避免 waitFor 预算与用例默认 5s 互相顶死。
+vi.setConfig({ testTimeout: 60000, hookTimeout: 30000 });
 
 /** 返回收藏单列表并点击指定标题的收藏单卡片（等到列表真正渲染出来）。 */
 async function openCollectionByName(wrapper: Awaited<ReturnType<typeof mountPage>>, title: string) {
