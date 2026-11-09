@@ -5,6 +5,7 @@
     :style="viewportPlaceholderStyle"
     @click.capture="retainViewportContent"
     @pointerdown.capture="retainPointerContent"
+    @pointerdown="recordClickPointerStart"
     @selectstart.capture="retainViewportContent"
     @keydown.capture="retainViewportContent"
     @focusin="retainViewportContent"
@@ -1621,10 +1622,36 @@ watch(
   }
 );
 
+/**
+ * 正文（.feed-body）是可选中文本，WebKit 在鼠标按下到抬起之间只要抖动 1–2px
+ * 就会真的建出一小段选区，随后 hasActiveTextSelection() 把整次点击判定成"正在选字"
+ * 而丢弃 —— 桌面端点击正文因此进不了详情页。只有超过阈值的位移才算选字拖动。
+ */
+const TEXT_SELECTION_DRAG_TOLERANCE = 4;
+let clickPointerStart: { x: number; y: number } | null = null;
+
+function recordClickPointerStart(event: PointerEvent) {
+  // 只记录主键按下；右键/中键点击不参与卡片点击判定。
+  clickPointerStart = !event.button ? { x: event.clientX, y: event.clientY } : null;
+}
+
+/** 返回 true 表示这次点击来自真正的选字拖动，应当放弃卡片点击。 */
+function isSelectionDragClick(e: MouseEvent): boolean {
+  const start = clickPointerStart;
+  clickPointerStart = null;
+  // 没有指针起点（键盘或脚本触发的点击）时沿用原有"有选区就不点击"的语义。
+  if (!start) return true;
+  return Math.hypot(e.clientX - start.x, e.clientY - start.y) > TEXT_SELECTION_DRAG_TOLERANCE;
+}
+
 function handleCardClick(e: MouseEvent) {
   if (props.detailMode) return;
-  // 选中文本准备复制时，不触发卡片点击（如展开/收起评论）
-  if (hasActiveTextSelection()) return;
+  // 选中文本准备复制时，不触发卡片点击（如展开/收起评论）。
+  if (hasActiveTextSelection()) {
+    if (isSelectionDragClick(e)) return;
+    // 抖动产生的零星选区不是用户的复制意图：清掉后照常进入详情/评论。
+    window.getSelection()?.removeAllRanges();
+  }
   const target = e.target as HTMLElement;
   if (target.closest('a') || target.closest('button') || target.closest('.grid-item') || target.closest('.feed-video-card') || target.closest('.inline-comment-wrapper')) {
     return;
