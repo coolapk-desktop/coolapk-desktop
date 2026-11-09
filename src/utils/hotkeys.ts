@@ -4,6 +4,37 @@ import { useSettingsStore } from '../stores/settings';
 import { hasActiveComments, collapseActiveComments } from './activeCommentTracker';
 import { usePageTabsStore } from '../stores/pageTabs';
 import { refreshPageTabGeneration } from './pageTabs';
+import { navigateBack } from './navigation';
+import type { ShortcutBranchId } from './shortcuts';
+
+/**
+ * 本文件 keydown 中实际处理的注册分支 id。
+ * 元素类型是 utils/shortcuts.ts 的 `ShortcutBranchId` 字面量联合：新增分支时
+ * 写未登记的 id 会编译期报错；登记后若忘记补 SHORTCUT_DEFINITIONS 帮助页条目，
+ * utils/__tests__/hotkeys.test.ts 的覆盖断言会失败。两道闸共同防止清单漂移。
+ */
+export const REGISTERED_HOTKEY_IDS: ReadonlySet<ShortcutBranchId> = new Set([
+  'closeTab',
+  'tabCycle',
+  'navBack',
+  'navForward',
+  'toggleSidebar',
+  'quickRoutes',
+  'publish',
+  'openSettings',
+  'refresh',
+  'zoomIn',
+  'zoomOut',
+  'escape',
+  'feedNavNext',
+  'feedNavPrev',
+  'feedNavComment',
+]);
+
+/** 由其它组件注册、但收录进快捷键帮助清单的分支 id（如 Ctrl+K 由 SearchCommand 处理）。 */
+export const EXTERNAL_HOTKEY_IDS: ReadonlySet<ShortcutBranchId> = new Set([
+  'search',
+]);
 
 /**
  * 全局快捷键注册：
@@ -21,6 +52,15 @@ import { refreshPageTabGeneration } from './pageTabs';
  *  - Ctrl+K / Esc 由 SearchCommand 及各浮层组件自行处理
  * 焦点在输入框/文本域/下拉框时忽略 J/K 等单键快捷键。
  */
+
+/**
+ * 会自行处理 Esc 的浮层根节点。
+ * 这些类名取自各自组件的真实模板：AppDialog 的 .dialog-wrapper、ImageViewer 的
+ * .image-viewer-backdrop、LoginModal 的 .login-overlay、AppContextMenu 的
+ * .app-context-menu 以及 .more-menu；与 AppShell 的手势守卫保持一致。
+ */
+const OVERLAY_ESCAPE_SELECTOR = '.dialog-wrapper, .image-viewer-backdrop, .login-overlay, .app-context-menu, .more-menu';
+
 export function registerGlobalHotkeys() {
   const router = useRouter();
   const settingsStore = useSettingsStore();
@@ -47,8 +87,11 @@ export function registerGlobalHotkeys() {
     if (ctrl && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       const tabsStore = usePageTabsStore();
-      const route = tabsStore.close(tabsStore.activeId);
-      if (route) void router.replace(route);
+      // 关闭前守卫（如代理页未应用修改的确认）是异步的，确认通过后才离开当前页面。
+      void tabsStore.closeTab(tabsStore.activeId).then(route => {
+        // 关闭页签沿用 replace：历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
+        if (route) void router.replace(route);
+      });
       return;
     }
 
@@ -64,13 +107,15 @@ export function registerGlobalHotkeys() {
       const previous = controlTab ? e.shiftKey : controlPage ? e.key === 'PageUp'
         : e.code === 'BracketLeft' || e.key === '[' || e.key === '{';
       const route = usePageTabsStore().cycle(previous ? -1 : 1);
-      if (route) void router.replace(route);
+      // 切换页签属于「打开另一个页面」，用 push 保证随后后退能回到刚看过的那一页。
+      if (route) void router.push(route);
       return;
     }
 
     if (e.altKey && e.key === 'ArrowLeft') {
       e.preventDefault();
-      router.back();
+      // 兜底页面由 navigation.ts 统一按当前路由给出语义上级栏目。
+      navigateBack(router);
       return;
     }
 
@@ -129,7 +174,7 @@ export function registerGlobalHotkeys() {
     if (e.key === 'Escape' && !e.defaultPrevented) {
       const appStore = useAppStore();
       if (appStore.isSearchOpen || appStore.isPublishOpen || appStore.activeImageViewer) return;
-      if (typeof document !== 'undefined' && document.querySelector('.app-dialog-container, .viewer-container, .login-modal-content')) return;
+      if (typeof document !== 'undefined' && document.querySelector(OVERLAY_ESCAPE_SELECTOR)) return;
       if (hasActiveComments()) {
         e.preventDefault();
         collapseActiveComments();

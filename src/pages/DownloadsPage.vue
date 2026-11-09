@@ -109,7 +109,30 @@
       </div>
 
       <div class="toolbar-batch-actions">
-        <template v-if="selectedTab === 'active' && activeTasks.length > 0">
+        <!-- 多选模式：与单条操作互斥，避免「点批量按钮却只作用于一条」的歧义 -->
+        <AppButton
+          v-if="visibleTasks.length > 0 && !selectionMode"
+          variant="ghost"
+          size="sm"
+          icon="fas fa-list-check"
+          @click="enterSelectionMode()"
+        >
+          多选
+        </AppButton>
+        <template v-if="selectionMode">
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :icon="allVisibleSelected ? 'fas fa-square-minus' : 'fas fa-square-check'"
+            @click="toggleSelectAll"
+          >
+            {{ allVisibleSelected ? '取消全选' : `全选 ${visibleTasks.length} 条` }}
+          </AppButton>
+          <AppButton variant="ghost" size="sm" icon="fas fa-xmark" @click="exitSelectionMode">
+            退出多选
+          </AppButton>
+        </template>
+        <template v-if="!selectionMode && selectedTab === 'active' && activeTasks.length > 0">
           <AppButton
             v-if="hasActiveDownloading"
             variant="secondary"
@@ -129,7 +152,16 @@
             全部继续
           </AppButton>
         </template>
-        <template v-else-if="selectedTab === 'history' && downloadStore.historyTasks.length > 0">
+        <template v-else-if="!selectionMode && selectedTab === 'history' && downloadStore.historyTasks.length > 0">
+          <AppButton
+            v-if="failedHistoryCount > 0"
+            variant="ghost"
+            size="sm"
+            icon="fas fa-circle-exclamation"
+            @click="handleClearFailed"
+          >
+            清空失败记录
+          </AppButton>
           <AppButton
             variant="ghost"
             size="sm"
@@ -159,7 +191,20 @@
     <!-- 任务卡片列表 -->
     <div v-else class="download-list">
       <TransitionGroup name="task-item">
-        <article v-for="task in visibleTasks" :key="task.id" class="download-card">
+        <article
+          v-for="task in visibleTasks"
+          :key="task.id"
+          :class="['download-card', { 'selection-mode': selectionMode, selected: selectedTaskIds.has(task.id) }]"
+          @click="handleCardClick(task)"
+          @pointerdown="startLongPress(task)"
+          @pointerup="cancelLongPress"
+          @pointerleave="cancelLongPress"
+          @pointercancel="cancelLongPress"
+        >
+          <!-- 多选模式勾选框：点击卡片任意位置即可切换，不进入任何详情 -->
+          <span v-if="selectionMode" :class="['download-select-box', { checked: selectedTaskIds.has(task.id) }]" aria-hidden="true">
+            <i class="fas fa-check"></i>
+          </span>
           <!-- 应用图标 -->
           <div class="download-icon-wrap">
             <AppImage v-if="task.logoUrl" :src="task.logoUrl" :alt="task.title" image-class="download-icon" />
@@ -173,7 +218,7 @@
             <!-- 标题、格式与状态徽标 -->
             <div class="download-title-row">
               <h3 class="download-task-title" :title="task.title">{{ task.title }}</h3>
-              <span class="download-kind-badge">{{ task.kind.toUpperCase() }}</span>
+              <span class="download-kind-badge">{{ kindBadgeText(task) }}</span>
               <span :class="['download-status-badge', `status-${task.status}`]">
                 <span v-if="task.status === 'downloading'" class="status-pulse-dot"></span>
                 <i v-else :class="statusIcon(task.status)" class="status-badge-icon"></i>
@@ -195,7 +240,7 @@
 
             <!-- 进度条与实时速率信息（进行中类状态显示） -->
             <div
-              v-if="task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'"
+              v-if="task.status === 'downloading' || task.status === 'paused' || task.status === 'queued' || task.status === 'failed'"
               class="download-progress-section"
             >
               <div class="download-progress-track">
@@ -237,10 +282,21 @@
             </div>
           </div>
 
-          <!-- 操作按钮组 -->
-          <div class="download-actions">
+          <!-- 操作按钮组：多选模式下隐藏单条操作，统一走底部批量操作条 -->
+          <div v-if="!selectionMode" class="download-actions">
+            <!-- 更新包下载中：不支持暂停/取消（Rust 侧无对应命令），不提供按钮避免误导 -->
+            <template v-if="isUpdateTask(task) && task.status === 'downloading'"></template>
+
+            <!-- 更新包排队中：已登记但首个进度未到，没有可暂停/取消的下载，
+                 但用户仍应有单条「删除记录」入口，操作区不能为空 -->
+            <template v-else-if="isUpdateTask(task) && task.status === 'queued'">
+              <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
+                删除记录
+              </AppButton>
+            </template>
+
             <!-- 下载中：暂停 / 取消 -->
-            <template v-if="task.status === 'downloading'">
+            <template v-else-if="task.status === 'downloading'">
               <AppButton variant="secondary" size="sm" icon="fas fa-pause" @click="downloadStore.pause(task.id)">
                 暂停
               </AppButton>
@@ -250,14 +306,14 @@
             </template>
 
             <!-- 排队中：取消 -->
-            <template v-else-if="task.status === 'queued'">
+            <template v-else-if="task.status === 'queued' && !isUpdateTask(task)">
               <AppButton variant="ghost" size="sm" icon="fas fa-ban" @click="downloadStore.cancel(task.id)">
                 取消
               </AppButton>
             </template>
 
             <!-- 暂停中：继续 / 删除 -->
-            <template v-else-if="task.status === 'paused'">
+            <template v-else-if="task.status === 'paused' && !isUpdateTask(task)">
               <AppButton variant="primary" size="sm" icon="fas fa-play" @click="downloadStore.resume(task.id)">
                 继续
               </AppButton>
@@ -266,9 +322,9 @@
               </AppButton>
             </template>
 
-            <!-- 失败或已取消：重试 / 删除 -->
-            <template v-else-if="task.status === 'failed' || task.status === 'canceled'">
-              <AppButton variant="primary" size="sm" icon="fas fa-rotate-right" @click="downloadStore.retry(task.id)">
+            <!-- 更新包失败：重试通过 window 事件交回 App.vue 重新发起下载（更新器不支持断点续传） -->
+            <template v-else-if="isUpdateTask(task) && task.status === 'failed'">
+              <AppButton variant="primary" size="sm" icon="fas fa-rotate-right" @click="retryUpdate(task)">
                 重试
               </AppButton>
               <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
@@ -276,8 +332,37 @@
               </AppButton>
             </template>
 
+            <!-- 失败或已取消：继续断点 / 重新开始 / 删除 -->
+            <template v-else-if="(task.status === 'failed' || task.status === 'canceled') && !isUpdateTask(task)">
+              <AppButton variant="primary" size="sm" icon="fas fa-rotate-right" @click="downloadStore.retry(task.id)">
+                {{ task.downloaded > 0 ? '继续下载' : '重试' }}
+              </AppButton>
+              <AppButton
+                v-if="task.downloaded > 0"
+                variant="secondary"
+                size="sm"
+                icon="fas fa-arrow-rotate-left"
+                @click="downloadStore.restart(task.id)"
+              >
+                重新开始
+              </AppButton>
+              <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
+                删除记录
+              </AppButton>
+            </template>
+
+            <!-- 更新包完成：安装入口通过 window 事件交回 App.vue（含 portable/deb/rpm 分支） -->
+            <template v-else-if="isUpdateTask(task) && task.status === 'completed'">
+              <AppButton variant="primary" size="sm" icon="fas fa-arrows-rotate" @click="installUpdate(task)">
+                安装
+              </AppButton>
+              <AppButton variant="ghost" size="sm" icon="fas fa-trash-can" @click="removeTask(task)">
+                删除记录
+              </AppButton>
+            </template>
+
             <!-- 已完成：打开位置 / 删除 -->
-            <template v-else-if="task.status === 'completed'">
+            <template v-else-if="task.status === 'completed' && !isUpdateTask(task)">
               <AppButton v-if="isAndroid && /\.apk$/i.test(task.targetPath)" variant="primary" size="sm" icon="fas fa-download" @click="downloadStore.install(task)">
                 安装
               </AppButton>
@@ -293,18 +378,47 @@
       </TransitionGroup>
     </div>
 
+    <!-- 多选批量操作条 -->
+    <div v-if="selectionMode" class="download-selection-bar" role="region" aria-label="批量操作">
+      <span class="selection-count">已选 {{ selectedTaskIds.size }} 项</span>
+      <div class="selection-actions">
+        <template v-if="selectedTab === 'active'">
+          <AppButton variant="secondary" size="sm" icon="fas fa-pause" :disabled="batchActionPending" @click="batchPauseSelected">
+            暂停所选
+          </AppButton>
+          <AppButton variant="secondary" size="sm" icon="fas fa-play" :disabled="batchActionPending" @click="batchResumeSelected">
+            继续所选
+          </AppButton>
+          <AppButton variant="ghost" size="sm" icon="fas fa-ban" :disabled="batchActionPending" @click="batchCancelSelected">
+            取消所选
+          </AppButton>
+        </template>
+        <AppButton
+          v-else
+          variant="ghost"
+          size="sm"
+          icon="fas fa-trash-can"
+          :disabled="batchActionPending"
+          @click="batchRemoveSelected"
+        >
+          删除记录
+        </AppButton>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import AppButton from '../components/common/AppButton.vue';
 import AppImage from '../components/common/AppImage.vue';
 import EmptyState from '../components/common/EmptyState.vue';
-import { useDownloadStore } from '../stores/downloads';
+import { isUpdateTask, useDownloadStore } from '../stores/downloads';
 import { useSettingsStore } from '../stores/settings';
 import { requestConfirmation } from '../utils/confirm';
+import { showToast, type ToastType } from '../utils/toast';
 import type { DownloadStatus, DownloadTask } from '../types/download';
 
 const route = useRoute();
@@ -329,6 +443,7 @@ const allActiveCount = computed(() => downloadStore.activeCount);
 const allTransferSpeed = computed(() => downloadStore.totalSpeed);
 const currentActiveCount = computed(() => downloadStore.activeCount);
 const currentHistoryCount = computed(() => downloadStore.historyTasks.length);
+const failedHistoryCount = computed(() => downloadStore.historyTasks.filter((task) => task.status === 'failed').length);
 const downloadDirTooltip = computed(() => settingsStore.settings.downloadPath || '保存至系统默认下载目录');
 
 const hasActiveDownloading = computed(() =>
@@ -337,6 +452,162 @@ const hasActiveDownloading = computed(() =>
 const hasActivePaused = computed(() =>
   activeTasks.value.some((task) => task.status === 'paused')
 );
+
+// ---------------------------------------------------------------------------
+// 多选批量操作
+// 列表页原有「全部暂停/全部继续/清空失败记录/清空历史」是整表操作，缺「只处理选中的几条」；
+// 移动端长按卡片进入多选，桌面端用工具栏「多选」按钮，两端共用同一套选择状态与批量实现。
+// ---------------------------------------------------------------------------
+const selectionMode = ref(false);
+const selectedTaskIds = ref<Set<string>>(new Set());
+const batchActionPending = ref(false);
+const allVisibleSelected = computed(() =>
+  visibleTasks.value.length > 0 && visibleTasks.value.every((task) => selectedTaskIds.value.has(task.id))
+);
+const selectedTasks = computed(() => visibleTasks.value.filter((task) => selectedTaskIds.value.has(task.id)));
+
+function enterSelectionMode(task?: DownloadTask) {
+  selectionMode.value = true;
+  selectedTaskIds.value = task ? new Set([task.id]) : new Set();
+}
+
+function exitSelectionMode() {
+  selectionMode.value = false;
+  selectedTaskIds.value = new Set();
+}
+
+function toggleTaskSelection(task: DownloadTask) {
+  const next = new Set(selectedTaskIds.value);
+  if (next.has(task.id)) next.delete(task.id);
+  else next.add(task.id);
+  selectedTaskIds.value = next;
+}
+
+function toggleSelectAll() {
+  selectedTaskIds.value = allVisibleSelected.value
+    ? new Set()
+    : new Set(visibleTasks.value.map((task) => task.id));
+}
+
+function handleCardClick(task: DownloadTask) {
+  if (!selectionMode.value) return;
+  toggleTaskSelection(task);
+}
+
+// 长按进入多选（500ms）；选中/勾选逻辑与工具栏入口完全一致。
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+function startLongPress(task: DownloadTask) {
+  if (selectionMode.value) return;
+  cancelLongPress();
+  longPressTimer = setTimeout(() => {
+    longPressTimer = null;
+    enterSelectionMode(task);
+  }, 500);
+}
+
+function cancelLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
+
+onBeforeUnmount(cancelLongPress);
+
+/** 批量操作的统一结果文案：成功/失败/跳过都要说清楚，不能只报成功数。 */
+function batchResultText(verb: string, counts: { done: number; skipped: number; failed: number }): string {
+  const parts = [`已${verb} ${counts.done} 条任务`];
+  if (counts.failed > 0) parts.push(`失败 ${counts.failed} 条`);
+  if (counts.skipped > 0) parts.push(`跳过 ${counts.skipped} 条`);
+  return parts.join('，');
+}
+
+async function runBatch(
+  action: (task: DownloadTask) => Promise<void>,
+  eligible: (task: DownloadTask) => boolean,
+  verb: string,
+) {
+  if (selectedTasks.value.length === 0 || batchActionPending.value) return;
+  batchActionPending.value = true;
+  const counts = { done: 0, skipped: 0, failed: 0 };
+  try {
+    // 串行执行：downloads store 的事件回写与 pump 调度对并发敏感，逐条推进最稳。
+    for (const task of selectedTasks.value) {
+      if (!eligible(task)) {
+        counts.skipped += 1;
+        continue;
+      }
+      try {
+        await action(task);
+        counts.done += 1;
+      } catch {
+        counts.failed += 1;
+      }
+    }
+  } finally {
+    batchActionPending.value = false;
+  }
+  // 有失败/跳过时用 warning，让用户知道结果不完整；全部成功才用 success。
+  const type: ToastType = counts.failed > 0 ? 'error' : counts.skipped > 0 ? 'warning' : 'success';
+  showToast(batchResultText(verb, counts), type);
+  exitSelectionMode();
+}
+
+async function batchPauseSelected() {
+  await runBatch(
+    (task) => downloadStore.pause(task.id),
+    (task) => !isUpdateTask(task) && (task.status === 'downloading' || task.status === 'queued'),
+    '暂停',
+  );
+}
+
+async function batchResumeSelected() {
+  await runBatch(
+    (task) => downloadStore.resume(task.id),
+    (task) => !isUpdateTask(task) && task.status === 'paused',
+    '继续',
+  );
+}
+
+async function batchCancelSelected() {
+  if (selectedTasks.value.length === 0 || batchActionPending.value) return;
+  const confirmed = await requestConfirmation({
+    title: '取消所选下载',
+    message: `确定取消已选中的 ${selectedTasks.value.length} 条下载任务吗？已下载的进度会保留。`,
+    confirmText: '取消下载',
+    danger: true,
+  });
+  if (!confirmed) return;
+  await runBatch(
+    (task) => downloadStore.cancel(task.id),
+    (task) => !isUpdateTask(task) && (task.status === 'downloading' || task.status === 'queued'),
+    '取消',
+  );
+}
+
+async function batchRemoveSelected() {
+  if (selectedTasks.value.length === 0 || batchActionPending.value) return;
+  const confirmed = await requestConfirmation({
+    title: '删除所选记录',
+    message: `确定删除已选中的 ${selectedTasks.value.length} 条下载记录吗？（已下载的安装包文件不会被删除）`,
+    confirmText: '删除记录',
+    danger: true,
+  });
+  if (!confirmed) return;
+  // 与「清空历史」口径一致：批量删除只清记录，不删安装包文件。
+  await runBatch((task) => downloadStore.remove(task.id), () => true, '删除');
+}
+
+// 切换到另一类任务时必须退出多选，否则选中的 id 会跨列表漂移。
+watch(selectedTab, () => exitSelectionMode());
+
+// 任务被删除/移动后，选中集合里不能留下已经不存在的 id。
+watch(visibleTasks, (tasks) => {
+  if (!selectionMode.value) return;
+  const alive = new Set(tasks.map((task) => task.id));
+  const next = new Set([...selectedTaskIds.value].filter((id) => alive.has(id)));
+  if (next.size !== selectedTaskIds.value.size) selectedTaskIds.value = next;
+});
 
 const activeTasksHint = computed(() => {
   if (allActiveCount.value === 0) return '队列空闲';
@@ -393,6 +664,22 @@ function remainingTimeText(task: DownloadTask) {
   return m > 0 ? `${h}小时${m}分` : `${h}小时`;
 }
 
+function kindBadgeText(task: DownloadTask) {
+  // 更新包任务的 kind 是 'update'，直接大写展示（UPDATE）对用户没有意义，给中文徽标。
+  if (isUpdateTask(task)) return '应用更新';
+  return task.kind.toUpperCase();
+}
+
+/** 请求 App.vue 打开待安装弹窗并启动更新安装（载荷仅带版本号用于诊断日志）。 */
+function installUpdate(task: DownloadTask) {
+  window.dispatchEvent(new CustomEvent('coolapk:install-update', { detail: { version: task.versionName } }));
+}
+
+/** 请求 App.vue 重新发起更新包下载（更新器不支持断点，只能整体重下）。 */
+function retryUpdate(_task: DownloadTask) {
+  window.dispatchEvent(new CustomEvent('coolapk:retry-update'));
+}
+
 function statusIcon(status: DownloadStatus) {
   return {
     queued: 'fas fa-clock',
@@ -416,6 +703,11 @@ function statusText(status: DownloadStatus) {
 }
 
 async function removeTask(task: DownloadTask) {
+  // 更新包文件由更新器管理（含待安装校验），删除记录不动文件，也无需确认弹窗。
+  if (isUpdateTask(task)) {
+    await downloadStore.removeUpdateTask(task.id);
+    return;
+  }
   const deleteFile =
     task.status !== 'completed' ||
     (await requestConfirmation({
@@ -437,6 +729,19 @@ async function handleClearHistory() {
   });
   if (confirmed) {
     await downloadStore.clearHistory(false);
+  }
+}
+
+async function handleClearFailed() {
+  if (failedHistoryCount.value === 0) return;
+  const confirmed = await requestConfirmation({
+    title: '清空失败记录',
+    message: '确定要清空全部下载失败的记录吗？（已下载的断点文件不会被删除）',
+    confirmText: '清空记录',
+    danger: true,
+  });
+  if (confirmed) {
+    await downloadStore.clearFailed(false);
   }
 }
 
@@ -1007,6 +1312,66 @@ onMounted(async () => {
   justify-content: flex-end;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* 多选模式 */
+.download-card.selection-mode {
+  cursor: pointer;
+}
+
+.download-card.selection-mode.selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.download-select-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  color: transparent;
+  font-size: 12px;
+  transition: all var(--duration-fast) var(--ease-default);
+}
+
+.download-select-box.checked {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+
+/* 批量操作条：贴近列表底部，窄屏不遮挡最后一条卡片 */
+.download-selection-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.selection-count {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 /* 列表过渡动效 */
