@@ -222,6 +222,12 @@ pub struct DiagnosticSnapshot {
     files: Vec<DiagnosticFile>,
     content: String,
     directory: String,
+    /// 本次快照是否发生过截断（按字节或按行）；导出全文时恒为 false。
+    #[serde(default)]
+    truncated: bool,
+    /// 按行截取模式下的行数上限；导出全文时为 None。
+    #[serde(default)]
+    line_limit: Option<usize>,
 }
 
 fn log_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -258,20 +264,81 @@ fn select_report_paths(paths: &[PathBuf]) -> Vec<&PathBuf> {
     selected
 }
 
-#[tauri::command]
-pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, String> {
+/// 取文本尾部最多 lines 行，返回（内容，是否截断）。
+/// 注意：lines 按字符行计（split('\n')），UTF-8 多字节字符整行保留，不会切出半个字符。
+fn tail_lines(content: &str, lines: usize) -> (String, bool) {
+    if lines == 0 {
+        return (String::new(), true);
+    }
+    let total = content.split('\n').count();
+    if total <= lines {
+        return (content.to_string(), false);
+    }
+    let tail: Vec<&str> = content.split('\n').skip(total - lines).collect();
+    (tail.join("\n"), true)
+}
+
+/// 页面展示的总量语义：line_limit 是**所有文件合计**的行数上限，而不是每文件各取 n 行。
+/// 这样前端 linesSummary 的「仅显示最近 n 行」文案才与实际返回量一致（否则多文件时是 n×文件数）。
+/// 分配规则：从最新的文件往前分配行数预算，优先保留较新文件的尾部；
+/// 每个被保留内容的文件都保留 ===== name ===== 头；预算耗尽后被整体挤出的旧文件
+/// 保留头并标注「未显示」，让用户知道还有更早的文件（这些标记行不计入行数预算）。
+/// 返回（拼接内容，是否发生行截断）。
+fn tail_parts(parts: &[(String, String)], lines: usize) -> (String, bool) {
+    if lines == 0 {
+        return (String::new(), true);
+    }
+    let mut segments: Vec<String> = Vec::new();
+    let mut remaining = lines;
+    let mut was_truncated = false;
+    // parts 按文件修改时间从旧到新排列，所以从末尾（最新）往前分配。
+    for (header, body) in parts.iter().rev() {
+        if remaining == 0 {
+            // 预算耗尽：旧文件整体不显示，但保留文件头作占位说明。
+            let mut segment = header.clone();
+            segment.push_str("<已超出展示行数上限，本文件未显示>\n");
+            segments.push(segment);
+            // 整个文件被挤出预算同样是「发生了截断」，否则前端会声称「已显示全部」。
+            was_truncated = true;
+            continue;
+        }
+        let total = body.split('\n').count();
+        let take = total.min(remaining);
+        // 复用 tail_lines 取该文件正文尾部，保证行边界与 truncated 判定一致。
+        let (tail, cut) = tail_lines(body, take);
+        was_truncated |= cut;
+        remaining -= take;
+        let mut segment = header.clone();
+        segment.push_str(&tail);
+        segments.push(segment);
+    }
+    // segments 目前是「最新在前」，还原成旧到新的展示顺序。
+    segments.reverse();
+    (segments.concat(), was_truncated)
+}
+
+/// 两个命令共用的内部实现：line_limit 为 None 时导出全文（仅受字节尾部上限约束），
+/// Some(n) 时对全部文件**合计**按行截取尾部 n 行（总量语义，见 tail_parts），用于页面展示。
+fn collect_diagnostic_logs(app: &tauri::AppHandle, line_limit: Option<usize>) -> Result<DiagnosticSnapshot, String> {
     log::logger().flush();
-    let dir = log_dir(&app)?;
+    let dir = log_dir(app)?;
     let paths = list_log_paths(&dir)?;
     let mut files = Vec::new();
-    let mut content = String::new();
+    let mut parts: Vec<(String, String)> = Vec::new();
+    let mut truncated = false;
     for path in select_report_paths(&paths) {
         let metadata = path.metadata().map_err(|error| error.to_string())?;
         let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         let tail = &bytes[bytes.len().saturating_sub(MAX_TAIL_BYTES)..];
-        content.push_str(&format!("\n===== {name} =====\n"));
-        content.push_str(&String::from_utf8_lossy(tail));
+        let header = format!("\n===== {name} =====\n");
+        let mut body = String::from_utf8_lossy(tail).into_owned();
+        // 超长文件只导出尾部，必须显式标注，避免把截断后的内容当成完整日志。
+        if bytes.len() > MAX_TAIL_BYTES {
+            truncated = true;
+            body.insert_str(0, &format!("<文件前部已截断，仅保留最近 {}MB>\n", MAX_TAIL_BYTES / 1_000_000));
+        }
+        parts.push((header, body));
         files.push(DiagnosticFile {
             name,
             size: metadata.len(),
@@ -280,11 +347,33 @@ pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, 
                 .map_or(0, |duration| duration.as_secs()),
         });
     }
+    let content = match line_limit {
+        None => parts.iter().map(|(header, body)| format!("{header}{body}")).collect::<String>(),
+        Some(lines) => {
+            let (limited, was_truncated) = tail_parts(&parts, lines);
+            truncated |= was_truncated;
+            limited
+        }
+    };
     Ok(DiagnosticSnapshot {
         files,
         content,
         directory: dir.to_string_lossy().to_string(),
+        truncated,
+        line_limit,
     })
+}
+
+/// 导出/复制用的全文快照（每文件最多保留尾部 2MB 字节）。
+#[tauri::command]
+pub fn get_diagnostic_logs(app: tauri::AppHandle) -> Result<DiagnosticSnapshot, String> {
+    collect_diagnostic_logs(&app, None)
+}
+
+/// 页面展示用的尾部快照：Rust 侧把全部文件合计按行截取尾部 lines 行（总量语义），避免前端拉全量再裁剪。
+#[tauri::command]
+pub fn get_diagnostic_logs_tail(app: tauri::AppHandle, lines: usize) -> Result<DiagnosticSnapshot, String> {
+    collect_diagnostic_logs(&app, Some(lines.max(1)))
 }
 
 #[tauri::command]
@@ -307,7 +396,7 @@ pub fn clear_diagnostic_logs(app: tauri::AppHandle) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_session_marker, is_diagnostic_file, select_report_paths, write_report, CRASH_FILE, LOGIN_CHECKPOINT_FILE, FOREGROUND_FILE, FOREGROUND_PREVIOUS_FILE};
+    use super::{create_session_marker, is_diagnostic_file, select_report_paths, tail_lines, tail_parts, write_report, CRASH_FILE, LOGIN_CHECKPOINT_FILE, FOREGROUND_FILE, FOREGROUND_PREVIOUS_FILE};
     use std::path::Path;
 
     #[test]
@@ -351,6 +440,92 @@ mod tests {
         write_report(&path, "新的报告").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "新的报告");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn tail_lines_empty_content_is_not_truncated() {
+        // 空内容没有可截的东西，不应误报 truncated。
+        assert_eq!(tail_lines("", 5), (String::new(), false));
+    }
+
+    #[test]
+    fn tail_lines_exactly_at_limit_is_not_truncated() {
+        // 行数恰好等于上限：内容完整返回，不标截断。
+        assert_eq!(tail_lines("a\nb\nc", 3), ("a\nb\nc".to_string(), false));
+    }
+
+    #[test]
+    fn tail_lines_over_limit_keeps_tail_and_marks_truncated() {
+        assert_eq!(tail_lines("a\nb\nc\nd", 2), ("c\nd".to_string(), true));
+    }
+
+    #[test]
+    fn tail_lines_zero_returns_empty_and_truncated() {
+        // lines=0 是调用方的边界错误兜底：返回空且标记截断，让前端能走「显示全部」。
+        assert_eq!(tail_lines("a\nb", 0), (String::new(), true));
+    }
+
+    #[test]
+    fn tail_lines_keeps_multibyte_lines_intact() {
+        // 中文多字节字符必须整行保留，不得切出半个字符。
+        let content = "错误一\n错误二\n错误三";
+        assert_eq!(tail_lines(content, 2), ("错误二\n错误三".to_string(), true));
+        assert_eq!(tail_lines(content, 10), (content.to_string(), false));
+    }
+
+    #[test]
+    fn tail_lines_counts_trailing_empty_line() {
+        // 结尾的空行也是一个独立行，截取时同样计入，避免行数统计不一致。
+        assert_eq!(tail_lines("a\nb\n", 2), ("b\n".to_string(), true));
+        assert_eq!(tail_lines("a\nb\n", 3), ("a\nb\n".to_string(), false));
+    }
+
+    #[test]
+    fn tail_parts_prefers_newest_files_within_total_budget() {
+        // 总量语义：多文件合计不超过 lines；预算优先给较新文件，旧文件保留头并标注未显示。
+        let parts = vec![
+            ("\n===== old.log =====\n".to_string(), "l1\nl2\nl3".to_string()),
+            ("\n===== new.log =====\n".to_string(), "n1\nn2".to_string()),
+        ];
+        let (content, truncated) = tail_parts(&parts, 3);
+        assert!(truncated);
+        // 新文件的 2 行全保留，旧文件只剩预算 1 行（尾部）。
+        assert!(content.contains("\n===== new.log =====\nn1\nn2"));
+        assert!(content.contains("\n===== old.log =====\nl3"));
+        assert!(!content.contains("l1"));
+        assert!(!content.contains("n0"));
+    }
+
+    #[test]
+    fn tail_parts_drops_exhausted_old_files_with_marker_header() {
+        // 预算耗尽后的旧文件：不显示正文，但保留文件头和「未显示」标注，且不占预算。
+        let parts = vec![
+            ("\n===== old.log =====\n".to_string(), "l1\nl2\nl3\nl4".to_string()),
+            ("\n===== new.log =====\n".to_string(), "n1\nn2".to_string()),
+        ];
+        let (content, truncated) = tail_parts(&parts, 2);
+        assert!(truncated);
+        assert!(content.contains("n1\nn2"));
+        assert!(content.contains("\n===== old.log =====\n<已超出展示行数上限，本文件未显示>"));
+        assert!(!content.contains("l1"));
+    }
+
+    #[test]
+    fn tail_parts_within_budget_is_not_truncated() {
+        // 合计行数不超过上限时不标截断，与前端「N 行结果」文案一致。
+        let parts = vec![
+            ("\n===== a.log =====\n".to_string(), "a1".to_string()),
+            ("\n===== b.log =====\n".to_string(), "b1\nb2".to_string()),
+        ];
+        let (content, truncated) = tail_parts(&parts, 5);
+        assert!(!truncated);
+        assert_eq!(content, "\n===== a.log =====\na1\n===== b.log =====\nb1\nb2");
+    }
+
+    #[test]
+    fn tail_parts_zero_lines_returns_empty_and_truncated() {
+        let parts = vec![("\n===== a.log =====\n".to_string(), "a1".to_string())];
+        assert_eq!(tail_parts(&parts, 0), (String::new(), true));
     }
 
     #[test]

@@ -173,6 +173,7 @@ import AppImage from '../../components/common/AppImage.vue';
 import { chinaRegions } from '../../data/chinaRegions';
 import { useAuthStore } from '../../stores/auth';
 import { getErrorMessage } from '../../utils/errors';
+import { requestConfirmation } from '../../utils/confirm';
 import { showToast } from '../../utils/toast';
 
 interface EditableProfile {
@@ -201,8 +202,11 @@ const committedGender = ref('-1');
 const committedBirthday = ref('');
 const locationDialogOpen = ref(false);
 const locationDraft = reactive({ province: '', city: '' });
+// 打开弹窗时的基线快照：取消关闭时与草稿比对，只有草稿真的改过才弹确认，未改动直接关。
+const locationBaseline = reactive({ province: '', city: '' });
 const signatureDialogOpen = ref(false);
 const signatureDraft = ref('');
+const signatureBaseline = ref('');
 const provinceOptions = Object.keys(chinaRegions);
 const cityOptions = computed(() => chinaRegions[locationDraft.province] || []);
 const displayAstro = computed(() => profile.value.astro || zodiacForBirthday(profile.value.birthmonth, profile.value.birthdayDay));
@@ -499,6 +503,8 @@ function openLocationDialog() {
   const city = province ? findCityOption(province, profile.value.city) : '';
   locationDraft.province = province;
   locationDraft.city = city;
+  locationBaseline.province = province;
+  locationBaseline.city = city;
   locationDialogOpen.value = true;
 }
 
@@ -506,8 +512,18 @@ function handleProvinceChange() {
   locationDraft.city = cityOptions.value[0] || '';
 }
 
-function closeLocationDialog() {
-  if (savingField.value !== 'location') locationDialogOpen.value = false;
+async function closeLocationDialog() {
+  if (savingField.value === 'location') return;
+  if (locationDraft.province !== locationBaseline.province || locationDraft.city !== locationBaseline.city) {
+    const confirmed = await requestConfirmation({
+      title: '放弃修改城市？',
+      message: '城市选择尚未保存，关闭后本次修改不会生效。',
+      confirmText: '放弃修改',
+      danger: true,
+    });
+    if (!confirmed) return;
+  }
+  locationDialogOpen.value = false;
 }
 
 async function saveLocation() {
@@ -541,11 +557,23 @@ async function saveLocation() {
 
 function openSignatureDialog() {
   signatureDraft.value = profile.value.bio;
+  signatureBaseline.value = profile.value.bio;
   signatureDialogOpen.value = true;
 }
 
-function closeSignatureDialog() {
-  if (savingField.value !== 'bio') signatureDialogOpen.value = false;
+async function closeSignatureDialog() {
+  if (savingField.value === 'bio') return;
+  // 与保存语义一致：按 trim 后比较，只动空格不算改过，不弹确认。
+  if (signatureDraft.value.trim() !== signatureBaseline.value) {
+    const confirmed = await requestConfirmation({
+      title: '放弃修改签名？',
+      message: '签名尚未保存，关闭后本次修改不会生效。',
+      confirmText: '放弃修改',
+      danger: true,
+    });
+    if (!confirmed) return;
+  }
+  signatureDialogOpen.value = false;
 }
 
 async function saveSignature() {

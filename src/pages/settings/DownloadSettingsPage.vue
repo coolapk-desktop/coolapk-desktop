@@ -10,6 +10,7 @@
           <span class="row-sub">
             {{ isAndroid ? '图片保存到相册，文件保存到下载目录；Android 7–9 保存时选择位置' : `${displayDownloadPath}（用于导出数据等文件保存；留空则使用系统下载目录）` }}
           </span>
+          <span class="row-sub">更改仅对之后新建的任务生效，进行中的任务仍按各自加入队列时的目录完成</span>
         </div>
         <div class="row-actions">
           <AppButton v-if="!isAndroid" variant="secondary" size="sm" @click="chooseDownloadDir">更改目录</AppButton>
@@ -144,12 +145,22 @@
         </select>
       </div>
 
+      <!-- 该开关依赖通知设置中的系统桌面通知总开关，总开关关闭时置灰并说明原因，避免看似开启却收不到通知。 -->
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">下载完成桌面通知</span>
-          <span class="row-sub">更新包下载完成后发送系统通知提醒</span>
+          <span class="row-sub">
+            更新包下载完成后发送系统通知提醒；
+            <router-link class="settings-link" to="/settings/notifications">需先在通知设置中开启系统桌面通知</router-link>
+          </span>
+          <span v-if="!settingsStore.settings.desktopNotifications" class="row-sub unsaved-warning">
+            系统桌面通知总开关当前已关闭，此开关不会生效；开启总开关后自动恢复。
+          </span>
         </div>
-        <AppSwitch v-model="settingsStore.settings.notifyDownloadComplete" />
+        <AppSwitch
+          v-model="settingsStore.settings.notifyDownloadComplete"
+          :disabled="!settingsStore.settings.desktopNotifications"
+        />
       </div>
     </div>
 
@@ -181,6 +192,8 @@ import { useAuthStore } from '../../stores/auth';
 import AppButton from '../../components/common/AppButton.vue';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { useDownloadStore } from '../../stores/downloads';
+import { showToast } from '../../utils/toast';
 import { clearResourceCache, clearResourceMemoryCache } from '../../utils/resourceCache';
 
 const settingsStore = useSettingsStore();
@@ -294,6 +307,7 @@ async function chooseDownloadDir() {
     const selected = await open({ directory: true, title: '选择默认保存目录' });
     if (typeof selected === 'string' && selected) {
       settingsStore.settings.downloadPath = selected;
+      notifyInFlightDownloadDir(selected);
     }
   } catch (err) {
     alert(`选择目录失败：${err instanceof Error ? err.message : String(err)}`);
@@ -302,6 +316,16 @@ async function chooseDownloadDir() {
 
 function resetDownloadDir() {
   settingsStore.settings.downloadPath = '';
+  notifyInFlightDownloadDir('');
+}
+
+/** 任务在入队时固化保存目录；改全局目录不影响在途任务，必须让用户知道这一口径。 */
+function notifyInFlightDownloadDir(newPath: string) {
+  const downloadStore = useDownloadStore();
+  const affected = downloadStore.tasks.filter((task) =>
+    task.kind !== 'update' && task.status !== 'canceled' && task.downloadDir && task.downloadDir !== newPath);
+  if (affected.length === 0) return;
+  showToast(`已有 ${affected.length} 个任务仍使用原目录下载，本次更改仅对之后新建的任务生效`, 'info', 6000);
 }
 
 async function refreshSystemDownloadPath() {
@@ -534,6 +558,19 @@ onMounted(() => {
 .text-input:hover,
 .text-input:focus {
   border-color: var(--brand-primary);
+}
+
+.settings-link {
+  color: var(--brand-primary);
+  text-decoration: none;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
+}
+
+.unsaved-warning {
+  color: var(--warning, var(--danger));
 }
 
 .tray-tip {

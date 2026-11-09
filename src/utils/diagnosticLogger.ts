@@ -108,11 +108,17 @@ function diagnosticScriptUrl(value: string): string {
   } catch { return 'unknown'; }
 }
 
+/** 只提取浏览器内核主版本，不采集 UA 中的设备型号、系统版本或应用包名。 */
+export function diagnosticWebviewVersion(userAgent: string = typeof navigator === 'undefined' ? '' : navigator.userAgent): string {
+  return userAgent.match(/(?:Chrome|Version)\/([\d.]+)/)?.[1] || 'unknown';
+}
+
 /** 不透明的 Script error 无法恢复堆栈，额外保存运行环境与脚本清单供复现排查。 */
 export function logWindowErrorDiagnostic(event: ErrorEvent): void {
   const opaque = /^Script error\.?$/i.test(event.message.trim()) && !event.filename && event.error == null;
   logDiagnostic('error', 'window', 'uncaught_exception', `${summarizeDiagnosticError(event.error || event.message)} source=${event.filename ? diagnosticScriptUrl(event.filename) : 'unknown'} line=${event.lineno || 0} column=${event.colno || 0} opaque=${opaque} error_present=${event.error != null} trusted=${event.isTrusted}`);
-  logDiagnostic('error', 'window', 'exception_context', `ready_state=${document.readyState} user_agent=${navigator.userAgent} scripts=${document.scripts.length}`);
+  // 与 renderer 事件保持同一口径：只记内核版本，不写完整 UA。
+  logDiagnostic('error', 'window', 'exception_context', `ready_state=${document.readyState} webview_version=${diagnosticWebviewVersion()} android=${/android/i.test(navigator.userAgent)} scripts=${document.scripts.length}`);
   // 清单只是排查线索，不能把最后加载的脚本认定为异常来源；逐条写入避免整行截断。
   Array.from(document.scripts).slice(-8).forEach((script, index) => {
     logDiagnostic('error', 'window', 'exception_script', `index=${index} source=${diagnosticScriptUrl(script.src)} type=${script.type || 'classic'} crossorigin=${script.crossOrigin || 'unset'} async=${script.async} defer=${script.defer}`);
@@ -237,7 +243,7 @@ export function installDiagnosticLogging(): void {
   installClickDiagnosticBridge();
   logDiagnostic('info', 'app', 'startup', `version=${APP_VERSION}`);
   // 只记录浏览器内核版本和图标显示方式，不采集完整 UA 中的设备型号。
-  const webviewVersion = navigator.userAgent.match(/(?:Chrome|Version)\/([\d.]+)/)?.[1] || 'unknown';
+  const webviewVersion = diagnosticWebviewVersion();
   logDiagnostic('info', 'app', 'renderer', `webview_version=${webviewVersion} icons=${document.documentElement.dataset.iconRenderer || 'font'} svg_mask_supported=${typeof CSS !== 'undefined' && (CSS.supports('mask-image', 'url("data:image/svg+xml,<svg/>")') || CSS.supports('-webkit-mask-image', 'url("data:image/svg+xml,<svg/>")'))}`);
   if (/android/i.test(navigator.userAgent)) {
     void invoke('log_android_runtime_info').catch(() => {

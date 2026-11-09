@@ -4,7 +4,7 @@ import { router } from '../router';
 import { getFeedDetailMessage, hasFeedMoreSuffix, parseWebFeedDetail } from '../utils/feedContent';
 import { getCoolapkUserLinkName, isCoolapkWebUrl, normalizeCoolapkRoute } from '../utils/coolapkRoute';
 import { normalizeUserUid } from '../utils/userRoute';
-import { requestWithPolicy, type RequestKind } from '../utils/requestCenter';
+import { requestWithPolicy, type RequestPolicy } from '../utils/requestCenter';
 import { logDiagnostic, logDiagnosticLimited, classifyDiagnosticRequestError, summarizeDiagnosticError } from '../utils/diagnosticLogger';
 import { apiEnvelopeError } from '../utils/apiErrorMessage';
 import { extractCaptchaParamsFromError, verifyWithCaptcha } from '../utils/neteaseCaptcha';
@@ -12,9 +12,93 @@ import type { UpdatePackageType } from '../utils/updateChecker';
 import { showToast } from '../utils/toast';
 import { getOriginalImageUrl } from '../utils/image';
 import { getMemoryCachedResourceSync, retainResourceUrl } from '../utils/resourceCache';
+import { invalidateFeedFullText } from '../utils/feedFullTextCache';
 import { useSettingsStore } from '../stores/settings';
 
-type NativeRequestOptions = { retry?: boolean; maxAttempts?: number; timeoutMs?: number; kind?: RequestKind };
+function tauriInvokeAvailable(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
+}
+
+async function safeFetchOnce(pythonEndpoint: string, tauriCmd: string, tauriArgs: any = {}) {
+  let rustError: unknown;
+
+  // 1. 优先使用 Tauri 2 原生 Rust Core (`client.rs`) 发起零延迟 API 请求
+  try {
+    const rustRes = await invoke(tauriCmd, tauriArgs);
+    if (rustRes && (rustRes as any).code === 200) {
+      return rustRes;
+    }
+    throw apiEnvelopeError(rustRes)
+      || new Error(`Rust API returned an invalid response for ${tauriCmd}`);
+  } catch (err) {
+    rustError = err;
+    console.warn(`[Tauri Invoke fallback to Python] cmd: ${tauriCmd}`, err);
+  }
+
+  // 2. 如果无 Tauri 环境，连通 Python 后端
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    
+    const resp = await fetch(`http://127.0.0.1:8080/api${pythonEndpoint}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+
+    const body = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`Python API returned HTTP ${resp.status}: ${body.slice(0, 200)}`);
+    }
+
+    const json = JSON.parse(body);
+    if (json && json.code === 200) {
+      return json;
+    }
+    throw new Error(json?.message || 'Python API returned an invalid response');
+  } catch (pythonError) {
+    // 桌面端没有 Python 兜底服务，它的连接错误只是噪音：
+    // 有 Tauri 环境时直接抛出原生错误，让界面按统一规则翻译成中文提示。
+    console.warn('[Tauri Invoke fallback to Python]', pythonError);
+    const rustMessage = rustError instanceof Error ? rustError.message : String(rustError);
+    const pythonMessage = pythonError instanceof Error ? pythonError.message : String(pythonError);
+    if (rustError && tauriInvokeAvailable()) {
+      throw rustError instanceof Error ? rustError : new Error(rustMessage);
+    }
+    throw new Error(`接口请求失败。Rust: ${rustMessage}; Python: ${pythonMessage}`);
+  }
+}
+
+async function safeFetch(pythonEndpoint: string, tauriCmd: string, tauriArgs: any = {}) {
+  return requestWithPolicy(tauriCmd, () => safeFetchOnce(pythonEndpoint, tauriCmd, tauriArgs), { retry: true, kind: 'feed' });
+}
+
+type NativeRequestOptions = RequestPolicy;
+
+/**
+ * 只读命令前缀白名单。invokeNative 默认把命令当作「写操作」处理（不重试），
+ * 只有命中这里的前缀才沿用原来的默认重试行为：
+ * 新的读接口只要按 get_/list_/search_ 之类命名就自动安全，未知命令则不会被盲目重试。
+ */
+const READ_ONLY_COMMAND_PREFIXES = ['get_', 'list_', 'search_', 'fetch_', 'resolve_', 'check_', 'query_', 'load_'];
+/** 少数不以只读前缀命名的只读命令（状态查询等）。 */
+const READ_ONLY_COMMANDS = new Set(['agent_bridge_status', 'agent_bridge_usage_guide', 'prepare_goods_by_url']);
+
+/**
+ * 上传类命令：原生侧可能耗时数十秒到数分钟，且取消不了。
+ * 统一关闭重试并解除 UI 超时（timeoutMs: 0），失败/进度由调用方 UI 自己呈现，
+ * 避免外层 15s 假超时把仍在进行的上传判成失败后触发重复上传。
+ */
+const UPLOAD_COMMANDS = new Set(['upload_image', 'upload_publish_video', 'change_avatar']);
+
+/**
+ * 判断命令是否属于写操作（发动态/发评论/点赞/关注/上传/改资料/登录等）。
+ * 写操作重试会在原生任务其实已成功时重复提交，因此默认不重试。
+ */
+export function isMutationCommand(command: string): boolean {
+  if (READ_ONLY_COMMANDS.has(command)) return false;
+  if (UPLOAD_COMMANDS.has(command)) return true;
+  return !READ_ONLY_COMMAND_PREFIXES.some(prefix => command.startsWith(prefix));
+}
 
 const SAFE_DIAGNOSTIC_ARG_KEYS = new Set([
   'feedId', 'replyId', 'uid', 'page', 'firstItem', 'lastItem', 'listType', 'feedType',
@@ -34,12 +118,18 @@ function summarizeNativeRequestArgs(args: unknown): string {
 async function invokeNative(tauriCmd: string, tauriArgs: any = {}, options: NativeRequestOptions = {}) {
   const started = Date.now();
   const context = summarizeNativeRequestArgs(tauriArgs);
+  // 写操作、上传命令的默认策略在这里统一注入，调用点只需在确有需要时显式覆盖（options 优先级最高）。
+  const policy: NativeRequestOptions = {
+    mutation: isMutationCommand(tauriCmd),
+    ...(UPLOAD_COMMANDS.has(tauriCmd) ? { timeoutMs: 0 } : {}),
+    ...options,
+  };
   try {
     const result = await requestWithPolicy(tauriCmd, async () => {
       const response = await invoke(tauriCmd, tauriArgs);
       if (response && (response as any).code === 200) return response as any;
       throw apiEnvelopeError(response) || new Error((response as any)?.message || `${tauriCmd} 返回格式不正确`);
-    }, options);
+    }, policy);
     logDiagnostic('debug', 'api', 'request_ok', `${tauriCmd}${context ? ` ${context}` : ''} elapsed_ms=${Date.now() - started}`);
     return result;
   } catch (error) {
@@ -155,8 +245,9 @@ export class CoolapkTauriAPI {
   }
 
   // 1.2 搜索候选词（输入联想）
-  static async getSearchSuggestions(query: string) {
-    return await invokeNative('get_search_suggestions', { query });
+  // 联想是随输入实时触发的交互请求：调用方可传固定较短超时且不重试，避免慢响应拖住输入。
+  static async getSearchSuggestions(query: string, options: NativeRequestOptions = {}) {
+    return await invokeNative('get_search_suggestions', { query }, options);
   }
 
   // 搜索页热门词（与 APK 的 type=hotSearch 接口一致）
@@ -367,7 +458,8 @@ export class CoolapkTauriAPI {
 
   // 1.7 轻量登录态检查
   static async checkLoginInfo() {
-    return await invokeNative('check_login_info');
+    // 登录校验由外层 auth store 统一兜底：不重试，超时压在 6s 内，避免多层超时叠加。
+    return await invokeNative('check_login_info', {}, { retry: false, timeoutMs: 6000 });
   }
 
   // 2. 24H 热榜
@@ -426,7 +518,9 @@ export class CoolapkTauriAPI {
 
 
 
-  // 7. 全站搜索
+  // 7. 全站搜索（原生 /v6/search?type=all，返回动态/用户/商品等混合实体，不同于按 searchType 请求的 searchByType）
+  // 供「清单选帖/选商品」这类需要跨实体类型检索、再在本地按 entityType 过滤的场景使用；
+  // 搜索页的多页签检索请用 searchByType(···, 'all')，两者的入参与返回结构不同，不要互相替换。
   static async searchAll(query: string, page: number = 1) {
     return await invokeNative('search_all', { query, page }, { retry: true, kind: 'feed' });
   }
@@ -1140,8 +1234,8 @@ export class CoolapkTauriAPI {
     return await invokeNative('search_users', { query, page });
   }
 
-  static async getSearchSuggestionsApp(query: string) {
-    return await invokeNative('get_search_suggestions_app', { query });
+  static async getSearchSuggestionsApp(query: string, options: NativeRequestOptions = {}) {
+    return await invokeNative('get_search_suggestions_app', { query }, options);
   }
 
   static async searchFeedTopics(query: string, page: number = 1) {
@@ -1207,7 +1301,10 @@ export class CoolapkTauriAPI {
   }
 
   static async deleteFeed(feedId: string) {
-    return await invokeNative('delete_feed', { feedId });
+    const result = await invokeNative('delete_feed', { feedId });
+    // 动态已删除，旧的全文缓存不可再复用。
+    invalidateFeedFullText(feedId);
+    return result;
   }
 
   static async deleteReply(replyId: string) {
@@ -1221,14 +1318,14 @@ export class CoolapkTauriAPI {
   }
 
   // 普通视频独立走官方腾讯 UGC 流程。
+  // 上传类命令统一由 invokeNative 的 UPLOAD_COMMANDS 注入 { retry: false, timeoutMs: 0 }。
   static async uploadPublishVideo(videoBytes: Uint8Array, fileName: string, coverBytes: Uint8Array, duration: number) {
     return await invokeNative('upload_publish_video', { videoBytes, fileName, coverBytes, duration },
       isWebBuild ? { retry: false, timeoutMs: 0 } : {});
   }
 
   static async uploadImage(imageBytes: Uint8Array, fileName: string, contentType: string, dir: string = 'feed', toUid?: string, liveVideoBytes?: Uint8Array, hdr = 0) {
-    return await invokeNative('upload_image', { imageBytes, fileName, contentType, dir, toUid, liveVideoBytes, hdr },
-      isWebBuild || dir === 'feed_report' ? { retry: false, timeoutMs: 0 } : {});
+    return await invokeNative('upload_image', { imageBytes, fileName, contentType, dir, toUid, liveVideoBytes, hdr });
   }
 
   static async changeAvatar(imageBytes: Uint8Array, fileName: string, contentType: string) {
@@ -1319,6 +1416,20 @@ export class CoolapkTauriAPI {
     });
   }
 
+  /// 探测断点(.part)文件是否还在。Rust 侧返回三态：exists / missing / unknown。
+  /// unknown 表示路径不合法、越界或目录无法解析，调用方应保持现有保守提示而不是清进度。
+  static async apkDownloadPartialExists(
+    partialPath?: string,
+    dir?: string,
+    fileName?: string,
+  ): Promise<'exists' | 'missing' | 'unknown'> {
+    return await invoke<'exists' | 'missing' | 'unknown'>('apk_download_partial_exists', {
+      dir: dir || '',
+      partialPath: partialPath || '',
+      fileName: fileName || '',
+    });
+  }
+
   static async openApkDownloadDirectory(dir?: string) {
     return await invoke<void>('open_apk_download_directory', { dir: dir || '' });
   }
@@ -1340,7 +1451,10 @@ export class CoolapkTauriAPI {
   }
 
   static async updateFeed(feedId: string, message: string, pic: string, postToken?: string, options?: PublishOptions) {
-    return await invokeNative('update_feed', { feedId, message, pic, postToken, options });
+    const result = await invokeNative('update_feed', { feedId, message, pic, postToken, options });
+    // 正文已编辑，展开缓存必须失效，否则详情页会继续显示旧全文。
+    invalidateFeedFullText(feedId);
+    return result;
   }
 
   static async importWebAccount(cookieStr: string) {
@@ -1352,7 +1466,8 @@ export class CoolapkTauriAPI {
   }
 
   static async checkLoginStatus() {
-    return await invokeNative('check_login_status');
+    // 与 checkLoginInfo 保持一致：不重试 + 6s 上限。
+    return await invokeNative('check_login_status', {}, { retry: false, timeoutMs: 6000 });
   }
 
   static async getDeviceInfo() {
