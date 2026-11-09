@@ -185,7 +185,8 @@ describe('MessagesPage 批次13：owner 快照 / 缓存上限 / 草稿提示', (
     expect(toastCalls).not.toContain('success');
   });
 
-  // 打开 22 个会话即可验证上限 20 的淘汰；用例在整包并发跑时 25 个会话会撞 5s 默认超时。
+  // 打开 22 个会话即可验证上限 20 的淘汰；用例要连续点 22 次会话再回看点，
+  // 整包并发或 CI 慢机上 15s 不够，给足余量（这是纯 UI 串行操作，不涉及真实网络）。
   it('会话历史缓存 LRU 上限 20：淘汰分页记录，当前会话受保护', async () => {
     const sessions = Array.from({ length: 22 }, (_, i) => makeSession(i));
     mocks.listMessages.mockResolvedValue({ data: sessions });
@@ -219,7 +220,7 @@ describe('MessagesPage 批次13：owner 快照 / 缓存上限 / 草稿提示', (
     const callKLast = mocks.listChatHistory.mock.calls.find((c: any[]) => c[0] === '10001_20021');
     expect(callKLast).toBeTruthy();
     expect(String(callKLast![3])).not.toBe('');
-  }, 15000);
+  }, 60000);
 
   it('草稿提示：输入首字符立即显示“保存中”，防抖落盘后才显示“已自动保存”', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });

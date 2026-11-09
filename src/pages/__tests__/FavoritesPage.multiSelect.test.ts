@@ -101,7 +101,11 @@ async function openDetail(wrapper: Awaited<ReturnType<typeof mountPage>>, itemId
   mocks.getCollectionDetail.mockResolvedValue({ data: { id: 'A', title: '测试收藏单', uid: '10001', item_num: 20 } });
   mocks.getCollectionItemList.mockResolvedValue({ data: items(itemIds) });
   mocks.route.query = { collectionId: 'A', collectionTitle: '测试收藏单' };
-  await flushPromises();
+  // 不按固定 tick 次数等待：路由 watch 触发的加载链在慢机器上需要更多次调度，
+  // 以「详情列表已渲染出条目」为就绪条件，避免并发跑时偶发取不到元素。
+  await vi.waitFor(() => {
+    expect(wrapper.findAll('.collection-feed-item')).toHaveLength(itemIds.length);
+  }, { timeout: 5000, interval: 20 });
   await flushPromises();
 }
 

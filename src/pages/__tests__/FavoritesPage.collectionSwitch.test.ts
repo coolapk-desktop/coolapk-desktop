@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
-import { nextTick } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 
 interface Deferred<T> {
@@ -101,6 +100,9 @@ function mountPage() {
   });
 }
 
+/** 条件等待：路由 watch 触发的加载链在慢机器上需要更多次调度。 */
+const WAIT = { timeout: 5000, interval: 20 };
+
 describe('FavoritesPage 收藏单快速切换', () => {
   let detailRequests: Map<string, Deferred<any>>;
   let itemRequests: Map<string, Deferred<any>>;
@@ -125,14 +127,14 @@ describe('FavoritesPage 收藏单快速切换', () => {
     const wrapper = mountPage();
     await flushPromises();
 
-    // 进入收藏单 A：详情与条目请求均已发出。
-    expect(mocks.getCollectionDetail).toHaveBeenCalledWith('A');
+    // 进入收藏单 A：详情与条目请求均已发出。按条件等待而不是固定 tick 次数，
+    // 慢机器/并发跑时路由 watch 的调度次数会变，固定 nextTick+flushPromises 会偶发落空。
+    await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('A'), WAIT);
     expect(mocks.getCollectionItemList.mock.calls.map(call => call[0])).toEqual(['A']);
 
     // A 还在加载中立刻切到 B，B 的请求不能被丢弃。
     mocks.route.query = { collectionId: 'B', collectionTitle: '收藏单B' };
-    await nextTick();
-    expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B');
+    await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B'), WAIT);
     expect(mocks.getCollectionItemList.mock.calls.map(call => call[0])).toEqual(['A', 'B']);
     // 切换瞬间不再展示上一个收藏单的内容。
     expect(wrapper.findAll('.collection-feed-item')).toHaveLength(0);
@@ -163,7 +165,7 @@ describe('FavoritesPage 收藏单快速切换', () => {
     await flushPromises();
 
     mocks.route.query = { collectionId: 'B', collectionTitle: '收藏单B' };
-    await nextTick();
+    await vi.waitFor(() => expect(mocks.getCollectionDetail).toHaveBeenCalledWith('B'), WAIT);
 
     detailRequests.get('A')!.reject(new Error('收藏单A详情失败'));
     itemRequests.get('A')!.reject(new Error('收藏单A条目失败'));
