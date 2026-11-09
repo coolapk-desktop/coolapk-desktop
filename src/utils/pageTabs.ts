@@ -2,7 +2,7 @@ import type { RouteLocationNormalizedLoaded, RouteLocationNormalized } from 'vue
 import { isFeedReportUrl } from './feedReport';
 import { HOME_TAB_REFRESH_EVENT } from './homeTab';
 
-type TabRoute = Pick<RouteLocationNormalizedLoaded, 'fullPath' | 'name' | 'path' | 'params' | 'query'> | Pick<RouteLocationNormalized, 'fullPath' | 'name' | 'path' | 'params' | 'query'>;
+export type TabRoute = Pick<RouteLocationNormalizedLoaded, 'fullPath' | 'name' | 'path' | 'params' | 'query'> | Pick<RouteLocationNormalized, 'fullPath' | 'name' | 'path' | 'params' | 'query'>;
 
 export interface PageTabDescriptor {
   id: string;
@@ -42,12 +42,70 @@ const structuralQueryKeys: Partial<Record<string, string[]>> = {
   Product: ['tab'],
   Favorites: ['collectionId'],
   Messages: ['targetUid'],
+  // 产品对比按对比项区分页签与 keep-alive 实例：不同入口的对比组合各自占一个标签，
+  // 互不覆盖；ids/productIds 参与身份但不直接展示在标题里（标题只显示项数）。
+  ProductCompare: ['ids', 'productIds'],
+  // 搜索标签按搜索范围区分（全局搜索 / 话题内搜索 / 用户动态搜索），
+  // 关键词、页签和排序变化继续复用同一个搜索标签。
+  Search: ['pageType', 'pageParam'],
 };
 
 function structuralQuerySuffix(route: TabRoute): string {
   const keys = structuralQueryKeys[String(route.name || '')] || [];
   const values = keys.map((key) => [key, decodeRouteText(route.query[key])] as const).filter(([, value]) => Boolean(value));
   return values.length ? `:${values.map(([key, value]) => `${key}=${value}`).join('&')}` : '';
+}
+
+/**
+ * 搜索页组件实例的范围 key：只由搜索词和搜索范围决定。
+ * 页签、排序、问答筛选属于同一实例内部状态，切换时不能重建整页（否则页签缓存与滚动位置全部失效）。
+ */
+export function getSearchPageScopeKey(route: TabRoute): string {
+  const keyword = decodeRouteText(route.query.q).trim();
+  const pageType = decodeRouteText(route.query.pageType);
+  const pageParam = decodeRouteText(route.query.pageParam);
+  return `/search:${keyword}|${pageType}|${pageParam}`;
+}
+
+/** 搜索页组件 key：`/search:<刷新代数>:<关键词>|<范围>`，代数放在固定位置便于还原实例范围。 */
+export function getSearchPageComponentKey(route: TabRoute, generation: number): string {
+  const scope = getSearchPageScopeKey(route).replace(/^\/search:/, '');
+  return `/search:${generation}:${scope}`;
+}
+
+/**
+ * 页面实例身份：同一实体（含结构性查询）只占一个 keep-alive 槽位。
+ * 排序、筛选、页签、定位、入口定位（replyId/scrollTo）、对比项、私信预填文本等临时 query
+ * 全部由页面自身响应式跟随地址更新，不再按 query 区分实例。
+ * 结构性查询（见 structuralQueryKeys）仍按页面语义区分，例如我的栏目、搜索范围。
+ */
+export function getPageInstanceKey(route: TabRoute): string {
+  return getPageTabId(route);
+}
+
+/**
+ * keep-alive 组件 key：`<页面实例身份>:<刷新代数>`。
+ * /topics 仍保持单实例常驻；/search 仍按「搜索词 + 范围」复用实例；
+ * 代数只由 Ctrl+R 刷新与关标签递增，因此刷新语义不变。
+ */
+export function getPageComponentKey(route: TabRoute, generation: number): string {
+  // 话题聚合页保持单实例常驻，内部子话题切换不触发父页面销毁重建与闪烁。
+  if (route.path === '/topics') return `/topics:${generation}`;
+  if (route.path === '/search') return getSearchPageComponentKey(route, generation);
+  return `${getPageInstanceKey(route)}:${generation}`;
+}
+
+/** keep-alive 槽位上限：至少 15 个，并随已开页签数量增长，长浏览不会把仍在使用的列表挤出缓存。 */
+export function getKeepAliveMax(tabCount: number): number {
+  const count = Number.isFinite(tabCount) ? Math.max(0, Math.floor(tabCount)) : 0;
+  return Math.max(15, count + 5);
+}
+
+/** 从搜索页组件 key 还原实例所属的搜索范围（去掉 Ctrl+R 刷新的代数）；非搜索页 key 返回空串。 */
+export function getSearchScopeFromComponentKey(key: unknown): string {
+  const text = typeof key === 'string' ? key : '';
+  const match = /^\/search:\d+:(.*)$/.exec(text);
+  return match ? `/search:${match[1]}` : '';
 }
 
 const mySectionTitles: Record<string, string> = {
@@ -109,6 +167,14 @@ export function describePageTab(route: TabRoute): PageTabDescriptor {
   else if (name === 'Node') [title, icon] = ['讨论区', 'fas fa-comments'];
   else if (name === 'AnyListDetail') [title, icon] = [`清单 ${param}`, 'fas fa-list'];
   else if (name === 'GoodsListDetail' || name === 'GoodsRankingDetail') [title, icon] = ['好物详情', 'fas fa-bag-shopping'];
+  // 产品对比标题只体现对比项数量，不展示长 id 串；无参数时保持通用标题。
+  else if (name === 'ProductCompare') {
+    // ids 是产品配置 id、productIds 是对应的产品 id，两者一一对应，数量不能相加；
+    // 只按对比项个数展示，取有值的那个列表长度。
+    const listOf = (key: string) => decodeRouteText(route.query[key]).split(',').map((id) => id.trim()).filter(Boolean);
+    const count = listOf('ids').length || listOf('productIds').length;
+    if (count) title = `产品对比 · ${count} 项`;
+  }
   else if (isSettingsPagePath(route.path)) [title, icon] = ['设置', 'fas fa-gear'];
 
   const section = decodeRouteText(route.query.section);

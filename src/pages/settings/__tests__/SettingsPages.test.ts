@@ -69,6 +69,8 @@ import StartupSettingsPage from '../StartupSettingsPage.vue';
 import SettingsLayout from '../SettingsLayout.vue';
 import ShortcutSettingsPage from '../ShortcutSettingsPage.vue';
 import { normalizeSettings, useSettingsStore } from '../../../stores/settings';
+import { usePageTabsStore } from '../../../stores/pageTabs';
+import { confirmationState, settleConfirmation } from '../../../utils/confirm';
 import { getPlatformInfo } from '../../../utils/platform';
 
 const RouterViewStub = { template: '<div><slot :Component="null" /></div>' };
@@ -295,6 +297,35 @@ describe('设置页面交互', () => {
     expect(settings.settings.alwaysOnTop).toBe(true);
   });
 
+  it('桌面行为同步失败时启动页显示生效告警，恢复后消失', async () => {
+    const { wrapper, settings } = mountPage(StartupSettingsPage);
+    await flushPromises();
+    expect(wrapper.find('.native-sync-alert').exists()).toBe(false);
+
+    // 开关值已保存但桌面端未同步：页面必须暴露真实生效状态，而不是只显示「已开启」。
+    settings.traySyncFailed = true;
+    settings.alwaysOnTopSyncFailed = true;
+    await flushPromises();
+    const alert = wrapper.find('.native-sync-alert');
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toContain('关闭到托盘');
+    expect(alert.text()).toContain('窗口置顶');
+    expect(alert.text()).toContain('未能同步到桌面端');
+    expect(alert.text()).not.toContain('启动参数');
+
+    // 同步成功后告警消失，避免长期误报。
+    settings.traySyncFailed = false;
+    settings.alwaysOnTopSyncFailed = false;
+    settings.startupFlagsSyncFailed = true;
+    await flushPromises();
+    expect(wrapper.find('.native-sync-alert').text()).toContain('启动参数');
+    expect(wrapper.find('.native-sync-alert').text()).not.toContain('窗口置顶');
+
+    settings.startupFlagsSyncFailed = false;
+    await flushPromises();
+    expect(wrapper.find('.native-sync-alert').exists()).toBe(false);
+  });
+
   it('非 Windows 10 环境下隐藏动态磁贴设置区块', async () => {
     vi.mocked(getPlatformInfo).mockResolvedValueOnce({
       os: 'windows',
@@ -350,6 +381,9 @@ describe('设置页面交互', () => {
     await appCodeInput.setValue('2600000');
     expect(wrapper.find('.version-warning').exists()).toBe(true);
     await wrapper.get('.reset-button').trigger('click');
+    // 恢复默认已改为先确认再执行（防误触）。
+    settleConfirmation(true);
+    await flushPromises();
     expect(settings.settings.deviceFingerprint.model).toBe('23113RKC6C');
     expect(settings.settings.deviceFingerprint.appCode).toBe('2610162');
     expect(settings.settings.deviceFingerprint.sdkInt).toBe('36');
@@ -535,7 +569,7 @@ describe('设置页面交互', () => {
 
   it('快捷键页展示全部快捷键并可设置私信回车行为', async () => {
     const { wrapper, settings } = mountPage(ShortcutSettingsPage);
-    expect(wrapper.findAll('.setting-row')).toHaveLength(16);
+    expect(wrapper.findAll('.setting-row')).toHaveLength(19);
     expect(wrapper.text()).toContain('下一个标签页');
     expect(wrapper.text()).toContain('Ctrl+Tab');
     expect(wrapper.text()).toContain('Ctrl+Shift+Tab');
@@ -544,6 +578,9 @@ describe('设置页面交互', () => {
     expect(wrapper.text()).toContain('Ctrl+K');
     expect(wrapper.text()).toContain('Esc');
     expect(wrapper.text()).toContain('C');
+    // 缩放快捷键此前在清单里遗漏，现在必须展示。
+    expect(wrapper.text()).toContain('放大界面');
+    expect(wrapper.text()).toContain('缩小界面');
     await wrapper.get('select').setValue('newline');
     expect(settings.settings.messageEnterBehavior).toBe('newline');
   });
@@ -554,7 +591,8 @@ describe('设置页面交互', () => {
     const { wrapper } = mountPage(AboutSettingsPage);
     await flushPromises();
     expect(wrapper.text()).toContain(APP_VERSION);
-    expect(wrapper.get('.about-channel').text()).toBe(`${APP_VERSION.includes('-') ? '测试版' : '稳定版'} · 稳定版更新渠道`);
+    expect(wrapper.get('.about-channel').text()).toBe(APP_VERSION.includes('-') ? '测试版' : '稳定版');
+    expect(wrapper.text()).toContain('稳定版更新渠道');
     expect(wrapper.text()).toContain('1.2k');
     await wrapper.get('.about-head button').trigger('click');
     expect(eventSpy).toHaveBeenCalled();
@@ -571,11 +609,165 @@ describe('设置页面交互', () => {
     vi.unstubAllGlobals();
   });
 
-  it('关于页切换更新渠道时仍保留安装版本类型', async () => {
+  it('关于页只读展示更新渠道当前值，不再提供可编辑下拉', async () => {
     const { wrapper, settings } = mountPage(AboutSettingsPage);
+    const findRow = () => wrapper.findAll('.setting-row').find((row) => row.find('.row-label').text() === '更新渠道')!;
+    // 安装版本类型仍显示在标题旁，更新渠道单独一行只读展示。
+    expect(wrapper.get('.about-channel').text()).toBe(APP_VERSION.includes('-') ? '测试版' : '稳定版');
+    expect(findRow().get('.channel-value').text()).toBe('稳定版更新渠道');
+    expect(findRow().find('select').exists()).toBe(false);
+    expect(findRow().find('.switch-input').exists()).toBe(false);
+    expect(findRow().find('.settings-link').exists()).toBe(true);
     settings.settings.updateChannel = 'beta';
     await flushPromises();
-    expect(wrapper.get('.about-channel').text()).toBe(`${APP_VERSION.includes('-') ? '测试版' : '稳定版'} · 测试版更新渠道`);
+    expect(findRow().get('.channel-value').text()).toBe('测试版更新渠道');
+  });
+
+  it('重复的窗口响应式布局开关只保留外观设置一处入口', async () => {
+    const appearance = mountPage(AppearanceSettingsPage);
+    const startup = mountPage(StartupSettingsPage);
+    try {
+      await flushPromises();
+      const appearanceRow = appearance.wrapper
+        .findAll('.setting-row')
+        .find((row) => row.text().includes('禁止窄窗口自动切换手机模式'))!;
+      expect(appearanceRow.find('.switch-input').exists()).toBe(true);
+
+      // 启动页同一开关不再重复出现，只保留一句说明和跳转链接。
+      const startupRow = startup.wrapper
+        .findAll('.setting-row')
+        .find((row) => row.text().includes('禁止窄窗口自动切换手机模式'))!;
+      expect(startupRow.find('.switch-input').exists()).toBe(false);
+      expect(startupRow.get('.settings-link').text()).toBe('前往外观设置');
+      expect(startup.wrapper.findAll('.switch-input').some((input) => input.element.getAttribute('aria-label') === '禁止窄窗口自动切换手机模式')).toBe(false);
+    } finally {
+      appearance.wrapper.unmount();
+      startup.wrapper.unmount();
+    }
+  });
+
+  it('下载完成桌面通知受系统桌面通知总开关约束', async () => {
+    const { wrapper, settings } = mountPage(DownloadSettingsPage);
+    const findRow = () => wrapper.findAll('.setting-row').find((row) => row.find('.row-label').text() === '下载完成桌面通知')!;
+    try {
+      await flushPromises();
+      expect(findRow().text()).toContain('需先在通知设置中开启系统桌面通知');
+      expect(findRow().find('.settings-link').exists()).toBe(true);
+      expect(findRow().get('.switch-input').attributes('disabled')).toBeDefined();
+      settings.settings.desktopNotifications = true;
+      await flushPromises();
+      expect(findRow().get('.switch-input').attributes('disabled')).toBeUndefined();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('代理页有未保存改动时离开会确认', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/settings/network', component: NetworkSettingsPage },
+        { path: '/settings/about', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/settings/network');
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    // onBeforeRouteLeave 只在 <router-view> 内的组件上生效，因此挂载一个路由宿主再断言守卫。
+    const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router] } });
+    try {
+      await flushPromises();
+      expect(wrapper.find('#proxy-address').exists()).toBe(true);
+      expect(wrapper.find('.setting-unsaved').exists()).toBe(false);
+      await wrapper.get('#proxy-address').setValue('127.0.0.1:7890');
+      await flushPromises();
+      expect(wrapper.get('.setting-unsaved').text()).toContain('有未保存的修改');
+
+      const navigation = router.push('/settings/about');
+      await flushPromises();
+      expect(confirmationState.isOpen).toBe(true);
+      // 取消确认后停留在代理页，草稿保留。
+      settleConfirmation(false);
+      await navigation;
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/settings/network');
+      expect((wrapper.get('#proxy-address').element as HTMLInputElement).value).toBe('127.0.0.1:7890');
+
+      // 确认放弃后才真正离开。
+      const leaving = router.push('/settings/about');
+      await flushPromises();
+      settleConfirmation(true);
+      await leaving;
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/settings/about');
+    } finally {
+      settleConfirmation(false);
+      wrapper.unmount();
+    }
+  });
+
+  it('关闭代理页标签时同样确认未保存修改，取消后标签与草稿都保留', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/settings/network', name: 'SettingsNetwork', component: NetworkSettingsPage },
+        { path: '/settings/about', name: 'SettingsAbout', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/settings/network');
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const tabsStore = usePageTabsStore(pinia);
+    const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router] } });
+    try {
+      await flushPromises();
+      tabsStore.syncRoute(router.currentRoute.value);
+      await wrapper.get('#proxy-address').setValue('127.0.0.1:7890');
+      await flushPromises();
+
+      // 页签关闭不经过路由守卫，必须由 store 的关闭前拦截兜住。
+      const closing = tabsStore.closeTab('settings');
+      await flushPromises();
+      expect(confirmationState.isOpen).toBe(true);
+      settleConfirmation(false);
+      expect(await closing).toBeNull();
+      expect(tabsStore.tabs.some((tab) => tab.id === 'settings')).toBe(true);
+      expect((wrapper.get('#proxy-address').element as HTMLInputElement).value).toBe('127.0.0.1:7890');
+
+      const confirmedClosing = tabsStore.closeTab('settings');
+      await flushPromises();
+      settleConfirmation(true);
+      expect(await confirmedClosing).toBe('/');
+      expect(tabsStore.tabs.some((tab) => tab.id === 'settings')).toBe(false);
+    } finally {
+      settleConfirmation(false);
+      wrapper.unmount();
+    }
+  });
+
+  it('无未保存修改时关闭代理页标签不再确认', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/settings/network', name: 'SettingsNetwork', component: NetworkSettingsPage }],
+    });
+    await router.push('/settings/network');
+    await router.isReady();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const tabsStore = usePageTabsStore(pinia);
+    const wrapper = mount({ template: '<router-view />' }, { global: { plugins: [pinia, router] } });
+    try {
+      await flushPromises();
+      tabsStore.syncRoute(router.currentRoute.value);
+      const closing = tabsStore.closeTab('settings');
+      await flushPromises();
+      expect(confirmationState.isOpen).toBe(false);
+      expect(await closing).toBe('/');
+      expect(tabsStore.tabs.some((tab) => tab.id === 'settings')).toBe(false);
+    } finally {
+      settleConfirmation(false);
+      wrapper.unmount();
+    }
   });
 
   it('账号页在没有本地账户时展示空状态', async () => {

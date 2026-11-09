@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke: mocks.invoke }));
 vi.mock('@tauri-apps/plugin-log', () => ({ info: mocks.info, warn: mocks.warn, error: mocks.error, debug: mocks.debug }));
 
-import { installDiagnosticLogging, logDiagnostic, logDiagnosticLayout, logDiagnosticLimited, logWindowErrorDiagnostic, redactDiagnosticText, setDiagnosticPage, setVerboseDiagnosticLogging, summarizeDiagnosticError, classifyDiagnosticRequestError } from '../diagnosticLogger';
+import { diagnosticWebviewVersion, installDiagnosticLogging, logDiagnostic, logDiagnosticLayout, logDiagnosticLimited, logWindowErrorDiagnostic, redactDiagnosticText, setDiagnosticPage, setVerboseDiagnosticLogging, summarizeDiagnosticError, classifyDiagnosticRequestError } from '../diagnosticLogger';
 
 describe('diagnosticLogger', () => {
   beforeEach(() => { (window as any).__TAURI_INTERNALS__ = {}; });
@@ -53,12 +53,33 @@ describe('diagnosticLogger', () => {
       expect(messages).toContain('opaque=true error_present=false');
       expect(messages).toContain('source=unknown line=0 column=0');
       expect(messages).toContain('exception_context');
-      expect(messages).toContain('user_agent=');
+      expect(messages).toContain('webview_version=');
+      expect(messages).not.toContain('user_agent=');
       expect(messages).toContain('source=https://example.com/sdk.js');
       expect(messages).toContain('crossorigin=anonymous');
       expect(messages).toContain('source=inline');
       expect(messages).not.toContain('private-');
     } finally { external.remove(); inline.remove(); }
+  });
+
+  it('异常上下文与 renderer 事件口径一致：只记录内核版本，不写完整 UA', () => {
+    const userAgent = 'Mozilla/5.0 (Linux; Android 14; SM-S9180 Build/UP1A) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.71 Mobile Safari/537.36';
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
+    Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+    try {
+      logWindowErrorDiagnostic(new ErrorEvent('error', { message: 'boom', error: new Error('boom') }));
+      const messages = mocks.error.mock.calls.map(call => call[0]).join('\n');
+      expect(messages).toContain('webview_version=126.0.6478.71');
+      expect(messages).toContain('android=true');
+      expect(messages).not.toContain('SM-S9180');
+      expect(messages).not.toContain('Mozilla/5.0');
+      expect(messages).not.toContain('user_agent=');
+      expect(diagnosticWebviewVersion(userAgent)).toBe('126.0.6478.71');
+      expect(diagnosticWebviewVersion('unknown-agent')).toBe('unknown');
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, 'userAgent', descriptor);
+      else delete (navigator as any).userAgent;
+    }
   });
 
   it('真实脚本异常保留错误堆栈和独立行列号', () => {

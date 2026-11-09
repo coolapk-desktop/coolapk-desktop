@@ -10,7 +10,7 @@
           <div class="about-name-row">
             <span class="about-name">酷安桌面版</span>
             <span class="about-version">v{{ appVersion }}</span>
-            <span class="about-channel">{{ channelLabel }}</span>
+            <span class="about-channel">{{ versionChannelLabel }}</span>
           </div>
           <p class="about-desc">
             基于 Tauri 2、Vue 3 与 Rust 构建的非官方酷安桌面客户端，数据来自酷安公开接口。
@@ -20,6 +20,18 @@
         <AppButton v-if="!isWebBuild" variant="secondary" size="sm" icon="fas fa-sync-alt" @click="checkUpdate">
           检查更新
         </AppButton>
+      </div>
+
+      <!-- 更新渠道只在启动与行为设置中编辑，这里只读展示当前值并提供跳转。 -->
+      <div class="setting-row">
+        <div class="row-info">
+          <span class="row-label">更新渠道</span>
+          <span class="row-sub">仅显示当前值，更新渠道在“启动与行为 → 更新渠道”中修改</span>
+        </div>
+        <div class="row-actions">
+          <span class="channel-value">{{ updateChannelLabel }}</span>
+          <router-link class="settings-link" to="/settings/startup">前往修改</router-link>
+        </div>
       </div>
 
       <div class="setting-row">
@@ -111,7 +123,10 @@ const buildCommit = (import.meta.env.VITE_BUILD_COMMIT || '').slice(0, 8);
 const settingsStore = useSettingsStore();
 
 // 安装版本与更新渠道独立，测试版用户也可以选择只接收稳定版更新。
-const channelLabel = computed(() => `${appVersion.includes('-') ? '测试版' : '稳定版'} · ${settingsStore.settings.updateChannel === 'beta' ? '测试版更新渠道' : '稳定版更新渠道'}`);
+const versionChannelLabel = computed(() => (appVersion.includes('-') ? '测试版' : '稳定版'));
+const updateChannelLabel = computed(() =>
+  settingsStore.settings.updateChannel === 'beta' ? '测试版更新渠道' : '稳定版更新渠道'
+);
 
 const techStack = ['Tauri 2', 'Vue 3', 'TypeScript', 'Rust', 'Pinia'];
 
@@ -272,6 +287,31 @@ onMounted(() => {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
   line-height: 1.6;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.channel-value {
+  font-size: var(--font-size-sub);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.settings-link {
+  color: var(--brand-primary);
+  font-size: var(--font-size-sub);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
 }
 
 /* 技术栈与社区数据 */

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAuthStore } from '../../stores/auth';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { getCachedUserProfileSync, getUserProfileCached } from '../../utils/userProfilePreloader';
 
 describe('auth store', () => {
   beforeEach(() => {
@@ -55,6 +56,37 @@ describe('auth store', () => {
     expect(clearCookie).toHaveBeenCalledOnce();
     expect(removeAccount).not.toHaveBeenCalled();
     expect(store.accounts).toHaveLength(1);
+  });
+
+  it('登出时清空带账号维度的用户资料缓存', async () => {
+    vi.spyOn(CoolapkTauriAPI, 'getPublicUserSpace').mockResolvedValue({ data: { uid: 'cached-viewer' } } as any);
+    vi.spyOn(CoolapkTauriAPI, 'clearCookie').mockResolvedValue(undefined as any);
+    vi.spyOn(CoolapkTauriAPI, 'listAccounts').mockResolvedValue({ code: 200, data: [] } as any);
+    localStorage.setItem('coolapk_user', JSON.stringify({ uid: '1', username: 'viewer', userAvatar: '' }));
+
+    await getUserProfileCached('cached-viewer');
+    expect(getCachedUserProfileSync('cached-viewer')).toBeTruthy();
+
+    const store = useAuthStore();
+    await store.logout();
+
+    expect(getCachedUserProfileSync('cached-viewer')).toBeNull();
+  });
+
+  it('切换账号成功后清空上一个账号的用户资料缓存', async () => {
+    vi.spyOn(CoolapkTauriAPI, 'getPublicUserSpace').mockResolvedValue({ data: { uid: 'cached-viewer' } } as any);
+    vi.spyOn(CoolapkTauriAPI, 'loginAs').mockResolvedValue({ code: 200, data: { uid: '2', username: 'next', userAvatar: '' } } as any);
+    vi.spyOn(CoolapkTauriAPI, 'listAccounts').mockResolvedValue({ code: 200, data: [] } as any);
+    localStorage.setItem('coolapk_user', JSON.stringify({ uid: '1', username: 'viewer', userAvatar: '' }));
+
+    await getUserProfileCached('cached-viewer');
+    expect(getCachedUserProfileSync('cached-viewer')).toBeTruthy();
+
+    const store = useAuthStore();
+    await store.loginAs('2');
+
+    expect(getCachedUserProfileSync('cached-viewer')).toBeNull();
+    expect(store.user?.uid).toBe('2');
   });
 
   it('keeps a cookie when the server cannot confirm login', async () => {

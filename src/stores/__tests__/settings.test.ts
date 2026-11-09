@@ -3,6 +3,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import { nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { buildDeviceUserAgent, normalizeSettings, useSettingsStore } from '../../stores/settings';
+import * as toastModule from '../../utils/toast';
 import type { AppSettings } from '../../types/settings';
 
 const fileStoreState = vi.hoisted(() => {
@@ -509,12 +510,28 @@ describe('settings store', () => {
     expect(invoke).toHaveBeenCalledWith('set_close_to_tray', { enabled: false });
   });
 
-  it('关闭实验性功能时立即退回稳定更新渠道', () => {
+  it('关闭实验性功能时立即退回稳定更新渠道，并给出一次性提示', () => {
+    const toastSpy = vi.spyOn(toastModule, 'showToast').mockImplementation(() => {});
     const store = useSettingsStore();
     store.settings.experimentalFeatures = true;
     store.settings.updateChannel = 'beta';
     store.settings.experimentalFeatures = false;
+    // 用户可见：渠道被连带改回 stable 的同时必须看到提示，而不是静默变化。
     expect(store.settings.updateChannel).toBe('stable');
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy.mock.calls[0]![0]).toContain('稳定版');
+    toastSpy.mockRestore();
+  });
+
+  it('关闭实验性功能时若渠道本来就是稳定版则不提示', () => {
+    const toastSpy = vi.spyOn(toastModule, 'showToast').mockImplementation(() => {});
+    const store = useSettingsStore();
+    store.settings.experimentalFeatures = true;
+    store.settings.updateChannel = 'stable';
+    store.settings.experimentalFeatures = false;
+    expect(store.settings.updateChannel).toBe('stable');
+    expect(toastSpy).not.toHaveBeenCalled();
+    toastSpy.mockRestore();
   });
 
   it('setAccent changes accent color', () => {
