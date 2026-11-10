@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 const sourceUrl = 'https://storage.googleapis.com/play_public/supported_devices.csv';
@@ -8,7 +8,7 @@ const download = process.argv.includes('--download');
 const previous = await readFile(outputPath, 'utf8').then(JSON.parse).catch(() => null);
 let bytes;
 if (download) {
-  const response = await fetch(sourceUrl);
+  const response = await fetch(sourceUrl, { signal: AbortSignal.timeout(45_000) });
   if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
   bytes = Buffer.from(await response.arrayBuffer());
 } else {
@@ -43,5 +43,12 @@ const catalog = {
 };
 // 校验全部完成后才替换快照，失败保留现有表。
 if (download) await writeFile(sourcePath, bytes);
-await writeFile(outputPath, JSON.stringify(catalog) + '\n');
+const stagedOutput = new URL(`./catalog.json.${process.pid}.tmp`, outputPath);
+try {
+  // 构建只读取 JSON，完整写入后再替换，避免刷新中断损坏随仓库携带的快照。
+  await writeFile(stagedOutput, JSON.stringify(catalog) + '\n');
+  await rename(stagedOutput, outputPath);
+} finally {
+  await rm(stagedOutput, { force: true });
+}
 console.log(`Official device catalog: ${rows.length} rows, SHA-256 ${catalog.sha256}`);

@@ -65,6 +65,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.build_sha || (inputs.create_release && inputs.release_tag != '' && inputs.release_tag) || github.sha }}
+      - uses: actions/setup-node@v5
+        continue-on-error: true
+        with:
+          node-version: 22
+      - name: 刷新 Google Play 安卓机型表
+        continue-on-error: true
+        run: node scripts/update-device-catalog.mjs --download
       - uses: docker/setup-buildx-action@v3
       - id: metadata
         shell: bash
@@ -149,6 +156,11 @@ jobs:
         if: matrix.task == 'typecheck'
         run: npm run typecheck
 
+      - name: 刷新 Google Play 安卓机型表
+        if: matrix.task == 'build'
+        continue-on-error: true
+        run: node scripts/update-device-catalog.mjs --download
+
       - name: 前端构建
         if: matrix.task == 'build'
         run: npm run build
@@ -201,6 +213,10 @@ jobs:
         if: ${{ inputs.build_version != '' }}
         shell: bash
         run: npm run version:set -- "$BUILD_VERSION" --beta
+
+      - name: 刷新 Google Play 安卓机型表
+        continue-on-error: true
+        run: node scripts/update-device-catalog.mjs --download
 
       - name: 构建前端
         run: npm run build
@@ -324,6 +340,10 @@ jobs:
         if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         shell: bash
         run: npm run version:set -- "${RELEASE_TAG#v}"
+
+      - name: 刷新 Google Play 安卓机型表
+        continue-on-error: true
+        run: node scripts/update-device-catalog.mjs --download
 
       - name: 构建前端
         run: npm run build
@@ -492,6 +512,10 @@ jobs:
         if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         shell: bash
         run: npm run version:set -- "${RELEASE_TAG#v}"
+
+      - name: 刷新 Google Play 安卓机型表
+        continue-on-error: true
+        run: node scripts/update-device-catalog.mjs --download
 
       - name: 设置 CI 纯英文包名 (coolapk-desktop)
         shell: bash
@@ -693,6 +717,10 @@ jobs:
         if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         shell: bash
         run: npm run version:set -- "${RELEASE_TAG#v}"
+
+      - name: 刷新 Google Play 安卓机型表
+        continue-on-error: true
+        run: node scripts/update-device-catalog.mjs --download
 
       - name: 准备 Android Release 签名
         shell: bash
