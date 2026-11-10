@@ -23,6 +23,7 @@ export type FavoriteContentIndexEntry = {
   checkedAt: number;
   contentComplete: boolean;
   feed: any;
+  collectionTitles?: string[];
 };
 
 type FavoriteContentIndexData = {
@@ -92,9 +93,9 @@ function normalizeEntry(value: unknown): FavoriteContentIndexEntry | null {
   const source = value as Record<string, unknown>;
   const feedId = textValue(source.feedId);
   const message = textValue(source.message);
-  if (!feedId || !message) return null;
   const title = textValue(source.title);
   const author = textValue(source.author);
+  if (!feedId || (!message && !title && !author)) return null;
   return {
     feedId,
     title,
@@ -107,6 +108,7 @@ function normalizeEntry(value: unknown): FavoriteContentIndexEntry | null {
     checkedAt: Number(source.checkedAt) || 0,
     contentComplete: source.contentComplete !== false,
     feed: source.feed && typeof source.feed === 'object' ? source.feed : { id: feedId, title, message },
+    ...(Array.isArray(source.collectionTitles) ? { collectionTitles: source.collectionTitles.map(textValue).filter(Boolean) } : {}),
   };
 }
 
@@ -202,9 +204,9 @@ function entryFromFeed(feed: any, detail: any, checkedAt: number, contentComplet
   const merged = detail && typeof detail === 'object' ? { ...feed, ...detail } : feed;
   const feedId = feedIdOf(merged) || feedIdOf(feed);
   const message = stripFeedMoreSuffix(getFeedDetailMessage(merged) || getFeedDetailMessage(feed));
-  if (!feedId || !message) return null;
-  const title = firstText(merged, ['title', 'message_title', 'messageTitle']);
+  const title = firstText(merged, ['title', 'message_title', 'messageTitle', 'appName']);
   const author = firstText(merged, ['username', 'userName']) || firstText(merged?.userInfo, ['username', 'user_name']);
+  if (!feedId || (!message && !title && !author)) return null;
   const updatedMarker = updateMarkerOf(merged) || updateMarkerOf(feed);
   return {
     feedId,
@@ -248,7 +250,7 @@ export async function syncFavoriteContentIndex(accountIdValue: string | number):
     const { index, trusted } = await loadIndexForWrite(accountId);
     if (!trusted) return { total: 0, indexed: 0, updated: 0, revalidated: 0, removed: 0, complete: false };
     const now = Date.now();
-    const { feeds, complete } = await loadAllFavoriteFeeds();
+    const { feeds, complete, collectionTitlesByFeedId } = await loadAllFavoriteFeeds();
     const seenIds = new Set(feeds.map(feedIdOf).filter(Boolean));
     const required = feeds.filter((feed) => shouldRefreshEntry(index.entries[feedIdOf(feed)], feed));
     const revalidationCandidates = feeds
@@ -266,10 +268,18 @@ export async function syncFavoriteContentIndex(accountIdValue: string | number):
       const previous = index.entries[feedId];
       const entry = await fetchDetailEntry(feed, now);
       if (!entry) return;
+      if (previous?.collectionTitles) entry.collectionTitles = previous.collectionTitles;
       index.entries[feedId] = entry;
       if (!previous) indexed += 1;
       else if (previous.contentHash !== entry.contentHash || previous.updatedMarker !== entry.updatedMarker) updated += 1;
     });
+    // 不完整的分页只能补充归属，完整同步才可移除旧收藏单名称。
+    for (const feedId of seenIds) {
+      const entry = index.entries[feedId];
+      if (!entry || !collectionTitlesByFeedId) continue;
+      const titles = collectionTitlesByFeedId.get(feedId) ?? [];
+      entry.collectionTitles = [...new Set([...(complete ? [] : entry.collectionTitles ?? []), ...titles])];
+    }
     let removed = 0;
     if (complete) {
       for (const feedId of Object.keys(index.entries)) {
@@ -316,6 +326,8 @@ export async function queueFavoriteContentIndexEntry(accountIdValue: string | nu
     if (!trusted) return;
     const entry = await fetchDetailEntry(feed, Date.now());
     if (!entry) return;
+    const previous = index.entries[feedId];
+    if (previous?.collectionTitles) entry.collectionTitles = previous.collectionTitles;
     index.entries[feedId] = entry;
     await saveIndex(accountId, index);
   });

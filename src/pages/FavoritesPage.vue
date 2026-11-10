@@ -35,6 +35,11 @@
           <span>新建收藏单</span>
         </button>
 
+        <button class="favorite-search-trigger" type="button" @click="favoriteSearchOpen = true">
+          <i class="fas fa-search" aria-hidden="true"></i>
+          <span>搜索全部收藏</span>
+        </button>
+
         <button class="favorite-export-trigger" type="button" @click="openFavoriteExport">
           <i class="fas fa-file-export"></i>
           <span>导出收藏</span>
@@ -629,6 +634,7 @@
         </div>
       </form>
     </AppDialog>
+    <FavoriteSearchDialog v-if="favoriteSearchOpen && favoriteAccountId()" :account-id="favoriteAccountId()" @close="favoriteSearchOpen = false" />
     <FavoriteExportDialog
       :is-open="favoriteExportOpen"
       mode="collections"
@@ -650,6 +656,7 @@ import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
 import FavoriteExportDialog from '../components/favorites/FavoriteExportDialog.vue';
+import FavoriteSearchDialog from '../components/favorites/FavoriteSearchDialog.vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
@@ -679,6 +686,8 @@ const props = defineProps<{ collectionQuery?: typeof route.query }>();
 const collectionQuery = computed(() => props.collectionQuery ?? (route.path === '/favorites' ? route.query : {}));
 
 const favoriteExportOpen = ref(false);
+const favoriteSearchOpen = ref(false);
+watch(favoriteAccountId, () => { favoriteSearchOpen.value = false; });
 // 本次导出来源列表：列表页「导出收藏」传全部，详情页「导出此收藏单」只传当前收藏单，二者互不污染。
 const favoriteExportSourceCollections = ref<any[]>([]);
 
@@ -1776,6 +1785,7 @@ async function refreshMobilePage() { if (activeCollectionId.value) { await fetch
   color: var(--text-primary);
 }
 
+.favorite-search-trigger,
 .favorite-export-trigger,
 .btn-create-collection {
   display: inline-flex;
@@ -1792,6 +1802,7 @@ async function refreshMobilePage() { if (activeCollectionId.value) { await fetch
   transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
+.favorite-search-trigger:hover,
 .favorite-export-trigger:hover,
 .btn-create-collection:hover {
   background: var(--brand-soft);

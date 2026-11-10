@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   showToast: vi.fn(),
   requestConfirmation: vi.fn(),
   removeFavoriteContentIndexEntry: vi.fn(),
+  searchFavoriteContentIndex: vi.fn(async (_accountId: string, _keyword: string): Promise<any[]> => []),
   syncFavoriteContentIndex: vi.fn(async () => null),
   syncFavoriteContentIndexIfNeeded: vi.fn(async () => null),
 }));
@@ -48,7 +49,7 @@ vi.mock('../../api/coolapk', () => ({
 
 vi.mock('../../utils/favoriteContentIndex', () => ({
   normalizeFavoriteSearchText: (text: string) => text,
-  searchFavoriteContentIndex: () => [],
+  searchFavoriteContentIndex: mocks.searchFavoriteContentIndex,
   removeFavoriteContentIndexEntry: mocks.removeFavoriteContentIndexEntry,
   syncFavoriteContentIndex: mocks.syncFavoriteContentIndex,
   syncFavoriteContentIndexIfNeeded: mocks.syncFavoriteContentIndexIfNeeded,
@@ -93,7 +94,7 @@ async function mountPage(query: Record<string, string> = { collectionId: '', col
         FeedCard: true,
         RatingCard: true,
         AppButton: true,
-        AppDialog: true,
+        AppDialog: { props: ['isOpen'], template: '<section v-if="isOpen"><slot /></section>' },
         AppImage: true,
         LoadingState: true,
         EmptyState: true,
@@ -126,6 +127,24 @@ describe('FavoritesPage 收藏单详情多选批量移除', () => {
     mocks.getCollectionList.mockResolvedValue({ data: [collection] });
     mocks.getCollectionDetail.mockResolvedValue({ data: { id: 'A', title: '测试收藏单', uid: '10001', item_num: 20 } });
     mocks.removeCollectionItem.mockResolvedValue({ code: 200 });
+  });
+
+  it('收藏首页可跨收藏单搜索，展示归属并打开原动态', async () => {
+    mocks.searchFavoriteContentIndex.mockResolvedValueOnce([{
+      feedId: '42', title: '故障排查', message: '<p>无线网络</p>', author: '作者',
+      collectionTitles: ['教程', '硬件'], feed: { id: '42', entityType: 'feed' },
+    }]);
+    const wrapper = await mountPage();
+    try {
+      await wrapper.get('.favorite-search-trigger').trigger('click');
+      await wrapper.get('input[type="search"]').setValue('无线');
+      await vi.waitFor(() => expect(wrapper.get('.favorite-search-source').text()).toBe('作者 · 教程 · 硬件'));
+      expect(mocks.searchFavoriteContentIndex).toHaveBeenCalledWith('10001', '无线', Number.MAX_SAFE_INTEGER);
+      await wrapper.get('.favorite-search-results button').trigger('click');
+      expect(mocks.router.push).toHaveBeenCalledWith('/feed/42');
+    } finally {
+      wrapper.unmount();
+    }
   });
 
   it('勾选 2 条移除后：头部条目数 20→18、列表剩 1 条、正文索引清理各调用一次', async () => {

@@ -4,6 +4,7 @@ import { CoolapkTauriAPI } from '../api/coolapk';
 export type FavoriteFeedListResult = {
   feeds: any[];
   complete: boolean;
+  collectionTitlesByFeedId: Map<string, Set<string>>;
 };
 
 export type FavoriteCollectionListResult = {
@@ -65,6 +66,7 @@ export async function loadAllFavoriteCollections(signal?: AbortSignal): Promise<
 export async function loadAllFavoriteFeeds(signal?: AbortSignal): Promise<FavoriteFeedListResult> {
   const feeds: any[] = [];
   const seenIds = new Set<string>();
+  const collectionTitlesByFeedId = new Map<string, Set<string>>();
   signal?.throwIfAborted();
   const collectionResult = await loadAllFavoriteCollections(signal);
   let complete = collectionResult.complete;
@@ -72,6 +74,7 @@ export async function loadAllFavoriteFeeds(signal?: AbortSignal): Promise<Favori
   for (const collection of collectionResult.collections) {
     signal?.throwIfAborted();
     const collectionId = favoriteCollectionId(collection);
+    const collectionTitle = String(collection?.title || collection?.name || '').trim();
     if (!collectionId) {
       complete = false;
       continue;
@@ -89,7 +92,13 @@ export async function loadAllFavoriteFeeds(signal?: AbortSignal): Promise<Favori
 
       for (const feed of pageFeeds) {
         const feedId = favoriteFeedId(feed);
-        if (!feedId || seenIds.has(feedId)) continue;
+        if (!feedId) continue;
+        if (collectionTitle) {
+          const titles = collectionTitlesByFeedId.get(feedId) ?? new Set<string>();
+          titles.add(collectionTitle);
+          collectionTitlesByFeedId.set(feedId, titles);
+        }
+        if (seenIds.has(feedId)) continue;
         seenIds.add(feedId);
         feeds.push(feed);
       }
@@ -110,5 +119,5 @@ export async function loadAllFavoriteFeeds(signal?: AbortSignal): Promise<Favori
     .map((feed, index) => ({ feed, index, timestamp: Number(feed?.dateline ?? feed?.createTime ?? feed?.create_time ?? 0) || 0 }))
     .sort((a, b) => b.timestamp - a.timestamp || a.index - b.index)
     .map(({ feed }) => feed);
-  return { feeds: sortedFeeds, complete };
+  return { feeds: sortedFeeds, complete, collectionTitlesByFeedId };
 }

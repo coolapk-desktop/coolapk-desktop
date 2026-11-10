@@ -22,7 +22,7 @@ describe('favorite feeds', () => {
 
   it('遍历所有收藏单并按发布时间排序，固定首项游标并更新末项游标', async () => {
     mocks.getCollectionList.mockImplementation(async (_uid: string, page: number) => {
-      if (page === 1) return { data: [{ id: 'default', entityId: 'collection-100' }, { id: 'created', entityId: 'collection-90' }] };
+      if (page === 1) return { data: [{ id: 'default', entityId: 'collection-100', title: '默认收藏' }, { id: 'created', entityId: 'collection-90', title: '教程' }] };
       return { data: [] };
     });
     mocks.getCollectionItemList.mockImplementation(async (collectionId: string, page: number) => {
@@ -34,7 +34,9 @@ describe('favorite feeds', () => {
 
     const result = await loadAllFavoriteFeeds();
 
-    expect(result).toEqual({ feeds: [{ id: 'feed-470', entityId: '470', dateline: 60 }, { id: 'feed-500', entityId: '500', dateline: 50 }, { id: 'feed-490', entityId: '490', dateline: 40 }, { id: 'feed-480', entityId: '480', dateline: 30 }], complete: true });
+    expect(result.feeds).toEqual([{ id: 'feed-470', entityId: '470', dateline: 60 }, { id: 'feed-500', entityId: '500', dateline: 50 }, { id: 'feed-490', entityId: '490', dateline: 40 }, { id: 'feed-480', entityId: '480', dateline: 30 }]);
+    expect(result.complete).toBe(true);
+    expect(result.collectionTitlesByFeedId.get('feed-500')).toEqual(new Set(['默认收藏', '教程']));
     expect(mocks.getCollectionList.mock.calls).toEqual([
       ['', 1, '', ''],
       ['', 2, 'collection-100', 'collection-90'],
