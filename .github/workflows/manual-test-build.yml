@@ -1,0 +1,30 @@
+name: 手动构建测试包
+run-name: 测试包 · ${{ inputs.platform }} · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 选择要打包的平台
+        type: choice
+        required: true
+        options:
+          - windows-x64
+          - windows-arm64
+          - macos-arm64
+          - macos-x64
+          - linux-x64
+          - android-arm64
+          - ios-arm64
+
+jobs:
+  build:
+    name: 构建所选平台
+    # 复用的 CI 声明了发布权限。测试目标会跳过全部发布步骤。
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      test_platform: ${{ inputs.platform }}
+    secrets: inherit

@@ -10,10 +10,14 @@ on:
     inputs:
       build_version:
         type: string
-        required: true
+        required: false
       build_sha:
         type: string
-        required: true
+        required: false
+      test_platform:
+        description: '仅构建指定平台的测试包'
+        type: string
+        required: false
       create_release:
         type: boolean
         required: false
@@ -49,6 +53,7 @@ env:
 jobs:
   docker-image:
     name: 构建酷安 Web 镜像
+    if: ${{ !inputs.test_platform }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -96,6 +101,7 @@ jobs:
   # ─── 前端测试矩阵（多代理并行） ───
   frontend-tests:
     name: ${{ matrix.name }}
+    if: ${{ !inputs.test_platform }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
@@ -150,6 +156,7 @@ jobs:
   # ─── Rust 测试 ───
   rust-tests:
     name: Rust 测试 (${{ matrix.name }})
+    if: ${{ !inputs.test_platform }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -214,39 +221,41 @@ jobs:
         run: sh scripts/test-desktop-update.sh
 
   # ─── 构建（仅 tag / 手动触发） ───
+  desktop-matrix:
+    name: 选择桌面打包目标
+    if: ${{ (inputs.test_platform && inputs.test_platform != 'ios-arm64' && inputs.test_platform != 'android-arm64') || (!inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || inputs.build_version != '')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.select.outputs.include }}
+    steps:
+      - name: 筛选桌面平台
+        id: select
+        shell: bash
+        env:
+          TEST_PLATFORM: ${{ inputs.test_platform }}
+          DESKTOP_TARGETS: |
+            [
+            {"target": "windows-x64", "name": "Windows x64", "platform": "windows-latest", "args": "--bundles nsis", "rustTargets": "", "portableArch": "x64", "portableTarget": ""},
+            {"target": "windows-arm64", "name": "Windows ARM64", "platform": "windows-latest", "args": "--target aarch64-pc-windows-msvc --bundles nsis", "rustTargets": "aarch64-pc-windows-msvc", "portableArch": "arm64", "portableTarget": "aarch64-pc-windows-msvc"},
+            {"target": "linux-x64", "name": "Linux x64", "platform": "ubuntu-22.04", "args": "--bundles deb,rpm", "rustTargets": ""},
+            {"target": "macos-arm64", "name": "macOS Apple Silicon", "platform": "macos-latest", "args": "--target aarch64-apple-darwin --bundles app,dmg", "rustTargets": "aarch64-apple-darwin"},
+            {"target": "macos-x64", "name": "macOS Intel", "platform": "macos-latest", "args": "--target x86_64-apple-darwin --bundles app,dmg", "rustTargets": "x86_64-apple-darwin"}
+            ]
+        run: |
+          # 普通发布保留全部桌面目标，手动测试只保留选中的目标。
+          selected="$(jq -ce --arg target "$TEST_PLATFORM" '[.[] | select($target == "" or .target == $target)] | select(length > 0)' <<< "$DESKTOP_TARGETS")"
+          echo "include=$selected" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || inputs.build_version != '' }}
+    needs: desktop-matrix
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Windows x64
-            platform: windows-latest
-            args: --bundles nsis
-            rustTargets: ''
-            portableArch: x64
-            portableTarget: ''
-          - name: Windows ARM64
-            platform: windows-latest
-            args: --target aarch64-pc-windows-msvc --bundles nsis
-            rustTargets: aarch64-pc-windows-msvc
-            portableArch: arm64
-            portableTarget: aarch64-pc-windows-msvc
-          - name: Linux x64
-            platform: ubuntu-22.04
-            args: --bundles deb,rpm
-            rustTargets: ''
-          - name: macOS Apple Silicon
-            platform: macos-latest
-            args: --target aarch64-apple-darwin --bundles app,dmg
-            rustTargets: aarch64-apple-darwin
-          - name: macOS Intel
-            platform: macos-latest
-            args: --target x86_64-apple-darwin --bundles app,dmg
-            rustTargets: x86_64-apple-darwin
+        include: ${{ fromJSON(needs.desktop-matrix.outputs.include) }}
 
     steps:
       - uses: actions/checkout@v5
@@ -255,10 +264,16 @@ jobs:
 
       - name: 记录实际构建源码提交
         shell: bash
-        run: echo "VITE_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        env:
+          TEST_PLATFORM: ${{ inputs.test_platform }}
+        run: |
+          echo "VITE_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          if [[ -n "$TEST_PLATFORM" ]]; then
+            echo "TEST_ARTIFACT_SUFFIX=-$(git rev-parse --short=8 HEAD)" >> "$GITHUB_ENV"
+          fi
 
       - name: 验证手动 Release 标签
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release }}
+        if: ${{ !inputs.test_platform && github.event_name == 'workflow_dispatch' && inputs.create_release }}
         shell: bash
         env:
           TARGET_RELEASE_TAG: ${{ inputs.release_tag }}
@@ -306,7 +321,7 @@ jobs:
         run: npm run version:set -- "$BUILD_VERSION" --beta
 
       - name: 同步标签版本号
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         shell: bash
         run: npm run version:set -- "${RELEASE_TAG#v}"
 
@@ -326,17 +341,17 @@ jobs:
           '
 
       - name: 构建与上传产物（非 Tag 推送）
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && !(runner.os == 'Linux' && inputs.build_version != '') && !(github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        if: ${{ !(runner.os == 'Linux' && inputs.build_version != '') && (inputs.test_platform || (!startsWith(github.ref, 'refs/tags/v') && !(github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != ''))) }}
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: ${{ matrix.args }}
           uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: '[platform]-[arch]-[bundle]'
+          workflowArtifactNamePattern: '[platform]-[arch]-[bundle]${{ env.TEST_ARTIFACT_SUFFIX }}'
 
       - name: 发布 Release 产物
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -387,15 +402,15 @@ jobs:
           bash scripts/fix-appimage-permissions.sh "$appimage"
 
       - name: 上传 Linux AppImage 工作流产物
-        if: ${{ runner.os == 'Linux' && !startsWith(github.ref, 'refs/tags/v') && !(github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        if: ${{ runner.os == 'Linux' && (inputs.test_platform || (!startsWith(github.ref, 'refs/tags/v') && !(github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != ''))) }}
         uses: actions/upload-artifact@v6
         with:
-          name: linux-x64-appimage
+          name: linux-x64-appimage${{ env.TEST_ARTIFACT_SUFFIX }}
           path: src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
       - name: 发布 Linux AppImage
-        if: ${{ runner.os == 'Linux' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
+        if: ${{ runner.os == 'Linux' && (!inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != ''))) }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/appimage/*.AppImage --repo "$GITHUB_REPOSITORY"
@@ -412,7 +427,7 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
         uses: actions/upload-artifact@v6
         with:
-          name: windows-${{ matrix.portableArch }}-portable
+          name: windows-${{ matrix.portableArch }}-portable${{ env.TEST_ARTIFACT_SUFFIX }}
           path: src-tauri/target/portable/*.exe
           if-no-files-found: error
 
@@ -431,7 +446,7 @@ jobs:
 
   ios-build:
     name: iOS ARM64 未签名 IPA
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || inputs.build_version != '' }}
+    if: ${{ inputs.test_platform == 'ios-arm64' || (!inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || inputs.build_version != '')) }}
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -441,7 +456,13 @@ jobs:
 
       - name: 记录实际构建源码提交
         shell: bash
-        run: echo "VITE_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        env:
+          TEST_PLATFORM: ${{ inputs.test_platform }}
+        run: |
+          echo "VITE_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          if [[ -n "$TEST_PLATFORM" ]]; then
+            echo "TEST_ARTIFACT_SUFFIX=-$(git rev-parse --short=8 HEAD)" >> "$GITHUB_ENV"
+          fi
 
       - name: 安装 Node.js
         uses: actions/setup-node@v5
@@ -468,7 +489,7 @@ jobs:
         run: npm run version:set -- "$BUILD_VERSION" --beta
 
       - name: 同步标签版本号
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         shell: bash
         run: npm run version:set -- "${RELEASE_TAG#v}"
 
@@ -558,13 +579,14 @@ jobs:
           rm -rf "$work"
 
           mkdir -p ios-release
-          ref_name="${RELEASE_TAG//\//-}"
+          ref_name="${TEST_ARTIFACT_SUFFIX#-}"
+          ref_name="${ref_name:-${RELEASE_TAG//\//-}}"
           cp "$ipa" "ios-release/coolapk-${ref_name}-ios-arm64-unsigned.ipa"
 
       - name: 上传 iOS 未签名 IPA
         uses: actions/upload-artifact@v6
         with:
-          name: ios-arm64-unsigned
+          name: ios-arm64-unsigned${{ env.TEST_ARTIFACT_SUFFIX }}
           path: ios-release/*.ipa
           if-no-files-found: error
 
@@ -576,7 +598,7 @@ jobs:
   # 上游 Secrets 齐全时输出 true，行为与原来完全一致；补齐 Secrets 后无需再改代码。
   android-signing-check:
     name: 检查 Android 签名 Secrets
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || inputs.build_version != '' }}
+    if: ${{ inputs.test_platform == 'android-arm64' || (!inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || inputs.build_version != '')) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     outputs:
@@ -586,6 +608,7 @@ jobs:
         id: check
         shell: bash
         env:
+          TEST_PLATFORM: ${{ inputs.test_platform }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -597,7 +620,7 @@ jobs:
           else
             echo "has_signing=false" >> "$GITHUB_OUTPUT"
             echo "缺少 Android Release 签名 Secrets，本次跳过 Android Release 构建。" >&2
-            if [[ -n "$BUILD_VERSION" ]]; then exit 1; fi
+            if [[ -n "$BUILD_VERSION" || -n "$TEST_PLATFORM" ]]; then exit 1; fi
           fi
 
   android-build:
@@ -613,7 +636,13 @@ jobs:
 
       - name: 记录实际构建源码提交
         shell: bash
-        run: echo "VITE_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        env:
+          TEST_PLATFORM: ${{ inputs.test_platform }}
+        run: |
+          echo "VITE_BUILD_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          if [[ -n "$TEST_PLATFORM" ]]; then
+            echo "TEST_ARTIFACT_SUFFIX=-$(git rev-parse --short=8 HEAD)" >> "$GITHUB_ENV"
+          fi
 
       - name: 安装 Node.js
         uses: actions/setup-node@v5
@@ -661,7 +690,7 @@ jobs:
         run: npm run version:set -- "$BUILD_VERSION" --beta
 
       - name: 同步标签版本号
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
         shell: bash
         run: npm run version:set -- "${RELEASE_TAG#v}"
 
@@ -704,20 +733,22 @@ jobs:
           expected_code="$(node -p 'require("./src-tauri/tauri.conf.json").bundle.android.versionCode')"
           badging="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk")"
           grep '^package:' <<< "$badging" | grep -F "versionName='$expected_version'" | grep -F "versionCode='$expected_code'"
-          cp "$apk" "android-release/coolapk-${RELEASE_TAG}-android-arm64.apk"
-          cp "$aab" "android-release/coolapk-${RELEASE_TAG}-android-arm64.aab"
+          ref_name="${TEST_ARTIFACT_SUFFIX#-}"
+          ref_name="${ref_name:-$RELEASE_TAG}"
+          cp "$apk" "android-release/coolapk-${ref_name}-android-arm64.apk"
+          cp "$aab" "android-release/coolapk-${ref_name}-android-arm64.aab"
 
       - name: 上传 Android Release 产物
         uses: actions/upload-artifact@v6
         with:
-          name: android-arm64-release
+          name: android-arm64-release${{ env.TEST_ARTIFACT_SUFFIX }}
           path: android-release/*
           if-no-files-found: error
 
   publish-android:
     name: 发布 Android APK 和 AAB
     needs: [build, android-build]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+    if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
     runs-on: ubuntu-22.04
     steps:
       - name: 下载 Android 产物
@@ -734,7 +765,7 @@ jobs:
   publish-ios:
     name: 发布 iOS 未签名 IPA
     needs: [build, ios-build]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+    if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
     runs-on: ubuntu-22.04
     steps:
       - name: 下载 iOS 产物
@@ -751,7 +782,7 @@ jobs:
   publish-windows-portable:
     name: 发布 Windows 单文件便携版
     needs: build
-    if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+    if: ${{ !inputs.test_platform && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '')) }}
     runs-on: ubuntu-22.04
     steps:
       - name: 下载 Windows 单文件产物
