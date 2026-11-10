@@ -570,7 +570,7 @@ import { useUserRelationsStore } from '../stores/userRelations';
 import { showToast } from '../utils/toast';
 import { getErrorMessage } from '../utils/errors';
 import { requestConfirmation } from '../utils/confirm';
-import { asUserSpaceProfile, entityKey, normalizeEntityPage } from '../types/userSpace';
+import { asUserSpaceProfile, mergeEntityPageItems, normalizeEntityPage } from '../types/userSpace';
 import { getCachedUserProfileSync } from '../utils/userProfilePreloader';
 import { usePageTabTitle } from '../composables/usePageTabTitle';
 
@@ -1089,12 +1089,11 @@ async function fetchTabFeeds(isRefresh = true, tabKey = activeTab.value) {
     const ratingTarget = activeRatingFilter.value === 'app' ? 'apk' : activeRatingFilter.value === 'digital' ? 'product' : 'all';
     const response: any = await CoolapkTauriAPI.getUserTabData(targetUid, apiTab, state.page, state.firstItem, state.lastItem, ratingTarget);
     const normalized = normalizeEntityPage(response, state.page);
-    const existing = new Set(state.items.map((item, index) => entityKey(item, index)));
-    const incoming = normalized.items.filter((item, index) => !existing.has(entityKey(item, index)));
-    state.items = isRefresh ? normalized.items : [...state.items, ...incoming];
+    const merged = mergeEntityPageItems(state.items, normalized, { refresh: isRefresh });
+    state.items = merged.items;
     state.firstItem = normalized.firstItem;
     state.lastItem = normalized.lastItem;
-    state.hasMore = normalized.hasMore;
+    state.hasMore = merged.hasMore;
     state.page = Math.max(state.page + 1, normalized.page + 1);
     state.loaded = true;
   } catch (err: any) {

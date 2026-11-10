@@ -212,7 +212,12 @@ function handleSectionHeaderClick(row: HomeRow) {
 
 function entityIdentity(entity: UserSpaceEntity, index: number): string {
   const source = entity as any;
-  if (source.uid ?? source.userId) return `user:${source.uid ?? source.userId}`;
+  // 动态实体同样带作者 uid；若优先按 uid 归一，同一作者的所有动态会被判成同一条，
+  // 下拉加载的新动态会被整体丢弃（列表高度不变 → 持续补页 → 页面在底部长跳）。
+  const ownKey = source.entityId ?? source.id ?? source.url;
+  if (ownKey !== undefined && ownKey !== null && ownKey !== '') return String(ownKey);
+  const uid = source.uid ?? source.userId;
+  if (uid !== undefined && uid !== null && uid !== '') return `user:${uid}`;
   return entityKey(entity, index);
 }
 
