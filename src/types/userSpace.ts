@@ -161,6 +161,18 @@ export function normalizeEntityPage(value: unknown, page = 1): EntityPage {
   };
 }
 
+/** 合并分页结果：加载更多时剔除已存在条目，并且一页全是重复条目不继续补页。 */
+export function mergeEntityPageItems(existing: UserSpaceEntity[], page: EntityPage, options: { refresh?: boolean } = {}): { items: UserSpaceEntity[]; hasMore: boolean } {
+  if (options.refresh) return { items: page.items, hasMore: page.hasMore };
+  const keys = new Set(existing.map((item, index) => entityKey(item, index)));
+  const incoming = page.items.filter((item, index) => !keys.has(entityKey(item, index)));
+  return {
+    items: [...existing, ...incoming],
+    // 服务端仍报有下一页但本页无新增时停止补页，否则停在底部会反复请求同一分页。
+    hasMore: page.hasMore && incoming.length > 0,
+  };
+}
+
 export function entityKey(entity: UserSpaceEntity, index: number): string {
   return String(entity.entityId ?? entity.id ?? entity.url ?? `${entity.entityType ?? 'entity'}-${index}`);
 }

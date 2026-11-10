@@ -4,6 +4,7 @@ import {
   entityKey,
   extractUserSpaceItems,
   isTruthy,
+  mergeEntityPageItems,
   normalizeEntityPage,
   relationUserBio,
 } from '../userSpace';
@@ -54,5 +55,33 @@ describe('user space data normalization', () => {
     expect(relationUserBio(fan, 'fans')).toBe('');
     expect(relationUserBio({ ...fan, userInfo: { uid: '2', bio: '粉丝本人简介' } }, 'fans')).toBe('粉丝本人简介');
     expect(relationUserBio({ bio: '', fUserInfo: { bio: '关注用户简介' } }, 'follow')).toBe('关注用户简介');
+  });
+});
+
+describe('分页合并', () => {
+  const feed = (id: number) => ({ id, entityId: id, entityType: 'feed', uid: 1603081 });
+  const page = (items: any[], hasMore = true) => ({ items, page: 2, hasMore, firstItem: '', lastItem: '' });
+
+  it('加载更多时追加新条目', () => {
+    const merged = mergeEntityPageItems([feed(1)], page([feed(2), feed(3)]));
+    expect(merged.items.map((item: any) => item.id)).toEqual([1, 2, 3]);
+    expect(merged.hasMore).toBe(true);
+  });
+
+  it('刷新时整页替换并沿用服务端 hasMore', () => {
+    const merged = mergeEntityPageItems([feed(1)], page([feed(9)], false), { refresh: true });
+    expect(merged.items.map((item: any) => item.id)).toEqual([9]);
+    expect(merged.hasMore).toBe(false);
+  });
+
+  it('剔除已存在条目', () => {
+    const merged = mergeEntityPageItems([feed(1), feed(2)], page([feed(2), feed(3)]));
+    expect(merged.items.map((item: any) => item.id)).toEqual([1, 2, 3]);
+  });
+
+  it('整页都是重复条目不继续补页', () => {
+    const merged = mergeEntityPageItems([feed(1), feed(2)], page([feed(1), feed(2)]));
+    expect(merged.items).toHaveLength(2);
+    expect(merged.hasMore).toBe(false);
   });
 });
