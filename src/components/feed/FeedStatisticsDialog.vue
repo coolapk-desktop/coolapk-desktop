@@ -1,5 +1,5 @@
 <template>
-  <AppDialog :is-open="true" title="动态统计" :width="1120" @close="$emit('close')">
+  <AppDialog :is-open="!commentFilter" title="动态统计" :width="1120" keep-content @close="$emit('close')">
     <div class="stats-overview">
       <p class="stats-author">
         <strong>{{ feed.username || feed.userInfo?.username || '发布者' }}</strong>
@@ -35,6 +35,7 @@
         :rows="levels.rows"
         :unknown="levels.unknown"
         :empty-text="replies.length ? '暂未识别到评论者等级' : '暂无评论'"
+        @show-replies="label => commentFilter = { kind: 'level', label }"
       />
       <section class="device-ranking" aria-label="机型排行">
         <header>
@@ -43,6 +44,7 @@
         </header>
         <ol v-if="devices.rows.length" class="device-ranks">
           <li v-for="(row, index) in visibleDevices" :key="row.label">
+            <button type="button" class="device-rank-link" :aria-label="`查看 ${row.label} 的评论`" @click="commentFilter = { kind: 'device', label: row.label }">
             <span class="device-rank-number" aria-hidden="true">#{{ index + 1 }}</span>
             <div class="device-rank-model">
               <span>{{ row.label }}</span>
@@ -51,6 +53,7 @@
               </div>
             </div>
             <strong>{{ formatNumber(row.value) }}<small>{{ unit }}</small></strong>
+            </button>
           </li>
         </ol>
         <p v-else class="device-rank-empty">{{ deviceEmptyText }}</p>
@@ -60,22 +63,37 @@
       </section>
     </div>
   </AppDialog>
+  <FeedCommentSearchDialog v-if="commentFilter" :feed="feed" :replies="filteredReplies" :filter-label="commentFilter.label" @close="commentFilter = undefined" @select="openReply" />
 </template>
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref, shallowRef } from 'vue';
+import { useRouter } from 'vue-router';
 import type { FeedItem } from '../../types/feed';
 import { useDeviceModelNames } from '../../utils/deviceModelNames';
 import { groupStatistics, loadStatisticsDevices, loadStatisticsReplies, statisticsDevice, statisticsLevel, statisticsUid } from '../../utils/feedStatistics';
 import AppDialog from '../common/AppDialog.vue';
 import FeedStatisticsChart from './FeedStatisticsChart.vue';
+import FeedCommentSearchDialog from './FeedCommentSearchDialog.vue';
 
 const props = defineProps<{ feed: FeedItem }>();
-defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: [] }>();
+const router = useRouter();
 
 const formatNumber = new Intl.NumberFormat('zh-CN').format;
 const displayDeviceName = useDeviceModelNames();
 const replies = shallowRef<any[]>([]);
+const commentFilter = ref<{ kind: 'level' | 'device'; label: string }>();
+const filteredReplies = computed(() => {
+  const filter = commentFilter.value;
+  if (!filter) return [];
+  return replies.value.filter(item => (filter.kind === 'level' ? statisticsLevel(item) : displayDeviceName(statisticsDevice(item))) === filter.label);
+});
+
+async function openReply(replyId: string) {
+  await router.push({ name: 'FeedDetail', params: { feedId: String(props.feed.id) }, query: { replyId } });
+  emit('close');
+}
 const loading = ref(false);
 const deviceProgress = ref<{ done: number; total: number }>();
 const error = ref('');
@@ -174,7 +192,8 @@ button { min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); b
 .device-ranking header span, .device-rank-number, .device-rank-empty, .device-ranks small { color: var(--text-secondary); }
 .device-ranking header span { flex-shrink: 0; font-size: 13px; }
 .device-ranks { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.device-ranks li { display: grid; grid-template-columns: 2.75em minmax(0, 1fr) 5.5em; align-items: baseline; gap: 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.device-ranks .device-rank-link { display: grid; grid-template-columns: 2.75em minmax(0, 1fr) 5.5em; align-items: baseline; gap: 8px; width: 100%; min-height: 40px; padding: 4px 6px; border: 0; text-align: start; font-size: 13px; font-variant-numeric: tabular-nums; }
+.device-rank-link:hover { background: var(--surface-hover); }
 .device-ranks strong { text-align: right; white-space: nowrap; }
 .device-ranks small { margin-inline-start: 3px; font-size: inherit; font-weight: normal; }
 .device-rank-model { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }

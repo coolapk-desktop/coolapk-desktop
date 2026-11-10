@@ -1,5 +1,5 @@
 <template>
-  <AppDialog :is-open="true" title="搜索评论" :width="640" @close="$emit('close')">
+  <AppDialog :is-open="true" :title="filterLabel ? `${filterLabel}的评论` : '搜索评论'" :width="640" @close="$emit('close')">
     <div class="reply-search-bar">
       <i class="fas fa-search" aria-hidden="true"></i>
       <input ref="input" v-model.trim="query" type="search" placeholder="搜索评论正文或昵称" aria-label="搜索评论正文或昵称" />
@@ -17,7 +17,7 @@
         </button>
       </li>
     </ul>
-    <p v-else-if="query" class="reply-search-empty">没有匹配的评论</p>
+    <p v-else-if="query || filterLabel" class="reply-search-empty">没有匹配的评论</p>
     <button v-if="visibleResults.length < results.length" type="button" class="reply-search-more" @click="limit += 40">显示更多</button>
   </AppDialog>
 </template>
@@ -30,7 +30,7 @@ import { loadStatisticsReplies } from '../../utils/feedStatistics';
 import { htmlToPlainText } from '../../utils/htmlText';
 import AppDialog from '../common/AppDialog.vue';
 
-const props = defineProps<{ feed: FeedItem; replies: any[]; canLoadAll?: boolean }>();
+const props = defineProps<{ feed: FeedItem; replies: any[]; canLoadAll?: boolean; filterLabel?: string }>();
 defineEmits<{ close: []; select: [replyId: string] }>();
 
 const input = ref<HTMLInputElement>();
@@ -53,7 +53,7 @@ const rows = computed(() => mergeReplies(props.replies, loaded.value).flatMap(re
   return [{ id, name: String(reply.username || reply.fromUserName || reply.userInfo?.username || ''), text: plainText(reply.message) }];
 }));
 const terms = computed(() => query.value.toLowerCase().split(/\s+/).filter(Boolean));
-const results = computed(() => terms.value.length ? rows.value.filter(row => terms.value.every(term => `${row.name} ${row.text}`.toLowerCase().includes(term))) : []);
+const results = computed(() => terms.value.length || props.filterLabel ? rows.value.filter(row => terms.value.every(term => `${row.name} ${row.text}`.toLowerCase().includes(term))) : []);
 const visibleResults = computed(() => results.value.slice(0, limit.value));
 const status = computed(() => loading.value
   ? `正在补齐评论 · 已读取 ${rows.value.length} 条`

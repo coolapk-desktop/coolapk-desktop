@@ -45,6 +45,7 @@
           <span v-for="tick in xTicks" :key="tick.x" class="chart-x-label" :style="{ left: `${tick.x}%` }" aria-hidden="true">{{ tick.label }}</span>
         </div>
       </div>
+      <button type="button" class="chart-replies" :disabled="activePoint.value === 0" @click="$emit('show-replies', activePoint.label)">查看 {{ activePoint.label }} 的评论</button>
     </template>
     <p v-else class="chart-empty">{{ emptyText }}</p>
   </figure>
@@ -60,6 +61,7 @@ const props = defineProps<{
   unknown: number;
   emptyText: string;
 }>();
+defineEmits<{ 'show-replies': [label: string] }>();
 
 const formatNumber = new Intl.NumberFormat('zh-CN').format;
 const gridLines = [0, 25, 50, 75, 100];
@@ -139,4 +141,7 @@ svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .chart-marker { position: absolute; width: 10px; height: 10px; border: 2px solid var(--surface); border-radius: 50%; background: var(--chart-color); transform: translate(-50%, -50%); pointer-events: none; }
 .chart-x-label { position: absolute; top: calc(100% + 9px); transform: translateX(-50%); white-space: nowrap; pointer-events: none; }
 .chart-empty { margin: 0; padding: 22px 14px; border-radius: 8px; background: var(--background-secondary); }
+.chart-replies { min-height: 36px; padding-inline: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+.chart-replies:not(:disabled):hover { background: var(--surface-hover); }
+.chart-replies:disabled { opacity: 0.55; cursor: default; }
 </style>

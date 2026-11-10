@@ -84,6 +84,15 @@ it('等级柱状图与机型排行可切换人数与评论数，排行合并地�
     expect(width(second)).toBeCloseTo(100 / 3);
     expect(wrapper.text()).not.toMatch(/M2011K2[CG]/);
     expect(wrapper.find('textarea').exists()).toBe(false);
+    await wrapper.get('.chart-replies').trigger('click');
+    expect(wrapper.findAll('.reply-search-results li')).toHaveLength(2);
+    wrapper.findComponent({ name: 'FeedCommentSearchDialog' }).vm.$emit('close');
+    await nextTick();
+    await first.get('button').trigger('click');
+    expect(wrapper.findAll('.reply-search-results li')).toHaveLength(3);
+    await wrapper.get('.reply-search-results button').trigger('click');
+    expect(mocks.routerPush).toHaveBeenLastCalledWith({ name: 'FeedDetail', params: { feedId: '42' }, query: { replyId: 'a' } });
+    mocks.routerPush.mockClear();
   } finally {
     wrapper.unmount();
     vi.unstubAllGlobals();
