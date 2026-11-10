@@ -12,7 +12,7 @@ function replyDetailId(item: any) {
   return String(item.id || getReplyEntityId(item));
 }
 
-export async function loadStatisticsReplies(feed: FeedItem, signal: AbortSignal, onProgress: (replies: any[]) => void) {
+export async function loadStatisticsReplies(feed: FeedItem, signal: AbortSignal, onProgress: (replies: any[], floors: any[]) => void) {
   const feedId = String(feed.id);
   const listType = getCachedReplySort(feedId);
   let firstItem = '';
@@ -23,8 +23,9 @@ export async function loadStatisticsReplies(feed: FeedItem, signal: AbortSignal,
 
   function publish() {
     const top = mergeReplies(floors, pinned);
-    const children = top.flatMap(item => childrenByFloor.get(getReplyEntityId(item)) ?? embeddedReplies(item));
-    onProgress(mergeReplies(top, children).map(item => withReplyDetail(item, getCachedReplyStatisticsDetail(replyDetailId(item)))));
+    const nested = top.map(item => ({ ...item, replyRows: childrenByFloor.get(getReplyEntityId(item)) ?? embeddedReplies(item) }));
+    const children = nested.flatMap(item => item.replyRows);
+    onProgress(mergeReplies(top, children).map(item => withReplyDetail(item, getCachedReplyStatisticsDetail(replyDetailId(item)))), nested);
   }
 
   for (let page = 1; ; page++) {

@@ -1,7 +1,6 @@
 <template>
   <div ref="sectionRef" class="feed-comment-section" :class="{ 'official-detail-comments': officialDetail, 'aside-comments': asideLayout }">
     <div v-if="!standaloneTarget" class="comment-toolbar">
-      <div class="comment-toolbar-left">
         <strong class="comment-title"><template v-if="officialDetail">共 {{ commentCount }} 回复</template><template v-else>评论 <span>{{ commentCount }}</span></template></strong>
         <div v-if="!preserveApiOrder || showSortControls" class="comment-sort" aria-label="评论排序和筛选">
           <button
@@ -23,30 +22,34 @@
             楼主
           </button>
         </div>
-        <button v-if="feedId" type="button" class="comment-search-trigger" title="搜索评论" aria-label="搜索评论" @click.stop="commentSearchOpen = true">
+      <div v-if="feedId || (!officialDetail && !hideCollapseButton)" class="comment-toolbar-actions">
+        <button v-if="feedId" type="button" class="comment-toolbar-action comment-search-trigger" title="搜索评论" aria-label="搜索评论" :aria-expanded="commentSearchOpen" @click.stop="toggleCommentSearch">
           <i class="fas fa-search" aria-hidden="true"></i>
         </button>
-      </div>
       <button
         v-if="!officialDetail && !hideCollapseButton"
         type="button"
-        class="comment-toolbar-collapse-btn"
+        class="comment-toolbar-action comment-toolbar-collapse-btn"
         :title="showShortcutHints ? '收起评论 (Esc)' : '收起评论'"
         aria-label="收起评论"
         @click.stop="handleCollapse"
       >
-        <i class="fa-solid fa-chevron-up"></i>
+        <i class="fa-solid fa-chevron-up" aria-hidden="true"></i>
         <span>收起评论</span>
       </button>
+      </div>
     </div>
-    <FeedCommentSearchDialog
-      v-if="commentSearchOpen"
-      :feed="{ id: feedId, replynum: Number(totalCommentCount) || undefined, topReplyRows: pinnedComments }"
-      :replies="searchableComments"
-      :can-load-all="!searchLoadedCommentsOnly"
-      @close="commentSearchOpen = false"
-      @select="selectCommentSearchResult"
-    />
+    <div v-if="commentSearchOpen" class="comment-inline-search">
+      <div class="comment-search-field">
+        <i class="fas fa-search" aria-hidden="true"></i>
+        <input ref="commentSearchInput" v-model.trim="commentSearchQuery" type="search" placeholder="搜索评论正文或昵称" aria-label="搜索评论正文或昵称" @keydown.esc.stop="closeCommentSearch" />
+      </div>
+      <span v-if="commentSearchLoading || commentSearchTerms.length" role="status">
+        {{ commentSearchLoading ? '正在补齐…' : `${commentSearchComplete ? '' : '已加载 · '}${visibleComments.length} 个匹配楼层` }}
+      </span>
+      <button v-if="!searchLoadedCommentsOnly && !commentSearchComplete" type="button" :disabled="commentSearchLoading" @click="loadAllCommentsForSearch">{{ commentSearchError ? '重试' : '搜索全部评论' }}</button>
+      <span v-if="commentSearchError" role="alert">{{ commentSearchError }}</span>
+    </div>
 
     <!-- 回复时保留顶部输入区的占位，浮层打开不会挤动当前楼层。 -->
     <div v-if="floatingReplyComposer" :style="{ height: `${inlineComposerHeight}px` }" aria-hidden="true"></div>
@@ -204,18 +207,18 @@
     </div>
 
     <!-- 无评论提示 -->
-    <div v-else-if="!sortedComments.length" class="comment-empty">
+    <div v-else-if="!visibleComments.length" class="comment-empty">
       <i class="fa-regular fa-comments empty-icon"></i>
-      <span>{{ authorOnly ? '暂无楼主评论' : '暂无评论，快来抢沙发吧~' }}</span>
+      <span>{{ commentSearchTerms.length ? (commentSearchLoading ? '正在搜索评论…' : '没有匹配的评论') : authorOnly ? '暂无楼主评论' : '暂无评论，快来抢沙发吧~' }}</span>
     </div>
 
     <!-- 微博/酷安 规范楼中楼树状结构列表 -->
     <div v-else class="comment-list">
       <div
-        v-for="c in sortedComments"
+        v-for="c in visibleComments"
         :key="c.id || c.uid"
         class="comment-row"
-        :class="{ 'notification-comment-target': String(c.id) === targetReplyId && !hasInlineTargetReply, 'comment-search-target': searchTargetId && getReplyEntityId(c) === searchTargetId }"
+        :class="{ 'notification-comment-target': String(c.id) === targetReplyId && !hasInlineTargetReply }"
         data-context-kind="comment"
         :data-context-feed-id="feedId"
         :data-context-comment-id="c.id"
@@ -253,10 +256,9 @@
             >
               <span
                 class="comment-username"
+                v-html="formatSearchName(c.username || c.userInfo?.username || '酷友')"
                 @click.stop="openCommentUser(c)"
-              >
-                {{ c.username || c.userInfo?.username || '酷友' }}
-              </span>
+              ></span>
             </UserHoverCard>
             
             <!-- 楼主 Tag -->
@@ -344,12 +346,12 @@
           </div>
 
           <!-- 2. 带竖线的多层级楼中楼回复 -->
-          <div v-if="getSubReplyRows(c).length > 0 || hasSubReplyMore(c)" class="sub-reply-thread">
+          <div v-if="commentSearchTerms.length ? getVisibleSubReplies(c).length > 0 : getSubReplyRows(c).length > 0 || hasSubReplyMore(c)" class="sub-reply-thread">
             <div
               v-for="sub in getVisibleSubReplies(c)"
               :key="sub.id || sub.uid"
               class="sub-reply-row"
-              :class="{ 'notification-comment-target': String(sub.id) === targetReplyId, 'comment-search-target': searchTargetId && getReplyEntityId(sub) === searchTargetId }"
+              :class="{ 'notification-comment-target': String(sub.id) === targetReplyId }"
               data-context-kind="comment"
               :data-context-feed-id="feedId"
               :data-context-comment-id="sub.id"
@@ -386,7 +388,7 @@
                     :level="getCommentUserLevel(sub)"
                     :verify-title="getCommentVerifyTitle(sub)"
                   >
-                    <span class="sub-user" @click.stop="openCommentUser(sub)">{{ sub.username || sub.fromUserName || '酷友' }}</span>
+                    <span class="sub-user" v-html="formatSearchName(sub.username || sub.fromUserName || sub.userInfo?.username || '酷友')" @click.stop="openCommentUser(sub)"></span>
                   </UserHoverCard>
                   <span v-if="isAuthor(sub)" class="badge-author sub-badge">楼主</span>
                   <span v-if="!isAuthor(sub) && isOwn(sub)" class="badge-identity sub-badge">我</span>
@@ -459,6 +461,7 @@
               </div>
             </div>
 
+            <template v-if="!commentSearchTerms.length">
             <div v-if="getSubReplyLoading(c)" class="sub-reply-status" aria-live="polite">
               <i class="fa-solid fa-circle-notch fa-spin text-green"></i>
               <span>加载楼中楼...</span>
@@ -506,13 +509,14 @@
                 </button>
               </template>
             </div>
+            </template>
           </div>
         </div>
       </div>
     </div>
 
     <div
-      v-if="hasMoreComments"
+      v-if="hasMoreComments && !commentSearchTerms.length"
       ref="loadMoreSentinel"
       class="comment-load-more"
       aria-live="polite"
@@ -548,7 +552,9 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivate
 import { trackInitialScrollAnchor } from '../../utils/initialScrollAnchor';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { useRouter } from 'vue-router';
-import FeedCommentSearchDialog from './FeedCommentSearchDialog.vue';
+import { loadStatisticsReplies } from '../../utils/feedStatistics';
+import { htmlToPlainText } from '../../utils/htmlText';
+import { highlightRenderedHtml } from '../../utils/sanitizeHtml';
 import { normalizeUserUid } from '../../utils/userRoute';
 import { useDeviceModelNames } from '../../utils/deviceModelNames';
 
@@ -597,7 +603,6 @@ import {
   hasMoreReplyPages,
   mergeReplies,
   sortComments,
-  getReplyEntityId,
   type CommentSortMode,
   type CommentSortSelection,
 } from '../../utils/commentList';
@@ -663,7 +668,13 @@ function getCommentText(item: any): string {
 
 function formatCommentText(text: string): string {
   if (!text) return '';
-  return props.formatRichText ? props.formatRichText(text) : renderCoolapkRichText(text);
+  const html = props.formatRichText ? props.formatRichText(text) : renderCoolapkRichText(text);
+  return highlightRenderedHtml(html, commentSearchTerms.value);
+}
+
+function formatSearchName(value: string) {
+  const text = String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  return highlightRenderedHtml(text, commentSearchTerms.value);
 }
 
 /** 新评论创建结果：宿主据此就地插入列表/更新计数，无需整页重拉评论。 */
@@ -1360,6 +1371,7 @@ function canExpandSubReplies(floor: any): boolean {
 }
 
 function getVisibleSubReplies(floor: any): any[] {
+  if (commentSearchTerms.value.length) return searchMatches.value.get(floor) ?? [];
   const rows = getSubReplyRows(floor);
   const floorId = subReplyFloorId(floor);
   const state = floorId ? subReplyStates.value[floorId] : undefined;
@@ -1893,6 +1905,16 @@ let targetRequest = 0;
 let scrolledTarget = '';
 let stopTargetAnchor: (() => void) | undefined;
 
+const commentSearchOpen = ref(false);
+const commentSearchInput = ref<HTMLInputElement>();
+const commentSearchQuery = ref('');
+const commentSearchTerms = computed(() => commentSearchQuery.value.toLowerCase().split(/\s+/).filter(Boolean));
+const commentSearchLoading = ref(false);
+const commentSearchComplete = ref(false);
+const commentSearchError = ref('');
+const searchFloors = ref<any[]>([]);
+let searchController: AbortController | undefined;
+
 /**
  * 自动树形构建算法 (Tree Aggregation)：
  * 将平铺的回复数组聚合成真实的【一级楼层 -> 二级楼中楼 (replyRows)】嵌套树！
@@ -1900,7 +1922,8 @@ let stopTargetAnchor: (() => void) | undefined;
 const nestedComments = computed(() => {
   // 官方 topReplyRows 独立于普通分页；置顶优先、按 ID 去重。
   const pinned = props.pinnedComments.filter(item => !authorOnly.value || isAuthor(item));
-  const comments = mergeReplies(pinned, mergeReplies(props.comments || [], targetComments.value))
+  const local = mergeReplies(props.comments || [], targetComments.value);
+  const comments = mergeReplies(pinned, commentSearchTerms.value.length ? mergeReplies(local, searchFloors.value) : local)
     .filter(item => !deletedCommentIds.value.has(String(item.id)));
   if (!comments.length) return [];
 
@@ -1972,26 +1995,64 @@ const sortedComments = computed(() => {
     ...rows.filter(item => !isPinnedComment(item))];
 });
 
-const commentSearchOpen = ref(false);
-const searchTargetId = ref('');
-const searchableComments = computed(() => sortedComments.value.flatMap(floor => [floor, ...getSubReplyRows(floor)]));
-watch(() => props.feedId, () => { commentSearchOpen.value = false; searchTargetId.value = ''; });
-onDeactivated(() => { commentSearchOpen.value = false; });
-
-async function selectCommentSearchResult(replyId: string) {
+function closeCommentSearch() {
   commentSearchOpen.value = false;
-  const floor = sortedComments.value.find(item => getReplyEntityId(item) === replyId || getSubReplyRows(item).some(reply => getReplyEntityId(reply) === replyId));
-  if (!floor) {
-    await router.push({ name: 'FeedDetail', params: { feedId: String(props.feedId) }, query: { replyId } });
-    return;
-  }
-  const floorId = subReplyFloorId(floor);
-  if (floorId && getReplyEntityId(floor) !== replyId) expandedFloorIds.value = new Set([...expandedFloorIds.value, floorId]);
-  searchTargetId.value = replyId;
-  stopTargetAnchor?.();
-  await nextTick();
-  sectionRef.value?.querySelector<HTMLElement>('.comment-search-target')?.scrollIntoView?.({ block: 'center' });
+  commentSearchQuery.value = '';
+  commentSearchComplete.value = false;
+  commentSearchLoading.value = false;
+  commentSearchError.value = '';
+  searchFloors.value = [];
+  searchController?.abort();
 }
+
+async function toggleCommentSearch() {
+  if (commentSearchOpen.value) return closeCommentSearch();
+  commentSearchOpen.value = true;
+  await nextTick();
+  commentSearchInput.value?.focus();
+}
+
+watch(() => props.feedId, closeCommentSearch);
+onDeactivated(closeCommentSearch);
+onUnmounted(() => searchController?.abort());
+
+async function loadAllCommentsForSearch() {
+  if (commentSearchLoading.value) return;
+  const signal = (searchController = new AbortController()).signal;
+  commentSearchLoading.value = true;
+  commentSearchError.value = '';
+  try {
+    await loadStatisticsReplies({ id: props.feedId, replynum: Number(props.totalCommentCount) || undefined, topReplyRows: props.pinnedComments }, signal, (_, floors) => { searchFloors.value = floors; });
+    if (!signal.aborted) commentSearchComplete.value = true;
+  } catch (error) {
+    if (!signal.aborted) commentSearchError.value = error instanceof Error ? error.message : '评论加载失败';
+  } finally {
+    if (!signal.aborted) commentSearchLoading.value = false;
+  }
+}
+
+const searchMatches = computed(() => {
+  const terms = commentSearchTerms.value;
+  const matches = new Map<any, any[]>();
+  if (!terms.length) return matches;
+  const fetchedById = new Map(searchFloors.value.map(floor => [String(floor.id), floor]));
+  function match(item: any) {
+    const name = item.username || item.fromUserName || item.userInfo?.username || '';
+    const text = `${name} ${htmlToPlainText(getCommentText(item), true, ' ')}`.toLowerCase();
+    return terms.every(term => text.includes(term));
+  }
+  // 命中楼中楼时保留父评论，并用原列表渲染匹配的回复。
+  for (const floor of sortedComments.value) {
+    const fetched = fetchedById.get(String(floor.id));
+    const extra = fetched ? getEmbeddedSubReplies(fetched) : [];
+    const children = mergeReplies(getSubReplyRows(floor), extra)
+      .filter(reply => !deletedCommentIds.value.has(String(reply.id)) && (!authorOnly.value || isAuthor(reply)));
+    const matchingChildren = children.filter(match);
+    if (match(floor) || matchingChildren.length) matches.set(floor, matchingChildren);
+  }
+  return matches;
+});
+const visibleComments = computed(() => commentSearchTerms.value.length ? [...searchMatches.value.keys()] : sortedComments.value);
 
 // 同一回复可能同时出现在楼中楼预览和完整楼层中，只突出更紧凑的楼中楼目标。
 const hasInlineTargetReply = computed(() => Boolean(props.targetReplyId) && sortedComments.value.some(
@@ -2067,6 +2128,7 @@ watch(
     () => props.loadingMoreComments,
     () => props.loadMoreError,
     () => sortedComments.value.length,
+    loadMoreSentinel,
   ],
   () => {
     void nextTick(refreshLoadMoreObserver);
@@ -2243,7 +2305,6 @@ async function handleSend() {
 }
 .official-detail-comments { margin: 0 !important; padding: 0 16px 16px !important; border: 0 !important; border-radius: 0 !important; background: var(--surface) !important; }
 .official-detail-comments .comment-toolbar { position: sticky; top: 60px; z-index: 5; background: var(--surface); padding: 8px 0 12px; border: 0; scroll-margin-top: 70px; }
-.official-detail-comments .comment-toolbar-left { width: 100%; display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 8px; }
 .official-detail-comments .comment-title { font-size: 14px; font-weight: 400; white-space: nowrap; }
 .official-detail-comments .comment-sort { display: flex; background: var(--surface-hover); border-radius: 24px; padding: 2px; gap: 0; }
 .official-detail-comments .comment-sort-button { min-width: 0; font-size: 12px; padding: 5px 9px; border: 0; border-radius: 24px; background: transparent; box-shadow: none; }
@@ -2286,6 +2347,7 @@ async function handleSend() {
 .official-composer-backdrop { position: absolute; inset: 0; background: #0006; pointer-events: auto; }
 .official-composer-close { position: absolute; right: 10px; top: 4px; width: 30px; height: 30px; border: 0; background: transparent; color: var(--text-secondary); font-size: 18px; }
 .feed-comment-section {
+  container: comment-panel / inline-size;
   margin-top: 14px;
   padding: 14px;
   background: var(--background);
@@ -2296,48 +2358,60 @@ async function handleSend() {
 /* 话题与分栏详情复用同一套侧栏评论间距和背景。 */
 .feed-comment-section.aside-comments { margin-top: 0; padding: 0; background: transparent; border: none; box-shadow: none; }
 
-.comment-search-trigger { flex: 0 0 auto; min-width: 36px; min-height: 36px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
-.comment-search-trigger:hover { background: var(--surface-hover); color: var(--text-primary); }
-.comment-search-target { outline: 2px solid var(--brand-primary); outline-offset: -2px; border-radius: 6px; }
+.comment-inline-search { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 12px; color: var(--text-secondary); font-size: 12px; }
+.comment-search-field { display: flex; align-items: center; flex: 1 1 220px; gap: 8px; min-width: 0; padding-inline: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-hover); }
+.comment-search-field:focus-within { border-color: var(--text-secondary); }
+.comment-search-field input { flex: 1; min-width: 0; min-height: 36px; border: 0; outline: none; background: transparent; color: var(--text-primary); font: inherit; font-size: 14px; }
+.comment-inline-search button { min-height: 36px; padding-inline: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+.comment-inline-search button:disabled { opacity: 0.55; cursor: wait; }
+.feed-comment-section :deep(mark.search-highlight) { padding-inline: 1px; border-radius: 3px; background: color-mix(in srgb, #eab308 34%, var(--surface)); color: var(--text-primary); }
 .comment-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'title sort actions';
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px 12px;
   margin-bottom: 12px;
-  flex-wrap: wrap;
 }
 
-.comment-toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.comment-toolbar-collapse-btn {
+.comment-toolbar-actions {
+  grid-area: actions;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: var(--radius-sm, 6px);
-  border: 1px solid var(--border);
-  background: var(--surface);
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--surface-muted, var(--surface));
+}
+
+.comment-toolbar-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 30px;
+  min-height: 30px;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 0.78rem;
   font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all var(--duration-fast);
-  margin-left: auto;
 }
 
-.comment-toolbar-collapse-btn:hover {
+.comment-toolbar-action:hover,
+.comment-search-trigger[aria-expanded='true'] {
   color: var(--brand-primary);
-  border-color: var(--brand-primary);
   background: var(--brand-soft);
 }
 
 .comment-title {
+  grid-area: title;
   color: var(--text-primary);
   font-size: 0.95rem;
   font-weight: 700;
@@ -2352,6 +2426,8 @@ async function handleSend() {
 }
 
 .comment-sort {
+  grid-area: sort;
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -2362,6 +2438,17 @@ async function handleSend() {
   overflow-x: auto;
   scrollbar-width: none;
   max-width: 100%;
+}
+
+/* 窄窗口和侧栏按评论区实际宽度排版，操作始终和标题同一行。 */
+@container comment-panel (max-width: 430px) {
+  .comment-toolbar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'title actions' 'sort sort'; }
+  .comment-toolbar-collapse-btn span { display: none; }
+  .comment-toolbar-action { min-width: 36px; min-height: 36px; }
+}
+
+@media (pointer: coarse) {
+  .comment-toolbar-action { min-width: 40px; min-height: 40px; }
 }
 
 .comment-sort-button {

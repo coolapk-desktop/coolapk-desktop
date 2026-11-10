@@ -7,6 +7,7 @@ import { shuzilmGuideState } from '../../../utils/shuzilmDeviceGuide';
 import { clearRecentEmojis } from '../../../utils/recentEmojis';
 
 const mocks = vi.hoisted(() => ({
+  getFeedReplies: vi.fn(),
   getReplyDetail: vi.fn(),
   getSubReplies: vi.fn(),
   deleteReply: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('../../../utils/confirm', () => ({ requestConfirmation: mocks.confirm })
 
 vi.mock('../../../api/coolapk', () => ({
   CoolapkTauriAPI: {
+    getFeedReplies: mocks.getFeedReplies,
     getReplyDetail: mocks.getReplyDetail,
     getSubReplies: mocks.getSubReplies,
     deleteReply: mocks.deleteReply,
@@ -66,16 +68,38 @@ vi.mock('../../../utils/toast', async (original) => ({
 import FeedCommentSection from '../FeedCommentSection.vue';
 
 describe('评论完整信息展示', () => {
-  it('桌面分栏按昵称和正文搜索已加载的楼中楼，并在原列表高亮', async () => {
-    const wrapper = mountSection({ replyRows: [{ id: '333', fromUserName: '楼中楼用户', message: '检查 <b>无线网络</b>' }] }, { preserveApiOrder: true });
-    const body = new DOMWrapper(document.body);
+  it('补齐评论后在原列表展示新楼层的匹配楼中楼', async () => {
+    mocks.getFeedReplies.mockResolvedValueOnce({ data: [{ id: '501', message: '新楼层', replyRows: [{ id: '502', message: '匹配关键词' }] }] })
+      .mockResolvedValueOnce({ data: [] });
+    const wrapper = mountSection();
     try {
       await wrapper.get('.comment-search-trigger').trigger('click');
-      expect(body.get('.reply-search-scope button').text()).toBe('搜索全部评论');
-      await body.get('input[type="search"]').setValue('楼中楼用户 无线');
-      expect(body.findAll('.reply-search-results li')).toHaveLength(1);
-      await body.get('.reply-search-results button').trigger('click');
-      expect(wrapper.get('.comment-search-target').attributes('data-context-comment-id')).toBe('333');
+      await wrapper.get('input[type="search"]').setValue('关键词');
+      expect(mocks.getFeedReplies).not.toHaveBeenCalled();
+      await wrapper.get('.comment-inline-search button').trigger('click');
+      await flushPromises();
+      expect(wrapper.get('.comment-row').attributes('data-context-comment-id')).toBe('501');
+      expect(wrapper.get('.sub-reply-text mark').text()).toBe('关键词');
+      await wrapper.get('.comment-search-trigger').trigger('click');
+      expect(wrapper.find('[data-context-comment-id="501"]').exists()).toBe(false);
+    } finally {
+      wrapper.unmount();
+      mocks.getFeedReplies.mockReset();
+    }
+  });
+
+  it('桌面分栏直接筛选原评论列表，保留父评论并高亮昵称和正文', async () => {
+    const wrapper = mountSection({ replyRows: [{ id: '333', fromUserName: '楼中楼用户', message: '检查 <b>无线网络</b>' }, { id: '334', message: '其他回复' }] }, { preserveApiOrder: true });
+    try {
+      await wrapper.get('.comment-search-trigger').trigger('click');
+      expect(wrapper.get('.comment-inline-search button').text()).toBe('搜索全部评论');
+      await wrapper.get('input[type="search"]').setValue('楼中楼用户 无线');
+      expect(wrapper.get('.comment-row').attributes('data-context-comment-id')).toBe('reply-1');
+      expect(wrapper.findAll('.sub-reply-row')).toHaveLength(1);
+      expect(wrapper.get('.sub-user mark').text()).toBe('楼中楼用户');
+      expect(wrapper.get('.sub-reply-text mark').text()).toBe('无线');
+      await wrapper.get('.comment-search-trigger').trigger('click');
+      expect(wrapper.findAll('.sub-reply-row')).toHaveLength(2);
       expect(mocks.routerPush).not.toHaveBeenCalled();
     } finally {
       wrapper.unmount();

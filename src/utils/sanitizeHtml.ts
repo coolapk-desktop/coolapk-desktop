@@ -28,8 +28,8 @@ function highlightTextNodes(root: Node, keyword: string, doc: Document) {
 
   for (const node of textNodes) {
     const text = node.nodeValue || '';
-    if (!regex.test(text)) continue;
     const parts = text.split(regex);
+    if (parts.length < 2) continue;
     const frag = doc.createDocumentFragment();
     for (const part of parts) {
       if (part.toLowerCase() === kw.toLowerCase()) {
@@ -43,6 +43,15 @@ function highlightTextNodes(root: Node, keyword: string, doc: Document) {
     }
     node.parentNode?.replaceChild(frag, node);
   }
+}
+
+/** 仅给已格式化的正文添加高亮，保留链接和表情节点。 */
+export function highlightRenderedHtml(html: string, terms: readonly string[]): string {
+  if (!html || !terms.length) return html;
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  for (const term of terms) highlightTextNodes(template.content, term, document);
+  return template.innerHTML;
 }
 
 export function sanitizeCoolapkHtml(text: string, keyword?: string): string {
