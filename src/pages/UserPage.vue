@@ -245,12 +245,10 @@
         </div>
       </div>
 
-      <!-- 底部无限加载更多指示器 -->
-      <div v-if="userFeedsLoadingMore" class="loading-more-footer">
-        <i class="fas fa-circle-notch fa-spin"></i> 正在读取下一页动态...
-      </div>
-      <div v-else-if="userFeedsNoMore && (userFeeds.length > 5 || (activeTab === 'home' && homeExtraFeeds.length > 0))" class="no-more-footer">
-        已无更多动态内容
+      <!-- 保留分页页脚高度，避免加载结束时滚动到底的页面突然回跳。 -->
+      <div v-if="hasUserFeedContent" class="user-feed-footer" :class="{ 'no-more-footer': showUserFeedsEnd }">
+        <template v-if="userFeedsLoadingMore"><i class="fas fa-circle-notch fa-spin"></i> 正在读取下一页动态...</template>
+        <template v-else-if="showUserFeedsEnd">已无更多动态内容</template>
       </div>
     </div>
   </template>
@@ -708,6 +706,8 @@ const homeExtraFeeds = computed(() => getTabState('home').items);
 const loadingFeeds = computed(() => activeTabState.value.loading);
 const userFeedsLoadingMore = computed(() => activeTabState.value.loadingMore);
 const userFeedsNoMore = computed(() => !activeTabState.value.hasMore);
+const hasUserFeedContent = computed(() => activeTab.value === 'home' ? homeTabCardRows.value.length > 0 || homeExtraFeeds.value.length > 0 : userFeeds.value.length > 0);
+const showUserFeedsEnd = computed(() => !userFeedsLoadingMore.value && userFeedsNoMore.value && (userFeeds.value.length > 5 || (activeTab.value === 'home' && homeExtraFeeds.value.length > 0)));
 
 function resetTabStates() {
   for (const key of tabStates.keys()) tabStates.set(key, createTabState());
@@ -2329,14 +2329,16 @@ async function refreshMobilePage() { await fetchUserProfile(); await fetchTabFee
   line-height: 1.2;
 }
 
-.loading-more-footer,
-.no-more-footer {
+.user-feed-footer {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
   padding: 32px 0 24px;
   font-size: 12px;
+  line-height: 16px;
+  min-block-size: 72px;
+  box-sizing: border-box;
   color: var(--text-tertiary, rgba(0, 0, 0, 0.35));
   user-select: none;
 }
