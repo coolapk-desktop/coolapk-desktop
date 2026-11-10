@@ -402,14 +402,6 @@ watch(() => props.gifAutoPlay, enabled => {
   background: var(--background-secondary, #f0f0f0);
 }
 
-.live-photo-preview.is-single {
-  position: relative;
-  inset: auto;
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
 .live-photo-preview :deep(.app-image-container) {
   position: absolute;
   inset: 0;
@@ -417,14 +409,6 @@ watch(() => props.gifAutoPlay, enabled => {
   height: 100%;
   border-radius: inherit;
   overflow: hidden;
-}
-
-/* 单图封面负责撑开布局，GIF 播放层继续绝对定位在封面上。 */
-.live-photo-preview.is-single :deep(.app-image-container:not(.gif-preview-image)) {
-  position: relative;
-  inset: auto;
-  width: 100%;
-  height: 100%;
 }
 
 .live-photo-preview :deep(.grid-img img) {

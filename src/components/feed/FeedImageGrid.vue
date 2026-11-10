@@ -165,6 +165,7 @@ function openViewer(index: number) {
 }
 
 .count-1 .grid-item {
+  /* 封面脱离文档流，单图高度只由占位尺寸和测得的比例决定。 */
   aspect-ratio: auto;
   min-height: 180px;
   max-height: 520px;
