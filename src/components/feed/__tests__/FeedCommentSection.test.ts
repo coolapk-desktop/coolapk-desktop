@@ -66,6 +66,22 @@ vi.mock('../../../utils/toast', async (original) => ({
 import FeedCommentSection from '../FeedCommentSection.vue';
 
 describe('评论完整信息展示', () => {
+  it('桌面分栏按昵称和正文搜索已加载的楼中楼，并在原列表高亮', async () => {
+    const wrapper = mountSection({ replyRows: [{ id: '333', fromUserName: '楼中楼用户', message: '检查 <b>无线网络</b>' }] }, { preserveApiOrder: true });
+    const body = new DOMWrapper(document.body);
+    try {
+      await wrapper.get('.comment-search-trigger').trigger('click');
+      expect(body.get('.reply-search-scope button').text()).toBe('搜索全部评论');
+      await body.get('input[type="search"]').setValue('楼中楼用户 无线');
+      expect(body.findAll('.reply-search-results li')).toHaveLength(1);
+      await body.get('.reply-search-results button').trigger('click');
+      expect(wrapper.get('.comment-search-target').attributes('data-context-comment-id')).toBe('333');
+      expect(mocks.routerPush).not.toHaveBeenCalled();
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
   it.each([false, true])('officialDetail=%s 时置顶评论显示标记，切换排序仍在前面且不重复', async officialDetail => {
     const pinned = { id: 'pinned', username: '置顶作者', message: '置顶内容', likenum: 1, dateline: 1 };
     const wrapper = mountSection({}, {

@@ -345,6 +345,7 @@
             :feed-uid="String(appInfo?.creatoruid || '')"
             :comments="apkComments"
             preserve-api-order
+            search-loaded-comments-only
             :loading="false"
             @send-comment="sendAppComment"
           />

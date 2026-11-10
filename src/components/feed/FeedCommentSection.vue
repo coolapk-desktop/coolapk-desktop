@@ -23,6 +23,9 @@
             楼主
           </button>
         </div>
+        <button v-if="feedId" type="button" class="comment-search-trigger" title="搜索评论" aria-label="搜索评论" @click.stop="commentSearchOpen = true">
+          <i class="fas fa-search" aria-hidden="true"></i>
+        </button>
       </div>
       <button
         v-if="!officialDetail && !hideCollapseButton"
@@ -36,6 +39,14 @@
         <span>收起评论</span>
       </button>
     </div>
+    <FeedCommentSearchDialog
+      v-if="commentSearchOpen"
+      :feed="{ id: feedId, replynum: Number(totalCommentCount) || undefined, topReplyRows: pinnedComments }"
+      :replies="searchableComments"
+      :can-load-all="!searchLoadedCommentsOnly"
+      @close="commentSearchOpen = false"
+      @select="selectCommentSearchResult"
+    />
 
     <!-- 回复时保留顶部输入区的占位，浮层打开不会挤动当前楼层。 -->
     <div v-if="floatingReplyComposer" :style="{ height: `${inlineComposerHeight}px` }" aria-hidden="true"></div>
@@ -204,7 +215,7 @@
         v-for="c in sortedComments"
         :key="c.id || c.uid"
         class="comment-row"
-        :class="{ 'notification-comment-target': String(c.id) === targetReplyId && !hasInlineTargetReply }"
+        :class="{ 'notification-comment-target': String(c.id) === targetReplyId && !hasInlineTargetReply, 'comment-search-target': searchTargetId && getReplyEntityId(c) === searchTargetId }"
         data-context-kind="comment"
         :data-context-feed-id="feedId"
         :data-context-comment-id="c.id"
@@ -338,7 +349,7 @@
               v-for="sub in getVisibleSubReplies(c)"
               :key="sub.id || sub.uid"
               class="sub-reply-row"
-              :class="{ 'notification-comment-target': String(sub.id) === targetReplyId }"
+              :class="{ 'notification-comment-target': String(sub.id) === targetReplyId, 'comment-search-target': searchTargetId && getReplyEntityId(sub) === searchTargetId }"
               data-context-kind="comment"
               :data-context-feed-id="feedId"
               :data-context-comment-id="sub.id"
@@ -537,6 +548,7 @@ import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivate
 import { trackInitialScrollAnchor } from '../../utils/initialScrollAnchor';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { useRouter } from 'vue-router';
+import FeedCommentSearchDialog from './FeedCommentSearchDialog.vue';
 import { normalizeUserUid } from '../../utils/userRoute';
 import { useDeviceModelNames } from '../../utils/deviceModelNames';
 
@@ -585,6 +597,7 @@ import {
   hasMoreReplyPages,
   mergeReplies,
   sortComments,
+  getReplyEntityId,
   type CommentSortMode,
   type CommentSortSelection,
 } from '../../utils/commentList';
@@ -599,6 +612,8 @@ const props = withDefaults(
     /** 宿主保存楼主筛选，切换互动栏目后重新挂载时恢复按钮状态。 */
     defaultAuthorOnly?: boolean;
     preserveApiOrder?: boolean;
+    /** 应用评论使用独立分页接口，搜索范围由已加载的数据决定。 */
+    searchLoadedCommentsOnly?: boolean;
     /** 侧栏共用话题评论的无卡片布局；服务端排序时仍可显示共用筛选按钮。 */
     asideLayout?: boolean;
     showSortControls?: boolean;
@@ -1957,6 +1972,27 @@ const sortedComments = computed(() => {
     ...rows.filter(item => !isPinnedComment(item))];
 });
 
+const commentSearchOpen = ref(false);
+const searchTargetId = ref('');
+const searchableComments = computed(() => sortedComments.value.flatMap(floor => [floor, ...getSubReplyRows(floor)]));
+watch(() => props.feedId, () => { commentSearchOpen.value = false; searchTargetId.value = ''; });
+onDeactivated(() => { commentSearchOpen.value = false; });
+
+async function selectCommentSearchResult(replyId: string) {
+  commentSearchOpen.value = false;
+  const floor = sortedComments.value.find(item => getReplyEntityId(item) === replyId || getSubReplyRows(item).some(reply => getReplyEntityId(reply) === replyId));
+  if (!floor) {
+    await router.push({ name: 'FeedDetail', params: { feedId: String(props.feedId) }, query: { replyId } });
+    return;
+  }
+  const floorId = subReplyFloorId(floor);
+  if (floorId && getReplyEntityId(floor) !== replyId) expandedFloorIds.value = new Set([...expandedFloorIds.value, floorId]);
+  searchTargetId.value = replyId;
+  stopTargetAnchor?.();
+  await nextTick();
+  sectionRef.value?.querySelector<HTMLElement>('.comment-search-target')?.scrollIntoView?.({ block: 'center' });
+}
+
 // 同一回复可能同时出现在楼中楼预览和完整楼层中，只突出更紧凑的楼中楼目标。
 const hasInlineTargetReply = computed(() => Boolean(props.targetReplyId) && sortedComments.value.some(
   floor => getVisibleSubReplies(floor).some(reply => String(reply.id) === props.targetReplyId),
@@ -2260,6 +2296,9 @@ async function handleSend() {
 /* 话题与分栏详情复用同一套侧栏评论间距和背景。 */
 .feed-comment-section.aside-comments { margin-top: 0; padding: 0; background: transparent; border: none; box-shadow: none; }
 
+.comment-search-trigger { flex: 0 0 auto; min-width: 36px; min-height: 36px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.comment-search-trigger:hover { background: var(--surface-hover); color: var(--text-primary); }
+.comment-search-target { outline: 2px solid var(--brand-primary); outline-offset: -2px; border-radius: 6px; }
 .comment-toolbar {
   display: flex;
   align-items: center;
