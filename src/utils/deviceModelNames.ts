@@ -32,8 +32,9 @@ export function buildDeviceModelIndex(rows: DevicePreset[]): ModelIndex {
 export function resolveDeviceModelName(raw: string, index: ModelIndex): string {
   const key = keyOf(raw);
   // 已有销售名称优先，哪怕恰好也是另一条记录的 Model，也不覆盖。
-  if (index.marketingNames.has(key)) return raw;
-  return index.models.get(key) || raw;
+  const name = index.marketingNames.has(key) ? raw : index.models.get(key) || raw;
+  // 小米旧款数字系列在 Google 表使用 Mi 前缀，和评论中的中文名统一显示。
+  return name.replace(/^(?:Mi\s+|小米\s*)(\d{1,2})(?=\s|$)/i, '小米 $1');
 }
 
 const modelIndex = shallowRef<ModelIndex>(buildDeviceModelIndex([]));

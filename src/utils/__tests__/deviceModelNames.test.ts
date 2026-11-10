@@ -14,6 +14,9 @@ describe('机型名称显示', () => {
     expect(resolveDeviceModelName('Xiaomi 23090RA98C', index)).toBe('Redmi Note 13 Pro+');
     expect(resolveDeviceModelName('samsung SM-S9280', index)).toBe('Galaxy S24 Ultra');
   });
+  it('小米 11 的地区型号与已转换名称使用同一个显示名称', () => {
+    for (const raw of ['Xiaomi M2011K2C', 'M2011K2G', 'Mi 11', '小米11']) expect(resolveDeviceModelName(raw, index)).toBe('小米 11');
+  });
   it('完整匹配，未知、截断编号及已有销售名称保留原文', () => {
     for (const raw of ['Redmi 25102RKBE', '未知设备', 'Redmi Note 13 Pro+', '小米 13 Pro', 'Samsung Galaxy S24 Ultra', 'Xiaomi 13 Pro', 'Apple iPhone99,1', 'Apple iPhone18,', 'Apple iPhone 17 Pro Max']) expect(resolveDeviceModelName(raw, index)).toBe(raw);
   });

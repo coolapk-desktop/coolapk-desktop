@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { isWebBuild } from '../api/runtime';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
@@ -8,6 +8,7 @@ import { useUserRelationsStore } from './userRelations';
 import { useTopicHubStore } from './topicHub';
 import { clearFeedFavorites } from './feedFavorites';
 import { clearGoodsRows } from './goodsRows';
+import { clearFeedStatisticsCache } from '../utils/feedStatisticsCache';
 
 export interface UserProfile {
   uid: string | number;
@@ -41,8 +42,10 @@ export const useAuthStore = defineStore('auth', () => {
   const rawCookie = ref('');
   const isLoginModalOpen = ref(false);
   const accounts = ref<any[]>([]);
+  watch(() => user.value?.uid, () => clearFeedStatisticsCache(), { flush: 'sync' });
 
   function clearFrontendAuthState() {
+    clearFeedStatisticsCache();
     clearResourceMemoryCache();
     // 用户资料缓存带账号维度（uid@viewerUid），登出/切号/凭据失效后必须整体清空。
     clearUserProfileCache();

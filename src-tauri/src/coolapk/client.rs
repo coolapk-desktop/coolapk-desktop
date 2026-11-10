@@ -3585,13 +3585,7 @@ impl CoolapkClient {
                 .or_else(|| obj.get("description").and_then(|v| v.as_str()))
                 .unwrap_or("");
 
-            let device_title = obj
-                .get("device_title")
-                .and_then(|v| v.as_str())
-                .or_else(|| obj.get("deviceTitle").and_then(|v| v.as_str()))
-                .or_else(|| obj.get("device_name").and_then(|v| v.as_str()))
-                .or_else(|| obj.get("device").and_then(|v| v.as_str()))
-                .unwrap_or("");
+            let device_title = reply_list_device_title(obj);
 
             let user_level = user_info
                 .and_then(|u| u.get("level"))
@@ -3769,13 +3763,7 @@ impl CoolapkClient {
                         .or_else(|| obj.get("description").and_then(|v| v.as_str()))
                         .unwrap_or("");
 
-                    let device_title = obj
-                        .get("device_title")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| obj.get("deviceTitle").and_then(|v| v.as_str()))
-                        .or_else(|| obj.get("device_name").and_then(|v| v.as_str()))
-                        .or_else(|| obj.get("device").and_then(|v| v.as_str()))
-                        .unwrap_or("");
+                    let device_title = reply_list_device_title(obj);
 
                     let user_level = user_info
                         .and_then(|u| u.get("level"))
@@ -9485,7 +9473,25 @@ fn value_to_string_opt(value: &Value) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
-/// 从评论详情的酷安 UA 中提取真实设备代号、系统版本与构建号。
+/// 先使用列表已有的机型字段，再从明确携带设备信息的 UA 取值。
+fn reply_list_device_title(reply: &serde_json::Map<String, Value>) -> String {
+    let title = ["device_title", "deviceTitle", "device_name", "deviceName", "device"]
+        .into_iter()
+        .filter_map(|key| reply.get(key).and_then(Value::as_str).map(str::trim))
+        .find(|name| !name.is_empty() && !matches!(name.to_ascii_lowercase().as_str(), "未知" | "unknown" | "null" | "undefined" | "0"));
+    if let Some(title) = title {
+        return title.to_string();
+    }
+
+    ["useragent", "userAgent"]
+        .into_iter()
+        .filter_map(|key| reply.get(key).and_then(Value::as_str))
+        .find(|ua| ua.contains("(#Build; ") || (ua.contains("Android ") && ua.contains(" Build/")))
+        .map(|ua| parse_reply_user_agent(ua).0)
+        .unwrap_or_default()
+}
+
+/// 从评论的酷安 UA 中提取真实设备代号、系统版本与构建号。
 /// 接口经常保留 useragent，却把 device_title 等便捷字段返回为空。
 fn parse_reply_user_agent(user_agent: &str) -> (String, String, String) {
     let android_version = user_agent

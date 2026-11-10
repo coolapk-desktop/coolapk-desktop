@@ -1135,7 +1135,7 @@ function pumpReplyDetailQueue() {
     const replyId = replyDetailQueue.shift();
     if (!replyId) continue;
     activeReplyDetailRequests += 1;
-    void CoolapkTauriAPI.getReplyDetail(replyId)
+    void CoolapkTauriAPI.getReplyDetail(replyId, { preferLocal: true })
       .then((response: any) => {
         if (!response?.data) return;
         replyDetails.value = {

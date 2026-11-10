@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick, ref } from 'vue';
 import { feedPageVisibleKey } from '../../../utils/feedPageVisibility';
+import deviceCatalog from '../../../../data/android-devices/catalog.json';
 
 const mocks = vi.hoisted(() => ({
   setUserFeedTop: vi.fn(),
@@ -40,8 +41,54 @@ vi.mock('../../../api/coolapk', () => ({
 vi.mock('../../../utils/confirm', () => ({ requestConfirmation: mocks.requestConfirmation }));
 
 import FeedCard from '../FeedCard.vue';
+import FeedStatisticsDialog from '../FeedStatisticsDialog.vue';
 import { useAuthStore } from '../../../stores/auth';
 import { useSettingsStore } from '../../../stores/settings';
+
+it('等级柱状图与机型排行可切换人数与评论数，排行合并地区型号并按比例显示', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => deviceCatalog }));
+  mocks.getFeedReplies.mockResolvedValueOnce({ data: [
+    { id: 'a', uid: '1', userLevel: 3, deviceTitle: 'Xiaomi M2011K2C' },
+    { id: 'b', uid: '1', userLevel: 3, deviceTitle: 'M2011K2G' },
+    { id: 'c', uid: '2', userLevel: 1, deviceTitle: '小米11' },
+    { id: 'd', uid: '2', userLevel: 1, deviceTitle: 'Redmi K70' },
+  ] });
+  const wrapper = mount(FeedStatisticsDialog, {
+    props: { feed: { id: '42', replynum: 4, deviceTitle: 'M2011K2C' } },
+    global: { stubs: { AppDialog: { template: '<section><slot /></section>' } } },
+  });
+  try {
+    await flushPromises();
+    const levelPlot = wrapper.get('[aria-label="等级分布"]');
+    const ranking = wrapper.get('[aria-label="机型排行"]');
+    const [first, second] = ranking.findAll('li');
+    const width = (row: typeof first) => parseFloat((row.get('.device-rank-bar').element as HTMLElement).style.width);
+    expect(wrapper.get('.stats-author').text()).toContain('小米 11');
+    expect(ranking.findAll('li')).toHaveLength(2);
+    expect(first.text()).toContain('小米 11');
+    expect(first.get('strong').text()).toBe('2人');
+    expect(width(first)).toBe(100);
+    expect(width(second)).toBe(50);
+    expect(levelPlot.attributes('aria-valuetext')).toBe('Lv.1，1 人');
+    await levelPlot.trigger('keydown', { key: 'ArrowRight' });
+    expect(levelPlot.attributes('aria-valuetext')).toBe('Lv.2，0 人');
+    await wrapper.get('.stats-metrics button:nth-child(2)').trigger('click');
+    await levelPlot.trigger('keydown', { key: 'End' });
+    expect(levelPlot.attributes('aria-valuetext')).toBe('Lv.3，2 条');
+    const bars = levelPlot.findAll('rect.chart-bar');
+    expect(bars).toHaveLength(3);
+    expect(bars[1].attributes('height')).toBe('0');
+    expect(bars[2].classes()).toContain('is-active');
+    expect(levelPlot.find('polyline').exists()).toBe(false);
+    expect(first.get('strong').text()).toBe('3条');
+    expect(width(second)).toBeCloseTo(100 / 3);
+    expect(wrapper.text()).not.toMatch(/M2011K2[CG]/);
+    expect(wrapper.find('textarea').exists()).toBe(false);
+  } finally {
+    wrapper.unmount();
+    vi.unstubAllGlobals();
+  }
+});
 
 describe('动态卡片编辑记录', () => {
   it.each(['cover', 'plugin'])('关闭背景开关后移除 %s 装饰，保留正文图片和作者头像入口', async type => {
@@ -129,8 +176,9 @@ describe('动态卡片编辑记录', () => {
     for (const label of ['复制', '收藏', '举报', '动态', '私信', '看看号', '复制链接']) expect(menu.text()).toContain(label);
     expect(menu.text()).toContain(officialMobileDetail ? '生成分享图' : '生成长图');
     expect(menu.classes('is-floating')).toBe(!officialMobileDetail);
+    expect(menu.find(officialMobileDetail ? '.official-share-tools' : '.desktop-share-tools').text()).toContain('动态统计');
     if (officialMobileDetail) {
-      expect(wrapper.findAll('.official-share-tools button')).toHaveLength(3);
+      expect(wrapper.findAll('.official-share-tools button')).toHaveLength(4);
       expect(wrapper.findAll('.official-share-destinations button')).toHaveLength(5);
       await wrapper.find('.official-share-cancel').trigger('click');
       expect(wrapper.find('.more-menu').exists()).toBe(false);

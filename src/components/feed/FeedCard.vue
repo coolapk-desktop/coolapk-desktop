@@ -68,6 +68,7 @@
           <button @click="copyFeed(false)"><span><i class="far fa-clone"></i></span>复制</button>
           <button v-if="!replyMode" @click="moreMenuOpen = false; toggleFav()"><span><i class="far fa-star"></i></span>{{ isFav ? '取消收藏' : '收藏' }}</button>
           <button @click="reportOfficialFeed"><span><i class="far fa-bell"></i></span>举报</button>
+          <button v-if="!replyMode" type="button" @click="moreMenuOpen = false; statisticsOpen = true"><span><i class="fas fa-chart-column"></i></span>动态统计</button>
         </div>
         <div class="official-share-destinations">
           <button @click="moreMenuOpen = false; openForwardDialog()"><span><i class="far fa-pen-to-square"></i></span>动态</button>
@@ -85,6 +86,7 @@
         <button @click="openSharePrivate"><i class="far fa-envelope"></i>私信</button>
         <button @click="openShareDyh"><i class="fas fa-circle-dot"></i>看看号</button>
         <button @click="copyFeed(true)"><i class="fas fa-link"></i>复制链接</button>
+        <button v-if="!replyMode" type="button" @click="moreMenuOpen = false; statisticsOpen = true"><i class="fas fa-chart-column"></i>动态统计</button>
       </div>
       <button v-if="!officialMobileDetail" class="more-menu-item" @click="handleShareImage">
         <i class="fas fa-image"></i> 生成长图
@@ -303,6 +305,7 @@
     <ForwardDialog v-model:show="forwardOpen" :feed="feed" @success="handleForwardSuccess" />
 
     <FeedShareImageDialog v-model:show="shareImageOpen" :feed="feed" :images="feedImages" />
+    <FeedStatisticsDialog v-if="statisticsOpen" :feed="feed" @close="statisticsOpen = false" />
 
     <FeedInteractionListDialog
       :show="interactionMode !== null"
@@ -383,6 +386,7 @@ import FeedActionBar from './FeedActionBar.vue';
 import FeedCollectionPickerDialog from './FeedCollectionPickerDialog.vue';
 import FeedCommentSection from './FeedCommentSection.vue';
 import FeedInteractionListDialog from './FeedInteractionListDialog.vue';
+import FeedStatisticsDialog from './FeedStatisticsDialog.vue';
 import ForwardDialog from '../overlays/ForwardDialog.vue';
 import FeedShareImageDialog from '../overlays/FeedShareImageDialog.vue';
 import LoadingState from '../common/LoadingState.vue';
@@ -942,6 +946,8 @@ onUnmounted(() => {
   window.removeEventListener('scroll', closeMenuOnScroll, true);
 });
 const historyDialogOpen = ref(false);
+const statisticsOpen = ref(false);
+watch(() => [props.feed.id, authStore.user?.uid], () => { statisticsOpen.value = false; });
 const historyLoading = ref(false);
 const historyError = ref('');
 const historyList = ref<any[]>([]);
@@ -1266,7 +1272,7 @@ const commentsAuthorOnly = ref(false);
 let commentsFirstItem = '';
 let commentsLastItem = '';
 let commentsRequestVersion = 0;
-const hasBlockingOverlay = computed(() => Boolean(dyhShareOpen.value || privateShareOpen.value || appStore.activeImageViewer || appStore.isSearchOpen || appStore.isPublishOpen || authStore.isLoginModalOpen || forwardOpen.value || interactionMode.value || historyDialogOpen.value || collectionPickerOpen.value || moreMenuOpen.value));
+const hasBlockingOverlay = computed(() => Boolean(dyhShareOpen.value || privateShareOpen.value || appStore.activeImageViewer || appStore.isSearchOpen || appStore.isPublishOpen || authStore.isLoginModalOpen || forwardOpen.value || interactionMode.value || historyDialogOpen.value || collectionPickerOpen.value || moreMenuOpen.value || statisticsOpen.value));
 
 /** 收藏状态同样回写实体字段，列表与详情不再各自保存一份副本。 */
 function syncFavoriteToFeed() {
@@ -1550,7 +1556,7 @@ const pageVisible = inject(feedPageVisibleKey, ref(true));
 const { renderViewportContent, viewportPlaceholderStyle, retainViewportContent } = useViewportContent(cardRef, computed(() => Boolean(
   props.detailMode || props.officialMobileDetail || props.autoOpenComments || showComments.value || commentsPage.value > 0
   || moreMenuOpen.value || shareImageOpen.value || forwardOpen.value || dyhShareOpen.value || privateShareOpen.value
-  || interactionMode.value || collectionPickerOpen.value || historyDialogOpen.value || commentsLoading.value || favoritePending.value
+  || interactionMode.value || collectionPickerOpen.value || historyDialogOpen.value || statisticsOpen.value || commentsLoading.value || favoritePending.value
 )), inject(feedPageRenderKey, pageVisible));
 function retainPointerContent(event: PointerEvent) {
   // 鼠标拖动选字需要保留子树；触摸滚动不把途经的所有卡片永久留在内存中。
@@ -1730,6 +1736,7 @@ watch(
 
 onDeactivated(() => {
   moreMenuOpen.value = false;
+  statisticsOpen.value = false;
   privateShareOpen.value = false;
   dyhShareOpen.value = false;
   componentActive.value = false;

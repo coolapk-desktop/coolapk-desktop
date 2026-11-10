@@ -15,6 +15,7 @@ import { getMemoryCachedResourceSync, retainResourceUrl } from '../utils/resourc
 import { invalidateFeedFullText } from '../utils/feedFullTextCache';
 import { useSettingsStore } from '../stores/settings';
 import { didNavigate } from '../utils/navigation';
+import { invalidateFeedStatisticsReplies, reuseFeedReplyPage, reuseReplyStatisticsDetail } from '../utils/feedStatisticsCache';
 
 function tauriInvokeAvailable(): boolean {
   return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__);
@@ -572,21 +573,23 @@ export class CoolapkTauriAPI {
       lastItem?: string;
       listType?: string;
       fromFeedAuthor?: number;
+      preferLocal?: boolean;
     } = {},
   ) {
-    return await invokeCommentList('get_feed_replies', {
+    const args = {
       feedId,
       page,
       firstItem: options.firstItem || '',
       lastItem: options.lastItem || '',
       listType: options.listType ?? 'lastupdate_desc',
       fromFeedAuthor: options.fromFeedAuthor ?? 0,
-    });
+    };
+    return await reuseFeedReplyPage(args, options.preferLocal === true, () => invokeCommentList('get_feed_replies', args));
   }
 
   // 评论列表不包含完整设备信息，详情接口用于后台补齐评论元数据。
-  static async getReplyDetail(replyId: string) {
-    return await invokeNative('get_reply_detail', { replyId }, { retry: true, kind: 'comment' });
+  static async getReplyDetail(replyId: string, { preferLocal = false, retry = true } = {}) {
+    return await reuseReplyStatisticsDetail<any>(replyId, preferLocal, () => invokeNative('get_reply_detail', { replyId }, { retry, kind: 'comment' }));
   }
 
   static async getSubReplies(
@@ -595,17 +598,19 @@ export class CoolapkTauriAPI {
     page: number = 1,
     options: {
       lastItem?: string;
+      preferLocal?: boolean;
     } = {},
   ) {
     // APK 的楼中楼详情使用同一个 feed/replyList；父评论 ID 作为 id，
     // 原生命令固定使用 feedType=feed_reply，并按 lastItem 游标翻页。
     // 不走旧的 Python /feed/replies 路径，也不在失败时切换其他接口。
-    return await invokeCommentList('get_sub_replies', {
+    const args = {
       feedId,
       replyId,
       page,
       lastItem: options.lastItem || '',
-    });
+    };
+    return await reuseFeedReplyPage(args, options.preferLocal === true, () => invokeCommentList('get_sub_replies', args));
   }
 
   static async getFeedDetail(feedId: string) {
@@ -895,7 +900,9 @@ export class CoolapkTauriAPI {
     if (rid) args.rid = rid;
     if (pic) args.pic = pic;
     if (postToken) args.postToken = postToken;
-    return await invokeNative('reply_feed', args);
+    const response = await invokeNative('reply_feed', args);
+    invalidateFeedStatisticsReplies(feedId);
+    return response;
   }
 
   // 应用评价区评论；不要与动态评论 replyFeed 混用。
@@ -1309,7 +1316,9 @@ export class CoolapkTauriAPI {
   }
 
   static async deleteReply(replyId: string) {
-    return await invokeNative('delete_reply', { replyId });
+    const response = await invokeNative('delete_reply', { replyId });
+    invalidateFeedStatisticsReplies();
+    return response;
   }
 
   static async createForward(feedId: string, message: string, pic?: string) {

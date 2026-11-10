@@ -4,6 +4,8 @@ import { CoolapkTauriAPI } from '../coolapk';
 import { clearFeedFullTextCache, getFeedFullTextRequestStats, loadFeedFullText } from '../../utils/feedFullTextCache';
 import { clearResourceMemoryCache, loadImageResource } from '../../utils/resourceCache';
 import { mockObjectUrls } from '../../test-utils/objectUrls';
+import { clearFeedStatisticsCache } from '../../utils/feedStatisticsCache';
+import { groupStatistics, loadStatisticsDevices, loadStatisticsReplies, statisticsDevice } from '../../utils/feedStatistics';
 
 function okResponse(data: unknown) {
   return { code: 200, data };
@@ -28,8 +30,64 @@ describe('CoolapkTauriAPI 内容新页接口封装', () => {
     vi.mocked(invoke).mockResolvedValue(okResponse([]));
     clearFeedFullTextCache();
     clearResourceMemoryCache();
+    clearFeedStatisticsCache();
     delete window.initNECaptcha;
     document.head.innerHTML = '';
+  });
+
+  it('动态统计接续已加载的评论页和楼中楼，重复打开时复用完整结果', async () => {
+    const first = { id: 'a', uid: 'u1', deviceTitle: '小米 15', replynum: 2, replyRows: [{ id: 'c', uid: 'u2' }] };
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(okResponse([first]))
+      .mockResolvedValueOnce(okResponse([{ id: 'c', uid: 'u2' }]))
+      .mockResolvedValueOnce(okResponse([{ id: 'b', uid: 'u1', deviceTitle: '小米 15' }]))
+      .mockResolvedValueOnce(okResponse([{ id: 'd', uid: 'u3' }]));
+    await CoolapkTauriAPI.getFeedReplies('42', 1, { listType: 'dateline_desc' });
+    await CoolapkTauriAPI.getSubReplies('42', 'a', 1);
+    const progress = vi.fn();
+    const feed = { id: '42', replynum: 2 };
+    const signal = new AbortController().signal;
+    await loadStatisticsReplies(feed, signal, progress);
+
+    expect(vi.mocked(invoke).mock.calls.slice(2)).toEqual([
+      ['get_feed_replies', { feedId: '42', page: 2, firstItem: 'a', lastItem: 'a', listType: 'dateline_desc', fromFeedAuthor: 0 }],
+      ['get_sub_replies', { feedId: '42', replyId: 'a', page: 2, lastItem: 'c' }],
+    ]);
+    const replies = progress.mock.lastCall?.[0];
+    expect(replies.map((item: { id: string }) => item.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(groupStatistics(replies, statisticsDevice)[0]).toEqual({ label: '小米 15', count: 2, users: new Set(['u1']) });
+    await loadStatisticsReplies(feed, signal, progress);
+    expect(invoke).toHaveBeenCalledTimes(4);
+  });
+
+  it('机型统计只补请求缺少机型的评论，复用正在请求或已缓存的详情', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(okResponse({ deviceTitle: 'Redmi K70' }))
+      .mockResolvedValueOnce(okResponse({ deviceTitle: '', device_name: '小米 15' }));
+    const pending = CoolapkTauriAPI.getReplyDetail('running', { preferLocal: true });
+    const progress = vi.fn();
+    const signal = new AbortController().signal;
+    const replies = [{ id: 'known', deviceTitle: 'OPPO K15 Pro+' }, { id: 'running' }, { id: 'missing' }];
+    await loadStatisticsDevices(replies, signal, progress);
+    await pending;
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ['get_reply_detail', { replyId: 'running' }],
+      ['get_reply_detail', { replyId: 'missing' }],
+    ]);
+    expect(progress.mock.lastCall?.[0].map(statisticsDevice)).toEqual(['OPPO K15 Pro+', 'Redmi K70', '小米 15']);
+    await loadStatisticsDevices(replies, signal, progress);
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it('批量补机型遇到网络错误时只尝试一次，立即重开也不重复请求', async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error('network timeout'));
+    const signal = new AbortController().signal;
+    const replies = [{ id: 'failed' }];
+    const progress = vi.fn();
+    await loadStatisticsDevices(replies, signal, progress);
+    await loadStatisticsDevices(replies, signal, progress);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(progress.mock.lastCall?.[0].map(statisticsDevice)).toEqual(['未知']);
   });
 
   afterEach(() => {

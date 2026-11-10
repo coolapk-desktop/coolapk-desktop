@@ -691,7 +691,7 @@ describe('评论完整信息展示', () => {
     });
     const wrapper = mountSection();
     await flushPromises();
-    expect(mocks.getReplyDetail).toHaveBeenCalledWith('reply-1');
+    expect(mocks.getReplyDetail).toHaveBeenCalledWith('reply-1', { preferLocal: true });
     expect(wrapper.text()).toContain('小米 17 Ultra');
   });
 

@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn reply_list_device_title_reuses_list_fields_and_user_agent() {
+    let ua = "Mozilla/5.0 (Linux; Android 14; wv) (#Build; Xiaomi; M2011K2C; AQ3A; Android)";
+    for (reply, expected) in [
+        (json!({"device_title": "", "deviceTitle": "小米 11", "useragent": ua}), "小米 11"),
+        (json!({"device_title": "unknown", "useragent": ua}), "Xiaomi M2011K2C"),
+        (json!({"useragent": "Mozilla/5.0 (Linux; Android 14; wv)"}), ""),
+    ] {
+        assert_eq!(reply_list_device_title(reply.as_object().unwrap()), expected);
+    }
+}
+
+#[test]
 fn apk_collection_plan_preserves_existing_memberships_and_only_uses_default() {
     // 不能因列表顺序把应用误加入用户自己创建的第一个收藏单。
     let rows = vec![json!({"id":"10","entityType":"collection"}), json!({"id":"20","defaultCollected":1})];
