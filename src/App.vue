@@ -839,6 +839,11 @@ html, body {
   overflow: hidden;
 }
 
+/* 界面缩小时 #app 的布局尺寸仍大于视口，避免焦点定位滚动 body 并把整个页面推离视口。 */
+body {
+  overflow: clip;
+}
+
 #app {
   margin: 0;
   padding: 0;
