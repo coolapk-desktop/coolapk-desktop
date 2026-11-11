@@ -123,6 +123,10 @@ macOS 与 Linux 的默认目录如下，同一系统用户下的不同分发包�
 
 详见 [SECURITY.md](SECURITY.md)。
 
+### Windows 动图或实况照片无法播放
+
+如果帖子能正常打开，但动图或实况照片加载失败，请检查防火墙或安全软件是否拦截了 Microsoft Edge WebView2 运行时（`msedgewebview2.exe`）访问酷安媒体服务器的出站连接。如果发现拦截，允许该进程访问媒体服务器后重试。参见 [问题 #24](https://github.com/coolapk-desktop/coolapk-desktop/issues/24) 和 [微软 WebView2 网络与安全说明](https://learn.microsoft.com/en-us/deployedge/webview2-security-tools)。
+
 ## 开发环境
 
 - Node.js 22 或更高版本
