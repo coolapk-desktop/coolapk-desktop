@@ -26,6 +26,7 @@ const POSITION_TTL_MS = 30 * 60 * 1000;
 const SCROLL_CONTAINER_SELECTOR = '[data-route-scroll], .custom-scrollbar';
 // 外框虽然禁止用户滚动，scrollIntoView/输入聚焦仍可能改变其滚动偏移。
 const SCROLL_FRAME_SELECTOR = '.app-page-content, .route-transition-stage';
+const LEAVING_ROUTE_SELECTOR = '.feed-detail-forward-leave-active, .feed-detail-back-leave-active, .feed-detail-desktop-leave-active';
 const CONTENT_ROOT_CLASS = 'app-main-content';
 const CONTENT_ROOT_SELECTOR = `.${CONTENT_ROOT_CLASS}`;
 const ROOT_SLOT = '#root';
@@ -86,6 +87,12 @@ function getScrollContainers(): HTMLElement[] {
   return [...new Set([...candidates, ...frames])];
 }
 
+/** 转场时旧页面仍可能留在舞台内，保存和恢复时都按当前页面计算下标。 */
+function slotChildren(parent: Element): HTMLCollection | Element[] {
+  if (!parent.classList.contains('route-transition-stage')) return parent.children;
+  return Array.from(parent.children).filter(child => !child.matches(LEAVING_ROUTE_SELECTOR));
+}
+
 /**
  * 用元素路径代替节点身份：同一路由的页面重建后 DOM 结构一致，就能把位置写回对应容器。
  * 只取标签名与元素下标，避免动态 class 变化导致槽位漂移。
@@ -97,7 +104,9 @@ function containerSlot(element: HTMLElement): string {
   while (node && !node.classList.contains(CONTENT_ROOT_CLASS)) {
     const parent: HTMLElement | null = node.parentElement;
     if (!parent) return '';
-    parts.unshift(`${node.tagName.toLowerCase()}[${Array.prototype.indexOf.call(parent.children, node)}]`);
+    const index = Array.prototype.indexOf.call(slotChildren(parent), node);
+    if (index < 0) return '';
+    parts.unshift(`${node.tagName.toLowerCase()}[${index}]`);
     node = parent;
   }
   return node ? parts.join('>') : '';
@@ -113,7 +122,7 @@ function findSlotElement(slot: string): HTMLElement | null {
   for (const part of slot.split('>')) {
     const match = /^([a-z0-9-]+)\[(\d+)\]$/.exec(part);
     if (!match) return null;
-    const child = node.children[Number(match[2])];
+    const child = slotChildren(node)[Number(match[2])];
     if (!child || child.tagName.toLowerCase() !== match[1]) return null;
     node = child;
   }

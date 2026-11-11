@@ -45,6 +45,37 @@ describe('route scroll restoration', () => {
     expect([root.scrollTop, frame.scrollTop, stage.scrollTop]).toEqual([0, 0, 0]);
   });
 
+  it.each(['feed-detail-back', 'feed-detail-forward', 'feed-detail-desktop'])('转场 %s 时恢复位置会跳过退出中的页面', async transition => {
+    document.body.innerHTML = '<main class="app-main-content"><div class="route-transition-stage"><div id="home"><div class="custom-scrollbar"></div></div></div></main>';
+    const home = document.querySelector<HTMLElement>('#home')!;
+    const list = home.querySelector<HTMLElement>('.custom-scrollbar')!;
+    const detail = document.createElement('div');
+    detail.className = `${transition}-leave-active`;
+    detail.innerHTML = '<div class="custom-scrollbar"></div>';
+    const detailScroll = detail.querySelector<HTMLElement>('.custom-scrollbar')!;
+    detailScroll.scrollTop = 320;
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    const key = '/home-during-transition';
+    list.scrollTop = 1200;
+    saveRouteScrollPosition(key);
+    // 返回首页的首帧，尚未卸载的详情页仍排在首页之前。
+    home.before(detail);
+    list.scrollTop = 0;
+    await restoreRouteScrollPosition(key);
+    expect(list.scrollTop).toBe(1200);
+    expect(detailScroll.scrollTop).toBe(320);
+
+    // 转场未结束就再次离开首页，保存时也应忽略详情页。
+    list.scrollTop = 1400;
+    saveRouteScrollPosition(key);
+    detail.remove();
+    list.scrollTop = 0;
+    await restoreRouteScrollPosition(key);
+    expect(list.scrollTop).toBe(1400);
+  });
+
   it.each(['new-page', 'comments-entry'])('快速切到 %s 后，旧页面的待执行恢复不能再写入位置', async destination => {
     document.body.innerHTML = '<main class="app-main-content"></main>';
     const root = document.querySelector<HTMLElement>('main')!;
