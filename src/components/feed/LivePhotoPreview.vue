@@ -65,10 +65,6 @@
       {{ isGif ? 'GIF' : 'Live' }}
     </span>
 
-    <span v-if="resolving && !isGif" class="live-photo-loading" aria-live="polite">
-      <i class="fas fa-circle-notch fa-spin"></i>
-    </span>
-
     <!-- GIF 一次加载失败后给出可见占位，点击可就地重试，不再静默空白（R3-3.4）。 -->
     <button
       v-if="isGif && gifError"
@@ -514,23 +510,6 @@ watch(() => props.gifAutoPlay, enabled => {
 
 .gif-error-placeholder i {
   font-size: 11px;
-}
-
-.live-photo-loading {
-  position: absolute;
-  left: 6px;
-  bottom: 6px;
-  z-index: 2;
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  border-radius: 50%;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(6px);
-  font-size: 10px;
-  pointer-events: none;
 }
 
 @keyframes live-ring-pulse {
