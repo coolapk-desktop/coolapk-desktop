@@ -81,6 +81,7 @@ import { useIosBackGesture } from '../../composables/useIosBackGesture';
 import { navigateBack } from '../../utils/navigation';
 import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey, useMobileReadingNavigation } from '../../composables/useMobileReadingNavigation';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
+import { logDiagnostic } from '../../utils/diagnosticLogger';
 
 const route = useRoute();
 const router = useRouter();
@@ -149,9 +150,45 @@ function updateTopicGlass(scroller?: Element) {
   topicGlassJoined.value = route.path.startsWith('/topic/') && window.innerWidth <= 720 && Boolean(controls && topbar && controls.getBoundingClientRect().top <= topbar.getBoundingClientRect().bottom + 1);
 }
 
+type LayoutSample = 'user_enter' | 'user_scroll' | 'home_return';
+const lastLayoutSample = new Map<LayoutSample, number>();
+let layoutSampleTimer: ReturnType<typeof setTimeout> | undefined;
+
+function describeLayoutBox(element: Element | null | undefined): string {
+  if (!element) return 'missing';
+  const { top, bottom } = element.getBoundingClientRect();
+  return `${Math.round(top)}:${Math.round(bottom)}:${getComputedStyle(element).overflowY}`;
+}
+
+/** #65：仅采集固定位置的命中类型及几何尺寸，不记录用户内容或路由参数。 */
+function scheduleLayoutSample(reason: LayoutSample) {
+  if (!isAndroidApp || layoutSampleTimer !== undefined || Date.now() - (lastLayoutSample.get(reason) ?? -Infinity) < 30_000) return;
+  layoutSampleTimer = setTimeout(() => {
+    layoutSampleTimer = undefined;
+    const main = mainContent.value;
+    if (!main || document.visibilityState === 'hidden') return;
+    lastLayoutSample.set(reason, Date.now());
+    const scroller = main.querySelector<HTMLElement>(reason === 'home_return'
+      ? '.pager-page[aria-hidden="false"] .feed-scroll-container' : '.user-page-wrapper');
+    const hitSamples = [0.55, 0.7, 0.9].map(fraction => {
+      const y = Math.round((window.visualViewport?.height ?? window.innerHeight) * fraction);
+      const hit = document.elementFromPoint(Math.floor(window.innerWidth / 2), y);
+      const region = hit?.closest('.feed-card') && scroller?.contains(hit) ? 'feed'
+        : hit && scroller?.contains(hit) ? 'list'
+        : hit?.closest('.dialog-backdrop, .dialog-container, .more-menu-backdrop, .login-overlay') ? 'overlay'
+        : hit && main.contains(hit) ? 'frame' : hit ? 'outside' : 'none';
+      return `${y}:${region}:${hit?.localName ?? '-'}`;
+    });
+    const scroll = scroller ? `${Math.round(scroller.scrollTop)}:${scroller.clientHeight}:${scroller.scrollHeight}` : 'missing';
+    logDiagnostic('info', 'layout', 'content_probe',
+      `reason=${reason} main=${describeLayoutBox(main)} page=${describeLayoutBox(main.querySelector('.app-page-content'))} stage=${describeLayoutBox(main.querySelector('.route-transition-stage'))} list=${describeLayoutBox(scroller)} scroll=${scroll} hits=${hitSamples.join(',')}`);
+  }, 500);
+}
+
 function handleShellScroll(event: Event) {
   reading.onScroll(event);
   if (route.path.startsWith('/topic/') && event.target instanceof Element && event.target.classList.contains('page-container')) updateTopicGlass(event.target);
+  if (isAndroidApp && route.name === 'User' && event.target instanceof HTMLElement && event.target.classList.contains('user-page-wrapper')) scheduleLayoutSample('user_scroll');
 }
 
 function toggleMobileNavigation() {
@@ -170,7 +207,11 @@ function handleMobileNavigationKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') closeMobileNavigation();
 }
 
-watch(() => route.fullPath, next => {
+watch(() => route.fullPath, (next, previous) => {
+  clearTimeout(layoutSampleTimer);
+  layoutSampleTimer = undefined;
+  if (route.name === 'User') scheduleLayoutSample('user_enter');
+  else if (route.path === '/' && previous.startsWith('/user/')) scheduleLayoutSample('home_return');
   const restoreHidden = routeNavigationIsHistory.value && Boolean(readingStates.get(next));
   readingRoute = next;
   topicGlassJoined.value = false;
@@ -180,8 +221,16 @@ watch(() => route.fullPath, next => {
   rootBack.reset();
 });
 
-onMounted(() => { window.addEventListener('keydown', handleMobileNavigationKeydown); window.addEventListener('resize', updateReadingViewport); });
-onUnmounted(() => { window.removeEventListener('keydown', handleMobileNavigationKeydown); window.removeEventListener('resize', updateReadingViewport); });
+onMounted(() => {
+  window.addEventListener('keydown', handleMobileNavigationKeydown);
+  window.addEventListener('resize', updateReadingViewport);
+  if (route.name === 'User') scheduleLayoutSample('user_enter');
+});
+onUnmounted(() => {
+  clearTimeout(layoutSampleTimer);
+  window.removeEventListener('keydown', handleMobileNavigationKeydown);
+  window.removeEventListener('resize', updateReadingViewport);
+});
 </script>
 
 <style scoped>

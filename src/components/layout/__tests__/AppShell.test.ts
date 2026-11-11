@@ -4,8 +4,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { computed, defineComponent, inject, nextTick, onMounted, ref } from 'vue';
 import { desktopFeedCommentsOpenKey, openDesktopFeedCommentsKey } from '../../../utils/desktopFeedComments';
 import { routeNavigationIsHistory } from '../../../utils/routeScroll';
+import * as diagnostics from '../../../utils/diagnosticLogger';
 
-const routeState = vi.hoisted(() => ({ controls: false, value: null as any, back: vi.fn(), replace: vi.fn(), history: { back: '/' as string | null } }));
+const routeState = vi.hoisted(() => ({ controls: false, android: false, value: null as any, back: vi.fn(), replace: vi.fn(), history: { back: '/' as string | null } }));
 vi.mock('../../../composables/useDesktopWindow', () => ({ useDesktopWindow: () => ({ showWindowControls: computed(() => routeState.value.controls), usesMacOverlay: ref(false) }) }));
 
 vi.mock('vue-router', async (importOriginal) => {
@@ -20,7 +21,7 @@ vi.mock('vue-router', async (importOriginal) => {
 });
 
 vi.mock('@tauri-apps/api/core', () => ({
-  isTauri: () => false,
+  isTauri: () => routeState.android,
   invoke: vi.fn(),
 }));
 
@@ -36,6 +37,46 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
+  it('Android 正文诊断按触发场景限频，且不记录用户文本或路由参数', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('navigator', { userAgent: 'Android', platform: 'Android', maxTouchPoints: 5 });
+    routeState.android = true;
+    const log = vi.spyOn(diagnostics, 'logDiagnostic').mockImplementation(() => {});
+    const hit = vi.fn();
+    const originalHit = Object.getOwnPropertyDescriptor(document, 'elementFromPoint');
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: hit });
+    const wrapper = mount(AppShell, {
+      slots: { default: '<div class="route-transition-stage"><div class="user-page-wrapper"><article class="feed-card">私有动态正文</article></div></div>' },
+      global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub,
+        NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } },
+    });
+    try {
+      hit.mockReturnValue(wrapper.get('.feed-card').element);
+      Object.assign(routeState.value, { name: 'User', path: '/user/123456', fullPath: '/user/123456' });
+      await nextTick();
+      vi.advanceTimersByTime(500);
+      const list = wrapper.get('.user-page-wrapper');
+      await list.trigger('scroll');
+      vi.advanceTimersByTime(500);
+      await list.trigger('scroll');
+      vi.advanceTimersByTime(500);
+      const samples = log.mock.calls.filter(([, module, event]) => module === 'layout' && event === 'content_probe');
+      expect(samples).toHaveLength(2);
+      expect(samples[0][3]).toContain('reason=user_enter');
+      expect(samples[1][3]).toContain('reason=user_scroll');
+      expect(samples[1][3]).toContain(':feed:article');
+      expect(samples[1][3]).not.toMatch(/私有动态正文|123456/);
+      expect(hit).toHaveBeenCalledTimes(6);
+    } finally {
+      wrapper.unmount();
+      routeState.android = false;
+      routeState.value.name = undefined;
+      if (originalHit) Object.defineProperty(document, 'elementFromPoint', originalHit);
+      else Reflect.deleteProperty(document, 'elementFromPoint');
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['/notifications', '/search'])('%s 只显示页面自带的工具栏，离开后恢复移动顶栏', async (path) => {
     Object.assign(routeState.value, { path, fullPath: path });
     const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
