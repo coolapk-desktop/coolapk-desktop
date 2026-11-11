@@ -864,13 +864,27 @@ async function handleNotifyClick(e: Event, item: any) {
   }, href);
 }
 
-onActivated(() => {
-  // 主动打开通知应看到最新消息；浏览器后退仍保留先前阅读的位置。
-  if (!routeNavigationIsHistory.value && pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
-  window.addEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
+let entryTab: string | undefined;
+let entryNoteType: string | undefined;
+
+function loadNotificationEntry(restoreHistory = false) {
   const requestedTab = normalizeNotificationTab(route.query.tab);
-  subNoteType.value = typeof route.query.noteType === 'string' ? route.query.noteType : '';
-  if (tabs.some((tab) => tab.value === requestedTab)) currentTab.value = requestedTab;
+  const requestedNoteType = typeof route.query.noteType === 'string' ? route.query.noteType : '';
+  // 历史返回要保留分页和列表高度，供路由恢复滚动位置。
+  if (restoreHistory && entryTab === requestedTab && entryNoteType === requestedNoteType
+    && (loading.value || items.value.length > 0 || !hasMore.value && !notificationError.value)) return;
+
+  entryTab = requestedTab;
+  entryNoteType = requestedNoteType;
+  if (!restoreHistory && pageContainerRef.value) pageContainerRef.value.scrollTop = 0;
+  if (currentTab.value !== requestedTab || subNoteType.value !== requestedNoteType) {
+    closeReplyComposer();
+    items.value = [];
+    notificationRequestId += 1;
+    loading.value = false;
+  }
+  currentTab.value = requestedTab;
+  subNoteType.value = requestedNoteType;
   if (!authStore.isLoggedIn) {
     items.value = [];
     page.value = 1;
@@ -879,6 +893,11 @@ onActivated(() => {
     return;
   }
   void refreshNotifications();
+}
+
+onActivated(() => {
+  window.addEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
+  loadNotificationEntry(routeNavigationIsHistory.value);
 });
 
 onDeactivated(() => {
@@ -887,21 +906,11 @@ onDeactivated(() => {
 });
 
 watch(
-  () => route.query.tab,
-  (tab) => {
-    const requestedTab = normalizeNotificationTab(tab);
-    if (tabs.some((item) => item.value === requestedTab)) void switchTab(requestedTab);
+  [() => route.name, () => route.query.tab, () => route.query.noteType],
+  ([name], [previousName]) => {
+    if (name === 'Notifications' && previousName === name) loadNotificationEntry();
   }
 );
-
-watch(() => route.query.noteType, async noteType => {
-  closeReplyComposer();
-  subNoteType.value = typeof noteType === 'string' ? noteType : '';
-  page.value = 1;
-  items.value = [];
-  hasMore.value = true;
-  await fetchNotifications();
-});
 
 watch(
   () => [authStore.isLoggedIn, authStore.user?.uid] as const,

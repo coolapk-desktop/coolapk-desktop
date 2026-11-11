@@ -24,8 +24,10 @@ vi.mock('../../utils/toast', () => ({ showToast: mocks.toast }));
 import NotificationsPage from '../NotificationsPage.vue';
 
 describe('通知评论点击入口', () => {
-  it.each([false, true])('缓存通知页重新进入时，历史导航=%s 决定是否保留旧阅读位置', async historyNavigation => {
-    mocks.notifications.mockResolvedValue({ data: [] });
+  it.each([false, true])('缓存通知页重新进入时，历史导航=%s 决定是否保留已加载分页和阅读位置', async historyNavigation => {
+    mocks.notifications.mockImplementation(async (_tab: string, page: number) => ({
+      data: page <= 2 ? [{ id: `page-${page}`, message: `第 ${page} 页的通知` }] : [],
+    }));
     const shown = ref(true);
     const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, setup: () => ({ shown }), template: '<KeepAlive><NotificationsPage v-if="shown" /></KeepAlive>' }), {
       global: { stubs: { AppAvatar: true, AppImage: true, AppButton: true, LoadingState: true, ErrorState: true, EmptyState: true, FeedCommentSection: true } },
@@ -33,11 +35,23 @@ describe('通知评论点击入口', () => {
     try {
       await flushPromises();
       const page = wrapper.get('.page-container').element as HTMLElement;
+      expect(wrapper.text()).toContain('第 2 页的通知');
       page.scrollTop = 900;
       shown.value = false; await flushPromises();
+      mocks.notifications.mockReset().mockImplementation(async (_tab: string, page: number) => ({
+        data: page === 1 ? [{ id: 'new', message: '最新通知' }] : [],
+      }));
       routeNavigationIsHistory.value = historyNavigation;
       shown.value = true; await flushPromises();
       expect(page.scrollTop).toBe(historyNavigation ? 900 : 0);
+      if (historyNavigation) {
+        expect(mocks.notifications).not.toHaveBeenCalled();
+        expect(wrapper.text()).toContain('第 2 页的通知');
+      } else {
+        expect(mocks.notifications).toHaveBeenCalledWith('list', 1, '', '', '');
+        expect(wrapper.text()).toContain('最新通知');
+        expect(wrapper.text()).not.toContain('第 2 页的通知');
+      }
     } finally { wrapper.unmount(); routeNavigationIsHistory.value = false; }
   });
   beforeEach(() => { vi.clearAllMocks(); mocks.feedFullText.mockRejectedValue(new Error('动态不可用')); localStorage.clear(); setActivePinia(createPinia()); mocks.clear.mockResolvedValue({}); mocks.report.mockResolvedValue({}); mocks.confirm.mockResolvedValue(false); mocks.read.mockResolvedValue({ data: { notifyCount: { notification_v18: 0, dateline: 101 } } }); });
