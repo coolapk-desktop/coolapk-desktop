@@ -256,6 +256,7 @@ describe('updateChecker', () => {
 
   describe('GitHub 更新源', () => {
     const repository = 'coolapk-desktop/coolapk-desktop';
+    const releasesUrl = `https://api.github.com/repos/${repository}/releases`;
     const platform = { os: 'windows', arch: 'x86_64' } as const;
     const release = (version: string, arch = 'x64') => ({
       tag_name: `v${version}`, body: repository,
@@ -271,7 +272,38 @@ describe('updateChecker', () => {
       expect(result.releaseNotes).toBe(repository);
       expect(result.downloadUrl).toContain(repository);
       expect(result.installerUrl).toContain(repository);
-      expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([`https://api.github.com/repos/${repository}/releases/latest`]);
+      expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([`${releasesUrl}/latest`, `${releasesUrl}?per_page=100`]);
+    });
+
+    it('正式渠道跨页补齐当前版本到目标版本之间的日志', async () => {
+      const target = { ...release('2.1.0'), body: '目标版日志' };
+      const firstPage = [
+        { ...target, body: '重复的目标日志' },
+        { ...release('2.0.0'), body: '中间版日志' },
+        { ...release('2.0.1-beta.1'), prerelease: true, body: '测试版日志' },
+        { ...release('2.0.1'), draft: true, body: '草稿日志' },
+        { ...release('2.2.0'), body: '目标之后的日志' },
+        { ...release(APP_VERSION), body: '当前版本日志' },
+        ...Array.from({ length: 94 }, () => release('1.8.0')),
+      ];
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        if (url === `${releasesUrl}/latest`) return response(target);
+        if (url === `${releasesUrl}?per_page=100`) return response(firstPage);
+        return response([{ ...release('1.9.2'), body: '较早的中间版日志' }]);
+      });
+      const result = await checkLatestRelease('stable', platform);
+      expect(result.latestVersion).toBe('v2.1.0');
+      expect(result.installerUrl).toBe(target.assets[0].browser_download_url);
+      expect(result.releaseNotes).toBe('## v2.1.0\n\n目标版日志\n\n---\n\n## v2.0.0\n\n中间版日志\n\n---\n\n## v1.9.2\n\n较早的中间版日志');
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`${releasesUrl}/latest`, `${releasesUrl}?per_page=100`, `${releasesUrl}?per_page=100&page=2`]);
+    });
+
+    it('历史查询失败时保留目标版本的日志和安装包', async () => {
+      const target = { ...release('2.1.0'), body: '目标版日志' };
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async url =>
+        url === `${releasesUrl}/latest` ? response(target) : response(null, 503));
+      const result = await checkLatestRelease('stable', platform);
+      expect(result).toMatchObject({ hasNew: true, releaseNotes: target.body, installerUrl: target.assets[0].browser_download_url });
     });
 
     it('仓库没有可用发布版本时返回明确错误', async () => {
@@ -289,11 +321,18 @@ describe('updateChecker', () => {
       expect(result).toMatchObject({ latestVersion: 'v8.0.0', releaseNotes: repository });
     });
 
-    it('测试渠道优先展示新仓库中的 beta 发布', async () => {
-      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => String(url).includes('?')
-        ? response([{ ...release('9.0.0-beta.1'), prerelease: true }, release('8.0.0')])
+    it('测试渠道沿用已获取的发布列表，按版本合并正式版和测试版日志', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => String(url).includes('?')
+        ? response([
+          { ...release('9.0.0-beta.2'), prerelease: true, body: 'beta 2 日志' },
+          { ...release('9.0.0-beta.1'), prerelease: true, body: 'beta 1 日志' },
+          release('8.0.0'),
+        ])
         : response(release('8.0.0')));
-      await expect(checkLatestRelease('beta', platform)).resolves.toMatchObject({ latestVersion: 'v9.0.0-beta.1', releaseNotes: repository });
+      const result = await checkLatestRelease('beta', platform);
+      expect(result.latestVersion).toBe('v9.0.0-beta.2');
+      expect(result.releaseNotes).toBe(`## v9.0.0-beta.2\n\nbeta 2 日志\n\n---\n\n## v9.0.0-beta.1\n\nbeta 1 日志\n\n---\n\n## v8.0.0\n\n${repository}`);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('当前版本日志只从新仓库读取', async () => {
