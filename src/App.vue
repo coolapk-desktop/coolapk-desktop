@@ -26,7 +26,7 @@
     <ShuzilmDeviceGuideModal />
     <EquipmentProductPicker />
 
-    <AppDialog :is-open="Boolean(updateInfo)" :title="updateInfo?.hasNew ? '发现新版本' : '检查更新'" :width="540" @close="updateInfo = null">
+    <AppDialog :is-open="Boolean(updateInfo)" :title="updateInfo?.hasNew ? '发现新版本' : '检查更新'" dialog-class="update-content-dialog" :width="660" @close="updateInfo = null">
       <div v-if="updateInfo" class="startup-update">
         <div class="startup-update-header">
           <div class="update-header-info">
@@ -38,17 +38,14 @@
           </span>
         </div>
 
-        <div class="startup-update-notes-block">
-          <div class="startup-update-notes-header">
-            <i class="fas fa-sparkles text-brand"></i>
-            <span class="startup-update-notes-label">{{ updateInfo.hasNew ? '更新内容' : '当前版本更新日志' }}</span>
-          </div>
-          <div
-            class="startup-update-notes custom-scrollbar"
-            v-html="renderReleaseMarkdown(updateInfo.releaseNotes || '')"
-            @click="handleAnchorClick"
-          ></div>
-        </div>
+        <div
+          class="startup-update-notes update-release-notes custom-scrollbar"
+          role="region"
+          :aria-label="updateInfo.hasNew ? '更新内容' : '当前版本更新日志'"
+          tabindex="0"
+          v-html="renderReleaseMarkdown(updateInfo.releaseNotes || '')"
+          @click="handleAnchorClick"
+        ></div>
 
         <p v-if="updateInfo.hasNew && !canInstallInApp" class="startup-update-notes">
           {{ isMacOS
@@ -108,20 +105,18 @@
       </div>
     </AppDialog>
 
-    <AppDialog :is-open="Boolean(readyInfo) && canInstallInApp && readyUpdateVisible" title="更新包已下载" :width="460" @close="readyUpdateVisible = false">
+    <AppDialog :is-open="Boolean(readyInfo) && canInstallInApp && readyUpdateVisible" title="更新包已下载" dialog-class="update-content-dialog" :width="660" @close="readyUpdateVisible = false">
       <div v-if="readyInfo" class="startup-update">
-        <p class="startup-update-version">{{ appUpdateName }} {{ readyInfo.version }} 更新包已下载完成</p>
-        <div v-if="readyInfo.releaseNotes" class="startup-update-notes-block">
-          <div class="startup-update-notes-header">
-            <i class="fas fa-sparkles text-brand"></i>
-            <span class="startup-update-notes-label">更新日志</span>
-          </div>
-          <div
-            class="startup-update-notes custom-scrollbar"
-            v-html="renderReleaseMarkdown(readyInfo.releaseNotes)"
-            @click="handleAnchorClick"
-          ></div>
-        </div>
+        <p class="startup-update-notes">{{ appUpdateName }} {{ readyInfo.version }}</p>
+        <div
+          v-if="readyInfo.releaseNotes"
+          class="startup-update-notes update-release-notes custom-scrollbar"
+          role="region"
+          aria-label="更新日志"
+          tabindex="0"
+          v-html="renderReleaseMarkdown(readyInfo.releaseNotes)"
+          @click="handleAnchorClick"
+        ></div>
         <p class="startup-update-notes">
           {{ isAndroid
             ? '是否打开系统安装界面？请在系统提示中确认安装。'
@@ -919,10 +914,107 @@ html, body {
   max-height: 240px;
   overflow-y: auto;
   padding-right: 4px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  font-size: 13px;
+  /* 更新日志是主要阅读内容，使用正文色和标准字号提高辨识度。 */
+  color: var(--text-primary);
+  line-height: 1.7;
+  font-size: 14px;
   word-break: break-word;
+}
+
+.dialog-container.update-content-dialog {
+  max-width: calc(100vw - 24px);
+  max-height: min(85vh, calc(var(--app-viewport-height, 100vh) - 24px));
+}
+
+.update-content-dialog .dialog-header {
+  flex: 0 0 48px;
+  padding-inline: 12px;
+}
+
+.update-content-dialog .dialog-body,
+.update-content-dialog .startup-update {
+  display: flex;
+  flex-direction: column;
+}
+
+.update-content-dialog .dialog-body {
+  padding: 12px;
+}
+
+.update-content-dialog .startup-update {
+  min-height: 0;
+  gap: 8px;
+}
+
+.update-content-dialog .startup-update > :not(.update-release-notes) {
+  flex-shrink: 0;
+}
+
+.update-content-dialog .update-release-notes {
+  /* 日志优先收缩，极矮窗口再由弹窗正文滚动。 */
+  min-height: 80px;
+  max-height: none;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.update-content-dialog .startup-update-actions {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.update-content-dialog .startup-update-header {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 0;
+}
+
+.update-content-dialog .update-header-info {
+  flex-wrap: wrap;
+}
+
+.update-content-dialog .startup-update-date,
+.update-content-dialog .startup-update-actions .btn-text {
+  color: var(--text-secondary);
+}
+
+.update-content-dialog .startup-update-actions button {
+  white-space: nowrap;
+}
+
+/* 窄窗口分两行展示操作，避免四个按钮互相挤压、逐字换行。 */
+@media (max-width: 600px) {
+  .update-content-dialog .startup-update-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+  }
+
+  .update-content-dialog .update-actions-left,
+  .update-content-dialog .update-actions-right {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+  }
+
+  .update-content-dialog .update-actions-left {
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .update-content-dialog .update-actions-right > button {
+    /* 两个下载入口等宽，长文案在极窄窗口中整行下移。 */
+    flex: 1 0 8rem;
+    justify-content: center;
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .update-content-dialog .btn-text {
+    min-height: 36px;
+    font-size: 13px;
+  }
 }
 
 .startup-update-notes h4,
@@ -935,15 +1027,15 @@ html, body {
 }
 
 .startup-update-notes h4 {
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .startup-update-notes h5 {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .startup-update-notes h6 {
-  font-size: 12.5px;
+  font-size: 14px;
 }
 
 .startup-update-notes p {
@@ -957,7 +1049,7 @@ html, body {
 }
 
 .startup-update-notes li {
-  margin: 2px 0;
+  margin: 4px 0;
 }
 
 .startup-update-notes blockquote {
@@ -966,7 +1058,7 @@ html, body {
   background: var(--bg-hover, rgba(0, 0, 0, 0.04));
   border-left: 3px solid var(--brand-green, #10b981);
   border-radius: 4px;
-  color: var(--text-secondary);
+  color: inherit;
 }
 
 .startup-update-notes hr {
