@@ -376,6 +376,17 @@ fn test_publish_device_model_is_scoped_and_preserves_identity() {
 }
 
 #[test]
+fn test_publish_topic_fields() {
+    for target_type in ["tag", "phone"] {
+        let options = PublishOptions { target_type: Some(target_type.to_string()), target_id: Some("67".to_string()), ..Default::default() };
+        let mut form = build_create_feed_form("#摄影# 正文", None, None);
+        apply_publish_options(&mut form, &options).unwrap();
+        assert!(form.contains(&("targetType", target_type.to_string())));
+        assert!(form.contains(&("targetId", "67".to_string())));
+    }
+}
+
+#[test]
 fn test_publish_extras_apk_fields() {
     let options: PublishOptions = serde_json::from_value(json!({"originalType":2,"dyhId":"9","extraUrl":"/goods/detail?id=8"})).unwrap();
     let mut form = build_create_feed_form("正文", None, None);

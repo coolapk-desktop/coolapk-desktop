@@ -42,6 +42,37 @@ beforeEach(() => {
   vi.mocked(CoolapkTauriAPI.getDeviceInfo).mockResolvedValue({ code: 200, data: { defaultProfile: { includeDeviceModel: false } } });
 });
 describe('完整发帖流程', () => {
+  it('话题动态跳过其他草稿，发布时携带话题 ID 和类型', async () => {
+    const target = { type: 'phone', id: '67', title: '摄影' };
+    stores.app.publishTopicContext = { mode: 'feed', target };
+    vi.mocked(listFullPublishDrafts).mockResolvedValue([{ id: 'other-draft' }] as any);
+    vi.mocked(CoolapkTauriAPI.createFeed).mockResolvedValue({ code: 400, message: '测试停止发送' });
+    const wrapper = await openDialog();
+    try {
+      expect(wrapper.get('[role=textbox]').text()).toBe('#摄影#');
+      const submit = wrapper.findAll('button').find(button => button.text() === '立即发布')!;
+      expect(submit.attributes('disabled')).toBeDefined();
+      await typeText(wrapper, '#摄影# 分享照片');
+      await submit.trigger('click');
+      await flushPromises();
+      expect(CoolapkTauriAPI.createFeed).toHaveBeenCalledWith('#摄影# 分享照片', undefined, undefined, expect.objectContaining({ targetId: '67', targetType: 'phone', largeCover: true }));
+    } finally { wrapper.unmount(); }
+  });
+
+  it('从话题直接打开图文并预填话题，直接关闭时不保存空草稿', async () => {
+    const target = { type: 'tag', id: '67', title: '摄影' };
+    stores.app.publishTopicContext = { mode: 'article', target };
+    const wrapper = await openDialog();
+    try {
+      expect(wrapper.findComponent({ name: 'PublishArticleComposer' }).props('modelValue').blocks[0].text).toBe('#摄影# ');
+      expect(wrapper.findComponent({ name: 'PublishTargetPicker' }).props('modelValue')).toEqual(target);
+      await wrapper.findAll('button').find(button => button.text() === '取消')!.trigger('click');
+      await flushPromises();
+      expect(stores.app.isPublishOpen).toBe(false);
+      expect(saveFullPublishDraft).not.toHaveBeenCalled();
+    } finally { wrapper.unmount(); }
+  });
+
   it('等待设备 ID 时连续点击只发布一次，失败后允许重试', async () => {
     const wrapper = await openDialog();
     stores.settings.settings.deviceFingerprint.deviceId = '';

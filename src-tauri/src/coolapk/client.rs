@@ -43,7 +43,7 @@ fn apply_publish_options(form: &mut Vec<(&'static str, String)>, options: &Publi
         return Err("图文标题和题图仅支持图文发布".to_string());
     }
     if options.extra_url.as_ref().is_some_and(|url| url.len() > 4096 || url.starts_with("javascript:") || url.starts_with("data:")) { return Err("附加内容链接无效".to_string()); }
-    if !["", "tag", "apk", "product_phone"].contains(&target_type) { return Err("不支持的发布板块类型".to_string()); }
+    if !["", "tag", "phone", "apk", "product_phone"].contains(&target_type) { return Err("不支持的发布板块类型".to_string()); }
     if target_type.is_empty() != target_id.is_empty() { return Err("发布板块信息不完整".to_string()); }
     if let Some(url) = options.media_url.as_deref() {
         let parsed = reqwest::Url::parse(url).map_err(|_| "视频地址无效")?;

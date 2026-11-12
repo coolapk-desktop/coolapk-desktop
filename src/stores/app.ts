@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { FeedImageInput, LivePhotoContextType } from '../utils/livePhoto';
 import type { FeedItem } from '../types/feed';
+import type { TopicPublishContext } from '../types/publish';
 
 export interface ImageViewerContext {
   /** 从详情打开的大图沿用该详情的无图模式例外。 */
@@ -19,6 +20,7 @@ export const useAppStore = defineStore('app', () => {
   const isSearchOpen = ref(false);
   const isPublishOpen = ref(false);
   const publishInitialText = ref('');
+  const publishTopicContext = ref<TopicPublishContext | null>(null);
   const editFeedTarget = ref<FeedItem | null>(null);
   const feedDetailContexts = ref<Record<string, any>>({});
   const activeImageViewer = ref<ImageViewerState | null>(null);
@@ -31,19 +33,22 @@ export const useAppStore = defineStore('app', () => {
     isSearchOpen.value = false;
   }
 
-  function openPublish(initialText: unknown = '') {
+  function openPublish(initialText: unknown = '', topicContext: TopicPublishContext | null = null) {
     publishInitialText.value = typeof initialText === 'string' ? initialText : '';
+    publishTopicContext.value = topicContext;
     editFeedTarget.value = null;
     isPublishOpen.value = true;
   }
 
   function openEditFeed(feed: FeedItem) {
+    publishTopicContext.value = null;
     editFeedTarget.value = feed;
     isPublishOpen.value = true;
   }
 
   function closePublish() {
     publishInitialText.value = '';
+    publishTopicContext.value = null;
     isPublishOpen.value = false;
     editFeedTarget.value = null;
   }
@@ -80,6 +85,7 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     publishInitialText,
+    publishTopicContext,
     isSearchOpen,
     isPublishOpen,
     editFeedTarget,

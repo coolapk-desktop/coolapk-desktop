@@ -1,7 +1,7 @@
 <template>
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: headerLoading || feedsLoading }"
     ref="pageContainerRef"
-    :class="['page-container', 'custom-scrollbar', { 'is-embedded': embedded }]"
+    :class="['page-container', 'custom-scrollbar', { 'is-embedded': embedded, 'has-topic-publish': showTopicPublish && mobileLayout }]"
     @scroll="handleScroll"
   >
     <!-- 1. 话题头部卡片 -->
@@ -34,6 +34,9 @@
         </div>
 
         <div class="topic-actions">
+          <button v-if="showTopicPublish && !mobileLayout" class="topic-publish-inline" type="button" :aria-haspopup="publishRestricted ? undefined : 'dialog'" @click="openTopicPublish">
+            {{ publishRestricted ? '申请发布权限' : '发布' }}
+          </button>
           <button
             :class="['btn-follow', { followed: isFollowed }]"
             :disabled="followPending"
@@ -128,6 +131,17 @@
         <div v-else-if="noMore" class="no-more">没有更多动态了</div>
       </div>
     </div>
+
+    <button v-if="showTopicPublish && mobileLayout" class="topic-publish-fab" type="button" :aria-label="publishRestricted ? '申请发布权限' : '发布'" :aria-haspopup="publishRestricted ? undefined : 'dialog'" @click="openTopicPublish">
+      <i :class="publishRestricted ? 'fas fa-file-circle-check' : 'fas fa-plus'" aria-hidden="true"></i>
+    </button>
+
+    <PublishOptionSheet :is-open="topicPublishOpen && showTopicPublish" title="话题发布" :presentation="mobileLayout ? 'bottom' : 'page'" hide-header @close="topicPublishOpen = false">
+      <div class="topic-publish-options">
+        <button type="button" @click="composeTopicPost('feed')"><span class="topic-publish-icon feed-icon"><i class="fas fa-pen" aria-hidden="true"></i></span>动态</button>
+        <button type="button" @click="composeTopicPost('article')"><span class="topic-publish-icon article-icon"><i class="far fa-newspaper" aria-hidden="true"></i></span>图文</button>
+      </div>
+    </PublishOptionSheet>
   </div>
 </template>
 
@@ -136,14 +150,18 @@ import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, onMounted, onActivated, onDeactivated, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
+import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
+import { useMobileLayout } from '../composables/useOfficialMobileFeedDetail';
+import type { PublishMode } from '../types/publish';
 import FeedCard from '../components/feed/FeedCard.vue';
 import DiscoveryEntityCard from '../components/discovery/DiscoveryEntityCard.vue';
 import AppImage from '../components/common/AppImage.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import EntityFilterBar from '../components/common/EntityFilterBar.vue';
+import PublishOptionSheet from '../components/overlays/PublishOptionSheet.vue';
 import TopicRatingPanel from '../components/topic/TopicRatingPanel.vue';
 const mobileRatingPanel = ref<InstanceType<typeof TopicRatingPanel> | null>(null);
 import TopicRatingSummary from '../components/topic/TopicRatingSummary.vue';
@@ -195,8 +213,10 @@ interface TopicTab {
 
 const route = useRoute();
 const router = useRouter();
+const appStore = useAppStore();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
+const mobileLayout = useMobileLayout();
 function decodeTopicTag(raw: string): string {
   try {
     return decodeURIComponent(raw);
@@ -232,6 +252,33 @@ const ratingAvailable = computed(() => hasTopicRating(topicDetail.value)
   || (Boolean(topicDetail.value?.id) && topicTabs.value.some(tab => tab.kind === 'rating')));
 const isRatingView = computed(() => Boolean(topicDetail.value?.id) && route.query.ratingDetail === '1');
 const headerLoading = ref(true);
+const topicPublishOpen = ref(false);
+const showTopicPublish = computed(() => !headerLoading.value && !isRatingView.value && Boolean(topicDetail.value?.id));
+const publishRestricted = computed(() => Number(topicDetail.value?.publishLimit ?? topicDetail.value?.publish_limit) === 1);
+watch(showTopicPublish, (visible) => { if (!visible) topicPublishOpen.value = false; });
+onDeactivated(() => { topicPublishOpen.value = false; });
+
+function openTopicPublish() {
+  if (publishRestricted.value) {
+    const url = new URL('https://m.coolapk.com/mp/tag/PublishApplyTips');
+    url.searchParams.set('title', topicDetail.value.title || tag.value);
+    void router.push({ path: '/external', query: { url: url.href } });
+    return;
+  }
+  topicPublishOpen.value = true;
+}
+
+function composeTopicPost(mode: PublishMode) {
+  topicPublishOpen.value = false;
+  if (!showTopicPublish.value || publishRestricted.value) return;
+  if (!authStore.isLoggedIn) { authStore.openLoginModal(); return; }
+  const detail = topicDetail.value;
+  // APK 的机型话题使用 phone，普通话题使用 tag，发布请求均携带话题 ID。
+  appStore.openPublish('', { mode, target: {
+    id: String(detail.id), title: detail.title || tag.value, logo: topicLogo.value,
+    type: Number(detail.tagType ?? detail.tag_type) === 1 ? 'phone' : 'tag',
+  } });
+}
 const topicTabs = ref<TopicTab[]>([]);
 const activeTopicTabKey = ref('feed');
 const searchKeyword = ref('');
@@ -256,6 +303,7 @@ const FALLBACK_SORT_OPTIONS: TopicSortOption[] = [
 ];
 const sortOptions = ref<TopicSortOption[]>([...FALLBACK_SORT_OPTIONS]);
 let feedRequestId = 0;
+let headerRequestId = 0;
 
 function findTopicSortOption(sortKey: string, options = sortOptions.value): TopicSortOption | undefined {
   const exact = options.find((option) => option.key === sortKey);
@@ -560,14 +608,18 @@ function openTopicEntity(entity: any) {
 }
 
 async function fetchTopicHeader() {
-  if (!tag.value) return;
+  const requestedTag = tag.value;
+  if (!requestedTag) return;
+  const requestId = ++headerRequestId;
   headerLoading.value = true;
   try {
-    const res = await CoolapkTauriAPI.getTopicDetail(tag.value);
+    const res = await CoolapkTauriAPI.getTopicDetail(requestedTag);
+    if (requestId !== headerRequestId) return;
     if (res && res.data) {
       let detail = res.data;
       if (normalizeTopicTabs(detail).length <= 1) {
-        const legacyRes = await CoolapkTauriAPI.getTopicDetailV7(tag.value).catch(() => null);
+        const legacyRes = await CoolapkTauriAPI.getTopicDetailV7(requestedTag).catch(() => null);
+        if (requestId !== headerRequestId) return;
         const legacyDetail = legacyRes?.data;
         if (legacyDetail && normalizeTopicTabs(legacyDetail).length > normalizeTopicTabs(detail).length) {
           detail = { ...legacyDetail, ...detail, tabList: legacyDetail.tabList || legacyDetail.tabApiList };
@@ -588,6 +640,7 @@ async function fetchTopicHeader() {
       applyTopicTabs(null);
     }
   } catch (err) {
+    if (requestId !== headerRequestId) return;
     topicDetail.value = {
       title: tag.value,
       description: '',
@@ -598,7 +651,7 @@ async function fetchTopicHeader() {
     isFollowed.value = false;
     applyTopicTabs(null);
   } finally {
-    headerLoading.value = false;
+    if (requestId === headerRequestId) headerLoading.value = false;
   }
 }
 
@@ -954,6 +1007,41 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
 .dot {
   opacity: 0.5;
 }
+
+.topic-actions { display: flex; align-items: center; gap: 8px; }
+.topic-publish-inline {
+  border: 1px solid currentColor;
+  border-radius: 18px;
+  padding: 6px 14px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.topic-publish-inline:hover { background: color-mix(in srgb, currentColor 9%, transparent); }
+.topic-publish-fab {
+  position: fixed;
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 21;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  color: #fff;
+  font-size: 21px;
+  box-shadow: 0 3px 12px rgb(0 0 0 / 22%);
+}
+.page-container.has-topic-publish { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+.topic-publish-options { display: grid; grid-template-columns: repeat(2, minmax(0, 88px)); justify-content: center; gap: 8px; padding: 12px 0 16px; }
+.topic-publish-options button { display: grid; justify-items: center; gap: 6px; min-height: 48px; color: var(--text-primary); font: inherit; font-size: 14px; }
+.topic-publish-icon { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; color: #fff; font-size: 22px; }
+.topic-publish-icon.feed-icon { background: #4caf50; }
+.topic-publish-icon.article-icon { background: #00bcd4; }
 
 .btn-follow {
   padding: 6px 18px;

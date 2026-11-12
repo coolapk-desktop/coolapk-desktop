@@ -124,7 +124,7 @@
       </div>
       <!-- APK submit_feed_v8 的推荐区与工具区固定在编辑区底部。 -->
       <div class="publish-bottom-area">
-      <PublishTopicRecommendations :node-type="publishTarget?.type === 'tag' ? '3' : publishTarget?.type === 'apk' ? '1' : publishTarget?.type === 'product_phone' ? '7' : '0'" :node-name="publishTarget?.title || ''" :uid="currentDraftAccount()" :text="topicSourceText" :cursor="topicInsertOffset" :refresh="topicRefresh" @select="insertRecommendedTopic" />
+      <PublishTopicRecommendations :node-type="publishTarget?.type === 'tag' || publishTarget?.type === 'phone' ? '3' : publishTarget?.type === 'apk' ? '1' : publishTarget?.type === 'product_phone' ? '7' : '0'" :node-name="publishTarget?.title || ''" :uid="currentDraftAccount()" :text="topicSourceText" :cursor="topicInsertOffset" :refresh="topicRefresh" @select="insertRecommendedTopic" />
 
       <!-- 分类表情面板 -->
       <div v-if="showEmojiPanel" class="emoji-panel custom-scrollbar"><EmojiPanel :key="publishMode" :disabled="submitting || processingMedia" :selected-urls="selectedFavoriteUrls" @select="insertEmoji" @picture="selectFavoritePicture" /></div>
@@ -229,7 +229,7 @@ import '../../styles/publish.css';
 import PublishTopicPicker from './PublishTopicPicker.vue';
 import PublishTargetPicker from './PublishTargetPicker.vue';
 import PublishExtras from './PublishExtras.vue';
-import type { PublishTarget, PublishOptions } from '../../types/publish';
+import type { PublishMode, PublishTarget, PublishOptions } from '../../types/publish';
 import PublishProductOptions from './PublishProductOptions.vue';
 import { validateProductPublish } from '../../utils/publishProduct';
 import { preparePublishImage, originalLiveCompanions, movePublishImage, type PublishImage } from '../../utils/publishMedia';
@@ -250,9 +250,8 @@ const MAX_IMAGES = 9;
 const message = ref('');
 const images = ref<PublishImage[]>([]);
 const videoAttachment = ref<PublishVideo>();
-type PublishMode = 'feed' | 'article';
 const publishMode = ref<PublishMode>('feed');
-function emptyArticle(): PublishArticleState { return { title: '', cover: null, blocks: [{ id: createUuid(), type: 'text', text: '' }] }; }
+function emptyArticle(text = ''): PublishArticleState { return { title: '', cover: null, blocks: [{ id: createUuid(), type: 'text', text }] }; }
 const articleState = ref<PublishArticleState>(emptyArticle());
 const selectedFavoriteUrls = computed(() => (publishMode.value === 'article'
   ? articleState.value.blocks.flatMap(block => block.type === 'image' ? [block.image] : [])
@@ -260,15 +259,17 @@ const selectedFavoriteUrls = computed(() => (publishMode.value === 'article'
 const articleComposer = ref<InstanceType<typeof PublishArticleComposer> | null>(null);
 const articleBodyLength = computed(() => articleState.value.blocks.reduce((count, block) => count + (block.type === 'text' ? block.text.length : 0), 0));
 const articleEmojiCount = computed(() => articleState.value.blocks.reduce((count, block) => count + (block.type === 'text' ? emojiCount(block.text) : 0), 0));
-const canPublish = computed(() => publishMode.value === 'article'
-  ? !articleComposer.value?.isPreparing() && !!articleState.value.title.trim() && articleBodyLength.value <= 12000 && articleEmojiCount.value <= 100 && hasPublishableArticleText(articleState.value)
-  : !!message.value.trim() || images.value.length > 0 || !!videoAttachment.value);
-const uploadableImageCount = computed(() => publishMode.value === 'article'
-  ? [articleState.value.cover, ...articleState.value.blocks.filter((block) => block.type === 'image').map((block) => block.image)].filter((image) => !!image?.file && !image.url).length
-  : images.value.filter((image) => !!image.file && !image.url).length);
 const topicSourceText = computed(() => publishMode.value === 'article'
   ? articleState.value.blocks.filter((block) => block.type === 'text').map((block) => block.text).join('\n')
   : message.value);
+const topicSeedText = ref('');
+const hasNewText = computed(() => topicSourceText.value.trim() !== topicSeedText.value.trim());
+const canPublish = computed(() => publishMode.value === 'article'
+  ? !articleComposer.value?.isPreparing() && !!articleState.value.title.trim() && articleBodyLength.value <= 12000 && articleEmojiCount.value <= 100 && hasNewText.value && hasPublishableArticleText(articleState.value)
+  : (!!message.value.trim() && hasNewText.value) || images.value.length > 0 || !!videoAttachment.value);
+const uploadableImageCount = computed(() => publishMode.value === 'article'
+  ? [articleState.value.cover, ...articleState.value.blocks.filter((block) => block.type === 'image').map((block) => block.image)].filter((image) => !!image?.file && !image.url).length
+  : images.value.filter((image) => !!image.file && !image.url).length);
 const publishTarget = ref<PublishTarget | null>(null);
 const productOptions = ref<PublishOptions>({});
 const extraOptions = ref<PublishOptions>({ originalType: 0, extraUrl: '', dyhId: '' });
@@ -334,6 +335,7 @@ const savingDraft = ref(false);
 let draftAccount = '';
 let sessionIsEdit = false;
 let editBaseline = '';
+let topicDraftSeed = '';
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
 let saveRevision = 0;
 let pendingDraftSave: Promise<void> | null = null;
@@ -383,7 +385,8 @@ async function persistCurrentDraft() {
       const articleHasContent = !!state.article?.title.trim() || !!state.article?.cover || !!state.article?.blocks.some((block) =>
         block.type === 'image' || block.type === 'preserved' || (block.type === 'text' && block.text.trim()),
       );
-      if (state.text.trim() || state.images.length || state.video || articleHasContent || state.target || state.extraOptions.extraUrl || state.extraOptions.dyhId || state.extraOptions.originalType || state.visibleStatus !== 1 || state.largeCover) await saveFullPublishDraft(uid, id, state);
+      const hasContent = state.text.trim() || state.images.length || state.video || articleHasContent || state.target || state.extraOptions.extraUrl || state.extraOptions.dyhId || state.extraOptions.originalType || state.visibleStatus !== 1 || state.largeCover;
+      if (hasContent && (!topicDraftSeed || JSON.stringify(state) !== topicDraftSeed)) await saveFullPublishDraft(uid, id, state);
       else await deleteFullPublishDraft(uid, id);
       if (uid === draftAccount) draftList.value = await listFullPublishDrafts(uid);
     } finally { if (request === saveRevision) savingDraft.value = false; }
@@ -397,6 +400,8 @@ async function applyDraftState(state: PublishDraftState, id: string) {
   restoringDraft = true;
   clearTimeout(draftTimer);
   draftId.value = id;
+  topicDraftSeed = '';
+  topicSeedText.value = '';
   publishMode.value = state.mode || 'feed';
   articleState.value = state.article || emptyArticle();
   message.value = state.text;
@@ -479,6 +484,8 @@ watch(() => appStore.isPublishOpen, async (open) => {
     draftAccount = String(authStore.user?.uid || 'guest');
     sessionIsEdit = isEditMode.value;
     editBaseline = '';
+    topicDraftSeed = '';
+    topicSeedText.value = '';
     draftId.value = createUuid();
     showDrafts.value = false;
     showVisibility.value = false;
@@ -489,6 +496,7 @@ watch(() => appStore.isPublishOpen, async (open) => {
     publishMode.value = 'feed';
     articleState.value = emptyArticle();
     publishTarget.value = null;
+    productOptions.value = {};
     visibleStatus.value = 1;
     largeCover.value = false;
     extraOptions.value = { originalType: 0, extraUrl: '', dyhId: '' };
@@ -561,7 +569,18 @@ watch(() => appStore.isPublishOpen, async (open) => {
       try {
         draftList.value = await listFullPublishDrafts(draftAccount);
         if (revision !== openRevision || !appStore.isPublishOpen) return;
-        if (appStore.publishInitialText) message.value = appStore.publishInitialText;
+        if (appStore.publishTopicContext) {
+          const { mode, target } = appStore.publishTopicContext;
+          const text = `#${target.title}# `;
+          publishMode.value = mode;
+          publishTarget.value = target;
+          topicSeedText.value = text;
+          message.value = text;
+          articleState.value = emptyArticle(text);
+          largeCover.value = true;
+          // 仅预填了话题的编辑器关闭时不产生空草稿。
+          topicDraftSeed = JSON.stringify(draftSnapshot());
+        } else if (appStore.publishInitialText) message.value = appStore.publishInitialText;
         else if (draftList.value[0]) await applyDraftState(restoreFullPublishDraft(draftList.value[0]), draftList.value[0].id);
       } catch (failure) { editLoadError.value = `草稿读取失败：${failure instanceof Error ? failure.message : String(failure)}`; }
     }

@@ -4,7 +4,7 @@
       <button type="button" class="publish-setting-row" :class="{ 'is-selected': !!modelValue }" @click="expanded = true">
         <AppImage v-if="modelValue?.logo" :src="modelValue.logo" class="target-current-logo" alt="板块图标" />
         <span v-else-if="modelValue" class="target-current-icon">
-          <i :class="modelValue.type === 'tag' ? 'fas fa-hashtag' : modelValue.type === 'apk' ? 'fas fa-th-large' : 'fas fa-mobile-alt'"></i>
+          <i :class="modelValue.type === 'tag' || modelValue.type === 'phone' ? 'fas fa-hashtag' : modelValue.type === 'apk' ? 'fas fa-th-large' : 'fas fa-mobile-alt'"></i>
         </span>
         <PublishIcon v-else name="add" class="setting-icon" />
         <span class="setting-title">{{ modelValue?.title || '发布到' }}</span>
@@ -39,7 +39,8 @@ defineProps<{ modelValue: PublishTarget | null }>();
 const emit = defineEmits<{ 'update:modelValue': [target: PublishTarget | null] }>();
 const tabs = [{ type: 'tag', title: '话题' }, { type: 'apk', title: '应用' }, { type: 'product_phone', title: '产品' }] as const;
 const expanded = ref(false);
-const type = ref<PublishTarget['type']>('tag');
+type PickerType = typeof tabs[number]['type'];
+const type = ref<PickerType>('tag');
 const query = ref('');
 const targets = ref<PublishTarget[]>([]);
 const error = ref('');
@@ -93,7 +94,7 @@ watch([query, type], () => { ++revision; loading.value = false; targets.value = 
 watch(expanded, (value) => { if (value) void load(true); else { ++revision; clearTimeout(timer); loading.value = false; } });
 onBeforeUnmount(() => { ++revision; clearTimeout(timer); });
 // 工具栏的应用入口复用同一个选择器，并直接定位到应用页签。
-defineExpose({ openPicker: (targetType: PublishTarget['type'] = 'tag') => { type.value = targetType; expanded.value = true; } });
+defineExpose({ openPicker: (targetType: PickerType = 'tag') => { type.value = targetType; expanded.value = true; } });
 </script>
 <style scoped>
 .target-current {

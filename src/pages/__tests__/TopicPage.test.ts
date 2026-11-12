@@ -3,6 +3,8 @@ import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it, vi } from 'vitest';
 import { useSettingsStore } from '../../stores/settings';
+import { useAppStore } from '../../stores/app';
+import { useAuthStore } from '../../stores/auth';
 
 const mocks = vi.hoisted(() => ({
   getTopicDetail: vi.fn(),
@@ -24,6 +26,55 @@ function deferred<T>() {
   const promise = new Promise<T>((res) => { resolve = res; });
   return { promise, resolve };
 }
+
+describe('话题发布快捷入口', () => {
+  async function mountTopic(detail: Record<string, unknown>) {
+    const pinia = createPinia();
+    mocks.getTopicDetail.mockResolvedValue({ data: { id: 67, title: '摄影', ...detail } });
+    mocks.getTopicDetailV7.mockResolvedValue({ data: {} });
+    mocks.getTopicFeeds.mockResolvedValue({ code: 200, data: [] });
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/topic/:tag', component: TopicPage },
+      { path: '/external', component: { template: '<div />' } },
+    ] });
+    await router.push('/topic/摄影');
+    const wrapper = mount(TopicPage, { global: { plugins: [pinia, router], stubs: { teleport: true, AppImage: true, LoadingState: true, EmptyState: true } } });
+    await flushPromises();
+    return { wrapper, router, app: useAppStore(pinia), auth: useAuthStore(pinia) };
+  }
+
+  it.each([
+    { width: 390, selector: '.topic-publish-fab', choice: 0, mode: 'feed', tagType: 0, type: 'tag' },
+    { width: 1280, selector: '.topic-publish-inline', choice: 1, mode: 'article', tagType: 1, type: 'phone' },
+  ])('在 $width px 打开 $mode 并关联当前话题', async ({ width, selector, choice, mode, tagType, type }) => {
+    const previousWidth = window.innerWidth;
+    window.innerWidth = width;
+    const { wrapper, app, auth } = await mountTopic({ tagType });
+    try {
+      auth.isLoggedIn = true;
+      await wrapper.get(selector).trigger('click');
+      const options = wrapper.findAll('.topic-publish-options button');
+      expect(options.map(button => button.text())).toEqual(['动态', '图文']);
+      await options[choice].trigger('click');
+      expect(app.isPublishOpen).toBe(true);
+      expect(app.publishTopicContext).toMatchObject({ mode, target: { type, id: '67', title: '摄影' } });
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    } finally { wrapper.unmount(); window.innerWidth = previousWidth; }
+  });
+
+  it('发布受限时打开官方申请说明', async () => {
+    const { wrapper, router, app } = await mountTopic({ publish_limit: 1 });
+    try {
+      await wrapper.get('.topic-actions button').trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/external');
+      const url = new URL(String(router.currentRoute.value.query.url));
+      expect(url.origin + url.pathname).toBe('https://m.coolapk.com/mp/tag/PublishApplyTips');
+      expect(url.searchParams.get('title')).toBe('摄影');
+      expect(app.isPublishOpen).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+});
 
 describe('话题排序按钮', () => {
   it('点评排序卡片只呈现为顶部按钮，保留我的打分和真实点评', async () => {
