@@ -56,14 +56,31 @@ describe('MorePage.vue', () => {
     wrapper.unmount();
   });
 
-  it('分类仅展示常用网格以外的服务，所有平台共享准确的服务总数', () => {
+  it.each([
+    ['我的数码装备', '我的数码'],
+    ['特惠', '好物推荐'],
+    ['创作者收益', '酷安中心'],
+    ['我的专辑合集', '我的专辑'],
+    ['调色', '酷图精选'],
+    ['自提', '二手市场'],
+    ['数码深度评测', '评测专区'],
+  ])('搜索旧分类词「%s」时仅显示保留的入口', async (keyword, title) => {
     const wrapper = mount(MorePage);
-    expect(wrapper.get('.hub-count-tag').text()).toContain('18');
-    expect(wrapper.findAll('.category-section .section-count').map(count => count.text())).toEqual(['(2)', '(3)', '(1)', '(2)']);
+    await wrapper.get('.hub-search-input').setValue(keyword);
+    expect(wrapper.findAll('.search-results-section .hub-card-title').map(item => item.text())).toEqual([title]);
+    wrapper.unmount();
+  });
+
+  it('分类仅展示常用网格以外的服务并保持双列对称排布', () => {
+    const wrapper = mount(MorePage);
+    expect(wrapper.find('.section-count').exists()).toBe(false);
+    expect(wrapper.find('.hub-count-tag').exists()).toBe(false);
+    expect(wrapper.findAll('.category-section').map(section => section.findAll('.hub-card-item').length)).toEqual([4, 2, 2]);
     const categories = wrapper.get('.categories-container').text();
-    expect(categories).not.toContain('我的数码装备');
+    expect(categories).not.toContain('我的数码');
     expect(categories).not.toContain('二手市场');
     expect(categories).toContain('机型多维对比');
+    expect(categories).toContain('酷友圈活动');
     expect(categories).not.toContain('酷安 CDN 文件上传');
     wrapper.unmount();
   });
