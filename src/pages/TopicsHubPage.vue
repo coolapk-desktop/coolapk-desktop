@@ -170,40 +170,41 @@
       </aside>
 
       <!-- 2. 中间栏：话题动态信息流（核心栏目，自动 100% 撑满） -->
-      <main class="split-center-main" :class="{ 'has-topic-top-nav': !showLeftSidebarActual, 'topic-glass-joined': topicGlassJoined }" @scroll.capture="updateTopicGlass">
+      <main class="split-center-main" :class="{ 'has-topic-top-nav': !showLeftSidebarActual, 'topic-glass-joined': topicGlassJoined, 'topic-reading-hidden': topicReadingHidden }" @scroll.capture="updateTopicGlass">
         <!-- 单栏模式或左栏收起时的顶部展开快捷条 -->
-        <div v-if="!showLeftSidebarActual" class="single-column-top-nav">
+        <nav v-if="!showLeftSidebarActual" class="single-column-top-nav" aria-label="话题导航" :inert="topicReadingHidden || undefined" :aria-hidden="topicReadingHidden || undefined">
           <div class="top-nav-left-actions">
             <button
               v-if="isOneColumnMode"
               type="button"
               class="btn-back-grid-mobile"
+              aria-label="返回全部话题"
               @click="handleBackToGrid"
             >
-              <i class="fas fa-arrow-left"></i>
-              <span>全部话题</span>
+              <i class="fas fa-arrow-left" aria-hidden="true"></i>
             </button>
             <button
               v-else
               type="button"
               class="btn-expand-left-sidebar"
               title="展开话题栏"
+              aria-label="展开话题栏"
               @click="toggleLeftSidebar"
             >
-              <i class="fas fa-angles-right"></i>
-              <span>话题</span>
+              <i class="fas fa-angles-right" aria-hidden="true"></i>
             </button>
           </div>
 
           <!-- 快速切换子话题下拉 -->
-          <div class="mobile-subtopic-selector">
+          <div ref="subtopicPickerRef" class="mobile-subtopic-selector">
             <button
               type="button"
               class="mobile-subtopic-btn"
+              :aria-expanded="isMobileSubtopicPickerOpen"
               @click="isMobileSubtopicPickerOpen = !isMobileSubtopicPickerOpen"
             >
-              <span class="mobile-subtopic-title"># {{ activeTopicTag }} #</span>
-              <i class="fas fa-chevron-down dropdown-arrow" :class="{ 'is-open': isMobileSubtopicPickerOpen }"></i>
+              <span class="mobile-subtopic-title">{{ activeTopicTag }}</span>
+              <i class="fas fa-chevron-down dropdown-arrow" :class="{ 'is-open': isMobileSubtopicPickerOpen }" aria-hidden="true"></i>
             </button>
 
             <div v-if="isMobileSubtopicPickerOpen" class="mobile-picker-popover" @click.stop>
@@ -220,14 +221,20 @@
               </div>
             </div>
           </div>
-        </div>
+          <button v-if="isOneColumnMode" type="button" class="btn-topic-search" aria-label="搜索话题动态" @click="topicPageRef?.focusSearch()">
+            <i class="fas fa-magnifying-glass" aria-hidden="true"></i>
+          </button>
+        </nav>
 
         <keep-alive :max="20">
           <TopicPage
             v-if="activeTopicTag"
+            ref="topicPageRef"
             :key="activeTopicTag"
             :tag-param="activeTopicTag"
             :embedded="true"
+            :search-in-toolbar="isOneColumnMode"
+            :reading-navigation-hidden="topicReadingHidden"
             :disable-inline-comments="showRightAsidePanel"
             :active-feed-id="activeFeed?.id"
             @select-feed="handleFeedSelected"
@@ -278,11 +285,13 @@
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
 import { observeResizeOnFrame } from '../utils/observeResizeOnFrame';
-import { ref, computed, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue';
+import { ref, computed, inject, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue';
+import { mobileReadingNavigationKey } from '../composables/useMobileReadingNavigation';
 import { usePersistedColumnResize } from '../composables/usePersistedColumnResize';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useSettingsStore } from '../stores/settings';
+import { useAppStore } from '../stores/app';
 import { useTopicHubStore, type CategoryItem } from '../stores/topicHub';
 import { navigateBack } from '../utils/navigation';
 import TopicCard from '../components/topic/TopicCard.vue';
@@ -294,6 +303,7 @@ import EmptyState from '../components/common/EmptyState.vue';
 const route = useRoute();
 const router = useRouter();
 const settingsStore = useSettingsStore();
+const appStore = useAppStore();
 const topicHubStore = useTopicHubStore();
 const topicEntryUrl = '/page?url=V11_VERTICAL_TOPIC';
 
@@ -310,6 +320,7 @@ let topicRequestGeneration = 0;
 
 const viewMode = computed(() => topicHubStore.viewMode);
 const activeTopicTag = computed(() => topicHubStore.activeTopicTag);
+const topicPageRef = ref<InstanceType<typeof TopicPage> | null>(null);
 const topicGlassJoined = ref(false);
 
 /** 聚合页的标题条覆盖在滚动内容上，栏目吸顶后使用同一玻璃表面，所有平台保持一致。 */
@@ -345,6 +356,7 @@ const { visibleWidth: rightAsideWidth, startResize: startResizeRight, resetWidth
 
 const pageRootRef = ref<HTMLElement | null>(null);
 const categoryPickerRef = ref<HTMLElement | null>(null);
+const subtopicPickerRef = ref<HTMLElement | null>(null);
 const sidebarSubtopicsListRef = ref<HTMLElement | null>(null);
 const subtopicItemRefs = new Map<string, HTMLElement>();
 
@@ -374,6 +386,9 @@ function handleResize() {
 const isThreeColumnMode = computed(() => viewportWidth.value >= 1150);
 const isTwoColumnMode = computed(() => viewportWidth.value >= 768 && viewportWidth.value < 1150);
 const isOneColumnMode = computed(() => viewportWidth.value < 768);
+const readingNavigation = inject(mobileReadingNavigationKey, undefined);
+const topicReadingHidden = computed(() => isOneColumnMode.value && Boolean(readingNavigation?.hidden.value));
+watch(topicReadingHidden, (hidden) => { if (hidden) isMobileSubtopicPickerOpen.value = false; });
 
 const activeColumnCount = computed(() => {
   if (showRightAsidePanel.value && showLeftSidebarActual.value) return 3;
@@ -887,14 +902,17 @@ function handleScroll(e: Event) {
 }
 
 function handleGlobalKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && viewMode.value === 'split') {
-    handleBackToGrid();
-  }
+  if (e.key !== 'Escape' || e.defaultPrevented || route.path !== '/topics' || viewMode.value !== 'split' || appStore.isPublishOpen) return;
+  if (isMobileSubtopicPickerOpen.value) { isMobileSubtopicPickerOpen.value = false; return; }
+  handleBackToGrid();
 }
 
 function handleClickOutside(e: MouseEvent) {
   if (categoryPickerRef.value && !categoryPickerRef.value.contains(e.target as Node)) {
     isCategoryPickerOpen.value = false;
+  }
+  if (subtopicPickerRef.value && !subtopicPickerRef.value.contains(e.target as Node)) {
+    isMobileSubtopicPickerOpen.value = false;
   }
 }
 
@@ -1096,6 +1114,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
 /* 1. 左侧子话题栏 */
 .split-left-sidebar {
   height: 100%;
+  max-width: 50%;
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -1384,7 +1403,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   --topic-hub-topbar-space: 0px;
   flex: 1;
   height: 100%;
-  min-width: 480px;
+  min-width: 0;
   overflow: hidden;
   background: var(--background);
   animation: slideInUp 0.32s cubic-bezier(0.2, 0, 0, 1);
@@ -1403,9 +1422,6 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   .cat-tab { flex: 0 0 auto; width: 100%; min-height: 48px; height: auto; padding: 14px 4px; font-size: 14px; white-space: normal; }
   .cat-tab.active { color: var(--brand-primary); background: var(--brand-soft); font-size: 14px; font-weight: 500; }
   .cat-tab.active::after { top: 0; bottom: 0; left: 0; width: 3px; height: auto; border-radius: 0; transform: none; background: var(--brand-primary); box-shadow: none; }
-  .topics-split-layout.columns-1 > .split-center-main {
-    min-width: 0;
-  }
 }
 
 /* 单栏模式或左栏收起时的顶部导航条 */
@@ -1419,8 +1435,8 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   min-height: 48px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
+  gap: 4px;
+  padding: 0 8px;
   background: var(--topic-glass-tint);
   -webkit-backdrop-filter: blur(24px) saturate(165%);
   backdrop-filter: blur(24px) saturate(165%);
@@ -1437,57 +1453,69 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .single-column-top-nav, .split-center-main.topic-glass-joined :deep(.topic-sticky-controls::before) { background: var(--surface); } }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .single-column-top-nav, .split-center-main.topic-glass-joined :deep(.topic-sticky-controls::before) { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } .split-center-main.topic-glass-joined .single-column-top-nav { background: transparent; } }
 
-.top-nav-left-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 顶栏保留吸顶位置，收起时正文不跳动，合并玻璃也能继续按原位置判定。 */
+.split-center-main.has-topic-top-nav .single-column-top-nav,
+.split-center-main.has-topic-top-nav :deep(.topic-sticky-controls),
+.split-center-main.has-topic-top-nav :deep(.topic-publish-fab) { transition: transform 200ms ease, opacity 200ms ease, visibility 0s; }
+.split-center-main.topic-reading-hidden .single-column-top-nav,
+.split-center-main.topic-reading-hidden :deep(.topic-sticky-controls),
+.split-center-main.topic-reading-hidden :deep(.topic-publish-fab) { opacity: 0; visibility: hidden; pointer-events: none; transition-delay: 0s, 0s, 200ms; }
+.split-center-main.topic-reading-hidden :deep(.topic-publish-fab) { transform: translateY(calc(100% + 16px + env(safe-area-inset-bottom, 0px))); }
+@media (prefers-reduced-motion: reduce) {
+  .split-center-main.has-topic-top-nav .single-column-top-nav,
+  .split-center-main.has-topic-top-nav :deep(.topic-sticky-controls),
+  .split-center-main.has-topic-top-nav :deep(.topic-publish-fab) { transition: none; }
 }
 
+.top-nav-left-actions { display: flex; flex-shrink: 0; }
+
 .btn-back-grid-mobile,
-.btn-expand-left-sidebar {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.btn-expand-left-sidebar,
+.btn-topic-search {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
   border: none;
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 17px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: all 0.15s ease;
+  border-radius: 8px;
 }
 
 .btn-expand-left-sidebar:hover,
-.btn-back-grid-mobile:hover {
-  color: var(--brand-primary, #10b981);
-  background: var(--background-secondary);
-}
+.btn-back-grid-mobile:hover,
+.btn-topic-search:hover { background: var(--surface-hover); }
 
 .mobile-subtopic-selector {
   position: relative;
+  flex: 1;
+  min-width: 0;
 }
 
 .mobile-subtopic-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.08));
-  background: var(--background-secondary);
-  border-radius: 16px;
-  padding: 4px 12px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--brand-primary, #10b981);
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
+.mobile-subtopic-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-subtopic-btn .dropdown-arrow { flex-shrink: 0; color: var(--text-secondary); }
+
 .mobile-picker-popover {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  width: 200px;
+  top: 100%;
+  left: 0;
+  width: min(240px, calc(100vw - 80px));
   max-height: 260px;
   overflow-y: auto;
   background: var(--surface);

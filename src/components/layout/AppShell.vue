@@ -15,7 +15,7 @@
       'topic-glass-joined': topicGlassJoined,
     }"
     @scroll.capture="handleShellScroll"
-    @wheel.capture.passive="reading.onWheel"
+    @wheel.capture="reading.onWheel"
     @touchstart.capture.passive="reading.onTouchStart"
     @touchmove.capture.passive="reading.onTouchMove"
   >
@@ -23,7 +23,7 @@
     <TopBar>
       <!-- 桌面窄窗口的返回入口固定在原生窗口按钮所在的标题栏，不随帖子滚动。 -->
       <template #narrow-navigation>
-        <button v-if="showWindowControls && !isMobileLayoutDisabled && mobileLayout && route.path !== '/' && route.path !== '/search'" type="button" class="narrow-titlebar-back" aria-label="返回" title="返回上一页" data-tauri-drag-region="false" @click="navigateBack(router)"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
+        <button v-if="showWindowControls && !isMobileLayoutDisabled && mobileLayout && route.path !== '/' && route.path !== '/search' && !isTopicHubDetail" type="button" class="narrow-titlebar-back" aria-label="返回" title="返回上一页" data-tauri-drag-region="false" @click="navigateBack(router)"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
       </template>
     </TopBar>
     <div class="mobile-reading-topbar"><div class="mobile-reading-topbar-content" :inert="reading.hidden.value || undefined" :aria-hidden="reading.hidden.value || undefined">
@@ -96,7 +96,8 @@ const homeToolbarTarget = ref<HTMLElement | null>(null);
 provide(mobileHomeToolbarTargetKey, homeToolbarTarget);
 const desktopCommentFeed = shallowRef<FeedItem | null>(null);
 const mobileLayout = useMobileLayout();
-const hasPageToolbar = computed(() => ['/notifications', '/search'].includes(route.path));
+const isTopicHubDetail = computed(() => route.path === '/topics' && typeof route.query?.tag === 'string' && Boolean(route.query.tag.trim()));
+const hasPageToolbar = computed(() => isTopicHubDetail.value || ['/notifications', '/search'].includes(route.path));
 const wideSplitLayout = useWideSplitLayout();
 const showDesktopComments = computed(() => settingsStore.settings.desktopCommentsOnRight && !mobileLayout.value && wideSplitLayout.value);
 provide(desktopFeedCommentsOpenKey, computed(() => showDesktopComments.value && desktopCommentFeed.value !== null));

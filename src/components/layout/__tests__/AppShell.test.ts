@@ -37,6 +37,19 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
+  it('话题详情使用页内标题栏，回到话题目录时恢复全局移动顶栏', async () => {
+    Object.assign(routeState.value, { path: '/topics', fullPath: '/topics?tag=摄影', query: { tag: '摄影' } });
+    const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub,
+      PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
+    try {
+      expect(wrapper.classes()).toContain('has-page-toolbar');
+      expect(wrapper.findComponent(MobileTopBarStub).exists()).toBe(false);
+      Object.assign(routeState.value, { fullPath: '/topics', query: {} });
+      await nextTick();
+      expect(wrapper.findComponent(MobileTopBarStub).exists()).toBe(true);
+    } finally { wrapper.unmount(); Object.assign(routeState.value, { path: '/', fullPath: '/', query: {} }); }
+  });
+
   it('Android 正文诊断按触发场景限频，且不记录用户文本或路由参数', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('navigator', { userAgent: 'Android', platform: 'Android', maxTouchPoints: 5 });

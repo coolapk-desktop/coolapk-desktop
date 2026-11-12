@@ -42,6 +42,7 @@ export function useMobileReadingNavigation(enabled: Readonly<Ref<boolean>>, scro
   function onWheel(event: WheelEvent) {
     const element = findScroller(event.target);
     if (!element || event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    // 桌面滚轮需要在默认滚动前记录位置，否则首个滚轮事件可能已改变 scrollTop。
     markIntent(element, event.deltaY);
   }
   function onTouchStart(event: TouchEvent) {

@@ -4,6 +4,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { defineComponent, nextTick } from 'vue';
 import TopicsHubPage from '../TopicsHubPage.vue';
+import AppShell from '../../components/layout/AppShell.vue';
 import { useSettingsStore } from '../../stores/settings';
 import { useTopicHubStore } from '../../stores/topicHub';
 
@@ -16,8 +17,68 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: mocks }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: () => false }));
 
 describe('TopicsHubPage 三栏/双栏/单栏响应式与过渡', () => {
+  it('按首页的滚动方向收起和恢复话题标题、栏目与发布按钮', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    useSettingsStore().settings.autoHideMobileNavigation = true;
+    mocks.getTopicHubData.mockResolvedValue({ data: [] });
+    mocks.getTopicDetail.mockResolvedValue({ data: { id: '1', title: '今日热点', tabList: [{ pageName: 'news', title: '快讯' }, { pageName: 'feed', title: '讨论' }], selectedTab: 'feed' } });
+    mocks.getTopicFeeds.mockResolvedValue({ data: [] });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/topics', component: TopicsHubPage }] });
+    await router.push('/topics?tag=今日热点');
+    const wrapper = mount(defineComponent({ components: { AppShell, TopicsHubPage }, template: '<AppShell><TopicsHubPage /></AppShell>' }), {
+      global: { plugins: [router], stubs: { TopBar: true, MainSidebar: true, PageTabBar: true, NetworkStatusBanner: true, AppImage: true } },
+    });
+    try {
+      await flushPromises();
+      const list = wrapper.get<HTMLElement>('.is-embedded[data-reading-scroll]');
+      const controls = ['.single-column-top-nav', '.topic-sticky-controls', '.topic-publish-fab'];
+      await list.trigger('wheel', { deltaY: 100 });
+      list.element.scrollTop = 100;
+      await list.trigger('scroll');
+      expect(wrapper.get('.split-center-main').classes()).toContain('topic-reading-hidden');
+      for (const control of controls) expect(wrapper.get(control).attributes('aria-hidden')).toBe('true');
+
+      await list.trigger('wheel', { deltaY: -20 });
+      list.element.scrollTop = 80;
+      await list.trigger('scroll');
+      expect(wrapper.get('.split-center-main').classes()).not.toContain('topic-reading-hidden');
+      for (const control of controls) expect(wrapper.get(control).attributes('aria-hidden')).toBeUndefined();
+    } finally { wrapper.unmount(); Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth }); }
+  });
+
+  it('移动话题顶栏保留返回和切换，搜索直接进入当前话题的动态搜索', async () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    mocks.getTopicHubData.mockResolvedValue({ data: [{ id: '1', entityType: 'topic', title: '今日热点' }, { id: '2', entityType: 'topic', title: '摄影' }] });
+    mocks.getTopicDetail.mockResolvedValue({ data: { title: '今日热点', tabList: [{ pageName: 'feed', title: '讨论' }] } });
+    mocks.getTopicDetailV7.mockResolvedValue({ data: null });
+    mocks.getTopicFeeds.mockResolvedValue({ data: [] });
+    const router = createRouter({ history: createMemoryHistory(), routes: [
+      { path: '/topics', component: TopicsHubPage }, { path: '/search', component: { template: '<div />' } },
+    ] });
+    await router.push('/topics?tag=今日热点');
+    const wrapper = mount(TopicsHubPage, { global: { plugins: [router], stubs: { AppImage: true, TopicFeedCommentAside: true } } });
+    try {
+      await flushPromises();
+      const nav = wrapper.get('.single-column-top-nav');
+      expect(nav.text()).toBe('今日热点');
+      expect(nav.find('[aria-label="返回全部话题"]').exists()).toBe(true);
+      expect(wrapper.find('.filter-search-input').exists()).toBe(false);
+      await nav.get('.mobile-subtopic-btn').trigger('click');
+      await nav.findAll('.mobile-subtopic-item')[1].trigger('click');
+      await flushPromises();
+      expect(nav.text()).toBe('摄影');
+      await nav.get('[aria-label="搜索话题动态"]').trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.path).toBe('/search');
+      expect(router.currentRoute.value.query).toEqual({ tab: 'feed', pageType: 'tag', pageParam: '摄影' });
+    } finally { wrapper.unmount(); Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth }); }
+  });
+
   it.each([[400, 'mobile'], [767, 'mobile'], [768, 'card'], [1200, 'card']])('目录在 %s 像素使用 %s 布局，桌面保留网格卡片', async (width, mode) => {
     const originalWidth = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });

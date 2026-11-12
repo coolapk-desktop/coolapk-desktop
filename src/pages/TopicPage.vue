@@ -1,6 +1,7 @@
 <template>
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: headerLoading || feedsLoading }"
     ref="pageContainerRef"
+    :data-reading-scroll="embedded ? '' : undefined"
     :class="['page-container', 'custom-scrollbar', { 'is-embedded': embedded, 'has-topic-publish': showTopicPublish && mobileLayout }]"
     @scroll="handleScroll"
   >
@@ -61,7 +62,7 @@
       <LoadingState text="正在加载话题概况..." />
     </div>
 
-    <div v-if="!isRatingView && (topicTabs.length > 1 || isDiscussionTab(activeTopicTab))" class="topic-sticky-controls">
+    <div v-if="!isRatingView && (topicTabs.length > 1 || isDiscussionTab(activeTopicTab))" class="topic-sticky-controls" :inert="readingNavigationHidden || undefined" :aria-hidden="readingNavigationHidden || undefined">
       <!-- APK 话题页由 tabList 下发栏目，展示方式与设备页 Tab 保持一致。 -->
       <div v-if="topicTabs.length > 1" class="topic-sub-tabs custom-scrollbar">
         <button
@@ -87,6 +88,7 @@
         :feed-type="searchFeedType"
         :feed-type-options="TOPIC_FEED_TYPE_OPTIONS"
         show-feed-type
+        :show-search="!searchInToolbar || Boolean(searchKeyword.trim())"
         :target-title="tag"
         scope-type="tag"
         :scope-param="tag"
@@ -132,7 +134,7 @@
       </div>
     </div>
 
-    <button v-if="showTopicPublish && mobileLayout" class="topic-publish-fab" type="button" :aria-label="publishRestricted ? '申请发布权限' : '发布'" :aria-haspopup="publishRestricted ? undefined : 'dialog'" @click="openTopicPublish">
+    <button v-if="showTopicPublish && mobileLayout" class="topic-publish-fab" type="button" :inert="readingNavigationHidden || undefined" :aria-hidden="readingNavigationHidden || undefined" :aria-label="publishRestricted ? '申请发布权限' : '发布'" :aria-haspopup="publishRestricted ? undefined : 'dialog'" @click="openTopicPublish">
       <i :class="publishRestricted ? 'fas fa-file-circle-check' : 'fas fa-plus'" aria-hidden="true"></i>
     </button>
 
@@ -182,6 +184,8 @@ const props = withDefaults(
     embedded?: boolean;
     activeFeedId?: string | number;
     disableInlineComments?: boolean;
+    searchInToolbar?: boolean;
+    readingNavigationHidden?: boolean;
   }>(),
   {
     tagParam: '',
@@ -872,6 +876,8 @@ function focusSearch() {
   void router.push({ path: '/search', query });
 }
 
+defineExpose({ focusSearch });
+
 async function initializeTopic() {
   await fetchTopicHeader();
   await fetchFeeds(false);
@@ -1247,5 +1253,30 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
   .feed-list :deep(.sub-score)::after { content: '☆'; font-size: 14px; }
   .feed-list :deep(.star-rating-stars i) { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 3px; background: var(--border); color: white; font-size: 10px; }
   .feed-list :deep(.star-rating-stars i.active) { background: #ffb900; }
+}
+
+/* 聚合页的标题栏已提供上下文，栏目、排序和搜索只保留一层吸顶表面。 */
+.is-embedded .topic-sticky-controls {
+  margin-inline: calc(-1 * var(--topic-page-side-space));
+  padding: 0 var(--topic-page-side-space);
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--border-light);
+}
+.is-embedded .topic-sticky-controls .topic-sub-tabs {
+  height: 38px;
+  min-height: 38px;
+  flex: 0 0 38px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0;
+}
+.is-embedded .topic-tab-item { min-width: 44px; font-size: 14px; }
+.is-embedded .topic-tab-item.active { font-size: 14px; }
+.is-embedded .topic-sticky-controls :deep(.entity-filter-bar) { padding: 2px 0; }
+.is-embedded .topic-sticky-controls :deep(.filter-options) { padding-inline: 0; }
+@media (min-width: 768px) {
+  .is-embedded .topic-sticky-controls { flex-flow: row wrap; align-items: center; column-gap: 16px; }
+  .is-embedded .topic-sticky-controls .topic-sub-tabs { flex-basis: auto; min-width: 0; max-width: 100%; }
+  .is-embedded .topic-sticky-controls :deep(.entity-filter-container) { flex: 1 1 320px; width: auto; }
 }
 </style>
