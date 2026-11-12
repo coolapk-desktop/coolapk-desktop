@@ -921,6 +921,9 @@ fn tool_error(error: ApiError) -> Value {
     if let Some(code) = error.error_code() {
         payload["error"] = json!(code);
     }
+    if let Some(retry_after) = error.retry_after() {
+        payload["retryAfter"] = json!(retry_after);
+    }
     json!({
         "content": [{ "type": "text", "text": payload.to_string() }],
         "isError": true,
