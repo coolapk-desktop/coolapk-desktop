@@ -171,6 +171,7 @@ export async function verifyWithCaptcha(captchaId = DEFAULT_COOLAPK_CAPTCHA_ID):
     // API v2 把 element 作为弹窗的 appendTo 容器；必须覆盖视口，不能用零尺寸节点。
     const container = document.createElement('div');
     container.id = `ne-captcha-${Date.now()}`;
+    container.classList.add('captcha-popup-host');
     container.style.position = 'fixed';
     container.style.inset = '0';
     container.style.zIndex = '99999';

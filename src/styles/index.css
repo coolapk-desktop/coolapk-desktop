@@ -42,7 +42,7 @@
   scroll-behavior: auto !important;
 }
 
-/* 无图模式下仍隐藏视频；图片只允许详情及其大图浮层按独立设置放行。 */
+/* 无图模式下仍隐藏视频；详情和大图按设置显示，验证码图片始终可见。 */
 :root[data-no-image-mode='true'] video,
 :root[data-no-image-mode='true'] .feed-video-card,
 :root[data-no-image-mode='true'] .live-player-shell {
@@ -57,6 +57,6 @@
   .collection-cover-placeholder, .banner-cover-placeholder, .cover-placeholder, .cover-gradient,
   .banner-cover-gradient, .card-cover-backdrop, .question-related-placeholder,
   .answer-related-placeholder, .live-player-placeholder, .placeholder-avatar, .discovery-generic-icon
-):not(.no-image-detail-enabled, .no-image-detail-enabled *) {
+):not(.no-image-detail-enabled, .no-image-detail-enabled *, .captcha-popup-host, .captcha-popup-host *) {
   display: none !important;
 }

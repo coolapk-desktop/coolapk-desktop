@@ -119,7 +119,11 @@ describe('neteaseCaptcha', () => {
     expect(token).toBe('NEC:414e5c9b:mock_validate_hash_12345');
     expect(verify).toHaveBeenCalledOnce();
     expect(popUp).not.toHaveBeenCalled();
-    expect(window.initNECaptcha).toHaveBeenCalledWith(expect.objectContaining({ mode: 'popup', apiVersion: 2 }), expect.any(Function), expect.any(Function));
+    expect(window.initNECaptcha).toHaveBeenCalledWith(expect.objectContaining({
+      element: expect.objectContaining({ className: 'captcha-popup-host' }),
+      mode: 'popup',
+      apiVersion: 2,
+    }), expect.any(Function), expect.any(Function));
   });
 
   it('rejects on user cancellation or verify error', async () => {
