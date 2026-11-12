@@ -46,8 +46,8 @@ async function setup() {
 }
 
 async function clickDownload(wrapper: Awaited<ReturnType<typeof setup>>) {
-  const button = wrapper.findAll('button').find(item => item.text() === '下载到电脑');
-  expect(button, '详情页缺少「下载到电脑」按钮').toBeDefined();
+  const button = wrapper.findAll('button').find(item => item.text() === '下载到本地');
+  expect(button, '详情页缺少「下载到本地」按钮').toBeDefined();
   await button!.trigger('click');
   await flushPromises();
 }

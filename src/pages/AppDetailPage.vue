@@ -38,8 +38,9 @@
 
           <!-- 开发者、大小、更新时间行 -->
           <div class="sub-row">
-            <span class="developer-text"><i class="far fa-building meta-icon"></i>{{ developerName }}</span>
-            <span class="dot-divider">•</span>
+            <RouterLink v-if="developerName" class="developer-link" :to="{ name: 'DeveloperApps', params: { developer: developerName } }">
+              <i class="far fa-building" aria-hidden="true"></i><span>{{ developerName }}</span><i class="fas fa-chevron-right developer-arrow" aria-hidden="true"></i>
+            </RouterLink>
             <span class="apk-size"><i class="fas fa-file-arrow-down meta-icon"></i>{{ apkSize }}</span>
             <span class="dot-divider">•</span>
             <span class="update-time"><i class="far fa-clock meta-icon"></i>{{ updateTime }}</span>
@@ -86,7 +87,7 @@
 
         <!-- 右侧操作区：主次分明的分层网格 -->
         <div class="header-actions">
-          <!-- 核心主下载按钮：仅下载到电脑，不执行安装 -->
+          <!-- 核心主下载按钮：仅下载到本地，不执行安装 -->
           <AppButton
             variant="primary"
             size="md"
@@ -95,7 +96,7 @@
             :loading="downloadLoading"
             @click="handleDownload"
           >
-            下载到电脑
+            下载到本地
           </AppButton>
 
           <!-- 关注与收藏并排行 -->
@@ -617,7 +618,7 @@ const logoUrl = computed(() => appInfo.value?.apkRomIcon || appInfo.value?.logo 
 const appTitle = computed(() => appInfo.value?.title || appInfo.value?.shorttitle || packageName.value);
 usePageTabTitle(appTitle);
 const appVersion = computed(() => appInfo.value?.apkversionname || appInfo.value?.versionName || appInfo.value?.version || '');
-const developerName = computed(() => appInfo.value?.developername || appInfo.value?.shorttitle || '酷安开发者');
+const developerName = computed(() => String(appInfo.value?.developername || appInfo.value?.developerName || '').trim());
 const apkSize = computed(() => appInfo.value?.apksize || appInfo.value?.apkSizeFormatted || appInfo.value?.size || '未知大小');
 const updateTime = computed(() => {
   const raw = appInfo.value?.lastupdate || appInfo.value?.lastUpdateFormatted || appInfo.value?.update_time;
@@ -1519,6 +1520,35 @@ async function refreshMobilePage() { await fetchAppDetail(); if (activeDetailTab
   margin-right: 4px;
   color: var(--text-tertiary);
 }
+
+.developer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--brand-soft);
+  color: var(--brand-active);
+  color: color-mix(in srgb, var(--brand-active) 88%, var(--text-primary));
+  text-decoration: none;
+}
+
+.developer-link span {
+  overflow-wrap: anywhere;
+}
+
+.developer-link:hover {
+  background: var(--brand-soft-hover);
+}
+
+.developer-link:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+.developer-arrow { font-size: 9px; }
 
 .dot-divider {
   color: var(--border-light);

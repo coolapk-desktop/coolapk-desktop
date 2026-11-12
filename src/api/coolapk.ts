@@ -498,13 +498,21 @@ export class CoolapkTauriAPI {
   }
 
   // 游戏中心榜单与列表
-  static async getGameList(gameType: string = 'hot', page: number = 1) {
-    return await invokeNative('get_game_list', { gameType, page }, { retry: true, kind: 'feed' });
+  static async getGameList(gameType: string = 'hot', page: number = 1, lastItem?: string) {
+    return await invokeNative('get_game_list', { gameType, page, lastItem }, { retry: true, kind: 'feed' });
   }
 
   // 应用中心榜单与分类列表
-  static async getAppList(cat: string = 'recommend', page: number = 1) {
-    return await invokeNative('get_app_list', { cat, page }, { retry: true, kind: 'feed' });
+  static async getAppList(cat: string = 'recommend', page: number = 1, lastItem?: string) {
+    return await invokeNative('get_app_list', { cat, page, lastItem }, { retry: true, kind: 'feed' });
+  }
+
+  static async getApkCategories(apkType: '1' | '2') {
+    return await invokeNative('get_apk_categories', { apkType }, { retry: true, kind: 'feed' });
+  }
+
+  static async getApkCategoryItems(options: { apkType: '1' | '2'; categoryId: string; tag: string; sort: string; page: number; lastItem: string }) {
+    return await invokeNative('get_apk_category_items', options, { retry: true, kind: 'feed' });
   }
 
   // 专项 APK / 软件 / 游戏搜索
@@ -1917,8 +1925,8 @@ export class CoolapkTauriAPI {
   }
 
   // === 搜索补充 ===
-  static async searchApksByDeveloper(developer: string, page: number = 1) {
-    return await invokeNative('search_apks_by_developer', { developer, page })
+  static async searchApksByDeveloper(developer: string, page: number = 1, lastItem?: string) {
+    return await invokeNative('search_apks_by_developer', { developer, page, lastItem });
   }
 
   static async searchApksByTag(tag: string, apkType: string = '1', page: number = 1) {

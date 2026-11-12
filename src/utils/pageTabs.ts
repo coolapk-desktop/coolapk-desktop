@@ -161,6 +161,7 @@ export function describePageTab(route: TabRoute): PageTabDescriptor {
   else if (name === 'User') [title, icon] = [param === 'me' ? '个人主页' : `用户 ${param}`, 'far fa-user'];
   else if (name === 'UserRelations') [title, icon] = ['用户关系', 'fas fa-user-group'];
   else if (name === 'AppDetail') [title, icon] = [param || '应用详情', 'fas fa-cube'];
+  else if (name === 'DeveloperApps') [title, icon] = [param || '开发者作品', 'far fa-building'];
   else if (name === 'Product') [title, icon] = [`产品 ${param}`, 'fas fa-mobile-screen-button'];
   else if (name === 'Dyh') [title, icon] = [`看看号 ${param}`, 'fas fa-rss'];
   else if (name === 'AlbumDetail') [title, icon] = [`专辑 ${param}`, 'fas fa-images'];

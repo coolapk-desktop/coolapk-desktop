@@ -17,9 +17,9 @@ function deferred<T>(): Deferred<T> {
 const mocks = vi.hoisted(() => ({
   router: { push: vi.fn() },
   getAppList: vi.fn(),
-  searchApks: vi.fn(),
-  searchApksByDeveloper: vi.fn(),
-  searchApksByTag: vi.fn(),
+  getApkCategories: vi.fn(),
+  getApkCategoryItems: vi.fn(),
+  searchByType: vi.fn(),
   showToast: vi.fn(),
 }));
 
@@ -27,9 +27,9 @@ vi.mock('vue-router', () => ({ useRouter: () => mocks.router }));
 vi.mock('../../api/coolapk', () => ({
   CoolapkTauriAPI: {
     getAppList: mocks.getAppList,
-    searchApks: mocks.searchApks,
-    searchApksByDeveloper: mocks.searchApksByDeveloper,
-    searchApksByTag: mocks.searchApksByTag,
+    getApkCategories: mocks.getApkCategories,
+    getApkCategoryItems: mocks.getApkCategoryItems,
+    searchByType: mocks.searchByType,
   },
 }));
 vi.mock('../../utils/toast', () => ({ showToast: mocks.showToast }));
@@ -54,7 +54,7 @@ async function triggerScroll(wrapper: any) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe('AppsPage 批次16：失败可见 / 竞态 / 分页 / 导航兜底', () => {
@@ -86,31 +86,40 @@ describe('AppsPage 批次16：失败可见 / 竞态 / 分页 / 导航兜底', ()
 
     const wrapper = mountPage();
     await flushPromises();
-    // 慢请求（推荐榜）在途时切到「系统工具」
+    // 榜单请求在途时切到「酷酷新品」。
     await wrapper.findAll('.cat-tab')[2].trigger('click');
     await flushPromises();
 
-    fast.resolve({ data: [{ id: 't1', packageName: 'com.t1', title: '工具应用' }] });
+    fast.resolve({ data: [{ id: 't1', packageName: 'com.t1', title: '新品应用' }] });
     await flushPromises();
-    // 旧响应现在才到达，不得覆盖工具榜列表
+    // 旧响应现在才到达，不得覆盖新品列表。
     slow.resolve({ data: [{ id: 'r1', packageName: 'com.r1', title: '推荐应用' }] });
     await flushPromises();
 
     const titles = wrapper.findAll('.app-name').map((n: any) => n.text());
-    expect(titles).toEqual(['工具应用']);
+    expect(titles).toEqual(['新品应用']);
   });
 
   it('触底加载下一页；footer 加载失败时重试以当前页补齐、不清空已加载内容', async () => {
+    const nextPage = deferred<any>();
     mocks.getAppList
       .mockResolvedValueOnce({ data: [1, 2].map((n) => ({ id: `a${n}`, packageName: `com.a${n}`, title: `应用${n}` })) })
-      .mockRejectedValueOnce(new Error('网络错误'))
+      .mockReturnValueOnce(nextPage.promise)
       .mockResolvedValueOnce({ data: [{ id: 'a3', packageName: 'com.a3', title: '应用3' }] });
 
     const wrapper = mountPage();
     await flushPromises();
     expect(wrapper.findAll('.app-card').length).toBe(2);
+    const firstCard = wrapper.get('.app-card').element;
 
     await triggerScroll(wrapper);
+    // 请求在途时保留原卡片节点，否则浏览器会因列表高度坍缩而丢失滚动位置。
+    expect(wrapper.get('.app-card').element).toBe(firstCard);
+    expect(wrapper.find('.loading-wrapper').exists()).toBe(false);
+    expect(wrapper.get('.pagination-footer loading-state-stub').attributes('text')).toBe('正在加载更多应用...');
+
+    nextPage.reject(new Error('网络错误'));
+    await flushPromises();
     expect(wrapper.find('.pagination-footer .retry-inline').exists()).toBe(true);
 
     const calls = mocks.getAppList.mock.calls.length;
@@ -118,8 +127,36 @@ describe('AppsPage 批次16：失败可见 / 竞态 / 分页 / 导航兜底', ()
     await flushPromises();
 
     expect(mocks.getAppList.mock.calls.length).toBe(calls + 1);
-    expect(mocks.getAppList).toHaveBeenLastCalledWith('recommend', 2);
+    expect(mocks.getAppList).toHaveBeenLastCalledWith('recommend', 2, 'a2');
     expect(wrapper.findAll('.app-card').length).toBe(3);
+    expect(wrapper.get('.app-card').element).toBe(firstCard);
+  });
+
+  it('从官方分类进入标签，并将分类和排序用于普通搜索', async () => {
+    mocks.getAppList.mockResolvedValue({ data: [] });
+    mocks.getApkCategories.mockResolvedValue({ data: [{ id: 5, title: '系统工具', tagList: ['输入法'] }] });
+    mocks.getApkCategoryItems.mockResolvedValue({ data: [{ id: '1', title: '输入法应用' }] });
+    mocks.searchByType.mockResolvedValue({ data: [{ entityType: 'apk', id: '1', title: '输入法应用' }] });
+    const wrapper = mountPage();
+    await flushPromises();
+    await wrapper.findAll('.cat-tab')[1].trigger('click');
+    await flushPromises();
+
+    expect(mocks.getApkCategories).toHaveBeenCalledWith('1');
+    await wrapper.get('.category-tag').trigger('click');
+    await flushPromises();
+    expect(mocks.getApkCategoryItems).toHaveBeenLastCalledWith({ apkType: '1', categoryId: '5', tag: '输入法', sort: 'default', page: 1, lastItem: '' });
+    expect(wrapper.get('.category-tag[aria-pressed="true"]').text()).toBe('输入法');
+
+    await wrapper.get('.search-input').setValue('输入法');
+    await wrapper.get('.search-input').trigger('keyup.enter');
+    await flushPromises();
+    await wrapper.get('button[aria-label="搜索分类"]').trigger('click');
+    await wrapper.findAll('[role="menuitemradio"]').find(option => option.text() === '系统工具')!.trigger('click');
+    await wrapper.get('button[aria-label="排序方式"]').trigger('click');
+    await wrapper.findAll('[role="menuitemradio"]').find(option => option.text() === '按评分排序')!.trigger('click');
+    await flushPromises();
+    expect(mocks.searchByType).toHaveBeenLastCalledWith({ searchType: 'apk', query: '输入法', category: '5', sort: 'rating', page: 1, lastItem: '' });
   });
 
   it('缺少 packageName/id 的条目点击：不跳转且给出提示', async () => {

@@ -1479,8 +1479,17 @@ async fn remove_account(state, uid: String) -> Value {
 async fn get_game_list(state,
     page: u32,
     game_type: String,
+    last_item: Option<String>,
 ) -> Value {
-    state.client.get_game_list(page, &game_type).await
+    state.client.get_game_list(page, &game_type, last_item.as_deref().unwrap_or_default()).await
+}
+
+async fn get_apk_categories(state, apk_type: String) -> Value {
+    state.client.get_apk_categories(&apk_type).await
+}
+
+async fn get_apk_category_items(state, apk_type: String, category_id: String, tag: String, sort: String, page: u32, last_item: String) -> Value {
+    state.client.get_apk_category_items(&apk_type, &category_id, &tag, &sort, page, &last_item).await
 }
 
 async fn search_apks(state,
@@ -1500,8 +1509,9 @@ async fn search_games(state,
 async fn get_app_list(state,
     page: u32,
     cat: String,
+    last_item: Option<String>,
 ) -> Value {
-    state.client.get_app_list(page, &cat).await
+    state.client.get_app_list(page, &cat, last_item.as_deref().unwrap_or_default()).await
 }
 
 async fn submit_feed_report(state, id: String, report_type: String, reason: String, custom_reason: String, request_hash: String, pictures: Vec<String>) -> Value {
@@ -1656,10 +1666,11 @@ async fn get_user_rating_list(state,
 async fn search_apks_by_developer(state,
     developer: String,
     page: u32,
+    last_item: Option<String>,
 ) -> Value {
     state
         .client
-        .search_apks_by_developer(&developer, page)
+        .search_apks_by_developer(&developer, page, last_item.as_deref().unwrap_or_default())
         .await
 }
 

@@ -179,7 +179,7 @@
       <EmptyState
         :icon="selectedTab === 'active' ? 'fas fa-cloud-arrow-down' : 'fas fa-clock-rotate-left'"
         :title="selectedTab === 'active' ? '暂无正在进行的下载任务' : '暂无下载历史记录'"
-        :description="selectedTab === 'active' ? (isAndroid ? '在应用或游戏详情页点击下载，即可加入队列' : '在应用或游戏详情页点击“下载到电脑”即可加入队列') : '完成、失败和取消的安装包记录会保存在这里'"
+        :description="selectedTab === 'active' ? '在应用或游戏详情页点击“下载到本地”即可加入队列' : '完成、失败和取消的安装包记录会保存在这里'"
       />
       <div v-if="selectedTab === 'active'" class="empty-action">
         <AppButton variant="secondary" size="sm" icon="fas fa-compass" @click="router.push('/apps')">

@@ -83,6 +83,7 @@ const routes = [
   { path: '/discover', name: 'Discover', component: DiscoverPage },
   { path: '/apps', name: 'Apps', component: AppsPage },
   { path: '/games', name: 'Games', component: GamesPage },
+  { path: '/developer/apps/:developer', name: 'DeveloperApps', component: () => import('../components/catalog/CatalogPage.vue'), props: (route: RouteLocationNormalized) => ({ kind: 'apps', developer: String(route.params.developer) }), meta: { title: '开发者作品' } },
   { path: '/downloads', name: 'Downloads', component: DownloadsPage },
   { path: '/topics', name: 'Topics', component: TopicsHubPage },
   { path: '/favorites', name: 'Favorites', component: FavoritesPage, props: (route: RouteLocationNormalized) => ({ collectionQuery: route.query }) },

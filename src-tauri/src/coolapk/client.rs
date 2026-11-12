@@ -2903,8 +2903,7 @@ impl CoolapkClient {
             &["subTitle", "description", "target_row_title", "comment"],
         )
         .unwrap_or_default();
-        let score =
-            get_str_by_keys(obj, &["score", "star", "rating"]).unwrap_or_else(|| "9.0".to_string());
+        let score = get_str_by_keys(obj, &["score", "star", "rating"]).unwrap_or_default();
         let apk_size = get_str_by_keys(obj, &["apksize", "apkSizeFormatted", "size", "apk_size"])
             .unwrap_or_default();
         let down_num = get_str_by_keys(
@@ -2966,6 +2965,7 @@ impl CoolapkClient {
 
         Some(json!({
             "id": obj.get("id").map(value_to_string).unwrap_or_else(|| package_name.clone()),
+            "entityId": obj.get("entityId").or_else(|| obj.get("id")).map(value_to_string).unwrap_or_default(),
             "title": title,
             "packageName": package_name,
             "icon": icon,
@@ -3868,12 +3868,50 @@ impl CoolapkClient {
         Ok(json!({ "code": 200, "data": Self::extract_cleaned_list(&raw) }))
     }
 
-    // 获取酷安游戏中心列表/热门与分类榜单
-    //
-    // 实测确认：酷安已废弃 #/game/* 系列 dataList 路由（返回空数据），
-    // 官方接口中唯一可用的游戏数据源是「游戏专项搜索」 GET /v6/search?type=game
-    // （返回实体 apktype=2 / apkTypeName=游戏），按分类关键词拉取。
-    pub async fn get_game_list(&self, page: u32, game_type: &str) -> Result<Value, String> {
+    // 官方排行榜和分类均用 apkType 区分软件（1）与游戏（2）。
+    fn official_apk_list(raw: &Value) -> Value {
+        let mut items = Self::extract_apk_list(raw, "all");
+        // 排行榜响应可能含导航和领奖台卡片，保留卡片内的 APK，跳过导航链接。
+        items.retain(|item| item["entityType"] == "apk");
+        json!({ "code": 200, "data": items })
+    }
+
+    async fn get_apk_rank(&self, apk_type: &str, page: u32, last_item: &str) -> Result<Value, String> {
+        let mut params = vec![("apkType", apk_type.to_string()), ("page", page.to_string())];
+        if !last_item.is_empty() {
+            params.push(("lastItem", last_item.to_string()));
+        }
+        let raw = wrap_api_data(self.api_get("/v6/apk/realRankList", &params).await?)?;
+        Ok(Self::official_apk_list(&raw))
+    }
+
+    pub async fn get_apk_categories(&self, apk_type: &str) -> Result<Value, String> {
+        wrap_api_data(self.api_get("/v6/apk/categoryList", &[("apkType", apk_type.to_string())]).await?)
+    }
+
+    pub async fn get_apk_category_items(&self, apk_type: &str, category_id: &str, tag: &str, sort: &str, page: u32, last_item: &str) -> Result<Value, String> {
+        let mut params = vec![("apkType", apk_type.to_string()), ("rankType", sort.to_string()), ("page", page.to_string())];
+        if !last_item.is_empty() {
+            params.push(("lastItem", last_item.to_string()));
+        }
+        let path = if tag.is_empty() {
+            params.push(("listType", "cat".to_string()));
+            params.push(("catId", category_id.to_string()));
+            "/v6/apk/index"
+        } else {
+            params.push(("searchType", "tag".to_string()));
+            params.push(("tag", tag.to_string()));
+            "/v6/apk/search"
+        };
+        let raw = wrap_api_data(self.api_get(path, &params).await?)?;
+        Ok(Self::official_apk_list(&raw))
+    }
+
+    // 保留旧的游戏分类关键词入口，排行榜使用官方榜单。
+    pub async fn get_game_list(&self, page: u32, game_type: &str, last_item: &str) -> Result<Value, String> {
+        if game_type == "hot" {
+            return self.get_apk_rank("2", page, last_item).await;
+        }
         let query = match game_type {
             "hot" => "手游",
             "new" => "新游戏",
@@ -3936,14 +3974,12 @@ impl CoolapkClient {
         Ok(json!({ "code": 200, "data": apks }))
     }
 
-    // 获取酷安应用中心列表/热门与分类榜单
-    //
-    // 实测确认：/v6/page/dataList?url=#/apk/rankList 与 #/apk/newestList 有效，
-    // 但 url 上的 type= 参数被服务端忽略（tools/social/media/theme 等均返回默认推荐榜），
-    // #/apk/category?catId=... 已废弃（返回空）。分类榜单改用应用搜索 type=apk 拉取。
-    pub async fn get_app_list(&self, page: u32, cat: &str) -> Result<Value, String> {
+    // 应用排行榜使用官方榜单，旧入口仍可请求酷酷新品和原有分类关键词。
+    pub async fn get_app_list(&self, page: u32, cat: &str, last_item: &str) -> Result<Value, String> {
+        if cat == "recommend" {
+            return self.get_apk_rank("1", page, last_item).await;
+        }
         let page_url = match cat {
-            "recommend" => "#/apk/rankList",
             "newest" => "#/apk/newestList",
             _ => "",
         };
@@ -9003,19 +9039,14 @@ impl CoolapkClient {
         &self,
         developer: &str,
         page: u32,
+        last_item: &str,
     ) -> Result<Value, String> {
-        let raw = self
-            .api_get(
-                "/v6/apk/search",
-                &[
-                    ("searchType", "developer".to_string()),
-                    ("developer", developer.to_string()),
-                    ("page", page.to_string()),
-                ],
-            )
-            .await?;
-        let apks = Self::extract_apk_list(&raw, "all");
-        Ok(json!({ "code": 200, "data": apks }))
+        let mut params = vec![("searchType", "developer".to_string()), ("developer", developer.to_string()), ("page", page.to_string())];
+        if !last_item.is_empty() {
+            params.push(("lastItem", last_item.to_string()));
+        }
+        let raw = wrap_api_data(self.api_get("/v6/apk/search", &params).await?)?;
+        Ok(Self::official_apk_list(&raw))
     }
 
     /// 按标签搜索应用
