@@ -11,6 +11,7 @@
       'has-topic-navigation': route.path.startsWith('/topic/'),
       'has-home-navigation': route.path === '/',
       'has-page-toolbar': hasPageToolbar,
+      'has-topic-hub-detail': isTopicHubDetail,
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
     }"
@@ -312,6 +313,8 @@ onUnmounted(() => {
   /* 页面自带工具栏时，外壳仅保留顶部安全区。 */
   .app-shell:not(.prevent-mobile-layout).has-page-toolbar .mobile-reading-topbar { padding-top: var(--app-safe-area-top, 0px); }
   .app-shell:not(.prevent-mobile-layout).has-page-toolbar.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
+  /* Android 状态栏透明，话题标题栏上方的安全区也要使用导航底色。 */
+  .app-shell.is-android:not(.prevent-mobile-layout).has-topic-hub-detail .mobile-reading-topbar { background: var(--surface); }
   /* 数码、发现收起搜索栏后仍保留状态栏安全区，底色与下方栏目栏一致，收起动画中也不露出外壳底色。 */
   .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar { background: var(--surface); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden .mobile-reading-topbar { grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); }
