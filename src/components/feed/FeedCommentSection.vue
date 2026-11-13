@@ -346,7 +346,7 @@
           </div>
 
           <!-- 2. 带竖线的多层级楼中楼回复 -->
-          <div v-if="commentSearchTerms.length ? getVisibleSubReplies(c).length > 0 : getSubReplyRows(c).length > 0 || hasSubReplyMore(c)" class="sub-reply-thread">
+          <div v-if="commentSearchTerms.length ? getVisibleSubReplies(c).length > 0 : getSubReplyRows(c).length > 0 || hasSubReplyMore(c)" class="sub-reply-thread" :class="{ 'is-expanded': expandedFloorIds.has(subReplyFloorId(c)) }">
             <div
               v-for="sub in getVisibleSubReplies(c)"
               :key="sub.id || sub.uid"
@@ -440,7 +440,8 @@
                     type="button"
                     :class="['comment-like-btn', 'sub-like-btn', { 'is-liked': isLiked(sub) }]"
                     :disabled="isLikePending(sub)"
-                    aria-label="点赞回复"
+                    :aria-label="isLiked(sub) ? '取消点赞回复' : '点赞回复'"
+                    :aria-pressed="isLiked(sub)"
                     @click.stop="toggleLike(sub)"
                   >
                     <i :class="[isLiked(sub) ? 'fa-solid fa-heart' : 'fa-regular fa-heart']"></i>
@@ -483,7 +484,8 @@
                 class="sub-more-btn"
                 @click.stop="toggleExpandSub(c)"
               >
-                <template v-if="getSubReplyTotal(c) !== null">
+                <template v-if="officialDetail && !hasSubReplyMore(c)">查看会话</template>
+                <template v-else-if="getSubReplyTotal(c) !== null">
                   查看更多回复({{ getSubReplyTotal(c) }})
                 </template>
                 <template v-else>
@@ -1367,7 +1369,9 @@ function hasSubReplyMore(floor: any): boolean {
 }
 
 function canExpandSubReplies(floor: any): boolean {
-  return hasSubReplyMore(floor) || getSubReplyRows(floor).length > getEmbeddedSubReplies(floor).length;
+  const rows = getSubReplyRows(floor);
+  return hasSubReplyMore(floor) || rows.length > getEmbeddedSubReplies(floor).length
+    || (props.officialDetail && !!subReplyFloorId(floor) && rows.length > 0);
 }
 
 function getVisibleSubReplies(floor: any): any[] {
@@ -1409,7 +1413,6 @@ async function toggleExpandSub(floor: any) {
   toggleExpandedFloor(floorId);
   const state = ensureSubReplyState(floor);
   if (state && !state.loaded && hasSubReplyMore(floor)) await loadSubReplies(floor, true);
-  else if (state && !state.loaded) updateSubReplyState(floorId, { loaded: true, hasMore: false });
 }
 
 async function loadSubReplies(floor: any, reset: boolean) {
@@ -2326,7 +2329,8 @@ async function handleSend() {
 .official-detail-comments .sub-reply-thread { grid-row: 5; grid-column: 1 / -1; margin: 12px 0 0; }
 .official-detail-comments .sub-reply-thread { border: 0; padding: 8px; border-radius: 8px; background: var(--surface-hover); }
 .official-detail-comments .sub-reply-row { display: block; padding: 2px 0; }
-.official-detail-comments .sub-reply-avatar, .official-detail-comments .sub-reply-row .user-hover-trigger:has(.sub-reply-avatar), .official-detail-comments .sub-detail-row, .official-detail-comments .sub-reply-actions { display: none; }
+.official-detail-comments .sub-reply-avatar, .official-detail-comments .sub-reply-row .user-hover-trigger:has(.sub-reply-avatar), .official-detail-comments .sub-detail-row, .official-detail-comments .sub-reply-thread:not(.is-expanded) .sub-reply-actions { display: none; }
+.official-detail-comments .sub-reply-thread.is-expanded .sub-like-btn { min-height: 32px; padding: 0 8px; font-size: 13px; }
 .official-detail-comments .sub-reply-main { display: block; }
 .official-detail-comments .sub-reply-meta { display: inline; font-size: 14px; line-height: 1.65; }
 .official-detail-comments .sub-reply-meta :deep(.user-hover-trigger) { display: inline; }
