@@ -12,16 +12,16 @@
         <AppAvatar v-if="auth.user?.userAvatar" :src="auth.user.userAvatar" :plugin-url="auth.user.avatarPluginUrl" :size="60" alt="头像" />
         <span v-else class="profile-avatar placeholder-avatar"><i class="fas fa-user"></i></span>
         <span class="identity-info">
-          <strong>{{ auth.user?.username || '登录 / 注册' }}</strong>
+          <strong>{{ auth.user?.username || (auth.isWebDemo ? '演示模式' : '登录 / 注册') }}</strong>
           <template v-if="auth.user">
             <span class="level-info"><em>Lv.{{ auth.user.level ?? 0 }}</em><span v-if="auth.user.maxExp">{{ auth.user.exp ?? 0 }}/{{ auth.user.maxExp }}</span></span>
             <span v-if="auth.user.maxExp" class="experience-track"><span :style="{ width: `${experiencePercent}%` }"></span></span>
           </template>
-          <span v-else class="login-caption">登录酷安，发现更多精彩</span>
+          <span v-else-if="!auth.isWebDemo" class="login-caption">登录酷安，发现更多精彩</span>
         </span>
       </button>
-      <button type="button" class="profile-qr" aria-label="我的二维码名片" @click="showQr"><i class="fas fa-qrcode"></i></button>
-      <button type="button" class="profile-arrow" aria-label="个人主页" @click="openProfile"><i class="fas fa-chevron-right"></i></button>
+      <button v-if="!auth.isWebDemo" type="button" class="profile-qr" aria-label="我的二维码名片" @click="showQr"><i class="fas fa-qrcode"></i></button>
+      <button v-if="!auth.isWebDemo" type="button" class="profile-arrow" aria-label="个人主页" @click="openProfile"><i class="fas fa-chevron-right"></i></button>
     </section>
     <div class="profile-statistics profile-card">
       <button v-for="stat in statistics" :key="stat.label" type="button" @click="goPrivate(stat.path)"><strong>{{ stat.value ?? '—' }}</strong><span>{{ stat.label }}</span></button>

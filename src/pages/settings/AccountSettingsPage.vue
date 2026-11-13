@@ -5,10 +5,12 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">登录状态</span>
-          <span class="row-sub">{{ authStore.isLoggedIn ? `已登录为 ${authStore.user?.username}` : '未登录' }}</span>
+          <span class="row-sub">{{ authStore.isWebDemo ? '演示模式不支持登录' : authStore.isLoggedIn ? `已登录为 ${authStore.user?.username}` : '未登录' }}</span>
         </div>
-        <AppButton v-if="!authStore.isLoggedIn" variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
-        <AppButton v-else variant="danger" size="sm" @click="handleLogout">退出登录</AppButton>
+        <template v-if="!authStore.isWebDemo">
+          <AppButton v-if="!authStore.isLoggedIn" variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
+          <AppButton v-else variant="danger" size="sm" @click="handleLogout">退出登录</AppButton>
+        </template>
       </div>
 
       <div v-if="!isWebBuild" class="setting-row">
@@ -20,7 +22,7 @@
       </div>
     </div>
 
-    <div class="account-management">
+    <div v-if="!authStore.isWebDemo" class="account-management">
       <div class="account-management-header">
         <div>
           <h4 class="account-management-title">{{ isWebBuild ? '会话账户' : '本地账户' }}</h4>

@@ -20,7 +20,7 @@
     <PublishDialog />
     <ImageViewer />
     <SearchCommand />
-    <LoginModal />
+    <LoginModal v-if="!authStore.isWebDemo" />
     <AppConfirmHost />
     <AppContextMenu />
     <ShuzilmDeviceGuideModal />

@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory, createWebHistory, type RouteLocationNormalized } from 'vue-router';
-import { isWebBuild } from '../api/runtime';
+import { isWebBuild, isWebDemo } from '../api/runtime';
 import HomePage from '../pages/HomePage.vue';
 import ProductSelectorPage from '../pages/ProductSelectorPage.vue';
 
@@ -78,7 +78,9 @@ const AuthCallbackView = () => import('../pages/AuthCallbackView.vue');
 
 const routes = [
   { path: '/', name: 'Home', component: HomePage },
-  { path: '/auth_callback', name: 'AuthCallback', component: AuthCallbackView },
+  isWebDemo
+    ? { path: '/auth_callback', name: 'AuthCallback', redirect: '/' }
+    : { path: '/auth_callback', name: 'AuthCallback', component: AuthCallbackView },
   { path: '/feeds', name: 'Feeds', redirect: '/' },
   { path: '/discover', name: 'Discover', component: DiscoverPage },
   { path: '/apps', name: 'Apps', component: AppsPage },

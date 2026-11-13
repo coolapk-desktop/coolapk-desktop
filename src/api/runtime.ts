@@ -3,6 +3,8 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 export const isDesktopWeb = typeof document !== 'undefined'
   && document.querySelector('meta[name="coolapk-desktop-web"]') !== null;
 export const isWebBuild = import.meta.env.MODE === 'web' || isDesktopWeb;
+export const isWebDemo = isWebBuild && !isDesktopWeb && typeof document !== 'undefined'
+  && document.querySelector('meta[name="coolapk-web-demo"]') !== null;
 
 let sessionReady: Promise<void> | undefined;
 

@@ -3,7 +3,7 @@
     <div class="section-heading">
       <div>
         <h3 class="section-title">个人信息</h3>
-        <p class="section-description">修改后会立即同步到酷安账号</p>
+        <p v-if="!authStore.isWebDemo" class="section-description">修改后会立即同步到酷安账号</p>
       </div>
       <span v-if="profile.uid" class="profile-uid">UID {{ profile.uid }}</span>
     </div>
@@ -11,10 +11,10 @@
     <div v-if="!authStore.isLoggedIn" class="login-card">
       <div class="login-card-icon"><i class="fas fa-user-circle"></i></div>
       <div class="login-card-info">
-        <strong>登录后才能修改个人资料</strong>
-        <span>头像、签名和其他资料会直接保存到酷安账号。</span>
+        <strong>{{ authStore.isWebDemo ? '演示模式不支持登录' : '登录后才能修改个人资料' }}</strong>
+        <span v-if="!authStore.isWebDemo">头像、签名和其他资料会直接保存到酷安账号。</span>
       </div>
-      <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
+      <AppButton v-if="!authStore.isWebDemo" variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
     </div>
 
     <template v-else>

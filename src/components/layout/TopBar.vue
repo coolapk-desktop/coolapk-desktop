@@ -204,7 +204,7 @@
       >
         <div
           class="user-profile-trigger"
-          :title="authStore.isLoggedIn ? '个人中心' : '点击登录酷安'"
+          :title="authStore.isWebDemo ? '演示模式' : authStore.isLoggedIn ? '个人中心' : '点击登录酷安'"
           @click="handleUserClick"
         >
           <AppAvatar :src="authStore.user?.userAvatar" size="sm" />
@@ -298,11 +298,13 @@
                 <div class="guest-icon-box">
                   <i class="fas fa-user-shield"></i>
                 </div>
-                <span class="guest-title">未登录酷安账号</span>
-                <span class="guest-desc">登录后即可发表动态、参与评论互动</span>
-                <AppButton variant="primary" size="sm" class="guest-login-btn" @click="handleGuestLogin">
-                  <i class="fas fa-sign-in-alt"></i> 登录账号
-                </AppButton>
+                <span class="guest-title">{{ authStore.isWebDemo ? '演示模式' : '未登录酷安账号' }}</span>
+                <template v-if="!authStore.isWebDemo">
+                  <span class="guest-desc">登录后即可发表动态、参与评论互动</span>
+                  <AppButton variant="primary" size="sm" class="guest-login-btn" @click="handleGuestLogin">
+                    <i class="fas fa-sign-in-alt"></i> 登录账号
+                  </AppButton>
+                </template>
               </div>
             </template>
           </div>

@@ -171,6 +171,14 @@ docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -v "${PWD}/data/web:/
 
 Compose 默认使用正式版镜像 `:latest`，首次正式版镜像发布后可拉取。升级运行 `docker compose pull && docker compose up -d`。需要固定版本时，在 `.env` 中设置 `COOLAPK_WEB_IMAGE`。
 
+### Web 演示模式
+
+独立部署时设置 `COOLAPK_WEB_DEMO=1` 可开启演示模式。访客可以浏览公开内容和搜索，登录、导入 Cookie 和切换账号会被禁用。演示使用独立的临时会话，原有的登录会话保留在会话目录中。
+
+- Docker Compose：在 `.env` 中添加 `COOLAPK_WEB_DEMO=1`，再执行 `docker compose up -d`。
+- Docker：在 `docker run` 中添加 `-e COOLAPK_WEB_DEMO=1`。
+- 本地运行：在 PowerShell 中执行 `$env:COOLAPK_WEB_DEMO = '1'`，再执行 `npm run serve:web`。
+
 ### 原生客户端构建
 
 生产构建可按当前平台选择产物格式：
