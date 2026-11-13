@@ -2,7 +2,7 @@ import { defineStore, getActivePinia } from 'pinia';
 import { listenMediaQuery } from '../utils/mediaQuery';
 import { ref, watch, onScopeDispose } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { invoke as invokeRuntime } from '../api/runtime';
+import { invoke as invokeRuntime, isWebBuild } from '../api/runtime';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { resolveDeviceIdentity } from '../utils/devicePresets';
 import { resolveDesktopCommentsOnRight } from '../utils/desktopCommentsPreference';
@@ -820,7 +820,10 @@ export const useSettingsStore = defineStore('settings', () => {
     appEl.style.transformOrigin = 'top left';
     appEl.style.transform = `scale(${factor})`;
     appEl.style.width = `${100 / factor}vw`;
-    appEl.style.height = `${100 / factor}vh`;
+    // 浏览器的地址栏会遮住 100vh 的一部分，沿用实时可视高度并反算缩放。
+    appEl.style.height = isWebBuild
+      ? `calc(var(--app-viewport-height, 100vh) / ${factor})`
+      : `${100 / factor}vh`;
   }
 
   function applyAppearance() {

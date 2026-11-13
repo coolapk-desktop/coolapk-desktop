@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { markNetworkReachable } from '../utils/networkState';
 
 export const isDesktopWeb = typeof document !== 'undefined'
   && document.querySelector('meta[name="coolapk-desktop-web"]') !== null;
@@ -9,6 +10,8 @@ export const isWebDemo = isWebBuild && !isDesktopWeb && typeof document !== 'und
 let sessionReady: Promise<void> | undefined;
 
 async function checkResponse(response: Response) {
+  // 已收到同源服务响应，即使浏览器还报告离线，网络也已恢复。
+  markNetworkReachable();
   if (response.ok) return;
   const payload = await response.json().catch(() => null);
   throw new Error(payload?.error || `Web 服务请求失败（HTTP ${response.status}）`);

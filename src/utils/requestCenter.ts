@@ -1,5 +1,6 @@
 import { reactive, readonly } from 'vue';
 import { logDiagnostic, logDiagnosticLimited, classifyDiagnosticRequestError, summarizeDiagnosticError } from './diagnosticLogger';
+import { networkOnline } from './networkState';
 let diagnosticRequestId = 0;
 const failureStats = new Map<string, { total: number; consecutive: number }>();
 let hiddenSince = typeof document !== 'undefined' && document.visibilityState === 'hidden' ? Date.now() : undefined;
@@ -30,7 +31,7 @@ const RATE_LIMIT_BASE_DELAY_MS = 2_000;
 const RATE_LIMIT_MAX_ATTEMPTS = 2;
 
 const requestState = reactive({
-  isOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
+  isOnline: networkOnline,
   pending: 0,
   lastError: '',
   lastErrorAt: 0,
@@ -40,8 +41,6 @@ const requestState = reactive({
 export const requestCenterState = readonly(requestState);
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => { requestState.isOnline = true; });
-  window.addEventListener('offline', () => { requestState.isOnline = false; });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') hiddenSince ??= Date.now();
     else if (hiddenSince !== undefined) {
