@@ -23,34 +23,7 @@
     </div>
 
     <div class="top-bar-center" data-tauri-drag-region="false">
-      <div class="global-navigation" aria-label="页面导航">
-        <AppIconButton
-          icon="fas fa-arrow-left"
-          title="后退"
-          aria-label="后退"
-          size="sm"
-          :disabled="!canGoBack"
-          @click="goBack"
-        />
-        <AppIconButton
-          icon="fas fa-arrow-right"
-          title="前进"
-          aria-label="前进"
-          size="sm"
-          :disabled="!canGoForward"
-          @click="goForward"
-        />
-        <AppIconButton
-          icon="fas fa-rotate-right"
-          title="刷新当前页面"
-          aria-label="刷新当前页面"
-          size="sm"
-          @click="refreshPage"
-        />
-        <span class="back-to-top-control">
-          <BackToTop variant="nav" />
-        </span>
-      </div>
+      <PageNavigation />
       <div class="search-input-wrapper" @click="appStore.openSearch">
         <i class="fas fa-search search-icon"></i>
         <span class="placeholder-text">搜索应用、动态、用户、话题</span>
@@ -89,10 +62,17 @@
           @click="openNotificationCenter"
         />
 
+        <Teleport to="body" :disabled="!sidebarMode">
         <Transition name="popover-fade">
           <div
             v-if="isNotificationPopoverVisible"
             class="notification-popover"
+            :class="{ 'sidebar-preview': sidebarMode }"
+            :style="sidebarMode ? sidebarPreviewStyle : undefined"
+            :ref="element => setSidebarPanel('notifications', element)"
+            :tabindex="sidebarMode ? -1 : undefined"
+            @keydown.esc="dismissSidebarPreview($event)"
+            @focusout="handleSidebarPanelFocusOut"
             @mouseenter="handleNotificationMouseEnter"
             @mouseleave="handleNotificationMouseLeave"
           >
@@ -135,6 +115,7 @@
             </div>
           </div>
         </Transition>
+        </Teleport>
       </div>
 
       <div
@@ -150,10 +131,17 @@
           @click="openMessagesPage"
         />
 
+        <Teleport to="body" :disabled="!sidebarMode">
         <Transition name="popover-fade">
           <div
             v-if="isMessagePopoverVisible"
             class="notification-popover message-popover"
+            :class="{ 'sidebar-preview': sidebarMode }"
+            :style="sidebarMode ? sidebarPreviewStyle : undefined"
+            :ref="element => setSidebarPanel('messages', element)"
+            :tabindex="sidebarMode ? -1 : undefined"
+            @keydown.esc="dismissSidebarPreview($event)"
+            @focusout="handleSidebarPanelFocusOut"
             @mouseenter="handleMessageMouseEnter"
             @mouseleave="handleMessageMouseLeave"
           >
@@ -196,6 +184,7 @@
             </div>
           </div>
         </Transition>
+        </Teleport>
       </div>
 
       <div
@@ -217,11 +206,18 @@
           <AppAvatar :src="authStore.user?.userAvatar" size="sm" />
         </button>
 
+        <Teleport to="body" :disabled="!sidebarMode">
         <Transition name="popover-fade">
           <div
             v-show="isPopoverVisible"
             id="topbar-account-panel"
             class="user-profile-popover"
+            :class="{ 'sidebar-preview': sidebarMode }"
+            :style="sidebarMode ? sidebarPreviewStyle : undefined"
+            :ref="element => setSidebarPanel('account', element)"
+            :tabindex="sidebarMode ? -1 : undefined"
+            @keydown.esc="dismissSidebarPreview($event)"
+            @focusout="handleSidebarPanelFocusOut"
             @mouseenter="handleMouseEnter"
             @mouseleave="handleMouseLeave"
           >
@@ -317,6 +313,7 @@
             </template>
           </div>
         </Transition>
+        </Teleport>
       </div>
     </div>
 
@@ -334,12 +331,12 @@
 
 <script setup lang="ts">
 import { htmlToPlainText } from '../../utils/htmlText';
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
+import { computed, nextTick, ref, onMounted, onUnmounted, watch, type ComponentPublicInstance } from 'vue';
+import type { SidebarPreview } from './sidebarPreview';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../../stores/app';
 import { useAuthStore } from '../../stores/auth';
 import { useNotificationStore } from '../../stores/notifications';
-import { usePageTabsStore } from '../../stores/pageTabs';
 import { useSettingsStore } from '../../stores/settings';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { androidNotificationContent } from '../../utils/androidNotificationContent';
@@ -354,29 +351,22 @@ import { markNotificationRead } from '../../utils/notificationRead';
 import { getNotificationExternalUrl, getNotificationFeedId, resolveNotificationTargetRoute } from '../../utils/notificationNavigation';
 import { syncWindowsNotificationIcons } from '../../utils/taskbarNotificationDot';
 import { showToast } from '../../utils/toast';
-import {
-  canNavigateBack,
-  canNavigateForward,
-  didNavigate,
-  navigateBack,
-  navigateForward,
-} from '../../utils/navigation';
+import { didNavigate } from '../../utils/navigation';
 import AppButton from '../common/AppButton.vue';
 import AppIconButton from '../common/AppIconButton.vue';
 import AppAvatar from '../common/AppAvatar.vue';
-import BackToTop from '../common/BackToTop.vue';
+import PageNavigation from './PageNavigation.vue';
 import WindowControls from './WindowControls.vue';
 import { usePlatformShortcuts } from '../../utils/shortcuts';
 import { useShortcutHints } from '../../composables/useShortcutHints';
 import { useDesktopWindow } from '../../composables/useDesktopWindow';
-import { refreshPageTabGeneration } from '../../utils/pageTabs';
 
 const router = useRouter();
+const props = defineProps<{ sidebarMode?: boolean }>();
 const route = useRoute();
 const appStore = useAppStore();
 const authStore = useAuthStore();
 const notificationStore = useNotificationStore();
-const pageTabsStore = usePageTabsStore();
 const settingsStore = useSettingsStore();
 const { formatShortcut } = usePlatformShortcuts();
 const showShortcutHints = useShortcutHints();
@@ -394,35 +384,6 @@ const isDark = computed(() => settingsStore.resolvedTheme === 'dark');
 function toggleTheme() {
   const nextTheme = settingsStore.settings.theme === 'dark' ? 'light' : 'dark';
   settingsStore.setTheme(nextTheme);
-}
-
-// 由路由器维护桌面端页面栈。
-// 通过当前路由的变化触发计算，保证页面进入、替换和返回后按钮状态同步更新。
-// 上一次历史项与当前页面相同时（重复进入同一明细页）后退会「亮着但点了没反应」，此时禁用按钮。
-const canGoBack = computed(() => {
-  if (!route.fullPath || !canNavigateBack(router)) return false;
-  const back = router.options.history.state.back;
-  return typeof back !== 'string' || back !== route.fullPath;
-});
-// 前进按钮同类隐患：history.state.forward 指向的页面就是当前页时（重复进入同一页/
-// 前进目标被替换成当前路由），按钮会亮着但 navigateForward 看不到位置变化。
-// 与 canGoBack 使用同一判据：目标位置等于当前 fullPath 时禁用。
-const canGoForward = computed(() => {
-  if (!route.fullPath || !canNavigateForward(router)) return false;
-  const forward = router.options.history.state.forward;
-  return typeof forward !== 'string' || forward !== route.fullPath;
-});
-
-function goBack() {
-  navigateBack(router);
-}
-
-function goForward() {
-  navigateForward(router);
-}
-
-function refreshPage() {
-  refreshPageTabGeneration(pageTabsStore.tabs, route);
 }
 
 const NOTIFICATION_POLL_MIN_INTERVAL_MS = 60 * 1000;
@@ -722,6 +683,7 @@ function handleNotificationMouseEnter() {
 function handleNotificationMouseLeave() {
   if (notificationPopoverHideTimer) clearTimeout(notificationPopoverHideTimer);
   notificationPopoverHideTimer = setTimeout(() => {
+    if (props.sidebarMode && sidebarPanels.notifications?.contains(document.activeElement)) return;
     isNotificationPopoverVisible.value = false;
   }, 220);
 }
@@ -735,6 +697,7 @@ function handleMessageMouseEnter() {
 function handleMessageMouseLeave() {
   if (messagePopoverHideTimer) clearTimeout(messagePopoverHideTimer);
   messagePopoverHideTimer = setTimeout(() => {
+    if (props.sidebarMode && sidebarPanels.messages?.contains(document.activeElement)) return;
     isMessagePopoverVisible.value = false;
   }, 220);
 }
@@ -974,10 +937,97 @@ function handleMouseEnter() {
 function handleMouseLeave() {
   if (popoverHideTimer) clearTimeout(popoverHideTimer);
   popoverHideTimer = setTimeout(() => {
+    if (props.sidebarMode && sidebarPanels.account?.contains(document.activeElement)) return;
     if (profileTrigger.value?.parentElement?.contains(document.activeElement)) return;
     isPopoverVisible.value = false;
   }, 220);
 }
+
+// 侧栏本身可滚动，浮层挂到 body 后使用触发项的实际位置，避免被侧栏裁切。
+const sidebarPreviewStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' });
+const sidebarPanels: Partial<Record<SidebarPreview, HTMLElement>> = {};
+let sidebarPreview: { key: SidebarPreview; anchor: HTMLElement } | undefined;
+let sidebarPanelObserver: ResizeObserver | undefined;
+
+function setSidebarPanel(key: SidebarPreview, element: Element | ComponentPublicInstance | null) {
+  if (element instanceof HTMLElement) sidebarPanels[key] = element;
+  else delete sidebarPanels[key];
+}
+
+function resetSidebarPreview() {
+  sidebarPanelObserver?.disconnect();
+  sidebarPreview = undefined;
+  isNotificationPopoverVisible.value = false;
+  isMessagePopoverVisible.value = false;
+  isPopoverVisible.value = false;
+}
+
+async function openSidebarPreview(key: SidebarPreview, anchor: HTMLElement, focus: boolean) {
+  if (!props.sidebarMode) return;
+  if (sidebarPreview?.key !== key) resetSidebarPreview();
+  const preview = { key, anchor };
+  sidebarPreview = preview;
+  const sidebar = anchor.closest('.main-sidebar');
+  const panelLeft = () => (sidebar ?? anchor).getBoundingClientRect().right + 8;
+  sidebarPreviewStyle.value = { left: `${panelLeft()}px`, top: `${anchor.getBoundingClientRect().top}px` };
+  if (key === 'notifications') handleNotificationMouseEnter();
+  if (key === 'messages') handleMessageMouseEnter();
+  if (key === 'account') handleMouseEnter();
+  await nextTick();
+  const panel = sidebarPanels[key];
+  if (sidebarPreview !== preview || !panel) return;
+  const position = () => {
+    if (sidebarPreview !== preview) return;
+    const current = anchor.getBoundingClientRect();
+    sidebarPreviewStyle.value = {
+      left: `${Math.max(8, Math.min(panelLeft(), window.innerWidth - panel.offsetWidth - 8))}px`,
+      top: `${Math.max(8, Math.min(current.top, window.innerHeight - panel.offsetHeight - 8))}px`,
+    };
+  };
+  position();
+  sidebarPanelObserver?.disconnect();
+  if (typeof ResizeObserver !== 'undefined') {
+    sidebarPanelObserver = new ResizeObserver(position);
+    sidebarPanelObserver.observe(panel);
+  }
+  if (focus) panel.focus();
+}
+
+function dismissSidebarPreview(event: KeyboardEvent) {
+  if (!props.sidebarMode || !sidebarPreview) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const { anchor } = sidebarPreview;
+  resetSidebarPreview();
+  anchor.focus();
+}
+
+function handleSidebarPanelFocusOut(event: FocusEvent) {
+  if (!props.sidebarMode || !sidebarPreview) return;
+  const panel = event.currentTarget as HTMLElement;
+  if (!(event.relatedTarget instanceof Node) || !panel.contains(event.relatedTarget)) resetSidebarPreview();
+}
+
+function closeSidebarPreview(key: SidebarPreview, event?: KeyboardEvent) {
+  if (sidebarPreview?.key !== key) return;
+  if (event) {
+    dismissSidebarPreview(event);
+    return;
+  }
+  if (key === 'notifications') handleNotificationMouseLeave();
+  if (key === 'messages') handleMessageMouseLeave();
+  if (key === 'account') handleMouseLeave();
+}
+
+watch(() => [props.sidebarMode, route.fullPath], () => { if (sidebarPreview) resetSidebarPreview(); });
+watch([isNotificationPopoverVisible, isMessagePopoverVisible, isPopoverVisible], states => {
+  if (sidebarPreview && !states.some(Boolean)) resetSidebarPreview();
+});
+onUnmounted(() => {
+  sidebarPanelObserver?.disconnect();
+  if (popoverHideTimer) clearTimeout(popoverHideTimer);
+});
+defineExpose({ openSidebarPreview, closeSidebarPreview });
 
 function handleProfileTrigger(event: MouseEvent) {
   // 键盘和辅助技术激活按钮时可以展开账号浮层，再用 Tab 访问其中的操作。
@@ -1124,15 +1174,6 @@ function handleUserClick() {
   align-self: stretch;
   flex: 1 1 40px;
   min-width: var(--space-2);
-}
-
-.global-navigation {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: 0 0 auto;
-  padding: 2px;
-  border-radius: var(--radius-control);
 }
 
 .search-input-wrapper {
@@ -1449,10 +1490,6 @@ function handleUserClick() {
 
 @media (max-width: 800px) {
   .shortcut-kbd {
-    display: none;
-  }
-
-  .back-to-top-control {
     display: none;
   }
 
@@ -1791,5 +1828,14 @@ function handleUserClick() {
 .popover-fade-leave-to {
   opacity: 0;
   transform: translateY(6px);
+}
+
+.sidebar-preview {
+  position: fixed;
+  right: auto;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 </style>

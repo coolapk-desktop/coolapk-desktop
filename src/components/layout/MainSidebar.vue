@@ -41,6 +41,10 @@
           <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
         </router-link>
 
+        <button v-if="webDesktopNavigation" type="button" class="nav-item action-item" title="搜索" aria-label="搜索" @click="appStore.openSearch">
+          <i class="fas fa-magnifying-glass nav-icon" aria-hidden="true"></i>
+        </button>
+
         <router-link
           v-if="moreVisible"
           to="/more"
@@ -58,6 +62,11 @@
       <div class="nav-divider"></div>
 
       <div class="nav-group">
+        <button v-if="webDesktopNavigation && !authStore.isWebDemo" type="button" class="nav-item action-item" title="写动态" aria-label="写动态" @click="appStore.openPublish">
+          <i class="fas fa-pen nav-icon" aria-hidden="true"></i>
+          <span v-if="!isCollapsed" class="nav-label">写动态</span>
+        </button>
+
         <router-link
           v-for="item in secondaryNavs"
           :key="item.path"
@@ -66,6 +75,10 @@
           active-class="is-active"
           :title="getNavTitle(item)"
           @click="handleNavSelection"
+          @mouseenter="openSidebarPreview(item.key, $event)"
+          @mouseleave="closeSidebarPreview(item.key)"
+          @keydown.down="openSidebarPreview(item.key, $event, true)"
+          @keydown.esc="closeSidebarPreview(item.key, $event)"
         >
           <OfficialNavIcon class="nav-icon" :route="item.path" :active="isNavIconActive(item.path)" />
           <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
@@ -91,9 +104,18 @@
         <span v-if="!isCollapsed || mobileOpen" class="nav-label">我的</span>
       </router-link>
 
+      <button v-if="webDesktopNavigation" type="button" class="nav-item action-item sidebar-account" :title="accountLabel" :aria-label="accountLabel" @click="openAccount($event)" @mouseenter="openSidebarPreview('account', $event)" @mouseleave="closeSidebarPreview('account')" @keydown.esc="closeSidebarPreview('account', $event)">
+        <AppAvatar :src="authStore.user?.userAvatar" :size="24" />
+        <span v-if="!isCollapsed" class="nav-label">{{ accountLabel }}</span>
+      </button>
+
       <div class="sidebar-settings">
         <div class="nav-divider"></div>
         <div class="nav-group">
+          <button v-if="webDesktopNavigation" type="button" class="nav-item action-item" :title="themeLabel" :aria-label="themeLabel" @click="settingsStore.setTheme(isDark ? 'light' : 'dark')">
+            <i :class="[isDark ? 'fas fa-sun' : 'fas fa-moon', 'nav-icon']" aria-hidden="true"></i>
+            <span v-if="!isCollapsed" class="nav-label">{{ themeLabel }}</span>
+          </button>
           <router-link to="/settings" class="nav-item" active-class="is-active" title="设置" @click="handleNavSelection">
             <OfficialNavIcon class="nav-icon" route="/settings" :active="isNavIconActive('/settings')" />
             <span v-if="!isCollapsed || mobileOpen" class="nav-label">设置</span>
@@ -137,10 +159,13 @@
 
 <script setup lang="ts">
 import OfficialNavIcon from './OfficialNavIcon.vue';
+import AppAvatar from '../common/AppAvatar.vue';
+import type { SidebarPreview } from './sidebarPreview';
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useSettingsStore } from '../../stores/settings';
 import { useAuthStore } from '../../stores/auth';
+import { useAppStore } from '../../stores/app';
 import { useNotificationStore } from '../../stores/notifications';
 import { useDownloadStore } from '../../stores/downloads';
 import { APP_VERSION } from '../../constants/version';
@@ -154,6 +179,29 @@ const route = useRoute();
 const router = useRouter();
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
+const appStore = useAppStore();
+const accountLabel = computed(() => authStore.isWebDemo ? '演示模式' : authStore.isLoggedIn ? '个人中心' : '登录账号');
+
+function openAccount(event: MouseEvent) {
+  if (event.detail === 0 || authStore.isWebDemo) {
+    openSidebarPreview('account', event, event.detail === 0);
+    return;
+  }
+  if (authStore.isLoggedIn) void router.push('/user/me');
+  else authStore.openLoginModal();
+}
+
+function openSidebarPreview(key: string, event: Event, focus = false) {
+  if (!props.webDesktopNavigation || !(event.currentTarget instanceof HTMLElement)) return;
+  if (key === 'notifications' || key === 'messages' || key === 'account') {
+    if (focus) event.preventDefault();
+    emit('openPreview', key, event.currentTarget, focus);
+  }
+}
+
+function closeSidebarPreview(key: string, event?: KeyboardEvent) {
+  if (props.webDesktopNavigation && (key === 'notifications' || key === 'messages' || key === 'account')) emit('closePreview', key, event);
+}
 const notificationStore = useNotificationStore();
 const downloadStore = useDownloadStore();
 const appVersion = APP_VERSION;
@@ -169,8 +217,8 @@ function toggleBetaChannel() {
 }
 const appDisplayName = computed(() => isWebBuild ? '酷安 Web' : /android|iphone|ipad|ipod/i.test(navigator.userAgent) ? '酷安' : '酷安桌面版');
 
-const props = withDefaults(defineProps<{ mobileOpen?: boolean; mobileWindowControls?: boolean }>(), { mobileOpen: false, mobileWindowControls: false });
-const emit = defineEmits<{ closeMobile: [] }>();
+const props = withDefaults(defineProps<{ mobileOpen?: boolean; mobileWindowControls?: boolean; webDesktopNavigation?: boolean }>(), { mobileOpen: false, mobileWindowControls: false, webDesktopNavigation: false });
+const emit = defineEmits<{ closeMobile: []; openPreview: [key: SidebarPreview, anchor: HTMLElement, focus: boolean]; closePreview: [key: SidebarPreview, event?: KeyboardEvent] }>();
 
 const mobileOpen = computed(() => props.mobileOpen);
 
@@ -214,6 +262,7 @@ const isCollapsed = computed(() => settingsStore.settings.sidebarCollapsed);
 const isDark = computed(() => {
   return settingsStore.resolvedTheme === 'dark';
 });
+const themeLabel = computed(() => isDark.value ? '切换日间模式' : '切换夜间模式');
 
 // 主侧边栏精简保留核心主干
 const allPrimaryNavs = [
@@ -430,6 +479,15 @@ function handleLogout() {
 .nav-item:hover {
   background-color: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.sidebar-account {
+  gap: var(--space-3);
+}
+
+.action-item:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: -2px;
 }
 
 .nav-item.is-active {
