@@ -94,7 +94,7 @@
         />
       </div>
 
-      <div v-else :class="isReviews ? 'reviews-feed' : 'catalog-grid'">
+      <div v-else :class="isReviews ? 'reviews-feed' : 'catalog-app-grid'">
         <template v-if="isReviews">
           <div
             v-for="feed in items"
@@ -122,39 +122,14 @@
 
         <!-- 应用和游戏使用相同的安装包卡片。 -->
         <template v-else>
-          <div
+          <CatalogAppCard
             v-for="(app, index) in items"
             :key="app.id || app.packageName || app.title"
-            class="app-card"
-            :class="{ 'rank-card': isRank }"
-            @click="navigateToApp(app)"
-          >
-            <span v-if="isRank" class="rank-number" :class="{ 'rank-leading': index < 3 }" :aria-label="`第 ${index + 1} 名`">{{ index + 1 }}</span>
-            <AppImage :src="getAppIcon(app)" alt="" image-class="app-icon" />
-            <div class="app-info">
-              <div class="title-row">
-                <span class="app-name">{{ app.title || app.shorttitle || (isGames ? '精选游戏' : '推荐应用') }}</span>
-                <span v-if="app.version" class="version-tag" :title="app.version">{{ app.version }}</span>
-              </div>
-              <span v-if="app.subTitle || app.description || app.packageName || app.category" class="app-desc">{{ app.subTitle || app.description || app.packageName || app.category }}</span>
-
-              <div class="app-meta">
-                <span v-if="app.score" class="score">
-                  <i class="fas fa-star"></i> {{ app.score }}
-                </span>
-                <span v-if="app.apkSizeFormatted || app.size" class="meta-item">
-                  <i class="fas fa-hdd"></i> {{ app.apkSizeFormatted || app.size }}
-                </span>
-                <span v-if="app.downCountFormatted || app.downnum" class="meta-item">
-                  <i class="fas fa-download"></i> {{ app.downCountFormatted || app.downnum }}
-                </span>
-              </div>
-            </div>
-
-            <AppButton variant="secondary" size="sm" icon="fas fa-arrow-right" class="action-btn">
-              查看
-            </AppButton>
-          </div>
+            :app="app"
+            :rank="isRank ? index + 1 : undefined"
+            :fallback-title="isGames ? '精选游戏' : '推荐应用'"
+            @open="navigateToApp(app)"
+          />
         </template>
 
         <!-- 底部分页状态 -->
@@ -175,14 +150,14 @@ import { CoolapkTauriAPI } from '../../api/coolapk';
 import { vPullRefresh } from '../../directives/pullRefresh';
 import { coolapkHtmlToPlainText } from '../../utils/sanitizeHtml';
 import { showToast } from '../../utils/toast';
-import AppButton from '../common/AppButton.vue';
+import CatalogAppCard from './CatalogAppCard.vue';
 import AppImage from '../common/AppImage.vue';
 import AppOptionMenu from '../common/AppOptionMenu.vue';
 import EmptyState from '../common/EmptyState.vue';
 import ErrorState from '../common/ErrorState.vue';
 import LoadingState from '../common/LoadingState.vue';
 
-interface CatalogItem {
+interface CatalogItem extends Record<string, unknown> {
   id?: string | number;
   entityId?: string | number;
   entityType?: string;
@@ -282,10 +257,6 @@ const loadingText = computed(() => {
 });
 
 const searchPlaceholder = isGames ? '搜索游戏' : '搜索应用';
-
-function getAppIcon(app: CatalogItem): string {
-  return app.icon || app.apkRomIcon || app.logo || app.pic || 'https://c2.coolapk.com/coolmarket/apk/default_avatar.png';
-}
 
 function getAvatar(feed: CatalogItem): string {
   return feed.userAvatar || feed.user_avatar || 'https://c2.coolapk.com/coolmarket/apk/default_avatar.png';
@@ -677,28 +648,9 @@ onMounted(() => loadItems());
   outline-offset: 2px;
 }
 
-.rank-number {
-  flex: 0 0 26px;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-control);
-  background: var(--surface-hover);
-  color: var(--text-secondary);
-  font-size: var(--font-size-caption);
-  font-weight: var(--font-weight-bold);
-  font-variant-numeric: tabular-nums;
-}
-
-.rank-leading {
-  background: var(--brand-soft);
-}
-
 .cat-tab.active,
 .category-tag:hover,
-.category-tag[aria-pressed="true"],
-.rank-leading {
+.category-tag[aria-pressed="true"] {
   color: var(--brand-active);
   color: color-mix(in srgb, var(--brand-active) 88%, var(--text-primary));
 }
@@ -765,12 +717,6 @@ onMounted(() => loadItems());
   color: var(--text-primary);
 }
 
-.catalog-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: var(--space-4);
-}
-
 .pagination-footer {
   grid-column: 1 / -1;
   display: flex;
@@ -791,100 +737,6 @@ onMounted(() => loadItems());
 .no-more {
   color: var(--text-tertiary);
   font-size: var(--font-size-caption);
-}
-
-.app-card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  background-color: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  padding: var(--space-4);
-  cursor: pointer;
-  transition: all var(--duration-fast);
-}
-
-.app-card:hover {
-  border-color: var(--brand-primary);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  transform: translateY(-2px);
-}
-
-.app-icon {
-  width: 58px;
-  height: 58px;
-  border-radius: var(--radius-control);
-  object-fit: cover;
-  flex-shrink: 0;
-}
-
-.app-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.app-name {
-  font-size: var(--font-size-title-sm);
-  font-weight: var(--font-weight-bold);
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.version-tag {
-  min-width: 0;
-  max-width: 38%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10px;
-  color: var(--text-tertiary);
-  background-color: var(--surface-hover);
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
-}
-
-.app-desc {
-  font-size: var(--font-size-caption);
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.app-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: 11px;
-  color: var(--text-tertiary);
-  margin-top: 2px;
-}
-
-.score {
-  color: #f59e0b;
-  font-weight: bold;
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.action-btn {
-  flex-shrink: 0;
 }
 
 .reviews-feed {
@@ -999,34 +851,6 @@ onMounted(() => loadItems());
   .search-box {
     width: 100%;
     min-width: 0;
-  }
-
-  .catalog-grid {
-    min-width: 0;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .app-card {
-    width: 100%;
-    min-width: 0;
-    display: grid;
-    grid-template-columns: 58px minmax(0, 1fr) auto;
-    gap: 10px;
-    padding: 12px;
-  }
-
-  .rank-card {
-    grid-template-columns: 26px 58px minmax(0, 1fr) auto;
-  }
-
-  .app-info,
-  .title-row {
-    min-width: 0;
-  }
-
-  .app-meta {
-    flex-wrap: wrap;
-    gap: 4px 8px;
   }
 }
 </style>

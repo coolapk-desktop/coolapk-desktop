@@ -829,6 +829,10 @@ export class CoolapkTauriAPI {
     return await invokeNative('get_app_detail', { packageName });
   }
 
+  static async setApkFollow(apkId: string, follow: boolean) {
+    return await invokeNative('set_apk_follow', { apkId, follow });
+  }
+
   static async getNotificationCount() {
     return await invokeNative('get_notification_count', {}, { retry: true });
   }
@@ -1820,8 +1824,8 @@ export class CoolapkTauriAPI {
     return await invokeNative('get_user_follow_nodes', { uid });
   }
 
-  static async getUserForumFollowList(uid: string, page: number = 1) {
-    return await invokeNative('get_user_forum_follow_list', { uid, page });
+  static async getUserForumFollowList(uid: string, page: number = 1, firstItem = '', lastItem = '') {
+    return await invokeNative('get_user_forum_follow_list', { uid, page, firstItem, lastItem });
   }
 
   static async getUserLikeList(uid: string, page: number = 1) {

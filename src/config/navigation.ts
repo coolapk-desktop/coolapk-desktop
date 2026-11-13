@@ -6,6 +6,7 @@ export const moreNavs: MoreNavItem[] = [
   { key: 'my_feeds', path: '/my?section=my_feeds', label: '我的动态', icon: 'fas fa-stream' },
   { key: 'followed_nodes', path: '/my?section=followed_nodes', label: '关注的论坛', icon: 'fas fa-comments' },
   { key: 'followed_topics', path: '/my?section=followed_topics', label: '关注的话题', icon: 'fas fa-hashtag' },
+  { key: 'followed_apps', path: '/my?section=followed_apps', label: '关注的应用', icon: 'fas fa-cube' },
   { key: 'followed_collections', path: '/my?section=followed_collections', label: '关注的收藏单', icon: 'fas fa-folder-open' },
   { key: 'followed_questions', path: '/my?section=followed_questions', label: '关注的问题', icon: 'fas fa-circle-question' },
   { key: 'followed_products', path: '/my?section=followed_products', label: '关注的数码吧', icon: 'fas fa-mobile-screen-button' },

@@ -5040,20 +5040,26 @@ impl CoolapkClient {
 
     pub async fn get_user_follow_nodes(&self, uid: &str) -> Result<Value, String> {
         // /v6/user/customNodeList 已被服务端移除，APK 当前统一读取论坛关注列表。
-        self.get_user_forum_follow_list(uid, 1).await
+        self.get_user_forum_follow_list(uid, 1, "", "").await
     }
 
     /// 用户关注的论坛列表
     /// 数据来源: GET /v6/user/forumFollowList
-    pub async fn get_user_forum_follow_list(&self, uid: &str, page: u32) -> Result<Value, String> {
+    pub async fn get_user_forum_follow_list(
+        &self,
+        uid: &str,
+        page: u32,
+        first_item: &str,
+        last_item: &str,
+    ) -> Result<Value, String> {
         let raw = self
             .api_get(
                 "/v6/user/forumFollowList",
                 &[
                     ("uid", uid.to_string()),
                     ("page", page.to_string()),
-                    ("firstItem", String::new()),
-                    ("lastItem", String::new()),
+                    ("firstItem", first_item.to_string()),
+                    ("lastItem", last_item.to_string()),
                 ],
             )
             .await?;
@@ -6427,6 +6433,30 @@ impl CoolapkClient {
             self.api_get("/v6/apk/detail", &[("id", package_name.to_string())])
                 .await?,
         )
+    }
+
+    pub async fn set_apk_follow(&self, apk_id: &str, follow: bool) -> Result<Value, String> {
+        let path = if follow {
+            "/v6/apk/follow"
+        } else {
+            "/v6/apk/unfollow"
+        };
+        let response = self.api_get(path, &[("id", apk_id.to_string())]).await?;
+        // 官方 Result 允许省略 status，但显式状态只有 1 表示成功。
+        let status = response.get("status").filter(|value| !value.is_null());
+        let succeeded = status.map_or_else(
+            || response.get("data").is_some_and(Value::is_object),
+            |value| value.as_i64() == Some(1) || value.as_str() == Some("1"),
+        );
+        if !succeeded || application_failure(&response).is_some() {
+            return Err(response
+                .get("message")
+                .and_then(Value::as_str)
+                .filter(|message| !message.is_empty())
+                .unwrap_or("酷安未确认应用关注操作")
+                .to_string());
+        }
+        wrap_api_data(response)
     }
 
     /// 应用评论列表（应用评价，不是动态讨论）

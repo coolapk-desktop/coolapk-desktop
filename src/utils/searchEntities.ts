@@ -2,6 +2,7 @@ import type { Router } from 'vue-router';
 import type { SearchEntity, SearchTabDefinition } from '../types/search';
 import { DEFAULT_SEARCH_TABS } from '../types/search';
 import { FEED_SEARCH_SORT_OPTIONS } from './coolapkFeedSearch';
+import { normalizeCoolapkDeepLink, normalizeCoolapkRoute } from './coolapkRoute';
 
 function textValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : value === null || value === undefined ? '' : String(value).trim();
@@ -47,7 +48,7 @@ export function getSearchEntityUid(entity: SearchEntity): string {
 }
 
 export function getSearchEntityPackageName(entity: SearchEntity): string {
-  return textValue(entity.packageName ?? entity.package_name ?? entity.pkg ?? entity.apkname ?? entity.apkName);
+  return firstTextValue(entity.packageName, entity.package_name, entity.pkg, entity.apkname, entity.apkName);
 }
 
 export function getSearchEntityTag(entity: SearchEntity): string {
@@ -89,7 +90,15 @@ function getSearchEntityTopicTag(entity: SearchEntity): string {
 }
 
 export function getSearchEntityUrl(entity: SearchEntity): string {
-  return textValue(entity.url ?? entity.actionUrl ?? entity.action_url ?? entity.link);
+  return firstTextValue(entity.url, entity.actionUrl, entity.action_url, entity.link);
+}
+
+export function getAppEntityRoute(entity: SearchEntity): string | null {
+  const packageName = getSearchEntityPackageName(entity);
+  if (packageName) return `/app/${encodeURIComponent(packageName)}`;
+  const url = getSearchEntityUrl(entity);
+  const route = normalizeCoolapkDeepLink(url) || normalizeCoolapkRoute(url);
+  return route?.startsWith('/app/') ? route : null;
 }
 
 export interface SearchEntitySearchTarget {

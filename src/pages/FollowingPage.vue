@@ -14,7 +14,7 @@
     </div>
 
     <!-- 登录后的关注工作区，动态与其它关注内容共用同一入口 -->
-    <div v-else class="following-workspace">
+    <div v-else class="following-workspace" :class="{ 'following-workspace--category': selectedFollowCategory !== 'feeds' }">
       <nav class="following-category-tabs" aria-label="关注分类">
         <button
           v-for="category in followCategoryOptions"
@@ -33,7 +33,7 @@
       <UpdatedFollowUsers ref="updatedFollowUsers" v-if="selectedFollowCategory === 'feeds'" :feeds="followingUpdateFeeds" />
 
       <div v-if="selectedFollowCategory !== 'feeds'" class="following-category-panel">
-        <MoreDataPage :key="selectedFollowCategory" :mode="selectedFollowCategory" />
+        <MoreDataPage :key="`${selectedFollowCategory}:${authStore.user?.uid ?? ''}`" :mode="selectedFollowCategory" />
       </div>
 
       <!-- 关注动态与关注用户仍保留原有双列布局 -->
@@ -202,6 +202,7 @@ const followCategoryOptions = [
   { key: 'feeds', label: '关注动态', icon: 'fas fa-stream' },
   { key: 'nodes', label: '关注论坛', icon: 'fas fa-comments' },
   { key: 'topics', label: '关注话题', icon: 'fas fa-hashtag' },
+  { key: 'apps', label: '应用', icon: 'fas fa-cube' },
   { key: 'collections', label: '收藏单', icon: 'fas fa-folder-open' },
   { key: 'questions', label: '问题', icon: 'fas fa-circle-question' },
   { key: 'products', label: '数码吧', icon: 'fas fa-mobile-screen-button' },
@@ -467,6 +468,7 @@ function navigateToUser(uid: string | number) {
 }
 
 function onScrollEvent(e: Event) {
+  if (selectedFollowCategory.value !== 'feeds') return;
   const el = e.target as HTMLElement;
   let scrollDiff = 999;
   if (el && el.scrollHeight) {
@@ -518,7 +520,7 @@ onDeactivated(unbindGlobalListeners);
 onUnmounted(unbindGlobalListeners);
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
-const mobileRefreshBusy = computed(() => loading.value || loadingMore.value);
+const mobileRefreshBusy = computed(() => selectedFollowCategory.value !== 'feeds' || loading.value || loadingMore.value);
 async function refreshMobilePage() { await loadFollowingFeeds(true); }
 </script>
 
@@ -545,9 +547,14 @@ async function refreshMobilePage() { await loadFollowingFeeds(true); }
   min-height: 100%;
 }
 
+.following-workspace--category {
+  height: 100%;
+}
+
 .following-category-tabs {
   display: flex;
   flex-wrap: wrap;
+  flex-shrink: 0;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4) 0;
 }

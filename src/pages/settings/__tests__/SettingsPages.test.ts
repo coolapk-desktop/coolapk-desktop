@@ -136,7 +136,8 @@ describe('设置页面交互', () => {
     expect(wrapper.find('.nav-main-grid').text()).not.toContain('下载');
     expect(wrapper.find('.nav-main-grid').text()).toContain('更多服务');
     expect(wrapper.find('.nav-more-services-settings').exists()).toBe(false);
-    expect(wrapper.findAll('.nav-toggle-card').some((card) => card.text().includes('应用'))).toBe(false);
+    expect(wrapper.findAll('.nav-toggle-card').some((card) => card.text().trim() === '应用')).toBe(false);
+    expect(wrapper.get('.nav-more-settings').text()).toContain('关注的应用');
     expect(wrapper.findAll('.nav-toggle-card').some((card) => card.text().includes('下载'))).toBe(false);
     expect(settings.settings.theme).toBe('dark');
     expect(settings.settings.accentColor).toBe('blue');

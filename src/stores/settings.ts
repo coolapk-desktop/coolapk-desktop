@@ -80,6 +80,7 @@ const defaultNavVisibility: NavVisibilitySettings = {
   my_recent: true,
   followed_nodes: true,
   followed_topics: true,
+  followed_apps: true,
   followed_collections: true,
   followed_questions: true,
   followed_products: true,

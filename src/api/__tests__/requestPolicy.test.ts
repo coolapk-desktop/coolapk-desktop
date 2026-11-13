@@ -38,6 +38,12 @@ describe('invokeNative 请求策略：写操作不重试、上传不受 UI 超�
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('应用关注用应用 ID 提交，失败时只调用一次', async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error('网络连接失败'));
+    await expect(CoolapkTauriAPI.setApkFollow('42', true)).rejects.toThrow('网络连接失败');
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('set_apk_follow', { apkId: '42', follow: true });
+  });
+
   it('读接口未显式指定策略时仍按默认策略重试', async () => {
     vi.useFakeTimers();
     try {

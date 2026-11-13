@@ -413,6 +413,13 @@ describe('CoolapkTauriAPI 内容新页接口封装', () => {
     expect(invoke).toHaveBeenCalledWith('get_discovery_page_data', expect.objectContaining({ url: '#/product/followProductList?&title=我关注的数码吧', title: '我关注的数码吧', page: 4 }));
   });
 
+  it('关注论坛翻页把首尾条目 ID 传给原生命令', async () => {
+    await CoolapkTauriAPI.getUserForumFollowList('42', 2, '101', '120');
+    expect(invoke).toHaveBeenCalledWith('get_user_forum_follow_list', {
+      uid: '42', page: 2, firstItem: '101', lastItem: '120',
+    });
+  });
+
   it('闲置品牌列表调用 APK 对应命令', async () => {
     await CoolapkTauriAPI.getSecondHandBrandList();
     expect(invoke).toHaveBeenCalledWith('get_secondhand_brand_list', {});

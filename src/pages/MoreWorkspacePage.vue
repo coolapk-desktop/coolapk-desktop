@@ -50,6 +50,7 @@ const activeSection = ref(visibleMoreNavs.value[0]?.key || 'my_likes');
 const dataModeByKey: Record<string, string> = {
   followed_nodes: 'nodes',
   followed_topics: 'topics',
+  followed_apps: 'apps',
   followed_collections: 'collections',
   followed_questions: 'questions',
   followed_products: 'products',
@@ -67,6 +68,7 @@ const componentByKey: Record<string, Component> = {
   my_albums: MyAlbumsPage,
   followed_nodes: MoreDataPage,
   followed_topics: MoreDataPage,
+  followed_apps: MoreDataPage,
   followed_collections: MoreDataPage,
   followed_questions: MoreDataPage,
   followed_products: MoreDataPage,
@@ -122,6 +124,11 @@ watch(visibleMoreNavs, (items) => {
   min-height: 100%;
   overflow: visible;
   padding: 0;
+}
+
+.more-content :deep(.follow-list-scroll) {
+  height: 100%;
+  overflow-y: auto;
 }
 
 .more-content :deep(.page-header) {

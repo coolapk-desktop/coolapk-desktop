@@ -1,6 +1,7 @@
 <template>
   <FeedCard v-if="isFeedEntity" :feed="feedForCard" :profile-uid="profileUid" @pin-changed="emit('pin-changed')" :reply-mode="replyMode" @deleted="(id) => emit('deleted', id)" />
   <RatingCard v-else-if="isRatingEntity" :feed="entity" />
+  <CatalogAppCard v-else-if="tab === 'apk_follow'" :app="entity" @open="openEntity" />
   <article v-else class="user-entity-card" :class="`entity-${variant}`" @click="openEntity">
     <template v-if="variant === 'collection'">
       <div class="collection-cover-container">
@@ -69,12 +70,14 @@
 <script setup lang="ts">
 import { computed, defineComponent, h } from 'vue';
 import { useRouter } from 'vue-router';
+import CatalogAppCard from '../catalog/CatalogAppCard.vue';
 import AppAvatar from '../common/AppAvatar.vue';
 import AppImage from '../common/AppImage.vue';
 import FeedCard from '../feed/FeedCard.vue';
 import RatingCard from '../feed/RatingCard.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import type { UserSpaceEntity } from '../../types/userSpace';
+import { getAppEntityRoute } from '../../utils/searchEntities';
 
 const props = defineProps<{ entity: UserSpaceEntity; tab?: string; profileUid?: string | number }>();
 const emit = defineEmits<{ (event: 'pin-changed'): void; (event: 'deleted', id: string | number): void }>();
@@ -91,6 +94,7 @@ const imageList = computed(() => {
   return values.map((value: any) => typeof value === 'string' ? value : value?.url || value?.pic || value?.image).filter(Boolean);
 });
 const targetUrl = computed(() => typeof entity.value.url === 'string' ? entity.value.url : typeof entity.value.actionUrl === 'string' ? entity.value.actionUrl : '');
+const appRoute = computed(() => getAppEntityRoute(props.entity));
 const avatarFromUid = computed(() => {
   const uid = entity.value.uid;
   if (!uid) return '';
@@ -175,6 +179,10 @@ function formatDate(value: unknown): string {
 }
 
 async function openEntity() {
+  if (props.tab === 'apk_follow' || props.tab === 'developer_apps' || type.value === 'apk') {
+    if (appRoute.value) return void router.push(appRoute.value);
+    if (props.tab === 'apk_follow') return;
+  }
   if (variant.value === 'collection') {
     const collectionId = entity.value.id || entity.value.entityId || entity.value.target_id;
     if (collectionId) {

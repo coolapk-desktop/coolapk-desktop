@@ -1017,8 +1017,18 @@ async fn get_user_follow_nodes(state,
 async fn get_user_forum_follow_list(state,
     uid: String,
     page: u32,
+    first_item: Option<String>,
+    last_item: Option<String>,
 ) -> Value {
-    state.client.get_user_forum_follow_list(&uid, page).await
+    state
+        .client
+        .get_user_forum_follow_list(
+            &uid,
+            page,
+            first_item.as_deref().unwrap_or_default(),
+            last_item.as_deref().unwrap_or_default(),
+        )
+        .await
 }
 
 async fn get_user_feeds(state,
@@ -1116,6 +1126,10 @@ async fn get_app_detail(state,
     package_name: String,
 ) -> Value {
     state.client.get_app_detail(&package_name).await
+}
+
+async fn set_apk_follow(state, apk_id: String, follow: bool) -> Value {
+    state.client.set_apk_follow(&apk_id, follow).await
 }
 
 async fn get_apk_comments(state,
