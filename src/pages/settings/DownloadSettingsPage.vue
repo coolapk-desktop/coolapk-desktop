@@ -7,17 +7,19 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">默认保存目录</span>
+          <code v-if="!isAndroid" class="mono-pill">{{ displayDownloadPath }}</code>
           <span class="row-sub">
-            {{ isAndroid ? '图片保存到相册，文件保存到下载目录；Android 7–9 保存时选择位置' : `${displayDownloadPath}（用于导出数据等文件保存；留空则使用系统下载目录）` }}
+            {{ isAndroid ? '图片保存到相册，文件保存到下载目录；Android 7–9 保存时选择位置' : '用于导出数据等文件保存；留空则使用系统下载目录' }}
           </span>
           <span class="row-sub">更改仅对之后新建的任务生效，进行中的任务仍按各自加入队列时的目录完成</span>
         </div>
         <div class="row-actions">
-          <AppButton v-if="!isAndroid" variant="secondary" size="sm" @click="chooseDownloadDir">更改目录</AppButton>
+          <AppButton v-if="!isAndroid" variant="secondary" size="sm" icon="fas fa-folder" @click="chooseDownloadDir">更改目录</AppButton>
           <AppButton
             v-if="settingsStore.settings.downloadPath"
-            variant="ghost"
+            variant="secondary"
             size="sm"
+            icon="fas fa-rotate-left"
             @click="resetDownloadDir"
           >恢复默认</AppButton>
         </div>
@@ -90,16 +92,17 @@
       <div class="setting-row cache-directory-row">
         <div class="row-info">
           <span class="row-label">图片缓存目录</span>
-          <span class="row-sub cache-path">{{ cacheDirectoryText }}</span>
+          <code class="mono-pill">{{ cacheDirectoryText }}</code>
           <span class="row-sub">{{ isAndroid ? '缓存保存在应用目录，可在下方清理' : '自定义目录中会创建应用专用的图片缓存子目录；WebView 系统缓存位置不变' }}</span>
         </div>
         <div class="row-actions">
-          <AppButton variant="ghost" size="sm" @click="openCacheDir">打开目录</AppButton>
-          <AppButton v-if="!isAndroid" variant="secondary" size="sm" @click="chooseCacheDir">更改目录</AppButton>
+          <AppButton variant="secondary" size="sm" icon="fas fa-folder-open" @click="openCacheDir">打开目录</AppButton>
+          <AppButton v-if="!isAndroid" variant="secondary" size="sm" icon="fas fa-folder" @click="chooseCacheDir">更改目录</AppButton>
           <AppButton
             v-if="settingsStore.settings.cachePath"
-            variant="ghost"
+            variant="secondary"
             size="sm"
+            icon="fas fa-rotate-left"
             @click="resetCacheDir"
           >恢复默认</AppButton>
         </div>
@@ -120,10 +123,10 @@
           </div>
         </div>
         <div class="row-actions cache-usage-actions">
-          <AppButton variant="ghost" size="sm" :disabled="cacheBusy" @click="cleanExpiredCache">
+          <AppButton variant="secondary" size="sm" icon="fas fa-broom" :disabled="cacheBusy" @click="cleanExpiredCache">
             清理过期项
           </AppButton>
-          <AppButton variant="ghost" size="sm" :disabled="cacheBusy" @click="clearCache">
+          <AppButton variant="secondary" size="sm" icon="fas fa-trash-can" :disabled="cacheBusy" @click="clearCache">
             {{ cacheBusy ? '清理中...' : '清理全部图片缓存' }}
           </AppButton>
         </div>
@@ -171,14 +174,14 @@
           <span class="row-label">导出浏览历史</span>
           <span class="row-sub">将酷安账号的浏览历史导出为 JSON 文件保存到下载目录</span>
         </div>
-        <AppButton variant="ghost" size="sm" :disabled="historyExporting" @click="exportHistory">
+        <AppButton variant="secondary" size="sm" icon="fas fa-file-export" :disabled="historyExporting" @click="exportHistory">
           {{ historyExporting ? '导出中...' : '导出 JSON' }}
         </AppButton>
       </div>
 
-      <p v-if="historyExportResult" class="tray-tip">
-        <i class="fas fa-check-circle"></i>
-        浏览历史已导出到：{{ historyExportResult }}
+      <p v-if="historyExportResult" class="extract-tip success-tip">
+        <i class="fas fa-check-circle" aria-hidden="true"></i>
+        <span>浏览历史已导出到：<code>{{ historyExportResult }}</code></span>
       </p>
     </div>
 
@@ -394,7 +397,12 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: download-settings;
 }
 
 .section-title {
@@ -409,9 +417,11 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0;
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -419,8 +429,10 @@ onMounted(() => {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -428,18 +440,20 @@ onMounted(() => {
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
-
-.cache-directory-row {
+.cache-directory-row,
+.cache-usage-row {
   align-items: flex-start;
 }
 
 .cache-usage-info {
-  min-width: 0;
-  flex: 1 1 auto;
-  gap: 4px;
+  gap: 6px;
 }
 
 .cache-total-line {
@@ -472,7 +486,7 @@ onMounted(() => {
 .cache-breakdown {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px var(--space-3);
+  gap: var(--space-2);
   color: var(--text-tertiary);
   font-size: var(--font-size-caption);
 }
@@ -482,38 +496,44 @@ onMounted(() => {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  background-color: var(--background);
+  border: 1px solid var(--border-light);
 }
 
 .cache-breakdown-item strong {
   white-space: nowrap;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-weight: var(--font-weight-semibold);
 }
 
-.cache-path {
-  max-width: 500px;
-  color: var(--text-secondary);
+.cache-error {
+  color: var(--danger);
+}
+
+.mono-pill {
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: var(--font-size-caption);
+  color: var(--text-primary);
+  background-color: var(--background);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-control);
+  padding: 3px 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   word-break: break-all;
 }
 
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-2);
-  flex-shrink: 0;
-  margin-left: var(--space-4);
-}
-
-.cache-usage-actions {
-  gap: 4px;
-  margin-left: var(--space-3);
-  white-space: nowrap;
-}
-
-.cache-usage-actions :deep(.app-button) {
-  padding: 4px 8px;
-  font-size: 12px;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .row-label {
@@ -525,6 +545,8 @@ onMounted(() => {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .select-control {
@@ -536,27 +558,15 @@ onMounted(() => {
   color: var(--text-primary);
   cursor: pointer;
   outline: none;
-  transition: border-color var(--duration-fast) var(--ease-default);
-}
-
-.select-control:hover {
-  border-color: var(--brand-primary);
-}
-
-.text-input {
-  background-color: var(--background);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  padding: 6px 12px;
-  font-size: var(--font-size-sub);
-  color: var(--text-primary);
-  outline: none;
   width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
-.text-input:hover,
-.text-input:focus {
+.select-control:hover,
+.select-control:focus {
   border-color: var(--brand-primary);
 }
 
@@ -573,13 +583,59 @@ onMounted(() => {
   color: var(--warning, var(--danger));
 }
 
-.tray-tip {
-  font-size: var(--font-size-caption);
-  color: var(--text-tertiary);
-  margin: 0;
+.extract-tip {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.extract-tip i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.extract-tip span {
+  min-width: 0;
+}
+
+.success-tip {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--brand-primary);
+}
+
+.success-tip code {
+  font-family: var(--font-mono, Consolas, monospace);
   word-break: break-all;
+}
+
+@media (max-width: 600px) {
+  .select-control {
+    width: 100%;
+  }
+
+  .row-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@container download-settings (max-width: 560px) {
+  .select-control {
+    width: 100%;
+  }
+
+  .row-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
 }
 </style>
