@@ -91,6 +91,26 @@ const defaultNavVisibility: NavVisibilitySettings = {
   my_votes: true,
 };
 
+export const DEFAULT_DEVICE_API_VERSION = '16';
+export const DEFAULT_DEVICE_APP_CHANNEL = 'coolapk';
+
+/** 请求头覆盖值为空或格式无效时交给客户端使用默认值。 */
+export function normalizeDeviceAppSupported(value: string): string {
+  const supported = value.trim();
+  return /^\d{1,12}$/.test(supported) ? supported : '';
+}
+
+export function normalizeDeviceAppChannel(value: string): string {
+  const channel = value.trim();
+  return /^[\x21-\x7e]{1,64}$/.test(channel) ? channel : '';
+}
+
+/** API 版本号独立于 App 版本，留空或格式无效时使用默认请求头。 */
+export function normalizeDeviceApiVersion(value: string): string {
+  const version = value.trim();
+  return /^\d{1,12}$/.test(version) ? version : DEFAULT_DEVICE_API_VERSION;
+}
+
 /** 默认设备信息：与 Rust 客户端 CoolapkClient::new() 内置的默认头一致 */
 const defaultDeviceFingerprint: DeviceFingerprintSettings = {
   customFingerprint: false,
@@ -102,6 +122,10 @@ const defaultDeviceFingerprint: DeviceFingerprintSettings = {
   rom: '',
   appVersion: '16.6.5',
   appCode: '2610162',
+  appSupported: '',
+  appChannel: '',
+  appMode: 'universal',
+  apiVersion: DEFAULT_DEVICE_API_VERSION,
   sdkInt: '36',
   locale: 'zh-CN',
   darkMode: '0',
@@ -116,7 +140,7 @@ export function buildDeviceUserAgent(f: DeviceFingerprintSettings): string {
   const code = f.appCode.trim() || defaultDeviceFingerprint.appCode;
   const { brand } = resolveDeviceIdentity({ ...f, model });
   const rom = f.rom?.trim() || android;
-  return `Dalvik/2.1.0 (Linux; U; Android ${android}; ${model} Build/${build}) (#Build; ${brand}; ${model}; ${build}; ${rom}) +CoolMarket/${version}-${code}-universal`;
+  return `Dalvik/2.1.0 (Linux; U; Android ${android}; ${model} Build/${build}) (#Build; ${brand}; ${model}; ${build}; ${rom}) +CoolMarket/${version}-${code}-${f.appMode}`;
 }
 
 const defaultSettings: AppSettings = {
@@ -382,6 +406,10 @@ export function normalizeSettings(value: unknown): AppSettings {
     result.deviceFingerprint.rom = readString(fingerprint.rom, '').trim();
     result.deviceFingerprint.appVersion = readString(fingerprint.appVersion, result.deviceFingerprint.appVersion);
     result.deviceFingerprint.appCode = readString(fingerprint.appCode, result.deviceFingerprint.appCode);
+    result.deviceFingerprint.appSupported = normalizeDeviceAppSupported(readString(fingerprint.appSupported, ''));
+    result.deviceFingerprint.appChannel = normalizeDeviceAppChannel(readString(fingerprint.appChannel, ''));
+    if (isOneOf(fingerprint.appMode, ['universal', 'community', 'market'])) result.deviceFingerprint.appMode = fingerprint.appMode;
+    result.deviceFingerprint.apiVersion = normalizeDeviceApiVersion(readString(fingerprint.apiVersion, ''));
     result.deviceFingerprint.sdkInt = readString(fingerprint.sdkInt, result.deviceFingerprint.sdkInt);
     result.deviceFingerprint.locale = readString(fingerprint.locale, result.deviceFingerprint.locale);
     if (isOneOf(fingerprint.darkMode, ['0', '1'])) result.deviceFingerprint.darkMode = fingerprint.darkMode;
@@ -872,7 +900,10 @@ export const useSettingsStore = defineStore('settings', () => {
                 locale: f.locale,
                 appVersion: f.appVersion,
                 appCode: f.appCode,
-                apiVersion: '16',
+                appSupported: normalizeDeviceAppSupported(f.appSupported) || undefined,
+                appChannel: normalizeDeviceAppChannel(f.appChannel) || undefined,
+                appMode: f.appMode,
+                apiVersion: normalizeDeviceApiVersion(f.apiVersion),
                 darkMode: f.darkMode,
                 model: f.model.trim() || undefined,
                 build: f.build.trim() || undefined,

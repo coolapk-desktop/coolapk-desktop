@@ -299,7 +299,6 @@
           <div class="field-item">
             <div class="row-info">
               <span class="row-label">版本号（X-App-Code）</span>
-              <span class="row-sub">同步作用于 X-App-Supported</span>
             </div>
             <input
               v-model="settingsStore.settings.deviceFingerprint.appCode"
@@ -310,6 +309,35 @@
             />
           </div>
         </div>
+
+        <div class="field-row">
+          <div class="field-item">
+            <label for="device-api-version" class="row-info row-label">API 版本（X-Api-Version）</label>
+            <input id="device-api-version" v-model="fingerprint.apiVersion" type="text" class="text-input small-input" inputmode="numeric" :placeholder="DEFAULT_DEVICE_API_VERSION" maxlength="12" :aria-invalid="invalidApiVersion || undefined" :aria-describedby="invalidApiVersion ? 'device-api-version-warning' : undefined" />
+          </div>
+          <div class="field-item">
+            <label for="device-app-supported" class="row-info row-label">支持版本（X-App-Supported）</label>
+            <input id="device-app-supported" v-model="fingerprint.appSupported" type="text" class="text-input small-input" inputmode="numeric" placeholder="跟随版本号" maxlength="12" :aria-invalid="invalidAppSupported || undefined" :aria-describedby="invalidAppSupported ? 'device-app-supported-warning' : undefined" />
+          </div>
+        </div>
+        <p v-if="invalidApiVersion" id="device-api-version-warning" class="version-warning">API 版本仅支持数字，当前使用默认值 {{ DEFAULT_DEVICE_API_VERSION }}。</p>
+        <p v-if="invalidAppSupported" id="device-app-supported-warning" class="version-warning">支持版本仅支持数字，当前跟随版本号。</p>
+
+        <div class="field-row">
+          <div class="field-item">
+            <label for="device-app-channel" class="row-info row-label">渠道（X-App-Channel）</label>
+            <input id="device-app-channel" v-model="fingerprint.appChannel" type="text" class="text-input small-input" :placeholder="DEFAULT_DEVICE_APP_CHANNEL" maxlength="64" autocapitalize="off" spellcheck="false" :aria-invalid="invalidAppChannel || undefined" :aria-describedby="invalidAppChannel ? 'device-app-channel-warning' : undefined" />
+          </div>
+          <div class="field-item">
+            <label for="device-app-mode" class="row-info row-label">应用模式（X-App-Mode）</label>
+            <select id="device-app-mode" v-model="fingerprint.appMode" class="text-input small-input">
+              <option value="universal">通用</option>
+              <option value="community">社区</option>
+              <option value="market">应用市场</option>
+            </select>
+          </div>
+        </div>
+        <p v-if="invalidAppChannel" id="device-app-channel-warning" class="version-warning">渠道仅支持不含空格的半角字符，当前使用默认渠道 {{ DEFAULT_DEVICE_APP_CHANNEL }}。</p>
 
         <div class="field-row">
           <div class="field-item">
@@ -366,6 +394,18 @@
             <code class="preview-value">{{ fingerprint.appCode || '2610162' }}</code>
           </div>
           <div class="preview-row">
+            <span class="preview-key">X-Api-Version</span>
+            <code class="preview-value">{{ effectiveApiVersion }}</code>
+            <span class="preview-key">X-App-Supported</span>
+            <code class="preview-value">{{ appSupportedOverride || fingerprint.appCode || '2610162' }}</code>
+          </div>
+          <div class="preview-row">
+            <span class="preview-key">X-App-Channel</span>
+            <code class="preview-value">{{ appChannelOverride || DEFAULT_DEVICE_APP_CHANNEL }}</code>
+            <span class="preview-key">X-App-Mode</span>
+            <code class="preview-value">{{ fingerprint.appMode }}</code>
+          </div>
+          <div class="preview-row">
             <span class="preview-key">X-Sdk-Int</span>
             <code class="preview-value">{{ fingerprint.sdkInt || '36' }}</code>
             <span class="preview-key">X-Sdk-Locale</span>
@@ -405,7 +445,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { useSettingsStore, buildDeviceUserAgent } from '../../stores/settings';
+import { useSettingsStore, buildDeviceUserAgent, DEFAULT_DEVICE_API_VERSION, DEFAULT_DEVICE_APP_CHANNEL, normalizeDeviceApiVersion, normalizeDeviceAppSupported, normalizeDeviceAppChannel } from '../../stores/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { loadDevicePresets, searchDevicePresets, groupDevicePresets, getDeviceSeries, getAndroidSdkWarning, resolveDeviceIdentity, type DevicePreset } from '../../utils/devicePresets';
 import { invoke, isWebBuild } from '../../api/runtime';
@@ -633,6 +673,15 @@ watch(selectedPreset, (preset) => {
 const deviceIdentity = computed(() => resolveDeviceIdentity(fingerprint.value));
 const sdkWarning = computed(() => getAndroidSdkWarning(fingerprint.value.androidVersion, fingerprint.value.sdkInt));
 const previewUserAgent = computed(() => buildDeviceUserAgent(fingerprint.value));
+const effectiveApiVersion = computed(() => normalizeDeviceApiVersion(fingerprint.value.apiVersion));
+const appSupportedOverride = computed(() => normalizeDeviceAppSupported(fingerprint.value.appSupported));
+const appChannelOverride = computed(() => normalizeDeviceAppChannel(fingerprint.value.appChannel));
+const invalidAppSupported = computed(() => !!fingerprint.value.appSupported.trim() && !appSupportedOverride.value);
+const invalidAppChannel = computed(() => !!fingerprint.value.appChannel.trim() && !appChannelOverride.value);
+const invalidApiVersion = computed(() => {
+  const value = fingerprint.value.apiVersion.trim();
+  return value !== '' && value !== effectiveApiVersion.value;
+});
 
 const presetModel = computed({
   get: () => forceCustomPreset.value ? '' : selectedPreset.value?.id || '',
@@ -684,6 +733,10 @@ async function resetToDefault() {
     rom: '',
     appVersion: '16.6.5',
     appCode: '2610162',
+    appSupported: '',
+    appChannel: '',
+    appMode: 'universal',
+    apiVersion: DEFAULT_DEVICE_API_VERSION,
     sdkInt: '36',
     locale: 'zh-CN',
     darkMode: '0',

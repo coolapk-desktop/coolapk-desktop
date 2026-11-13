@@ -565,9 +565,25 @@ pub struct DeviceProfile {
     #[serde(default)]
     pub app_code: Option<String>,
     #[serde(default)]
+    pub app_supported: Option<String>,
+    #[serde(default)]
+    pub app_channel: Option<String>,
+    #[serde(default)]
+    pub app_mode: Option<String>,
+    #[serde(default)]
     pub api_version: Option<String>,
     #[serde(default)]
     pub dark_mode: Option<String>,
+}
+
+impl DeviceProfile {
+    fn app_mode(&self) -> &'static str {
+        match self.app_mode.as_deref() {
+            Some("community") => "community",
+            Some("market") => "market",
+            _ => "universal",
+        }
+    }
 }
 
 /// 移动端 UA：酷安网页（账号安全页/移动版页面）在桌面 UA 下会白屏或重定向
@@ -1467,6 +1483,7 @@ impl CoolapkClient {
             ("X-Sdk-Locale", profile.locale.as_ref()),
             ("X-App-Version", profile.app_version.as_ref()),
             ("X-App-Code", profile.app_code.as_ref()),
+            ("X-App-Channel", profile.app_channel.as_ref()),
             ("X-Api-Version", profile.api_version.as_ref()),
             ("X-Dark-Mode", profile.dark_mode.as_ref()),
         ] {
@@ -1476,10 +1493,15 @@ impl CoolapkClient {
                 }
             }
         }
-        if let Some(app_code) = profile.app_code.as_ref().filter(|s| !s.trim().is_empty()) {
-            if let Ok(header_value) = HeaderValue::from_str(app_code) {
-                headers.insert("X-App-Supported", header_value);
-            }
+        if profile.app_mode.is_some() {
+            headers.insert("X-App-Mode", HeaderValue::from_static(profile.app_mode()));
+        }
+        // 支持版本可以独立配置，留空沿用请求版本号。签名仍使用 X-App-Code。
+        let app_supported = profile.app_supported.as_deref().map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 12 && value.bytes().all(|byte| byte.is_ascii_digit()));
+        if let Some(header_value) = app_supported.or(profile.app_code.as_deref())
+            .filter(|value| !value.trim().is_empty()).and_then(|value| HeaderValue::from_str(value).ok()) {
+            headers.insert("X-App-Supported", header_value);
         }
         if let Some(ua) = profile.user_agent.as_ref().filter(|s| !s.trim().is_empty()) {
             if let Ok(header_value) = HeaderValue::from_str(ua) {
@@ -1498,7 +1520,7 @@ impl CoolapkClient {
                 })* };
             }
             override_fields!(manufacturer, brand, model, build, device_id, ddid, user_agent,
-                sdk_int, locale, app_version, app_code, api_version, dark_mode);
+                sdk_int, locale, app_version, app_code, app_supported, app_channel, app_mode, api_version, dark_mode);
         }
         profile
     }
@@ -7598,9 +7620,9 @@ impl CoolapkClient {
         let profile = self.effective_device_profile();
         // 覆盖默认 UA 和自定义 UA，避免从 #Build 或 Dalvik 片段重新识别机型。
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_str(&format!("CoolMarket/{}-{}-universal",
+        headers.insert(USER_AGENT, HeaderValue::from_str(&format!("CoolMarket/{}-{}-{}",
             profile.app_version.as_deref().unwrap_or("16.6.5"),
-            profile.app_code.as_deref().unwrap_or("2610162"))).map_err(|_| "发布 UA 格式无效")?);
+            profile.app_code.as_deref().unwrap_or("2610162"), profile.app_mode())).map_err(|_| "发布 UA 格式无效")?);
         Ok(request.headers(headers))
     }
 

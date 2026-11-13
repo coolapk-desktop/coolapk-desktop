@@ -113,8 +113,16 @@ export interface DeviceFingerprintSettings {
   rom?: string;
   /** X-App-Version，如 "16.6.5" */
   appVersion: string;
-  /** X-App-Code / X-App-Supported，如 "2610162" */
+  /** X-App-Code，如 "2610162" */
   appCode: string;
+  /** X-App-Supported，留空跟随 X-App-Code */
+  appSupported: string;
+  /** X-App-Channel，留空使用默认渠道 */
+  appChannel: string;
+  /** X-App-Mode，同步到 User-Agent */
+  appMode: 'universal' | 'community' | 'market';
+  /** X-Api-Version，如 "16" */
+  apiVersion: string;
   /** X-Sdk-Int，如 "35" */
   sdkInt: string;
   /** X-Sdk-Locale，如 "zh-CN" */

@@ -33,6 +33,7 @@ fn default_request_version_matches_token_signing_version() {
     let code = APP_CODE.to_string();
     assert_eq!(request.headers()["X-App-Code"], code.as_str());
     assert_eq!(request.headers()["X-App-Supported"], code.as_str());
+    assert_eq!(request.headers()["X-Api-Version"], "16");
     assert!(super::super::native_device::COMPATIBILITY_UA.contains(&format!("-{code}-")));
 }
 
@@ -41,10 +42,12 @@ fn custom_request_version_matches_signing_and_resets_with_profile() {
     let client = CoolapkClient::new();
     // 保留旧版自定义机型时也要按实际请求头签名，不能混入当前默认版本。
     for code in ["2604201", "2610162"] {
-        client.update_device_profile(DeviceProfile { app_code: Some(code.into()), ..Default::default() });
+        client.update_device_profile(DeviceProfile { app_code: Some(code.into()), api_version: Some("17".into()), ..Default::default() });
         let request = client.apply_download_headers(reqwest::Client::new().get("https://api.coolapk.com/v6/main/init")).unwrap().build().unwrap();
         assert_eq!(request.headers()["X-App-Code"], code);
         assert_eq!(request.headers()["X-App-Supported"], code);
+        assert_eq!(request.headers()["X-Api-Version"], "17");
+        assert_eq!(request.headers().get_all("X-Api-Version").iter().count(), 1);
         assert_eq!(request.headers().get_all("X-App-Code").iter().count(), 1);
         assert_eq!(request.headers().get_all("X-App-Supported").iter().count(), 1);
         assert_eq!(client.request_app_code().unwrap().to_string(), code);
@@ -52,6 +55,8 @@ fn custom_request_version_matches_signing_and_resets_with_profile() {
     }
     client.update_device_profile(DeviceProfile::default());
     assert_eq!(client.request_app_code().unwrap(), APP_CODE);
+    let request = client.apply_download_headers(reqwest::Client::new().get("https://api.coolapk.com/v6/main/init")).unwrap().build().unwrap();
+    assert_eq!(request.headers()["X-Api-Version"], "16");
 }
 
 #[test]
@@ -71,9 +76,12 @@ fn public_user_requests_keep_custom_version_headers_aligned_with_signing() {
         client.update_device_profile(DeviceProfile {
             app_version: Some("16.6.5".into()),
             app_code: Some(code.into()),
+            app_supported: Some("2600100".into()),
+            app_channel: Some("coolapk-beta".into()),
+            app_mode: Some("community".into()),
             sdk_int: Some("37".into()),
             locale: Some("en-US".into()),
-            api_version: Some("16".into()),
+            api_version: Some("17".into()),
             dark_mode: Some("1".into()),
             user_agent: Some("Coolapk-Profile-Test".into()),
             device_id: Some("DUguestTest123456".into()),
@@ -86,13 +94,15 @@ fn public_user_requests_keep_custom_version_headers_aligned_with_signing() {
                     .unwrap().build().unwrap();
                 let headers = request.headers();
                 assert_eq!(headers["X-App-Code"], client.request_app_code().unwrap().to_string());
-                assert_eq!(headers["X-App-Supported"], code);
+                assert_eq!(headers["X-App-Supported"], "2600100");
+                assert_eq!(headers["X-App-Channel"], "coolapk-beta");
+                assert_eq!(headers["X-App-Mode"], "community");
                 assert_eq!(headers["X-App-Version"], "16.6.5");
                 assert_eq!(headers.get_all("X-App-Code").iter().count(), 1);
                 assert_eq!(headers.get_all("X-App-Supported").iter().count(), 1);
                 assert_eq!(headers["X-Sdk-Int"], "37");
                 assert_eq!(headers["X-Sdk-Locale"], "en-US");
-                assert_eq!(headers["X-Api-Version"], "16");
+                assert_eq!(headers["X-Api-Version"], "17");
                 assert_eq!(headers["X-Dark-Mode"], "1");
                 assert_eq!(headers[USER_AGENT], "Coolapk-Profile-Test");
                 let guest_device = device_code_with_profile(&client.guest_device_code(), &client.effective_device_profile());
@@ -347,7 +357,8 @@ fn test_publish_device_model_is_scoped_and_preserves_identity() {
         device_id: Some("publish-identity".into()),
         manufacturer: Some("Apple".into()), brand: Some("Apple".into()),
         model: Some("iPhone17,3".into()), build: Some("real-build".into()),
-        user_agent: Some("native-UA iPhone17,3".into()),
+        user_agent: Some("native-UA iPhone17,3 +CoolMarket/16.6.5-2610162-market".into()),
+        app_mode: Some("market".into()),
         ..Default::default()
     });
     let original_code = client.device_code.read().unwrap().clone();
@@ -366,9 +377,10 @@ fn test_publish_device_model_is_scoped_and_preserves_identity() {
     assert_eq!(hidden_fields[0], "publish-identity");
     assert!(hidden_fields[4..8].iter().all(String::is_empty));
     assert_eq!(visible_fields[6], "iPhone17,3");
-    assert_eq!(hidden.headers()[USER_AGENT], "CoolMarket/16.6.5-2610162-universal");
+    assert_eq!(hidden.headers()[USER_AGENT], "CoolMarket/16.6.5-2610162-market");
+    assert_eq!(hidden.headers()["X-App-Mode"], "market");
     assert_eq!(hidden.headers().get_all(USER_AGENT).iter().count(), 1);
-    assert_eq!(visible.headers()[USER_AGENT], "native-UA iPhone17,3");
+    assert_eq!(visible.headers()[USER_AGENT], "native-UA iPhone17,3 +CoolMarket/16.6.5-2610162-market");
     assert_eq!(hidden.body().unwrap().as_bytes(), visible.body().unwrap().as_bytes());
     assert_eq!(*client.device_code.read().unwrap(), original_code);
     assert!(device_code_without_model("invalid").is_err());
