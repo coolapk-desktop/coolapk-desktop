@@ -2,10 +2,10 @@
   <div class="settings-section">
     <h3 class="section-title">Agent 接口</h3>
 
-    <p class="tray-tip warn">
+    <div class="warning-banner">
       <i class="fas fa-triangle-exclamation"></i>
-      开启后本机任意程序都能凭下方 token 调用酷安接口，请只在本机可信环境中使用，不要把 token 粘贴给不受信任的程序或网站。
-    </p>
+      <span>开启后本机任意程序都能凭下方 token 调用酷安接口，请只在本机可信环境中使用，不要把 token 粘贴给不受信任的程序或网站。</span>
+    </div>
 
     <div class="setting-group">
       <h4 class="group-title">服务状态</h4>
@@ -20,20 +20,20 @@
       <div v-if="status.enabled" class="setting-row">
         <div class="row-info">
           <span class="row-label">接入地址</span>
-          <span class="row-sub mono">{{ status.endpoint }}</span>
+          <code class="mono-pill">{{ status.endpoint }}</code>
         </div>
-        <button type="button" class="btn-text" @click="copyText(status.endpoint)">复制</button>
+        <AppButton variant="secondary" size="sm" icon="fas fa-copy" @click="copyText(status.endpoint)">复制</AppButton>
       </div>
 
       <div v-if="status.enabled" class="setting-row">
         <div class="row-info">
           <span class="row-label">访问 token</span>
-          <span class="row-sub mono">{{ tokenVisible ? status.token : '•••••••••••••••••••••' }}</span>
+          <code class="mono-pill">{{ tokenVisible ? status.token : '•••••••••••••••••••••' }}</code>
         </div>
         <div class="row-actions">
-          <button type="button" class="btn-text" @click="tokenVisible = !tokenVisible">{{ tokenVisible ? '隐藏' : '显示' }}</button>
-          <button type="button" class="btn-text" @click="copyText(status.token)">复制</button>
-          <button type="button" class="btn-text" :disabled="busy" @click="rotateToken">重新生成</button>
+          <AppButton variant="secondary" size="sm" :icon="tokenVisible ? 'fas fa-eye-slash' : 'fas fa-eye'" @click="tokenVisible = !tokenVisible">{{ tokenVisible ? '隐藏' : '显示' }}</AppButton>
+          <AppButton variant="secondary" size="sm" icon="fas fa-copy" @click="copyText(status.token)">复制</AppButton>
+          <AppButton variant="secondary" size="sm" icon="fas fa-rotate-right" :disabled="busy" @click="rotateToken">重新生成</AppButton>
         </div>
       </div>
     </div>
@@ -57,9 +57,9 @@
       <div v-if="status.enabled && status.mcpEnabled" class="setting-row">
         <div class="row-info">
           <span class="row-label">MCP 接入地址</span>
-          <span class="row-sub mono">{{ status.mcpEndpoint }}</span>
+          <code class="mono-pill">{{ status.mcpEndpoint }}</code>
         </div>
-        <button type="button" class="btn-text" @click="copyText(status.mcpEndpoint || '')">复制</button>
+        <AppButton variant="secondary" size="sm" icon="fas fa-copy" @click="copyText(status.mcpEndpoint || '')">复制</AppButton>
       </div>
       <p v-if="status.enabled && status.mcpEnabled" class="tray-tip">
         <i class="fas fa-info-circle"></i>
@@ -152,7 +152,10 @@
 
     <div class="setting-group">
       <h4 class="group-title">调用方式</h4>
-      <pre class="code-block">{{ exampleCommand }}</pre>
+      <div class="setting-card">
+        <span class="card-key">命令示例</span>
+        <pre class="code-block">{{ exampleCommand }}</pre>
+      </div>
       <p class="tray-tip">
         <i class="fas fa-gauge-high"></i>
         限流：读 60 次/分钟；写 1 次/分钟、10 次/小时。调用记录写入应用数据目录的审计文件，只保存接口、授权范围与账号，不保存正文。
@@ -161,14 +164,16 @@
 
     <div class="setting-group">
       <h4 class="group-title">给 AI 的说明</h4>
-      <p class="row-sub">
-        把下面整段文字复制给本机 AI（Claude Code、Codex、Cursor 等）：里面包含接入地址、token、当前授权范围与可用工具清单，AI 可以据此自己完成 MCP 注册，并按约定调用。
-      </p>
-      <pre v-if="status.enabled" class="code-block guide-block">{{ guidePreview || '正在生成说明…' }}</pre>
-      <p v-else class="row-sub">开启服务后在这里生成说明。</p>
-      <div class="row-actions guide-actions">
-        <button type="button" class="btn-text" :disabled="!guide" @click="copyText(guide)">复制说明</button>
-        <button type="button" class="btn-text" :disabled="!status.enabled" @click="loadGuide">重新生成</button>
+      <div class="setting-card">
+        <p class="card-desc">
+          把下面整段文字复制给本机 AI（Claude Code、Codex、Cursor 等）：里面包含接入地址、token、当前授权范围与可用工具清单，AI 可以据此自己完成 MCP 注册，并按约定调用。
+        </p>
+        <pre v-if="status.enabled" class="code-block guide-block">{{ guidePreview || '正在生成说明…' }}</pre>
+        <p v-else class="row-sub">开启服务后在这里生成说明。</p>
+        <div class="row-actions guide-actions">
+          <AppButton variant="primary" size="sm" icon="fas fa-copy" :disabled="!guide" @click="copyText(guide)">复制说明</AppButton>
+          <AppButton variant="secondary" size="sm" icon="fas fa-rotate-right" :disabled="!status.enabled" @click="loadGuide">重新生成</AppButton>
+        </div>
       </div>
     </div>
   </div>
@@ -176,6 +181,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import AppButton from '../../components/common/AppButton.vue';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { showToast } from '../../utils/toast';
@@ -531,7 +537,12 @@ onMounted(refresh);
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: agent-settings;
 }
 
 .section-title {
@@ -542,10 +553,31 @@ onMounted(refresh);
   padding-bottom: var(--space-3);
 }
 
+.warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-card);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--warning, #d97706);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.warning-banner i {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
 .setting-group {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
@@ -557,9 +589,10 @@ onMounted(refresh);
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -567,8 +600,11 @@ onMounted(refresh);
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
   min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -580,19 +616,61 @@ onMounted(refresh);
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mono-pill,
+.code-block {
+  font-family: var(--font-mono, Consolas, monospace);
+}
+
+.mono-pill {
+  font-size: var(--font-size-caption);
+  color: var(--text-primary);
+  background-color: var(--background);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-control);
+  padding: 3px 8px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
   word-break: break-all;
 }
 
-.row-sub.mono,
-.code-block {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+.select-control {
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 6px 12px;
+  font-size: var(--font-size-sub);
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+  width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+
+.select-control:hover:not(:disabled),
+.select-control:focus {
+  border-color: var(--brand-primary);
+}
+
+.select-control:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .guide-actions {
@@ -601,11 +679,39 @@ onMounted(refresh);
 
 .badge-on {
   flex: 0 0 auto;
-  padding: 2px var(--space-2);
+  padding: 4px 10px;
   border-radius: var(--radius-control);
-  background-color: var(--background);
-  color: var(--text-secondary);
+  background-color: var(--brand-soft);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--brand-primary);
   font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+}
+
+.setting-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card-key {
+  font-size: var(--font-size-caption);
+  color: var(--text-tertiary);
+}
+
+.card-desc {
+  font-size: var(--font-size-sub);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .guide-block {
@@ -617,11 +723,12 @@ onMounted(refresh);
 .code-block {
   margin: 0;
   padding: var(--space-3);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-control);
-  background-color: var(--background);
-  color: var(--text-secondary);
+  background-color: var(--surface);
+  color: var(--text-primary);
   font-size: var(--font-size-caption);
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -633,9 +740,42 @@ onMounted(refresh);
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.tray-tip.warn {
-  color: var(--warning, #d97706);
+.tray-tip i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .select-control {
+    width: 100%;
+  }
+
+  .row-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  .guide-actions {
+    justify-content: flex-start;
+  }
+}
+
+@container agent-settings (max-width: 560px) {
+  .select-control {
+    width: 100%;
+  }
+
+  .row-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  .guide-actions {
+    justify-content: flex-start;
+  }
 }
 </style>
