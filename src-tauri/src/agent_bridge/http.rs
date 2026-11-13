@@ -141,7 +141,12 @@ impl ApiError {
     }
 
     pub(super) fn rate_limited(retry_after: u64) -> Self {
-        Self { retry_after: Some(retry_after), retryable: true, ..Self::new(StatusCode::TOO_MANY_REQUESTS, "请求过于频繁，请稍后重试") }
+        // 把等待秒数写进消息体：客户端/Agent 只看得到 message，读不到 Retry-After 头。
+        Self {
+            retry_after: Some(retry_after),
+            retryable: true,
+            ..Self::new(StatusCode::TOO_MANY_REQUESTS, format!("请求过于频繁，请 {retry_after} 秒后重试"))
+        }
     }
 
     /// 酷安要求人工验证码：不能自动重试，必须由应用内用户完成。
@@ -206,6 +211,10 @@ impl ApiError {
         self.error_code
     }
 
+    pub(super) fn retry_after(&self) -> Option<u64> {
+        self.retry_after
+    }
+
     /// 把 CoolapkClient 的 Err(String) 转成 HTTP 语义。
     pub fn from_client_error(error: String) -> Self {
         if let Ok(value) = serde_json::from_str::<Value>(&error) {
@@ -244,6 +253,9 @@ impl IntoResponse for ApiError {
         });
         if let Some(error) = self.error_code {
             body["error"] = json!(error);
+        }
+        if let Some(retry_after) = self.retry_after {
+            body["retryAfter"] = json!(retry_after);
         }
         let mut response = (self.status, Json(body)).into_response();
         if let Some(retry_after) = self.retry_after {

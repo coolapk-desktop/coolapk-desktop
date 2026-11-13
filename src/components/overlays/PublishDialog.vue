@@ -121,6 +121,12 @@
       <PublishOptionSheet :is-open="showVisibility" title="谁可以看" @close="showVisibility = false"><button v-for="choice in visibilityChoices" :key="choice.value" type="button" class="publish-choice" :class="{ 'is-selected': visibleStatus === choice.value }" @click="visibleStatus = choice.value; showVisibility = false"><i :class="choice.icon"></i><span>{{ choice.title }}</span><i :class="visibleStatus === choice.value ? 'fas fa-check-circle' : 'far fa-circle'"></i></button></PublishOptionSheet>
       </div>
       <div v-if="errorMessage && !errorMessage.startsWith('最多只能添加')" class="error-tip"><i class="fas fa-exclamation-circle"></i> {{ errorMessage }}</div>
+      <!-- 打开发布框时会自动恢复最近一份草稿：明确告知，避免看着像“暂存区没刷新”。 -->
+      <div v-if="restoredDraftNotice" class="draft-restored-tip" role="status">
+        <i class="fas fa-history" aria-hidden="true"></i>
+        <span>已恢复到上次未发布的草稿</span>
+        <button type="button" class="draft-restored-action" :disabled="savingDraft || submitting" @click="newDraft">改发新内容</button>
+      </div>
       </div>
       <!-- APK submit_feed_v8 的推荐区与工具区固定在编辑区底部。 -->
       <div class="publish-bottom-area">
@@ -308,6 +314,7 @@ const uploadedCount = ref(0);
 const imageUploadTotal = ref(0);
 const submitting = ref(false);
 const errorMessage = ref('');
+const restoredDraftNotice = ref(false);
 const showEmojiPanel = ref(false);
 const { addRecent } = useRecentEmojis();
 const showTopicPanel = ref(false);
@@ -398,6 +405,7 @@ async function applyDraftState(state: PublishDraftState, id: string) {
   // 切换/删除草稿必须使仍在途的图片解析失效，否则慢解析结果会落进切换后的草稿。
   ++openRevision;
   restoringDraft = true;
+  restoredDraftNotice.value = false;
   clearTimeout(draftTimer);
   draftId.value = id;
   topicDraftSeed = '';
@@ -504,6 +512,7 @@ watch(() => appStore.isPublishOpen, async (open) => {
     images.value = []; clearVideo();
     uploadingImages.value = false; uploadingVideo.value = false;
     errorMessage.value = '';
+    restoredDraftNotice.value = false;
     previewMode.value = false;
     showEmojiPanel.value = false;
     showTopicPanel.value = false;
@@ -581,7 +590,10 @@ watch(() => appStore.isPublishOpen, async (open) => {
           // 仅预填了话题的编辑器关闭时不产生空草稿。
           topicDraftSeed = JSON.stringify(draftSnapshot());
         } else if (appStore.publishInitialText) message.value = appStore.publishInitialText;
-        else if (draftList.value[0]) await applyDraftState(restoreFullPublishDraft(draftList.value[0]), draftList.value[0].id);
+        else if (draftList.value[0]) {
+          await applyDraftState(restoreFullPublishDraft(draftList.value[0]), draftList.value[0].id);
+          if (appStore.isPublishOpen) restoredDraftNotice.value = true;
+        }
       } catch (failure) { editLoadError.value = `草稿读取失败：${failure instanceof Error ? failure.message : String(failure)}`; }
     }
     await nextTick();
@@ -1589,6 +1601,33 @@ async function handlePublish() {
   margin-top: var(--space-3);
   color: var(--danger);
   font-size: var(--font-size-caption);
+}
+
+.draft-restored-tip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md, 10px);
+  background: var(--fill-2, rgba(127, 127, 127, 0.12));
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.draft-restored-action {
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--brand-primary);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.draft-restored-action:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 </style>
 
