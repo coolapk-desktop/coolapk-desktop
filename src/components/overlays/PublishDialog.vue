@@ -46,6 +46,12 @@
         <template #footer><button type="button" class="publish-confirm" :disabled="savingDraft" @click="newDraft">新建草稿</button></template>
       </PublishOptionSheet>
       <div class="publish-compose-scroll custom-scrollbar">
+      <!-- 失败原因固定在编辑区首行悬浮，长正文或已滚动到底部时也能立刻看到。 -->
+      <div v-if="visibleError" class="publish-error-banner" role="alert" aria-live="assertive">
+        <i class="fas fa-exclamation-circle" aria-hidden="true"></i>
+        <span class="publish-error-text">{{ visibleError }}</span>
+        <button type="button" class="publish-error-dismiss" aria-label="关闭提示" @click="dismissPublishError"><i class="fas fa-times" aria-hidden="true"></i></button>
+      </div>
       <!-- 关联板块与权限设置合并在顶部，方案1：发到哪里与谁能看并排一目了然 -->
       <div v-if="!isEditMode" class="publish-target-area">
         <div class="publish-target-header">
@@ -120,7 +126,6 @@
       <!-- 官方仅自己可见使用 publish_status=1，不能直接把 -1 写到请求表单。 -->
       <PublishOptionSheet :is-open="showVisibility" title="谁可以看" @close="showVisibility = false"><button v-for="choice in visibilityChoices" :key="choice.value" type="button" class="publish-choice" :class="{ 'is-selected': visibleStatus === choice.value }" @click="visibleStatus = choice.value; showVisibility = false"><i :class="choice.icon"></i><span>{{ choice.title }}</span><i :class="visibleStatus === choice.value ? 'fas fa-check-circle' : 'far fa-circle'"></i></button></PublishOptionSheet>
       </div>
-      <div v-if="errorMessage && !errorMessage.startsWith('最多只能添加')" class="error-tip"><i class="fas fa-exclamation-circle"></i> {{ errorMessage }}</div>
       </div>
       <!-- APK submit_feed_v8 的推荐区与工具区固定在编辑区底部。 -->
       <div class="publish-bottom-area">
@@ -308,6 +313,9 @@ const uploadedCount = ref(0);
 const imageUploadTotal = ref(0);
 const submitting = ref(false);
 const errorMessage = ref('');
+// 图片数量超限提示贴近图片区展示，其余失败原因统一提到编辑区首行，避免长正文下必须滚到底才能看到。
+const visibleError = computed(() => (errorMessage.value && !errorMessage.value.startsWith('最多只能添加') ? errorMessage.value : ''));
+function dismissPublishError() { errorMessage.value = ''; }
 const showEmojiPanel = ref(false);
 const { addRecent } = useRecentEmojis();
 const showTopicPanel = ref(false);
@@ -1589,6 +1597,44 @@ async function handlePublish() {
   margin-top: var(--space-3);
   color: var(--danger);
   font-size: var(--font-size-caption);
+}
+/* 悬浮在正文首行：粘性定位保证滚动到正文中后仍然可见。 */
+.publish-error-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-control, 8px);
+  background: var(--surface, #fff);
+  box-shadow: var(--shadow-dropdown, 0 4px 16px rgba(0, 0, 0, 0.08));
+  color: var(--danger);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  animation: publishErrorIn 0.2s ease-out;
+}
+.publish-error-banner > i { margin-top: 2px; flex-shrink: 0; }
+.publish-error-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.publish-error-dismiss {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.publish-error-dismiss:hover { color: var(--text-primary); background: var(--surface-hover); }
+@keyframes publishErrorIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 </style>
 
