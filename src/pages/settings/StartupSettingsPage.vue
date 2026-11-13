@@ -9,8 +9,10 @@
           <span class="row-label">启用 Web 访问</span>
           <span class="row-sub">{{ webAccessError || '在浏览器使用当前桌面账号，下次启动时恢复设置' }}</span>
         </div>
-        <button v-if="webAccessUrl" class="select-control" type="button" @click="openWebAccess">在浏览器打开</button>
-        <AppSwitch :model-value="!!webAccessUrl" :disabled="webAccessBusy" @update:model-value="setWebAccess" />
+        <div class="row-actions">
+          <AppButton v-if="webAccessUrl" variant="secondary" size="sm" icon="fas fa-arrow-up-right-from-square" @click="openWebAccess">在浏览器打开</AppButton>
+          <AppSwitch :model-value="!!webAccessUrl" :disabled="webAccessBusy" @update:model-value="setWebAccess" />
+        </div>
       </div>
       <div class="setting-row">
         <label for="web-access-scope" class="row-info">
@@ -23,9 +25,13 @@
         </select>
       </div>
       <div v-if="webAccessUrl" class="setting-row">
-        <label for="web-access-url" class="row-label">访问链接</label>
-        <input id="web-access-url" class="select-control web-access-url" :value="webLanUrl || webAccessUrl" readonly @focus="($event.target as HTMLInputElement).select()" />
-        <button type="button" class="select-control" @click="copyWebAccess">{{ webAccessCopied ? '已复制' : '复制链接' }}</button>
+        <div class="row-info">
+          <label for="web-access-url" class="row-label">访问链接</label>
+          <input id="web-access-url" class="text-input web-access-url" :value="webLanUrl || webAccessUrl" readonly @focus="($event.target as HTMLInputElement).select()" />
+        </div>
+        <div class="row-actions">
+          <AppButton variant="secondary" size="sm" icon="fas fa-copy" @click="copyWebAccess">{{ webAccessCopied ? '已复制' : '复制链接' }}</AppButton>
+        </div>
       </div>
     </div>
 
@@ -58,7 +64,7 @@
       </div>
       <p v-if="autostartError" class="tray-tip">
         <i class="fas fa-exclamation-triangle"></i>
-        设置开机自启动失败，请重试或检查系统权限。
+        <span>设置开机自启动失败，请重试或检查系统权限。</span>
       </p>
 
       <div class="setting-row">
@@ -103,16 +109,16 @@
           <span class="row-label">立即检查更新</span>
           <span class="row-sub">手动检测最新版本并重新弹出更新提示</span>
         </div>
-        <button class="check-update-button" type="button" @click="checkNow">检查更新</button>
+        <AppButton class="check-update-button" variant="secondary" size="sm" icon="fas fa-sync-alt" @click="checkNow">检查更新</AppButton>
       </div>
 
       <p v-if="updateTipHidden" class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        已忽略更新提醒（忽略此版本或忽略所有更新），更新提示将不再自动弹出。
+        <span>已忽略更新提醒（忽略此版本或忽略所有更新），更新提示将不再自动弹出。</span>
       </p>
-      <button v-if="updateTipHidden" class="reset-update-button" type="button" @click="reopenTip">
+      <AppButton v-if="updateTipHidden" class="reset-update-button" variant="secondary" size="sm" icon="fas fa-rotate-left" @click="reopenTip">
         重新启用更新提醒
-      </button>
+      </AppButton>
     </div>
 
     <div v-if="showLiveTileSetting" class="setting-group">
@@ -140,11 +146,11 @@
 
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        {{
+        <span>{{
           hasLiveTileIdentity
             ? '已检测到稀疏身份包，开启后磁贴将在启动时、每 30 分钟及切换数据源时自动刷新。'
             : '当前进程尚未检测到稀疏身份包，需先按下方开发预览说明完成注册后磁贴才会生效。'
-        }}
+        }}</span>
       </p>
 
       <details class="live-tile-guide">
@@ -221,7 +227,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-live-tile.ps1</code></pre
       </div>
       <p v-if="settingsStore.settings.closeToTray" class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        最小化到托盘后，可通过托盘图标或托盘菜单恢复窗口，并从菜单选择“退出”来彻底关闭应用。
+        <span>最小化到托盘后，可通过托盘图标或托盘菜单恢复窗口，并从菜单选择“退出”来彻底关闭应用。</span>
       </p>
 
       <div class="setting-row">
@@ -244,7 +250,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-live-tile.ps1</code></pre
       <!-- 生效状态告警：开关值已保存但桌面端没同步成功，与「未保存修改」是两个语义。 -->
       <p v-if="nativeSyncFailureText" class="native-sync-alert" role="alert">
         <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
-        {{ nativeSyncFailureText }}
+        <span>{{ nativeSyncFailureText }}</span>
       </p>
 
       <div v-if="showDesktopLayoutSwitch" class="setting-row">
@@ -257,7 +263,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-live-tile.ps1</code></pre
 
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        应用支持单实例运行：重复启动时会自动聚焦已有窗口，不会打开多个实例。
+        <span>应用支持单实例运行：重复启动时会自动聚焦已有窗口，不会打开多个实例。</span>
       </p>
     </div>
   </div>
@@ -267,6 +273,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev-live-tile.ps1</code></pre
 import { computed, onMounted, ref } from 'vue';
 import { useSettingsStore } from '../../stores/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
+import AppButton from '../../components/common/AppButton.vue';
 import { getPlatformInfo, isTouchMobilePlatform } from '../../utils/platform';
 import { invoke } from '../../api/runtime';
 
@@ -388,19 +395,38 @@ function reopenTip() {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: startup-settings;
 }
 
 .native-sync-alert {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   margin: 0;
   padding: var(--space-3);
-  border: 1px solid var(--danger, var(--border));
-  border-radius: var(--radius-md, 8px);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-control);
+  background: rgba(239, 68, 68, 0.08);
   color: var(--text-primary);
   font-size: var(--font-size-caption);
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.native-sync-alert i {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--danger);
+}
+
+.native-sync-alert span {
+  min-width: 0;
 }
 
 .section-title {
@@ -415,9 +441,11 @@ function reopenTip() {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0;
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -425,8 +453,10 @@ function reopenTip() {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -434,7 +464,11 @@ function reopenTip() {
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -446,6 +480,18 @@ function reopenTip() {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .select-control {
@@ -457,15 +503,39 @@ function reopenTip() {
   color: var(--text-primary);
   cursor: pointer;
   outline: none;
+  width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  transition: border-color var(--duration-fast) var(--ease-default);
+}
+
+.text-input {
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 6px 12px;
+  font-size: var(--font-size-sub);
+  color: var(--text-primary);
+  outline: none;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
 .web-access-url {
-  flex: 1;
-  min-width: 0;
+  margin-top: 2px;
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
 }
 
-.select-control:hover {
+.select-control:hover,
+.select-control:focus,
+.text-input:hover,
+.text-input:focus {
   border-color: var(--brand-primary);
 }
 
@@ -484,28 +554,22 @@ function reopenTip() {
 .tray-tip {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
   margin: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.check-update-button,
-.reset-update-button {
-  background-color: var(--brand-soft);
-  color: var(--brand-primary);
-  border: 1px solid var(--brand-green-border);
-  border-radius: var(--radius-control);
-  padding: 6px 16px;
-  font-size: var(--font-size-sub);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-default);
+.tray-tip i {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 
-.check-update-button:hover,
-.reset-update-button:hover {
-  background-color: var(--brand-soft-hover);
+.tray-tip span {
+  min-width: 0;
 }
 
 .reset-update-button {
@@ -514,9 +578,11 @@ function reopenTip() {
 
 .live-tile-guide {
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-card);
   background-color: var(--background);
-  padding: var(--space-3);
+  padding: var(--space-4);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .live-tile-guide-summary {
@@ -525,6 +591,7 @@ function reopenTip() {
   color: var(--text-primary);
   cursor: pointer;
   user-select: none;
+  overflow-wrap: anywhere;
 }
 
 .live-tile-guide-body {
@@ -576,5 +643,27 @@ function reopenTip() {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+@media (max-width: 600px) {
+  .select-control {
+    width: 100%;
+  }
+
+  .row-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@container startup-settings (max-width: 560px) {
+  .select-control {
+    width: 100%;
+  }
+
+  .row-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
 }
 </style>

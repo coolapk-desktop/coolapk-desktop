@@ -94,14 +94,16 @@
           <span class="row-label">系统字体</span>
           <span class="row-sub">Android 版使用系统字体；如已保存自定义字体，可以恢复默认。</span>
         </div>
-        <button
+        <AppButton
           v-if="settingsStore.settings.fontFamily"
-          type="button"
+          variant="secondary"
+          size="sm"
+          icon="fas fa-rotate-left"
           class="font-reset-button"
           @click="resetFontFamily"
         >
           恢复默认
-        </button>
+        </AppButton>
       </div>
       <div v-else class="setting-row">
         <div class="row-info">
@@ -119,14 +121,16 @@
             <span class="font-picker-value">{{ selectedFontLabel }}</span>
             <i class="fas fa-chevron-down" aria-hidden="true"></i>
           </button>
-          <button
+          <AppButton
             v-if="settingsStore.settings.fontFamily"
-            type="button"
+            variant="secondary"
+            size="sm"
+            icon="fas fa-rotate-left"
             class="font-reset-button"
             @click="resetFontFamily"
           >
             恢复默认
-          </button>
+          </AppButton>
         </div>
       </div>
     </div>
@@ -303,6 +307,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
 import type { AccentColor, FeedDensity } from '../../types/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
+import AppButton from '../../components/common/AppButton.vue';
 import { moreNavs } from '../../config/navigation';
 import { usePlatformShortcuts } from '../../utils/shortcuts';
 import { useShortcutHints } from '../../composables/useShortcutHints';
@@ -389,7 +394,8 @@ function toggleNav(key: string) {
 
 <style scoped>
 .light-background-options { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.light-background-option, .light-background-custom { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font: inherit; cursor: pointer; }
+.light-background-option, .light-background-custom { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; max-width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--background); color: var(--text-primary); font: inherit; font-size: var(--font-size-sub); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-default); }
+.light-background-option:hover, .light-background-custom:hover { border-color: var(--brand-primary); }
 .light-background-option.is-active { border-color: var(--brand-primary); background: var(--brand-soft); }
 .background-swatch { width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 50%; flex-shrink: 0; }
 .light-background-custom input { width: 34px; height: 28px; padding: 0; border: 0; background: transparent; cursor: pointer; }
@@ -409,7 +415,12 @@ function toggleNav(key: string) {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: appearance-settings;
 }
 
 .section-title {
@@ -424,9 +435,11 @@ function toggleNav(key: string) {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0;
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -435,7 +448,9 @@ function toggleNav(key: string) {
 .group-sub {
   font-size: var(--font-size-sub);
   color: var(--text-tertiary);
-  margin-top: -4px;
+  line-height: 1.5;
+  margin: -4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .nav-grid {
@@ -459,6 +474,7 @@ function toggleNav(key: string) {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .nav-item-icon {
@@ -466,12 +482,14 @@ function toggleNav(key: string) {
   font-size: 14px;
   width: 16px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .nav-item-name {
   font-size: var(--font-size-sub);
   color: var(--text-primary);
   font-weight: var(--font-weight-medium);
+  overflow-wrap: anywhere;
 }
 
 .theme-options {
@@ -511,8 +529,10 @@ function toggleNav(key: string) {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -520,6 +540,11 @@ function toggleNav(key: string) {
 .row-info {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -531,6 +556,8 @@ function toggleNav(key: string) {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .zoom-controls {
@@ -551,6 +578,7 @@ function toggleNav(key: string) {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
+  background-color: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   cursor: pointer;
@@ -582,6 +610,7 @@ function toggleNav(key: string) {
 
 .density-options {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
   margin-top: var(--space-2);
 }
@@ -592,6 +621,7 @@ function toggleNav(key: string) {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
+  background-color: var(--background);
   border: 2px solid var(--border);
   border-radius: var(--radius-card);
   cursor: pointer;
@@ -619,13 +649,24 @@ function toggleNav(key: string) {
 }
 
 .zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 32px;
   height: 32px;
   border-radius: var(--radius-control);
   background-color: var(--background);
   border: 1px solid var(--border);
+  color: var(--text-primary);
   font-size: 16px;
   font-weight: bold;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
+}
+
+.zoom-btn:hover {
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
 }
 
 .zoom-value {
@@ -636,9 +677,11 @@ function toggleNav(key: string) {
 
 .font-picker-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
+  max-width: 100%;
 }
 
 .font-picker-button {
@@ -646,16 +689,20 @@ function toggleNav(key: string) {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  min-width: 220px;
-  max-width: 260px;
-  padding: 8px 10px;
+  width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background-color: var(--background);
   color: var(--text-primary);
   cursor: pointer;
   font: inherit;
+  font-size: var(--font-size-sub);
   text-align: left;
+  transition: border-color var(--duration-fast) var(--ease-default);
 }
 
 .font-picker-button:hover:not(:disabled),
@@ -676,27 +723,7 @@ function toggleNav(key: string) {
   white-space: nowrap;
 }
 
-.font-reset-button {
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  color: var(--brand-primary);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--font-size-caption);
-  white-space: nowrap;
-}
-
-.font-reset-button:hover {
-  text-decoration: underline;
-}
-
 @media (max-width: 720px) {
-  .settings-section {
-    width: 100%;
-    max-width: none;
-  }
-
   .theme-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-3);
@@ -716,13 +743,56 @@ function toggleNav(key: string) {
     gap: 12px;
   }
 
-  .row-info {
-    flex: 1 1 auto;
+  .font-picker-controls {
+    flex: 1 1 100%;
     min-width: 0;
   }
 
-  .row-sub {
-    line-height: 1.4;
+  .font-picker-button {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .density-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .density-card {
+    min-width: 0;
+    padding: var(--space-3) 6px;
+  }
+
+  .nav-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav-toggle-card {
+    min-width: 0;
+  }
+}
+
+@container appearance-settings (max-width: 600px) {
+  .theme-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .theme-card {
+    min-width: 0;
+    padding: var(--space-2);
+  }
+
+  .preview-box {
+    height: 48px;
+  }
+
+  .setting-row {
+    align-items: flex-start;
+    gap: 12px;
   }
 
   .font-picker-controls {
@@ -732,6 +802,7 @@ function toggleNav(key: string) {
 
   .font-picker-button {
     flex: 1 1 auto;
+    width: auto;
     min-width: 0;
     max-width: none;
   }
