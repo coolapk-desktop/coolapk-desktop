@@ -68,6 +68,7 @@
 
     <div class="top-bar-right" data-tauri-drag-region="false">
       <AppIconButton
+        v-if="!authStore.isWebDemo"
         class="publish-action"
         icon="fas fa-pen"
         title="发布动态"
@@ -201,18 +202,25 @@
         class="user-profile-wrapper"
         @mouseenter="handleMouseEnter"
         @mouseleave="handleMouseLeave"
+        @focusout="handleProfileFocusOut"
+        @keydown.esc="closeProfileFromKeyboard"
       >
-        <div
+        <button
+          ref="profileTrigger"
+          type="button"
           class="user-profile-trigger"
-          :title="authStore.isWebDemo ? '演示模式' : authStore.isLoggedIn ? '个人中心' : '点击登录酷安'"
-          @click="handleUserClick"
+          :aria-label="authStore.isWebDemo ? '演示模式' : authStore.isLoggedIn ? '个人中心' : '账号'"
+          :aria-expanded="isPopoverVisible"
+          aria-controls="topbar-account-panel"
+          @click="handleProfileTrigger"
         >
           <AppAvatar :src="authStore.user?.userAvatar" size="sm" />
-        </div>
+        </button>
 
         <Transition name="popover-fade">
           <div
-            v-if="isPopoverVisible"
+            v-show="isPopoverVisible"
+            id="topbar-account-panel"
             class="user-profile-popover"
             @mouseenter="handleMouseEnter"
             @mouseleave="handleMouseLeave"
@@ -912,7 +920,8 @@ watch(
 );
 
 const isPopoverVisible = ref(false);
-let popoverHideTimer: any = null;
+const profileTrigger = ref<HTMLButtonElement | null>(null);
+let popoverHideTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function fetchUserDetailStats() {
   if (!authStore.isLoggedIn || !authStore.user?.uid) return;
@@ -965,8 +974,35 @@ function handleMouseEnter() {
 function handleMouseLeave() {
   if (popoverHideTimer) clearTimeout(popoverHideTimer);
   popoverHideTimer = setTimeout(() => {
+    if (profileTrigger.value?.parentElement?.contains(document.activeElement)) return;
     isPopoverVisible.value = false;
   }, 220);
+}
+
+function handleProfileTrigger(event: MouseEvent) {
+  // 键盘和辅助技术激活按钮时可以展开账号浮层，再用 Tab 访问其中的操作。
+  if (event.detail === 0 || authStore.isWebDemo) {
+    if (isPopoverVisible.value) isPopoverVisible.value = false;
+    else handleMouseEnter();
+    return;
+  }
+  isPopoverVisible.value = false;
+  handleUserClick();
+}
+
+function handleProfileFocusOut(event: FocusEvent) {
+  const wrapper = event.currentTarget as HTMLElement;
+  if (!(event.relatedTarget instanceof Node) || !wrapper.contains(event.relatedTarget)) {
+    isPopoverVisible.value = false;
+  }
+}
+
+function closeProfileFromKeyboard(event: KeyboardEvent) {
+  if (!isPopoverVisible.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  isPopoverVisible.value = false;
+  profileTrigger.value?.focus();
 }
 
 function handleMenuClick(path: string) {
@@ -1465,12 +1501,23 @@ function handleUserClick() {
 }
 
 .user-profile-trigger {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
   cursor: pointer;
   transition: transform var(--duration-fast);
 }
 
 .user-profile-trigger:hover {
   transform: scale(1.06);
+}
+
+.user-profile-trigger:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 3px;
 }
 
 .user-profile-popover {

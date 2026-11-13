@@ -7,7 +7,8 @@
       </div>
     </header>
 
-    <div v-if="!authStore.isLoggedIn" class="login-state">
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="login-state">
       <EmptyState title="需要登录" description="登录酷安账号后可以查看你的数码产品清单">
         <button type="button" class="login-btn" @click="authStore.openLoginModal()">
           <i class="fas fa-sign-in-alt"></i> 立即登录
@@ -73,6 +74,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';

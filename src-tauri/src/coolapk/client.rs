@@ -1178,6 +1178,14 @@ impl CoolapkClient {
         })
     }
 
+    #[cfg(feature = "web")]
+    pub(crate) fn has_web_account_state(&self) -> bool {
+        self.get_user_cookie().is_some() || self.web_accounts.as_ref().is_some_and(|accounts| {
+            let accounts = accounts.read().expect("web account store lock");
+            accounts["accounts"].as_array().is_some_and(|items| !items.is_empty())
+        })
+    }
+
     fn api_client(&self) -> Result<Client, String> { self.client.read().map(|client| client.clone()).map_err(|_| "无法读取酷安 HTTP 客户端".to_string()) }
     fn api_redirect_client(&self) -> Result<Client, String> { self.redirect_client.read().map(|client| client.clone()).map_err(|_| "无法读取酷安重定向客户端".to_string()) }
 

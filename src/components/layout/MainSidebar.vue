@@ -113,12 +113,13 @@
             <i class="fas fa-comment-dots action-icon"></i>
             <span>反馈</span>
           </button>
-          <button class="footer-action-btn check-update-btn" title="检查更新" @click="requestUpdateCheck">
+          <button v-if="!isWebBuild" class="footer-action-btn check-update-btn" title="检查更新" @click="requestUpdateCheck">
             <i class="fas fa-sync-alt update-icon"></i>
             <span>更新</span>
           </button>
         </div>
         <button
+          v-if="!isWebBuild"
           type="button"
           class="footer-action-btn beta-toggle-btn"
           :class="{ 'is-enabled': betaEnabled }"
@@ -144,6 +145,7 @@ import { useNotificationStore } from '../../stores/notifications';
 import { useDownloadStore } from '../../stores/downloads';
 import { APP_VERSION } from '../../constants/version';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { isWebBuild } from '../../api/runtime';
 import { triggerSidebarTransition } from '../../utils/routeTransition';
 import { activateRootTab } from '../../utils/homeTab';
 import { createFeedbackIssueUrl } from '../../utils/feedback';
@@ -165,7 +167,7 @@ function toggleBetaChannel() {
     settingsStore.settings.updateChannel = 'beta';
   }
 }
-const appDisplayName = computed(() => /android|iphone|ipad|ipod/i.test(navigator.userAgent) ? '酷安' : '酷安桌面版');
+const appDisplayName = computed(() => isWebBuild ? '酷安 Web' : /android|iphone|ipad|ipod/i.test(navigator.userAgent) ? '酷安' : '酷安桌面版');
 
 const props = withDefaults(defineProps<{ mobileOpen?: boolean; mobileWindowControls?: boolean }>(), { mobileOpen: false, mobileWindowControls: false });
 const emit = defineEmits<{ closeMobile: [] }>();

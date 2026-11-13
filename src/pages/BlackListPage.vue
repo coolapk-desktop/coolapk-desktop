@@ -29,7 +29,8 @@
     </div>
 
     <!-- 未登录：登录引导 -->
-    <div v-if="!authStore.isLoggedIn" class="empty-wrapper">
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="empty-wrapper">
       <EmptyState title="登录后查看黑名单" description="登录酷安账号后，此处将展示您拉黑与屏蔽的用户" />
       <div class="login-hint">
         <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton>
@@ -81,6 +82,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, watch, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';

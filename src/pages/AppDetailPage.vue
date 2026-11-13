@@ -506,7 +506,7 @@
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { initializeSession, isWebBuild } from '../api/runtime';
+import { isWebBuild, renewSession } from '../api/runtime';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
@@ -1078,7 +1078,8 @@ async function handleDownload() {
       total: Number(appInfo.value?.apksize || appInfo.value?.size || 0) || 0,
     };
     if (isWebBuild) {
-      await initializeSession();
+      // 浏览器直连下载不会走请求层的 401 重试，打开下载链接前重新确认游客会话。
+      await renewSession();
       const fileName = `${download.packageName}-${download.versionName || 'latest'}.apk`;
       const query = new URLSearchParams({
         packageName: download.packageName, apkId: String(download.apkId),

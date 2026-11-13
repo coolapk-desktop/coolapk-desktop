@@ -1,7 +1,8 @@
 <template>
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar">
     <!-- 未登录引导视图 -->
-    <div v-if="!authStore.isLoggedIn" class="empty-wrapper login-guide-wrapper">
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="empty-wrapper login-guide-wrapper">
       <div class="login-guide-card">
         <i class="fas fa-user-lock guide-icon"></i>
         <h3>解锁关注动态与酷友动态</h3>
@@ -174,6 +175,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue';
 import { useRouter, useRoute } from 'vue-router';

@@ -431,7 +431,7 @@ async function confirmRemoveSavedAccount() {
 
 watch(
   () => authStore.isLoginModalOpen,
-  (isOpen) => {
+  (isOpen, wasOpen) => {
     if (isOpen) {
       webLoginCompleted = false;
       stopStatusPolling();
@@ -446,11 +446,13 @@ watch(
       expiredUid.value = '';
       removingUid.value = '';
       pendingRemovalAccount.value = null;
-      authStore.loadAccounts();
+      // 延迟挂载时优先复用启动阶段已读取的账号，之后每次打开时重新同步。
+      if (wasOpen !== undefined || authStore.accounts.length === 0) void authStore.loadAccounts();
     } else {
       stopStatusPolling();
     }
-  }
+  },
+  { immediate: true },
 );
 
 function switchTab(tab: 'cookie') {
@@ -486,6 +488,7 @@ watch(
     if (isOpen) window.addEventListener('keydown', handleLoginModalKeydown);
     else window.removeEventListener('keydown', handleLoginModalKeydown);
   },
+  { immediate: true },
 );
 
 // Cookie 凭据导入登录

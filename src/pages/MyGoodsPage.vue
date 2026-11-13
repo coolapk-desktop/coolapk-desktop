@@ -7,7 +7,8 @@
       </div>
     </div>
 
-    <div v-if="!authStore.isLoggedIn" class="login-guide">
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="login-guide">
       <div class="login-guide-icon">
         <i class="fas fa-user-lock"></i>
       </div>
@@ -121,6 +122,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue';
 import { useRouter } from 'vue-router';

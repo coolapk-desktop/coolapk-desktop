@@ -1,4 +1,6 @@
 import { useRouter } from 'vue-router';
+import { isWebDemo } from '../api/runtime';
+import { webRouteFallback } from '../router/webRoutes';
 import { useAppStore } from '../stores/app';
 import { useSettingsStore } from '../stores/settings';
 import { hasActiveComments, collapseActiveComments } from './activeCommentTracker';
@@ -142,6 +144,7 @@ export function registerGlobalHotkeys() {
     }
 
     if (ctrl && e.key.toLowerCase() === 'n') {
+      if (isWebDemo) return;
       e.preventDefault();
       useAppStore().openPublish();
       return;
@@ -149,7 +152,7 @@ export function registerGlobalHotkeys() {
 
     if (ctrl && e.key === ',') {
       e.preventDefault();
-      router.push('/settings/startup');
+      router.push(webRouteFallback('/settings/startup') ?? '/settings/startup');
       return;
     }
 

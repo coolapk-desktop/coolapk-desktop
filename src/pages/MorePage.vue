@@ -143,6 +143,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { webRouteFallback } from '../router/webRoutes';
 
 interface HubItem {
   id: string;
@@ -169,7 +170,7 @@ function navigateTo(path: string) {
 }
 
 // 常用入口也保留合并前分类条目的搜索词，避免服务去重后丢失匹配。
-const featuredItems: HubItem[] = [
+const featuredItems = ([
   {
     id: 'apps',
     title: '应用',
@@ -260,7 +261,7 @@ const featuredItems: HubItem[] = [
     path: '/games',
     tags: ['游戏', '好游', '手游', '单机'],
   },
-];
+] satisfies HubItem[]).filter(item => !webRouteFallback(item.path));
 
 // 2. 分类板块定义（与常用区去重后为 4 + 2 + 2 共 8 项，全部呈对称双列排布）
 const hubCategories: HubCategory[] = [

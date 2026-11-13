@@ -9,7 +9,8 @@
       </div>
     </div>
 
-    <div v-if="!authStore.isLoggedIn" class="login-prompt">
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="login-prompt">
       <EmptyState title="登录后查看我的动态号" description="登录账号后即可查看你关注、订阅和管理的动态号">
         <button class="btn-login" @click="authStore.openLoginModal()">立即登录</button>
       </EmptyState>
@@ -91,6 +92,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';

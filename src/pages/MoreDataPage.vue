@@ -10,7 +10,8 @@
       </div>
     </div>
 
-    <div v-if="requiresLogin && !authStore.isLoggedIn" class="empty-wrapper">
+    <DemoLoginState v-if="authStore.isWebDemo && requiresLogin && !authStore.isLoggedIn" />
+    <div v-else-if="requiresLogin && !authStore.isLoggedIn" class="empty-wrapper">
       <EmptyState title="登录后查看此内容" description="该页面需要酷安账号的真实数据" />
       <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton>
     </div>
@@ -47,6 +48,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';

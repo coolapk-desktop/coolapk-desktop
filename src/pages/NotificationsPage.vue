@@ -30,7 +30,8 @@
 
 
     <div class="content-wrapper">
-      <div v-if="!authStore.isLoggedIn" class="empty-wrapper">
+      <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+      <div v-else-if="!authStore.isLoggedIn" class="empty-wrapper">
         <EmptyState title="登录后查看通知" description="登录酷安账号后，可在这里查看评论回复、@ 提及、收到的赞和新关注提醒" />
         <div class="notification-login-hint">
           <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton>
@@ -114,6 +115,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { formatCommentTime } from '../utils/commentList';
 import { normalizeCoolapkRoute } from '../utils/coolapkRoute';

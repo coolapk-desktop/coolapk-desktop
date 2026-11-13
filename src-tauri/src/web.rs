@@ -3,7 +3,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, ensure};
@@ -43,6 +43,7 @@ const MAX_UPLOAD_BYTES: usize = 272 * 1024 * 1024;
 struct Session {
     client: Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>,
     persisted: Option<Mutex<(PathBuf, Value)>>,
+    last_used: Mutex<Instant>,
 }
 
 impl Session {
@@ -112,15 +113,24 @@ impl WebState {
         if sessions.len() < MAX_SESSIONS {
             return Ok(());
         }
-        // 演示访客会话不落盘，空闲时可以回收，浏览器会自动建立新的会话。
-        let evictable = sessions.iter().find(|(_, session)| {
-            Arc::strong_count(session) == 1
-                && (self.demo_mode || self.desktop.is_some()
-                    || session.persisted.as_ref().is_some_and(|saved| {
-                        !saved.lock().expect("web session snapshot lock").1.is_null()
-                    }))
-        });
-        if let Some((key, _)) = evictable {
+        // 优先回收最久未使用的访客会话。含账号的会话只有能完整恢复时才移出内存。
+        let evictable = sessions.iter().filter_map(|(key, session)| {
+            if Arc::strong_count(session) != 1 {
+                return None;
+            }
+            let client = session.client.try_lock().ok()?;
+            let saved = session.persisted.as_ref().map(|saved| saved.lock().expect("web session snapshot lock"));
+            let has_account = self.desktop.is_none() && client.has_web_account_state();
+            if has_account && saved.as_ref().is_none_or(|saved| saved.1 != client.web_session_snapshot()) {
+                return None;
+            }
+            // 有磁盘目录时，保留尚未完成初次落盘的会话。
+            if saved.is_some_and(|saved| saved.1.is_null()) {
+                return None;
+            }
+            Some((key, has_account, *session.last_used.lock().expect("web session access lock")))
+        }).min_by_key(|(_, has_account, last_used)| (*has_account, *last_used));
+        if let Some((key, _, _)) = evictable {
             let key = key.clone();
             sessions.remove(&key);
             return Ok(());
@@ -145,6 +155,7 @@ impl WebState {
         };
         for key in cookie_names.iter().flat_map(|name| session_cookies(headers, name)) {
             if let Some(session) = sessions.get(key) {
+                *session.last_used.lock().expect("web session access lock") = Instant::now();
                 return Ok((Arc::clone(session), None));
             }
             if let Some(dir) = &self.session_dir
@@ -159,6 +170,7 @@ impl WebState {
                     let session = Arc::new(Session {
                         client: Arc::new(tokio::sync::Mutex::new(Arc::new(client))),
                         persisted: Some(Mutex::new((path, snapshot))),
+                        last_used: Mutex::new(Instant::now()),
                     });
                     sessions.insert(key.to_owned(), Arc::clone(&session));
                     return Ok((session, None));
@@ -177,6 +189,7 @@ impl WebState {
             client: self.desktop.as_ref().map(Arc::clone)
                 .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(Arc::new(CoolapkClient::new_web())))),
             persisted: self.session_dir.as_ref().map(|dir| Mutex::new((dir.join(format!("{token}.json")), Value::Null))),
+            last_used: Mutex::new(Instant::now()),
         });
         sessions.insert(token.clone(), Arc::clone(&session));
         Ok((session, Some(token)))
@@ -1222,6 +1235,34 @@ mod tests {
             assert_eq!(data["data"].as_array().unwrap().len(), count);
             assert!(!String::from_utf8_lossy(&bytes).contains("fake-test-value"));
         }
+    }
+
+    #[tokio::test]
+    async fn memory_session_limit_reclaims_old_guest_but_preserves_account_and_active_requests() {
+        let state = new_state(None);
+        let headers = HeaderMap::new();
+        let (signed_in, signed_in_key) = state.session(&headers, true).unwrap();
+        signed_in.client.lock().await.set_user_cookie("SESSID=fake; uid=123".into()).unwrap();
+        drop(signed_in);
+        let (busy, busy_key) = state.session(&headers, true).unwrap();
+        let (saved_account, saved_account_key) = state.session(&headers, true).unwrap();
+        saved_account.client.lock().await.save_account("456", "example", "", "SESSID=fake; uid=456").await.unwrap();
+        saved_account.client.lock().await.clear_user_cookie().unwrap();
+        drop(saved_account);
+        let (old_guest, old_guest_key) = state.session(&headers, true).unwrap();
+        *old_guest.last_used.lock().unwrap() = Instant::now() - Duration::from_secs(60);
+        drop(old_guest);
+        for _ in 4..MAX_SESSIONS {
+            state.session(&headers, true).unwrap();
+        }
+
+        state.session(&headers, true).unwrap();
+        let sessions = state.sessions.lock().unwrap();
+        assert_eq!(sessions.len(), MAX_SESSIONS);
+        assert!(!sessions.contains_key(&old_guest_key.unwrap()));
+        assert!(sessions.contains_key(&signed_in_key.unwrap()));
+        assert!(sessions.contains_key(&saved_account_key.unwrap()));
+        assert!(Arc::ptr_eq(sessions.get(&busy_key.unwrap()).unwrap(), &busy));
     }
 
     #[tokio::test]

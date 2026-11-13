@@ -4,7 +4,7 @@
       <button v-if="compact" class="compact-avatar" type="button" aria-label="个人主页" @click="openProfile"><AppImage v-if="auth.user?.userAvatar" :src="auth.user.userAvatar" alt="头像" /></button>
       <button type="button" aria-label="扫一扫（暂未支持）" disabled><span class="official-icon" :style="iconStyle(scanIcon)"></span></button>
       <button type="button" aria-label="设置" @click="go('/settings')"><span class="official-icon" :style="iconStyle(settingsIcon)"></span></button>
-      <button type="button" aria-label="应用管理" @click="go('/downloads')"><span class="official-icon" :style="iconStyle(appIcon)"></span></button>
+      <button type="button" :aria-label="appsPath === '/downloads' ? '应用管理' : '应用游戏'" @click="go(appsPath)"><span class="official-icon" :style="iconStyle(appIcon)"></span></button>
       <button type="button" :aria-label="notifications.messageCount > 0 ? `消息，${notifications.messageCount} 条未读私信` : '消息'" @click="go('/messages')"><span class="official-icon" :style="iconStyle(mailIcon)"></span><span v-if="notifications.messageCount" class="message-badge">{{ notifications.messageCount > 99 ? '99+' : notifications.messageCount }}</span></button>
     </div>
     <section class="profile-identity">
@@ -44,6 +44,7 @@
 import { vPullRefresh } from '../directives/pullRefresh';
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { webRouteFallback } from '../router/webRoutes';
 import { useAuthStore } from '../stores/auth';
 import { useSettingsStore } from '../stores/settings';
 import { useNotificationStore } from '../stores/notifications';
@@ -68,6 +69,7 @@ import appIcon from '../assets/official-profile/ic_app_outline.svg';
 import nightIcon from '../assets/official-profile/night.png';
 
 const router = useRouter();
+const appsPath = webRouteFallback('/downloads') ?? '/downloads';
 const auth = useAuthStore();
 const settings = useSettingsStore();
 const notifications = useNotificationStore();

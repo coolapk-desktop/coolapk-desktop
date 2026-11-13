@@ -24,6 +24,15 @@ export function initializeSession(): Promise<void> {
   return sessionReady;
 }
 
+export async function renewSession(): Promise<void> {
+  const previous = sessionReady;
+  if (previous) {
+    await previous;
+    if (sessionReady === previous) sessionReady = undefined;
+  }
+  await initializeSession();
+}
+
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!isWebBuild) return args === undefined ? tauriInvoke<T>(command) : tauriInvoke<T>(command, args);
 

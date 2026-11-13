@@ -40,7 +40,7 @@ import { computed, nextTick, onDeactivated, ref, watch } from 'vue';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { useRoute, useRouter } from 'vue-router';
 import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
-import { isWebBuild } from '../../api/runtime';
+import { webRouteFallback } from '../../router/webRoutes';
 const route = useRoute();
 const router = useRouter();
 const mobileLayout = useMobileLayout();
@@ -59,7 +59,7 @@ const settingsMenu = [
   { path: '/settings/agent', label: 'Agent 接口', icon: 'fas fa-robot' },
   { path: '/settings/diagnostics', label: '诊断日志', icon: 'fas fa-file-lines' },
   { path: '/settings/about', label: '关于酷安', icon: 'fas fa-info-circle' },
-].filter(item => !isWebBuild || !['downloads', 'network', 'startup', 'device', 'agent', 'diagnostics'].includes(item.path.split('/').pop() || ''));
+].filter(item => !webRouteFallback(item.path));
 const categoriesOpen = ref(false);
 const categoryTrigger = ref<HTMLButtonElement | null>(null);
 const categoryPanel = ref<HTMLElement | null>(null);

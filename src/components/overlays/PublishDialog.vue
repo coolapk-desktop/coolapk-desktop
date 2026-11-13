@@ -602,7 +602,7 @@ watch(() => appStore.isPublishOpen, async (open) => {
     if (sessionIsEdit && !editLoadError.value) editBaseline = JSON.stringify(draftSnapshot());
     nextTick(() => messageInput.value?.focus());
   }
-});
+}, { immediate: true });
 
 watch([publishMode, articleState, message, images, videoAttachment, publishTarget, productOptions, visibleStatus, largeCover, extraOptions, attachmentTitle], () => {
   if (restoringDraft || sessionIsEdit || !appStore.isPublishOpen) return;

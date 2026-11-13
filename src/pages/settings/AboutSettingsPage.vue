@@ -23,7 +23,7 @@
       </div>
 
       <!-- 更新渠道只在启动与行为设置中编辑，这里只读展示当前值并提供跳转。 -->
-      <div class="setting-row">
+      <div v-if="!isWebBuild" class="setting-row">
         <div class="row-info">
           <span class="row-label">更新渠道</span>
           <span class="row-sub">仅显示当前值，更新渠道在“启动与行为 → 更新渠道”中修改</span>

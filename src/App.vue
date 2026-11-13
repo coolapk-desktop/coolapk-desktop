@@ -17,13 +17,13 @@
     </router-view>
 
     <!-- 全局交互浮层 -->
-    <PublishDialog />
+    <PublishDialog v-if="publishDialogRequested" />
     <ImageViewer />
     <SearchCommand />
-    <LoginModal v-if="!authStore.isWebDemo" />
+    <LoginModal v-if="loginModalRequested" />
     <AppConfirmHost />
     <AppContextMenu />
-    <ShuzilmDeviceGuideModal />
+    <ShuzilmDeviceGuideModal v-if="shuzilmGuideState.visible" />
     <EquipmentProductPicker />
 
     <AppDialog :is-open="Boolean(updateInfo)" :title="updateInfo?.hasNew ? '发现新版本' : '检查更新'" dialog-class="update-content-dialog" :width="660" @close="updateInfo = null">
@@ -157,21 +157,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue';
 import EquipmentProductPicker from './components/profile/EquipmentProductPicker.vue';
 import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from 'vue-router';
 import { listen } from '@tauri-apps/api/event';
 import { isWebBuild } from './api/runtime';
 import AppShell from './components/layout/AppShell.vue';
-import PublishDialog from './components/overlays/PublishDialog.vue';
 import ImageViewer from './components/overlays/ImageViewer.vue';
 import SearchCommand from './components/overlays/SearchCommand.vue';
-import LoginModal from './components/overlays/LoginModal.vue';
-import ShuzilmDeviceGuideModal from './components/overlays/ShuzilmDeviceGuideModal.vue';
 import AppConfirmHost from './components/common/AppConfirmHost.vue';
 import AppContextMenu from './components/common/AppContextMenu.vue';
 import AppDialog from './components/common/AppDialog.vue';
 import { useAuthStore } from './stores/auth';
+import { useAppStore } from './stores/app';
+import { shuzilmGuideState } from './utils/shuzilmDeviceGuide';
 import { useSettingsStore } from './stores/settings';
 import { isUpdateTask, useDownloadStore } from './stores/downloads';
 import {
@@ -229,7 +228,16 @@ type DownloadNotice = { version: string; releaseNotes?: string };
 type DownloadProgress = { downloaded: number; total: number; percent: number };
 
 const router = useRouter();
+const PublishDialog = defineAsyncComponent(() => import('./components/overlays/PublishDialog.vue'));
+const LoginModal = defineAsyncComponent(() => import('./components/overlays/LoginModal.vue'));
+const ShuzilmDeviceGuideModal = defineAsyncComponent(() => import('./components/overlays/ShuzilmDeviceGuideModal.vue'));
 const authStore = useAuthStore();
+const appStore = useAppStore();
+// 首次打开后保留弹窗实例，关闭时仍能完成草稿保存和登录状态清理。
+const publishDialogRequested = ref(false);
+const loginModalRequested = ref(false);
+watch(() => appStore.isPublishOpen, open => { if (open) publishDialogRequested.value = true; }, { immediate: true });
+watch(() => authStore.isLoginModalOpen, open => { if (open) loginModalRequested.value = true; }, { immediate: true });
 const settingsStore = useSettingsStore();
 const downloadStore = useDownloadStore();
 const route = useRoute();
