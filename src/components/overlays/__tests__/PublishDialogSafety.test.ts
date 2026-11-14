@@ -133,4 +133,36 @@ describe('发布草稿与弹窗修复（R3 域4）', () => {
       expect(stores.app.isPublishOpen).toBe(false);
     } finally { wrapper.unmount(); stores.app.editFeedTarget = null; }
   });
+
+  it('修改失败的原因悬浮在正文首行，不再埋到正文末端', async () => {
+    stores.app.editFeedTarget = { id: '9', title: '原文' };
+    vi.mocked(CoolapkTauriAPI.getEditableFeed).mockResolvedValue({ code: 200, data: { id: '9', uid: '123', feedType: 'feed', message: '原文' } } as any);
+    vi.mocked(CoolapkTauriAPI.updateFeed).mockResolvedValue({ code: 400, message: '添加的话题数量超过限制' } as any);
+    const wrapper = await openDialog();
+    try {
+      await flushPromises();
+      await typeText(wrapper, '很长的正文'.repeat(50));
+      await wrapper.findAll('button').find((button) => button.text() === '保存修改')!.trigger('click');
+      await flushPromises();
+      const banner = wrapper.get('.publish-error-banner');
+      expect(banner.text()).toContain('添加的话题数量超过限制');
+      // 提示条必须位于滚动区首个子节点，滚动位置不影响可见性（粘性定位）。
+      expect(wrapper.get('.publish-compose-scroll').element.firstElementChild).toBe(banner.element);
+      expect(wrapper.find('.error-tip').exists()).toBe(false);
+      await banner.get('button.publish-error-dismiss').trigger('click');
+      expect(wrapper.find('.publish-error-banner').exists()).toBe(false);
+    } finally { wrapper.unmount(); stores.app.editFeedTarget = null; }
+  });
+
+  it('首次发布失败的原因同样悬浮在正文首行', async () => {
+    const wrapper = await openDialog();
+    try {
+      await typeText(wrapper, '很长的正文'.repeat(50));
+      await wrapper.findAll('button').find((button) => button.text() === '立即发布')!.trigger('click');
+      await flushPromises();
+      const banner = wrapper.get('.publish-error-banner');
+      expect(banner.text()).toContain('测试停止发送');
+      expect(wrapper.get('.publish-compose-scroll').element.firstElementChild).toBe(banner.element);
+    } finally { wrapper.unmount(); }
+  });
 });
