@@ -13,7 +13,8 @@
       </div>
     </div>
 
-    <div v-if="!authStore.isLoggedIn" class="login-prompt">
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="login-prompt">
       <EmptyState title="登录后创建万物清单" description="创建清单需要登录账号">
         <button class="btn-login" @click="authStore.openLoginModal()">立即登录</button>
       </EmptyState>
@@ -139,6 +140,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';

@@ -492,6 +492,38 @@ describe('评论完整信息展示', () => {
     expect(mocks.getSubReplies).not.toHaveBeenCalled();
   });
 
+  it('移动端可展开只有预览回复的会话并用回复 ID 点赞和取消点赞', async () => {
+    const auth = useAuthStore();
+    auth.isLoggedIn = true;
+    mocks.likeReply.mockResolvedValueOnce({ code: 200 });
+    mocks.unlikeReply.mockResolvedValueOnce({ code: 200 });
+    const wrapper = mountSection({
+      replyRows: [{ id: 'sub-1', message: '楼中楼', likenum: 2 }],
+      replynum: 1,
+    }, { officialDetail: true });
+    try {
+      const thread = wrapper.get('.sub-reply-thread');
+      expect(thread.classes()).not.toContain('is-expanded');
+      expect(thread.get('.sub-more-btn').text()).toContain('查看会话');
+      await thread.get('.sub-more-btn').trigger('click');
+      expect(thread.classes()).toContain('is-expanded');
+      expect(mocks.getSubReplies).not.toHaveBeenCalled();
+      const like = thread.get('.sub-like-btn');
+      await like.trigger('click');
+      await flushPromises();
+      expect(mocks.likeReply).toHaveBeenCalledExactlyOnceWith('sub-1');
+      expect(like.attributes('aria-pressed')).toBe('true');
+      expect(like.text()).toBe('3');
+      await like.trigger('click');
+      await flushPromises();
+      expect(mocks.unlikeReply).toHaveBeenCalledExactlyOnceWith('sub-1');
+      expect(like.text()).toBe('2');
+      await thread.get('.sub-collapse-btn').trigger('click');
+      expect(thread.classes()).not.toContain('is-expanded');
+      expect(thread.get('.sub-reply-text').text()).toBe('楼中楼');
+    } finally { wrapper.unmount(); }
+  });
+
   it('展开楼中楼会按 APK replyList 分页补齐全部回复', async () => {
     const firstPage = Array.from({ length: 20 }, (_, index) => ({
       id: `remote-${index + 1}`,

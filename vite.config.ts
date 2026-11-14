@@ -2,12 +2,13 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { androidIconSvgPlugin } from './scripts/icon-svg-plugin.ts';
 import { heicWorkerPlugin } from './scripts/heic-worker-plugin.ts';
+import { webEmojiAssetsPlugin } from './scripts/web-emoji-assets-plugin.ts';
 
 // Tauri 2 使用 TAURI_ENV_PLATFORM，32 位 Android 目标还可能返回 androideabi。
 const androidBuild = ['android', 'androideabi'].includes(process.env.TAURI_ENV_PLATFORM || process.env.TAURI_PLATFORM || '');
 
 export default defineConfig({
-  plugins: [vue(), androidIconSvgPlugin(), heicWorkerPlugin()],
+  plugins: [vue(), androidIconSvgPlugin(), heicWorkerPlugin(), webEmojiAssetsPlugin()],
   clearScreen: false,
   server: {
     host: process.env.TAURI_DEV_HOST || '127.0.0.1',

@@ -5,8 +5,8 @@ export function normalizeCoolapkAppRoute(href: string): string | null {
   const detailMatch = href.match(/^\/apk\/detail\/?(?:\?([^#]*))?(?:#.*)?$/i);
   if (detailMatch) {
     const params = new URLSearchParams(detailMatch[1] || '');
-    const packageName = params.get('packageName') || params.get('package_name');
-    return packageName ? `/app/${encodeURIComponent(packageName)}` : null;
+    const appId = params.get('packageName') || params.get('package_name') || params.get('id');
+    return appId ? `/app/${encodeURIComponent(appId)}` : null;
   }
 
   const appMatch = href.match(/^\/apk\/([^/?#]+)(?:[?#].*)?$/i);

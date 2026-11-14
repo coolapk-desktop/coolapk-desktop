@@ -20,6 +20,24 @@
         ],
         "createdAt": "2026-11-09T09:52:55.822Z",
         "reason": "Agent: .startup-update-notes blockquote marks quoted Markdown release notes; this is a quotation marker. Git blame traces the style to 628c308e."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/pages/MessagesPage.vue"
+        ],
+        "createdAt": "2026-11-13T08:32:11.827Z",
+        "reason": "Codex: 当前剩余两处命中是消息气泡 ::before 三角尖角的实色边，用于指向发送者。"
+      },
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          "src/pages/MessagesPage.vue"
+        ],
+        "createdAt": "2026-11-13T08:32:11.896Z",
+        "reason": "Codex: 当前四处命中是零宽高的消息气泡 ::before 三角尖角的透明上下边。"
       }
     ]
   }

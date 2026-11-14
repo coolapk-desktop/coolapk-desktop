@@ -332,8 +332,8 @@
           </div>
 
           <div v-else-if="!authStore.isLoggedIn && showRatingComposer" class="rating-login-tip">
-            <span>评分需要登录酷安账号</span>
-            <button type="button" class="login-btn" @click="authStore.openLoginModal()">立即登录</button>
+            <span>{{ authStore.isWebDemo ? '演示模式不支持评分' : '评分需要登录酷安账号' }}</span>
+            <button v-if="!authStore.isWebDemo" type="button" class="login-btn" @click="authStore.openLoginModal()">立即登录</button>
           </div>
         </div>
 

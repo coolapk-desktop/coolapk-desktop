@@ -44,7 +44,7 @@
       </div>
       
       <div class="session-list-status" v-else-if="isNotLoggedIn">
-        <EmptyState title="暂无会话" description="登录后同步私信列表" icon="far fa-user" />
+        <EmptyState v-if="!authStore.isWebDemo" title="暂无会话" description="登录后同步私信列表" icon="far fa-user" />
       </div>
 
       <div class="session-list-status" v-else-if="loadingSessions">
@@ -163,7 +163,7 @@
                   </div>
                 </div>
                 <div class="msg-time">{{ formatMessageTime(getDateline(msg)) }}</div>
-                <button v-if="getDiagnosticLink(getMessageText(msg))" type="button" class="diagnostic-report-action"
+                <button v-if="canOpenDiagnosticReports && getDiagnosticLink(getMessageText(msg))" type="button" class="diagnostic-report-action"
                   @click="router.push({ path: '/settings/diagnostics', query: { report: getDiagnosticLink(getMessageText(msg)) } })">
                   <i class="fas fa-file-lines"></i> 查看诊断日志
                 </button>
@@ -282,7 +282,8 @@
     
     <!-- 空状态占位 -->
     <div class="messages-main empty-main" v-else>
-      <div v-if="isNotLoggedIn" class="not-login-main-card">
+      <DemoLoginState v-if="authStore.isWebDemo && isNotLoggedIn" />
+      <div v-else-if="isNotLoggedIn" class="not-login-main-card">
         <div class="not-login-main-icon">
           <i class="fas fa-comments"></i>
         </div>
@@ -298,6 +299,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { createEditorTextNodes } from "../utils/editorTextNodes";
 import { ref, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, computed, watch } from 'vue';
@@ -339,11 +341,14 @@ import {
 import { getDiagnosticLink } from '../utils/feedbackDiagnostics';
 
 import { useRoute, useRouter } from 'vue-router';
+import { webRouteFallback } from '../router/webRoutes';
+
 import { useAndroidBackButton } from '../utils/androidBackButton';
 
 // --- 状态管理 ---
 const route = useRoute();
 const router = useRouter();
+const canOpenDiagnosticReports = !webRouteFallback('/settings/diagnostics');
 const authStore = useAuthStore();
 const notificationStore = useNotificationStore();
 const settingsStore = useSettingsStore();
@@ -2558,11 +2563,6 @@ async function refreshMobilePage() { await loadSessions(); }
   background: var(--surface-hover);
 }
 
-.session-item.active {
-  background: var(--brand-soft);
-  border-left: 3px solid var(--brand-primary);
-}
-
 .session-item {
   display: flex;
   align-items: center;
@@ -2585,19 +2585,6 @@ async function refreshMobilePage() { await loadSessions(); }
 
 .session-item.active {
   background: var(--brand-soft);
-  border-left: 3px solid var(--brand-primary);
-  animation: activeSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes activeSlideIn {
-  from {
-    border-left-width: 0px;
-    opacity: 0.8;
-  }
-  to {
-    border-left-width: 3px;
-    opacity: 1;
-  }
 }
 
 .session-info {

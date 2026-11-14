@@ -129,12 +129,15 @@
     </div>
 
     <!-- 云端收藏：未登录状态 -->
-    <div v-if="!authStore.isLoggedIn" class="empty-wrapper">
-      <EmptyState title="登录后查看云端收藏" description="登录酷安账号后，此处将同步展示您在酷安上真实收藏的动态" />
-      <div class="login-hint">
-        <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton>
+    <template v-if="!authStore.isLoggedIn && !(authStore.isWebDemo && activeCollectionId)">
+      <DemoLoginState v-if="authStore.isWebDemo" />
+      <div v-else class="empty-wrapper">
+        <EmptyState title="登录后查看云端收藏" description="登录酷安账号后，此处将同步展示您在酷安上真实收藏的动态" />
+        <div class="login-hint">
+          <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton>
+        </div>
       </div>
-    </div>
+    </template>
 
     <template v-else>
       <!-- 收藏单内容视图 (详情页) -->
@@ -208,6 +211,7 @@
             <button
               type="button"
               :class="['toolbar-btn', 'btn-follow', { 'is-active': collectionFollowed }]"
+              v-if="authStore.isLoggedIn"
               :disabled="collectionFollowPending"
               @click="toggleFollowCollection"
             >
@@ -220,6 +224,7 @@
             <button
               type="button"
               :class="['toolbar-btn', 'btn-like', { 'is-active': collectionLiked }]"
+              v-if="authStore.isLoggedIn"
               :disabled="collectionLikePending"
               @click="toggleLikeCollection"
             >
@@ -284,6 +289,7 @@
                   </button>
 
                   <button
+                    v-if="authStore.isLoggedIn"
                     type="button"
                     class="dropdown-menu-item"
                     @click="handleMenuExportCollection"
@@ -644,6 +650,7 @@
   </div>
 </template>
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';

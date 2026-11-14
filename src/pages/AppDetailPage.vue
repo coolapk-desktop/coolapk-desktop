@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || discussionsLoading || commentsLoading || versionsLoading || discoverersLoading || giftsLoading || relatedAppsLoading || relatedAlbumsLoading }" class="page-container custom-scrollbar" @scroll="handlePageScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || followLoading || discussionsLoading || commentsLoading || versionsLoading || discoverersLoading || giftsLoading || relatedAppsLoading || relatedAlbumsLoading }" class="page-container custom-scrollbar" @scroll="handlePageScroll">
     <!-- 当前应用标题 -->
     <div class="detail-nav-bar">
       <span v-if="appTitle" class="nav-app-name">{{ appTitle }}</span>
@@ -106,6 +106,8 @@
               size="sm"
               :icon="isFollowed ? 'fas fa-check' : 'fas fa-plus'"
               class="action-half-btn"
+              :loading="followLoading"
+              :disabled="loading"
               @click="toggleFollow"
             >
               {{ isFollowed ? '已关注' : '关注应用' }}
@@ -504,9 +506,9 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { initializeSession, isWebBuild } from '../api/runtime';
+import { isWebBuild, renewSession } from '../api/runtime';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAppStore } from '../stores/app';
 import { useAuthStore } from '../stores/auth';
@@ -538,6 +540,9 @@ const packageName = ref((route.params.packageName as string) || '');
 const loading = ref(false);
 const appInfo = ref<any>(null);
 const isFollowed = ref(false);
+const followLoading = ref(false);
+const followAccount = computed(() => authStore.isLoggedIn ? String(authStore.user?.uid ?? '') : null);
+let detailRequest = 0;
 const isFavorited = ref(false);
 const favoriteLoading = ref(false);
 
@@ -704,16 +709,21 @@ const formattedChangeLog = computed(() => {
 
 async function fetchAppDetail() {
   if (!packageName.value) return;
+  const account = followAccount.value;
+  const request = ++detailRequest;
   loading.value = true;
   try {
     const res = await CoolapkTauriAPI.getAppDetail(packageName.value);
+    if (request !== detailRequest || account !== followAccount.value) return;
     const data = res?.data || res;
     if (data) {
       appInfo.value = data;
+      isFollowed.value = account !== null && Number(data.userAction?.follow ?? 0) > 0;
       // 实测旧 follow 字段不会随收藏单同步，重新进入页面必须查询真实归属。
       isFavorited.value = false;
       if (authStore.isLoggedIn && data.id) {
         const status = await CoolapkTauriAPI.getApkCollectionStatus(String(data.id));
+        if (request !== detailRequest || account !== followAccount.value) return;
         isFavorited.value = Array.isArray(status?.data) && status.data.some((collection: any) => [true, 1, '1'].includes(collection.isBeCollected ?? collection.is_be_collected));
       }
       if (recommendList.value.length === 0 && !recommendLoading.value) {
@@ -723,7 +733,7 @@ async function fetchAppDetail() {
   } catch (err) {
     console.warn('App detail fetch error', err);
   } finally {
-    loading.value = false;
+    if (request === detailRequest) loading.value = false;
   }
 }
 
@@ -1078,7 +1088,8 @@ async function handleDownload() {
       total: Number(appInfo.value?.apksize || appInfo.value?.size || 0) || 0,
     };
     if (isWebBuild) {
-      await initializeSession();
+      // 浏览器直连下载不会走请求层的 401 重试，打开下载链接前重新确认游客会话。
+      await renewSession();
       const fileName = `${download.packageName}-${download.versionName || 'latest'}.apk`;
       const query = new URLSearchParams({
         packageName: download.packageName, apkId: String(download.apkId),
@@ -1152,9 +1163,39 @@ async function toggleFavorite() {
   }
 }
 
-function toggleFollow() {
-  isFollowed.value = !isFollowed.value;
+async function toggleFollow() {
+  if (loading.value || followLoading.value) return;
+  const account = followAccount.value;
+  if (account === null) {
+    authStore.openLoginModal();
+    return;
+  }
+  const apkId = String(appInfo.value?.id ?? '').trim();
+  if (!apkId) {
+    showToast('未获取到应用 ID，请刷新后重试', 'error');
+    return;
+  }
+  const follow = !isFollowed.value;
+  followLoading.value = true;
+  try {
+    await CoolapkTauriAPI.setApkFollow(apkId, follow);
+    if (account === followAccount.value) {
+      isFollowed.value = follow;
+      showToast(follow ? '已关注应用' : '已取消关注', 'success');
+    }
+  } catch (err) {
+    if (account === followAccount.value) {
+      showToast(getErrorMessage(err, follow ? '关注应用失败' : '取消关注失败'), 'error');
+    }
+  } finally {
+    followLoading.value = false;
+  }
 }
+
+watch(followAccount, () => {
+  isFollowed.value = false;
+  void fetchAppDetail();
+});
 
 function versionName(ver: any): string {
   return ver?.versionName || ver?.version_name || ver?.apkversionname || ver?.version || '未知版本';

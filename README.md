@@ -18,7 +18,7 @@
 
 ## 📥 下载与安装
 
-桌面端和移动端的安装包可从 [👉 GitHub Releases](https://github.com/coolapk-desktop/coolapk-desktop/releases) 获取。Web 版可从桌面客户端打开，也可用 Docker 独立部署。
+桌面端和移动端的安装包可从 [👉 GitHub Releases](https://github.com/coolapk-desktop/coolapk-desktop/releases) 获取。也可以直接[体验 Web 演示版](https://coolapk-desktop-latest.onrender.com/)。
 
 | 平台 | 文件格式 | 安装包或使用方式 |
 | :--- | :--- | :--- |
@@ -28,7 +28,7 @@
 | **Linux** | `.AppImage` / `.deb` / `.rpm` | `coolapk-desktop_x.x.x_amd64.AppImage` / `.deb` / `.rpm` |
 | **Android** | `.apk` / `.aab` | `coolapk-vx.y.z-android-arm64.apk` / `coolapk-vx.y.z-android-arm64.aab` |
 | **iPhone / iPad** | `.ipa` | `coolapk-vx.y.z-ios-arm64-unsigned.ipa`（未签名，需自行签名安装） |
-| **Web（浏览器）** | 浏览器访问 / Docker 镜像 | [桌面内置 Web 或独立部署](#web-版) |
+| **Web（浏览器）** | 浏览器访问 / Docker 镜像 | [在线演示](https://coolapk-desktop-latest.onrender.com/) · [桌面内置 Web 与独立部署](#web-版) |
 
 > 💡 **提示**：构建产物均由 GitHub Actions 自动化流程在云端打包。Windows 单文件版无需解压或安装，系统需已有 WebView2 Runtime。iOS IPA 为未签名设备包，不能直接安装到普通 iPhone/iPad，需要使用 AltStore、SideStore、Sideloadly 或自己的 Apple 证书完成签名。
 
@@ -38,6 +38,7 @@ Web 版复用桌面和移动端的 Vue 界面与 Rust 酷安客户端。可以�
 
 | 使用方式 | 如何打开 | 数据存储 |
 | :--- | :--- | :--- |
+| **在线演示** | 打开 [Web 演示版](https://coolapk-desktop-latest.onrender.com/)，可浏览和搜索公开内容 | 使用临时访客会话，登录和导入 Cookie 已禁用 |
 | **桌面内置 Web** | 在 Windows、macOS 或 Linux 桌面客户端的「设置 → 启动与行为」启用 Web 访问。默认仅本机，亦可选择局域网 | 与桌面共用账号列表、当前账号和草稿。界面偏好各自保存 |
 | **独立 Docker** | 使用仓库的 [Compose 配置](compose.yaml) 部署，默认在服务器本机访问 `http://127.0.0.1:17521`。远程访问可配置 HTTPS 反向代理或隧道 | 在浏览器导入 Cookie 登录。会话、账号和设备配置保存在 `./data/web` |
 
@@ -170,6 +171,16 @@ docker run --rm --name coolapk-web -p 127.0.0.1:17521:8080 -v "${PWD}/data/web:/
 服务器部署运行 `docker compose up -d`，启动后访问 `http://127.0.0.1:17521`。数据保存在 `./data/web`。需要公网访问时，将 HTTPS 反向代理或 Cloudflare Tunnel 指向本机映射端口。
 
 Compose 默认使用正式版镜像 `:latest`，首次正式版镜像发布后可拉取。升级运行 `docker compose pull && docker compose up -d`。需要固定版本时，在 `.env` 中设置 `COOLAPK_WEB_IMAGE`。
+
+### Web 演示模式
+
+公开实例可在浏览器直接打开。[体验 Web 演示版](https://coolapk-desktop-latest.onrender.com/)
+
+独立部署时设置 `COOLAPK_WEB_DEMO=1` 可开启演示模式。访客可以浏览公开内容和搜索，登录、导入 Cookie 和切换账号会被禁用。演示使用独立的临时会话，原有的登录会话保留在会话目录中。
+
+- Docker Compose：在 `.env` 中添加 `COOLAPK_WEB_DEMO=1`，再执行 `docker compose up -d`。
+- Docker：在 `docker run` 中添加 `-e COOLAPK_WEB_DEMO=1`。
+- 本地运行：在 PowerShell 中执行 `$env:COOLAPK_WEB_DEMO = '1'`，再执行 `npm run serve:web`。
 
 ### 原生客户端构建
 

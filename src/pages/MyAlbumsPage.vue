@@ -10,7 +10,8 @@
       </div>
     </div>
 
-    <div v-if="!authStore.isLoggedIn" class="empty-wrapper"><EmptyState title="登录后管理我的专辑" description="专辑列表和写入操作都需要酷安登录态" /><AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton></div>
+    <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
+    <div v-else-if="!authStore.isLoggedIn" class="empty-wrapper"><EmptyState title="登录后管理我的专辑" description="专辑列表和写入操作都需要酷安登录态" /><AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">立即登录</AppButton></div>
     <template v-else>
       <div v-if="embedded" class="embedded-actions">
         <AppButton variant="primary" size="sm" icon="fas fa-plus" @click="openCreate">新建专辑</AppButton>
@@ -46,6 +47,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { computed, onMounted, ref, watch } from 'vue';
 import AppButton from '../components/common/AppButton.vue';

@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   getApkFeeds: vi.fn(), getApkComments: vi.fn(),
   favoriteApk: vi.fn(), unfavoriteApk: vi.fn(),
   getApkCollectionStatus: vi.fn(),
+  setApkFollow: vi.fn(),
 }));
 vi.mock('../../api/coolapk', () => ({ CoolapkTauriAPI: api }));
 vi.mock('../../stores/downloads', () => ({ useDownloadStore: () => ({ initialize: vi.fn() }) }));
@@ -24,6 +25,7 @@ beforeEach(() => {
   api.favoriteApk.mockReset().mockResolvedValue({ code: 200, data: { collect: 1 } });
   api.unfavoriteApk.mockReset().mockResolvedValue({ code: 200, data: { collect: 0 } });
   api.getApkCollectionStatus.mockReset().mockResolvedValue({ code: 200, data: [] });
+  api.setApkFollow.mockReset().mockResolvedValue({ code: 200, data: {} });
 });
 
 async function setup(loggedIn = false) {
@@ -44,12 +46,44 @@ async function setup(loggedIn = false) {
 }
 
 describe('应用动态排序', () => {
+  it('用应用 ID 提交关注，等服务端确认后才更新按钮', async () => {
+    let finish!: (value: unknown) => void;
+    api.setApkFollow.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const wrapper = await setup(true);
+    try {
+      const button = wrapper.findAll('button').find(item => item.text() === '关注应用')!;
+      await button.trigger('click');
+      await button.trigger('click');
+      expect(api.setApkFollow).toHaveBeenCalledExactlyOnceWith('42', true);
+      expect(button.text()).toBe('关注应用');
+      expect(button.attributes('disabled')).toBeDefined();
+      finish({ code: 200, data: {} });
+      await flushPromises();
+      expect(button.text()).toBe('已关注');
+    } finally { wrapper.unmount(); }
+  });
+
+  it('从详情恢复关注状态，取消失败时保持原状态', async () => {
+    api.getAppDetail.mockResolvedValue({ data: { id: '42', title: '应用', userAction: { follow: '1' } } });
+    api.setApkFollow.mockRejectedValueOnce('服务端拒绝取消关注');
+    const wrapper = await setup(true);
+    try {
+      const button = wrapper.findAll('button').find(item => item.text() === '已关注')!;
+      await button.trigger('click');
+      await flushPromises();
+      expect(api.setApkFollow).toHaveBeenCalledExactlyOnceWith('42', false);
+      expect(button.text()).toBe('已关注');
+      await button.trigger('click');
+      await flushPromises();
+      expect(button.text()).toBe('关注应用');
+    } finally { wrapper.unmount(); }
+  });
+
   it('收藏只在服务器成功后更新，等待期间禁止重复点击', async () => {
     let finish!: (value: unknown) => void;
     api.favoriteApk.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-    const wrapper = await setup();
+    const wrapper = await setup(true);
     try {
-      useAuthStore().isLoggedIn = true;
       const button = wrapper.findAll('button').find(item => item.text() === '收藏应用')!;
       await button.trigger('click');
       expect(button.text()).toBe('收藏应用');
@@ -64,9 +98,8 @@ describe('应用动态排序', () => {
   it('收藏失败保留未收藏状态，并显示后端返回的具体原因', async () => {
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
     api.favoriteApk.mockRejectedValue('服务端拒绝收藏');
-    const wrapper = await setup();
+    const wrapper = await setup(true);
     try {
-      useAuthStore().isLoggedIn = true;
       const button = wrapper.findAll('button').find(item => item.text() === '收藏应用')!;
       await button.trigger('click'); await flushPromises();
       expect(button.text()).toBe('收藏应用');

@@ -75,6 +75,21 @@ describe('发布草稿与弹窗修复（R3 域4）', () => {
     } finally { wrapper.unmount(); }
   });
 
+  it('打开时自动恢复草稿要明确提示，并可一键改发新内容', async () => {
+    vi.mocked(listFullPublishDrafts).mockResolvedValue([draft('old', '上次没发出去的正文')] as any);
+    const wrapper = await openDialog();
+    try {
+      await flushPromises();
+      expect(wrapper.text()).toContain('上次没发出去的正文');
+      expect(wrapper.get('.draft-restored-tip').text()).toContain('已恢复到上次未发布的草稿');
+
+      await wrapper.get('.draft-restored-action').trigger('click');
+      await flushPromises();
+      expect(wrapper.find('.draft-restored-tip').exists()).toBe(false);
+      expect(wrapper.get('[role=textbox]').element.textContent).toBe('');
+    } finally { wrapper.unmount(); }
+  });
+
   it('图片既无 url 也无 file 时发布前阻止并明确提示', async () => {
     vi.mocked(listFullPublishDrafts).mockResolvedValue([draft('bad', '正文', [{ preview: '坏图' }])] as any);
     const wrapper = await openDialog();

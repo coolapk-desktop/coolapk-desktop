@@ -1,4 +1,5 @@
 import type { RouteLocationNormalizedLoaded, RouteLocationNormalized } from 'vue-router';
+import { moreNavs } from '../config/navigation';
 import { isFeedReportUrl } from './feedReport';
 import { HOME_TAB_REFRESH_EVENT } from './homeTab';
 
@@ -110,9 +111,7 @@ export function getSearchScopeFromComponentKey(key: unknown): string {
   return match ? `/search:${match[1]}` : '';
 }
 
-const mySectionTitles: Record<string, string> = {
-  my_likes: '我的赞', my_comments: '我的评论', my_feeds: '我的动态', followed_nodes: '关注的论坛', followed_topics: '关注的话题', followed_collections: '关注的收藏单', followed_questions: '关注的问题', followed_products: '关注的数码吧', recent_contacts: '最近联系人', recycle_bin: '内容回收站', hidden_replies: '隐藏的回复', my_devices: '我的设备', my_albums: '我的专辑', my_votes: '我的投票', my_recent: '我的常去',
-};
+const mySectionTitles = new Map(moreNavs.map(({ key, label }) => [key, label]));
 
 /** 设置中心的子菜单共用一个标签，保留地址以便返回最近访问的菜单。 */
 export function isSettingsPagePath(path: string): boolean {
@@ -183,8 +182,8 @@ export function describePageTab(route: TabRoute): PageTabDescriptor {
   const section = decodeRouteText(route.query.section);
   const category = decodeRouteText(route.query.category);
   const tab = decodeRouteText(route.query.tab);
-  if (name === 'My' && section && mySectionTitles[section]) title = mySectionTitles[section];
-  else if (name === 'Following' && category) title = category === 'users' ? '关注的用户' : category === 'topics' ? '关注的话题' : '关注的动态';
+  if (name === 'My' && section) title = mySectionTitles.get(section) ?? title;
+  else if (name === 'Following' && category) title = ({ users: '关注的用户', topics: '关注的话题', apps: '关注的应用' } as Record<string, string>)[category] || '关注的动态';
   else if (name === 'Goods' && tab) title = ({ search: '好物搜索', mine: '我的好物', lists: '好物清单', ranking: '好物榜' } as Record<string, string>)[tab] || title;
   else if (name === 'User' && tab) title = `${title} · ${({ home: '主页', feed: '动态', like: '赞过', reply: '回复', rating: '点评', album: '图集', developer_apps: '开发者应用', apk_follow: '关注的应用', discovery: '发现', goods_store: '商品店铺' } as Record<string, string>)[tab] || tab}`;
   else if (name === 'Product' && tab) title = `${title} · ${({ feed: '讨论', answer: '问答', article: '图文', video: '视频', trade: '交易', config: '参数', media: '媒体', rating: '评分' } as Record<string, string>)[tab] || tab}`;

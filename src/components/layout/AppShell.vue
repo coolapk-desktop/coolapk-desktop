@@ -12,6 +12,7 @@
       'has-home-navigation': route.path === '/',
       'has-page-toolbar': hasPageToolbar,
       'has-topic-hub-detail': isTopicHubDetail,
+      'has-web-desktop-navigation': useWebDesktopNavigation,
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
     }"
@@ -21,7 +22,7 @@
     @touchmove.capture.passive="reading.onTouchMove"
   >
     <NetworkStatusBanner />
-    <TopBar>
+    <TopBar ref="topBar" v-show="!useWebDesktopNavigation" :sidebar-mode="useWebDesktopNavigation">
       <!-- 桌面窄窗口的返回入口固定在原生窗口按钮所在的标题栏，不随帖子滚动。 -->
       <template #narrow-navigation>
         <button v-if="showWindowControls && !isMobileLayoutDisabled && mobileLayout && route.path !== '/' && route.path !== '/search' && !isTopicHubDetail" type="button" class="narrow-titlebar-back" aria-label="返回" title="返回上一页" data-tauri-drag-region="false" @click="navigateBack(router)"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
@@ -40,12 +41,19 @@
     </div></div>
     <div class="app-body">
       <MainSidebar
+        :web-desktop-navigation="useWebDesktopNavigation"
+        @open-preview="(key, anchor, focus) => topBar?.openSidebarPreview(key, anchor, focus)"
+        @close-preview="(key, event) => topBar?.closeSidebarPreview(key, event)"
         :mobile-open="isMobileLayoutDisabled ? false : mobileNavigationOpen"
         :mobile-window-controls="showWindowControls"
         @close-mobile="closeMobileNavigation"
       />
       <div class="app-content-column">
-        <PageTabBar v-if="settingsStore.settings.showPageTabBar" />
+        <PageTabBar
+          v-if="settingsStore.settings.showPageTabBar || useWebDesktopNavigation"
+          :show-tabs="settingsStore.settings.showPageTabBar"
+          :show-navigation="useWebDesktopNavigation"
+        />
         <main ref="mainContent" class="app-main-content">
           <div class="app-page-content"><slot></slot></div>
           <DesktopFeedCommentPanel v-if="showDesktopComments && desktopCommentFeed" :feed="desktopCommentFeed" @close="desktopCommentFeed = null" />
@@ -63,6 +71,7 @@ import { desktopFeedCommentsOpenKey, openDesktopFeedCommentsKey } from '../../ut
 import { useMobileLayout, useWideSplitLayout } from '../../composables/useOfficialMobileFeedDetail';
 import type { FeedItem } from '../../types/feed';
 import { isTauri } from '@tauri-apps/api/core';
+import { isWebBuild } from '../../api/runtime';
 import { useRoute, useRouter } from 'vue-router';
 import TopBar from './TopBar.vue';
 import MainSidebar from './MainSidebar.vue';
@@ -93,6 +102,7 @@ const readingViewportWidth = ref(window.innerWidth);
 const topicGlassJoined = ref(false);
 function updateReadingViewport() { readingViewportWidth.value = window.innerWidth; updateTopicGlass(); }
 const mainContent = ref<HTMLElement | null>(null);
+const topBar = ref<InstanceType<typeof TopBar> | null>(null);
 const homeToolbarTarget = ref<HTMLElement | null>(null);
 provide(mobileHomeToolbarTargetKey, homeToolbarTarget);
 const desktopCommentFeed = shallowRef<FeedItem | null>(null);
@@ -123,6 +133,8 @@ const { showWindowControls, usesMacOverlay } = useDesktopWindow();
 const isMobileLayoutDisabled = computed(() => {
   return !isTouchMobilePlatform() && Boolean(settingsStore.settings.disableAutoMobileMode);
 });
+// 顶栏继续维护未读状态，桌面 Web 的可见入口由侧栏与页签栏提供。
+const useWebDesktopNavigation = computed(() => isWebBuild && (readingViewportWidth.value > 720 || isMobileLayoutDisabled.value));
 // 仅四个主栏目保留底栏；子页面通过顶栏返回，避免遮挡内容。
 const showMobileBottomNav = computed(() => !isMobileLayoutDisabled.value
   && ['/', '/digital', '/discover', '/me'].includes(route.path));
@@ -246,6 +258,7 @@ onUnmounted(() => {
 }
 
 .mobile-reading-topbar, .mobile-reading-topbar-content, .mobile-reading-topbar-stack { display: contents; }
+.app-shell.has-web-desktop-navigation { --app-titlebar-height: 0px; }
 .app-shell.has-topic-navigation { --topic-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --topic-glass-edge: rgba(255, 255, 255, .65); }
 :global([data-theme="dark"] .app-shell.has-topic-navigation) { --topic-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --topic-glass-edge: rgba(255, 255, 255, .18); }
 

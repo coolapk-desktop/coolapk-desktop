@@ -156,17 +156,26 @@ describe('settings store', () => {
     (window as any).__TAURI_INTERNALS__ = {};
     Object.assign(store.settings.deviceFingerprint, {
       customFingerprint: true, manufacturer: 'Samsung', brand: 'samsung',
-      model: 'SM-S9280', deviceId: 'saved-id', androidVersion: '15', sdkInt: '35',
+      model: 'SM-S9280', deviceId: 'saved-id', androidVersion: '15', sdkInt: '35', apiVersion: ' 17 ',
+      appSupported: ' 2600100 ', appChannel: ' coolapk-beta ', appMode: 'community',
     });
     await store.syncDeviceProfile(store.settings);
+    expect(invoke).toHaveBeenLastCalledWith('update_device_profile', {
+      profile: expect.objectContaining({ appSupported: '2600100', appChannel: 'coolapk-beta', appMode: 'community', userAgent: expect.stringMatching(/-community$/) }),
+    });
     expect(invoke).toHaveBeenCalledWith('update_device_profile', {
-      profile: expect.objectContaining({ manufacturer: 'Samsung', brand: 'samsung', model: 'SM-S9280', deviceId: 'saved-id', sdkInt: '35' }),
+      profile: expect.objectContaining({ manufacturer: 'Samsung', brand: 'samsung', model: 'SM-S9280', deviceId: 'saved-id', sdkInt: '35', apiVersion: '17' }),
     });
     expect(buildDeviceUserAgent(store.settings.deviceFingerprint)).toContain('(#Build; samsung; SM-S9280; AQ3A.250226.002; 15)');
     store.settings.deviceFingerprint.rom = 'HyperOS_3.0; 3.0.310.0';
     await store.syncDeviceProfile(store.settings);
     expect(invoke).toHaveBeenLastCalledWith('update_device_profile', {
       profile: expect.objectContaining({ userAgent: expect.stringContaining('; HyperOS_3.0; 3.0.310.0)') }),
+    });
+    store.settings.deviceFingerprint.apiVersion = '';
+    await store.syncDeviceProfile(store.settings);
+    expect(invoke).toHaveBeenLastCalledWith('update_device_profile', {
+      profile: expect.objectContaining({ apiVersion: '16' }),
     });
     store.settings.deviceFingerprint.customFingerprint = false;
     await store.syncDeviceProfile(store.settings);
@@ -176,9 +185,12 @@ describe('settings store', () => {
   it('migrates legacy device settings and preserves custom ROM information', () => {
     const legacy = normalizeSettings({ deviceFingerprint: { androidVersion: '15', model: '2210132C', deviceId: 'saved-id' } });
     expect(legacy.deviceFingerprint.rom).toBe('');
+    expect(legacy.deviceFingerprint.apiVersion).toBe('16');
+    expect(legacy.deviceFingerprint).toMatchObject({ appSupported: '', appChannel: '', appMode: 'universal' });
     expect(legacy.deviceFingerprint.deviceId).toBe('saved-id');
     expect(buildDeviceUserAgent(legacy.deviceFingerprint)).toContain('; 15) +CoolMarket/');
-    const custom = normalizeSettings({ deviceFingerprint: { rom: ' HyperOS_3.0; 3.0.310.0 ' } });
+    const custom = normalizeSettings({ deviceFingerprint: { rom: ' HyperOS_3.0; 3.0.310.0 ', apiVersion: '17' } });
+    expect(custom.deviceFingerprint.apiVersion).toBe('17');
     expect(custom.deviceFingerprint.rom).toBe('HyperOS_3.0; 3.0.310.0');
     expect(buildDeviceUserAgent({ ...legacy.deviceFingerprint, androidVersion: '', rom: ' ' })).toContain('; 16) +CoolMarket/');
   });

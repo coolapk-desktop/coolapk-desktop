@@ -854,32 +854,73 @@ async fn confirm_broker_denies_and_times_out() {
 }
 
 #[tokio::test]
-async fn confirm_broker_replacement_rejects_previous_request() {
+async fn confirm_broker_queues_second_request_until_first_settles() {
     use std::time::Duration;
-    use tokio::sync::Notify;
+    use tokio::sync::mpsc;
 
     let broker = Arc::new(super::write::ConfirmBroker::default());
-    let first_emitted = Arc::new(Notify::new());
+    let (first_emit, mut first_events) = mpsc::unbounded_channel();
     let worker = broker.clone();
-    let notify = first_emitted.clone();
     let first = tokio::spawn(async move {
-        worker.request("id-a", Duration::from_secs(2), || notify.notify_one()).await
+        worker.request("id-a", Duration::from_secs(2), || {
+            let _ = first_emit.send(());
+        })
+        .await
     });
-    first_emitted.notified().await;
+    first_events.recv().await.unwrap();
 
-    let second_emitted = Arc::new(Notify::new());
+    let (second_emit, mut second_events) = mpsc::unbounded_channel();
     let worker = broker.clone();
-    let notify = second_emitted.clone();
     let second = tokio::spawn(async move {
-        worker.request("id-b", Duration::from_secs(2), || notify.notify_one()).await
+        worker.request("id-b", Duration::from_secs(2), || {
+            let _ = second_emit.send(());
+        })
+        .await
     });
-    second_emitted.notified().await;
 
-    // 旧请求被自动拒绝，且不能再被结算
-    assert!(!first.await.unwrap());
-    assert!(!broker.resolve("id-a", true));
+    // 第一个还没结算时，第二个只排队，不弹窗也不被自动判否
+    assert!(tokio::time::timeout(Duration::from_millis(80), second_events.recv()).await.is_err());
+    assert!(broker.resolve("id-a", true));
+    assert!(first.await.unwrap());
+
+    second_events.recv().await.unwrap();
     assert!(broker.resolve("id-b", true));
     assert!(second.await.unwrap());
+    // 两个请求互不干扰，各自只结算一次
+    assert!(!broker.resolve("id-a", true));
+}
+
+#[tokio::test]
+async fn confirm_broker_queued_request_times_out_without_emitting() {
+    use std::time::Duration;
+
+    let broker = Arc::new(super::write::ConfirmBroker::default());
+    let (first_emit, mut first_events) = tokio::sync::mpsc::unbounded_channel();
+    let worker = broker.clone();
+    let first = tokio::spawn(async move {
+        worker.request("id-block", Duration::from_secs(2), || {
+            let _ = first_emit.send(());
+        })
+        .await
+    });
+    first_events.recv().await.unwrap();
+
+    let emitted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker = broker.clone();
+    let flag = emitted.clone();
+    let queued = tokio::spawn(async move {
+        worker
+            .request("id-queued", Duration::from_millis(60), || {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+            .await
+    });
+
+    // 排到超时也没拿到确认槽：直接拒绝且不弹窗
+    assert!(!queued.await.unwrap());
+    assert!(!emitted.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(broker.resolve("id-block", true));
+    assert!(first.await.unwrap());
 }
 
 fn like_call(feed_id: &str) -> super::write::WriteCall {

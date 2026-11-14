@@ -159,7 +159,7 @@
       <div class="search-order-content">
         <div class="search-order-heading">
           <p class="row-sub">综合固定在第一位。拖动右侧手柄调整其他分类，松手后自动保存，手机和桌面搜索均立即生效。</p>
-          <AppButton variant="ghost" size="sm" :disabled="!settingsStore.settings.searchTabOrder.length" @click="resetSearchOrder">恢复默认</AppButton>
+          <AppButton variant="secondary" size="sm" icon="fas fa-rotate-left" :disabled="!settingsStore.settings.searchTabOrder.length" @click="resetSearchOrder">恢复默认</AppButton>
         </div>
         <SearchTabOrderList v-if="searchOrderOpen" :tabs="orderedSearchTabs" @reorder="saveSearchOrder" />
         <p class="row-sub" role="status">{{ searchOrderMessage }}</p>
@@ -183,7 +183,7 @@
           maxlength="50"
           @keydown.enter.prevent="addKeyword"
         />
-        <AppButton variant="secondary" size="sm" @click="addKeyword">添加</AppButton>
+        <AppButton variant="secondary" size="sm" icon="fas fa-plus" @click="addKeyword">添加</AppButton>
       </div>
       <div v-if="blockedKeywords.length > 0" class="keyword-chips">
         <span v-for="kw in blockedKeywords" :key="kw" class="keyword-chip">
@@ -195,7 +195,7 @@
       </div>
       <p v-else class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        暂无屏蔽关键词，添加后可过滤不想看到的动态（如“广告”、“抽奖”等）。
+        <span>暂无屏蔽关键词，添加后可过滤不想看到的动态（如“广告”、“抽奖”等）。</span>
       </p>
     </div>
 
@@ -302,8 +302,21 @@ function removeKeyword(kw: string) {
 </script>
 
 <style scoped>
-.tab-config-fallback { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--warning, var(--border)); border-radius: var(--radius-md); background: var(--warning-soft, var(--surface)); color: var(--text-primary); font-size: var(--font-size-caption); }
-.tab-config-fallback-text { min-width: 0; overflow-wrap: anywhere; }
+.tab-config-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-control);
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--text-primary);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+.tab-config-fallback-text { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
 .search-order-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .search-order-heading > p { flex: 1 1 220px; }
 .search-order-group { min-width: 0; }
@@ -319,7 +332,12 @@ function removeKeyword(kw: string) {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: content-settings;
 }
 
 .section-title {
@@ -335,9 +353,11 @@ function removeKeyword(kw: string) {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0;
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -345,8 +365,10 @@ function removeKeyword(kw: string) {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -354,7 +376,11 @@ function removeKeyword(kw: string) {
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -366,6 +392,8 @@ function removeKeyword(kw: string) {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .select-control {
@@ -377,10 +405,15 @@ function removeKeyword(kw: string) {
   color: var(--text-primary);
   cursor: pointer;
   outline: none;
+  width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
-.select-control:hover {
+.select-control:hover,
+.select-control:focus {
   border-color: var(--brand-primary);
 }
 
@@ -392,8 +425,10 @@ function removeKeyword(kw: string) {
   font-size: var(--font-size-sub);
   color: var(--text-primary);
   outline: none;
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
@@ -404,6 +439,7 @@ function removeKeyword(kw: string) {
 
 .keyword-input-row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
   align-items: center;
 }
@@ -419,9 +455,10 @@ function removeKeyword(kw: string) {
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 12px;
+  max-width: 100%;
   border-radius: var(--radius-pill);
   background-color: var(--brand-soft);
-  border: 1px solid var(--brand-green-border);
+  border: 1px solid rgba(16, 185, 129, 0.25);
   color: var(--brand-primary);
   font-size: var(--font-size-sub);
 }
@@ -455,10 +492,34 @@ function removeKeyword(kw: string) {
 .tray-tip {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
   margin: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tray-tip i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.tray-tip span {
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .select-control {
+    width: 100%;
+  }
+}
+
+@container content-settings (max-width: 560px) {
+  .select-control {
+    width: 100%;
+  }
 }
 
 </style>

@@ -47,11 +47,13 @@ describe('页面标签身份', () => {
   it('栏目子页和同栏目下的不同具体页面分别建立标签', () => {
     const followedNodes = route('/my', 'My', {}, { section: 'followed_nodes' });
     const followedTopics = route('/my', 'My', {}, { section: 'followed_topics' });
+    const followedApps = route('/my', 'My', {}, { section: 'followed_apps' });
     const nodeA = route('/node/forum/100', 'Node', { nodeType: 'forum', nodeId: '100' });
     const nodeB = route('/node/forum/200', 'Node', { nodeType: 'forum', nodeId: '200' });
 
     expect(getPageTabId(followedNodes)).not.toBe(getPageTabId(followedTopics));
     expect(describePageTab(followedNodes).title).toBe('关注的论坛');
+    expect(describePageTab(followedApps).title).toBe('关注的应用');
     expect(getPageTabId(nodeA)).not.toBe(getPageTabId(nodeB));
   });
 });

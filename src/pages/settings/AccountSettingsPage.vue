@@ -5,10 +5,12 @@
       <div class="setting-row">
         <div class="row-info">
           <span class="row-label">登录状态</span>
-          <span class="row-sub">{{ authStore.isLoggedIn ? `已登录为 ${authStore.user?.username}` : '未登录' }}</span>
+          <span class="row-sub">{{ authStore.isWebDemo ? '演示模式不支持登录' : authStore.isLoggedIn ? `已登录为 ${authStore.user?.username}` : '未登录' }}</span>
         </div>
-        <AppButton v-if="!authStore.isLoggedIn" variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
-        <AppButton v-else variant="danger" size="sm" @click="handleLogout">退出登录</AppButton>
+        <template v-if="!authStore.isWebDemo">
+          <AppButton v-if="!authStore.isLoggedIn" variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
+          <AppButton v-else variant="danger" size="sm" @click="handleLogout">退出登录</AppButton>
+        </template>
       </div>
 
       <div v-if="!isWebBuild" class="setting-row">
@@ -20,7 +22,7 @@
       </div>
     </div>
 
-    <div class="account-management">
+    <div v-if="!authStore.isWebDemo" class="account-management">
       <div class="account-management-header">
         <div>
           <h4 class="account-management-title">{{ isWebBuild ? '会话账户' : '本地账户' }}</h4>
@@ -53,7 +55,8 @@
     <AppDialog :is-open="cookieDialogOpen" title="Cookie 凭据管理" :width="480" @close="cookieDialogOpen = false">
       <div class="cookie-panel">
           <div v-if="cookieLoading" class="cookie-tip">
-            <i class="fas fa-circle-notch fa-spin"></i> 正在读取本地凭据...
+            <i class="fas fa-circle-notch fa-spin"></i>
+            <span>正在读取本地凭据...</span>
           </div>
           <div v-else-if="cookieError" class="cookie-tip account-error">{{ cookieError }}</div>
           <template v-else>
@@ -66,7 +69,7 @@
             </div>
             <p class="cookie-tip-text">
               <i class="fas fa-shield-alt"></i>
-              完整凭据仅在你点击“复制”时展示到剪贴板，请勿泄露给他人。
+              <span>完整凭据仅在你点击“复制”时展示到剪贴板，请勿泄露给他人。</span>
             </p>
           </div>
           <div v-else class="cookie-tip">本地暂无 Cookie 凭据，请先登录账号。</div>
@@ -208,6 +211,12 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: account-settings;
 }
 
 .section-title {
@@ -221,6 +230,8 @@ onMounted(() => {
 .setting-group {
   display: flex;
   flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .account-management {
@@ -230,7 +241,8 @@ onMounted(() => {
   padding: var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
-  background: var(--surface);
+  background: var(--background);
+  min-width: 0;
 }
 
 .account-management-header,
@@ -241,24 +253,46 @@ onMounted(() => {
   align-items: center;
 }
 
-.account-management-header { justify-content: space-between; gap: var(--space-4); }
+.account-management-header {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+}
+.account-management-header > div {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .account-management-title { margin: 0; font-size: var(--font-size-title-sm); color: var(--text-primary); }
 .account-management-desc,
 .account-uid,
-.empty-accounts { margin: 4px 0 0; font-size: var(--font-size-sub); color: var(--text-secondary); }
+.empty-accounts {
+  margin: 4px 0 0;
+  font-size: var(--font-size-sub);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .account-list { display: flex; flex-direction: column; border-top: 1px solid var(--border-light); }
-.account-item { gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-light); }
-.account-info { min-width: 0; flex: 1; }
-.account-name-row { gap: var(--space-2); }
+.account-item {
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.account-info { min-width: 0; flex: 1 1 160px; overflow-wrap: anywhere; }
+.account-name-row { flex-wrap: wrap; gap: var(--space-2); }
 .account-name { overflow: hidden; color: var(--text-primary); font-weight: var(--font-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
 .current-badge { padding: 1px 6px; border-radius: var(--radius-pill); background: var(--brand-soft); color: var(--brand-primary); font-size: var(--font-size-caption); }
-.account-actions { gap: var(--space-2); }
-.account-error { margin: 0; color: var(--danger); font-size: var(--font-size-sub); }
+.account-actions { flex-wrap: wrap; flex-shrink: 0; max-width: 100%; gap: var(--space-2); }
+.account-error { margin: 0; color: var(--danger); font-size: var(--font-size-sub); line-height: 1.5; overflow-wrap: anywhere; }
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -266,6 +300,11 @@ onMounted(() => {
 .row-info {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -277,6 +316,8 @@ onMounted(() => {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .cookie-panel {
@@ -287,10 +328,23 @@ onMounted(() => {
 
 .cookie-tip {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   font-size: var(--font-size-sub);
   color: var(--text-secondary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cookie-tip i,
+.cookie-tip-text i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.cookie-tip span,
+.cookie-tip-text span {
+  min-width: 0;
 }
 
 .cookie-box {
@@ -311,6 +365,7 @@ onMounted(() => {
   background-color: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
+  font-family: var(--font-mono, Consolas, monospace);
   font-size: 13px;
   color: var(--text-primary);
   word-break: break-all;
@@ -319,6 +374,7 @@ onMounted(() => {
 
 .cookie-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
@@ -326,8 +382,24 @@ onMounted(() => {
   margin: 0;
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .account-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@container account-settings (max-width: 560px) {
+  .account-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
 }
 </style>

@@ -114,6 +114,24 @@ describe('关注页账号 UID', () => {
     wrapper.unmount();
   });
 
+  it('应用分类可以点击切换，也可以从地址栏恢复', async () => {
+    const wrapper = mountFollowingPage();
+    try {
+      const appTab = wrapper.findAll('.following-category-tab').find(tab => tab.text() === '应用')!;
+      await appTab.trigger('click');
+      expect(mocks.push).toHaveBeenCalledWith({ path: '/following', query: { category: 'apps' } });
+      expect(wrapper.get('more-data-page-stub').attributes('mode')).toBe('apps');
+      mocks.query.value = { category: 'nodes' };
+      await flushPromises();
+      expect(wrapper.get('more-data-page-stub').attributes('mode')).toBe('nodes');
+      mocks.query.value = { category: 'apps' };
+      await flushPromises();
+      expect(appTab.attributes('aria-pressed')).toBe('true');
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
   it('独立的看动态按钮只筛选动态，全部动态可清除筛选', async () => {
     useAuthStore().user = { uid: '100', username: '自己' } as any;
     mocks.getFollowUserList.mockResolvedValue({ data: [{ uid: '100', fuid: '200', fusername: '关注酷友' }] });

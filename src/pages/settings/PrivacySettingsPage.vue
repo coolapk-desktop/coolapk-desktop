@@ -27,7 +27,7 @@
       </div>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        示例效果：{{ settingsStore.settings.publishDeviceSignature && settingsStore.settings.deviceSignature ? `... 来自 ${settingsStore.settings.deviceSignature}` : '未开启' }}
+        <span>示例效果：{{ settingsStore.settings.publishDeviceSignature && settingsStore.settings.deviceSignature ? `... 来自 ${settingsStore.settings.deviceSignature}` : '未开启' }}</span>
       </p>
     </div>
 
@@ -35,7 +35,7 @@
       <h4 class="group-title">账号隐私</h4>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        “允许通过酷安号搜索我”等账号级隐私设置由酷安官方服务器管理，桌面客户端暂未开放对应接口，请在酷安 App 中设置。
+        <span>“允许通过酷安号搜索我”等账号级隐私设置由酷安官方服务器管理，桌面客户端暂未开放对应接口，请在酷安 App 中设置。</span>
       </p>
     </div>
   </div>
@@ -53,7 +53,12 @@ const settingsStore = useSettingsStore();
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: privacy-settings;
 }
 
 .section-title {
@@ -68,9 +73,11 @@ const settingsStore = useSettingsStore();
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0;
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -78,8 +85,10 @@ const settingsStore = useSettingsStore();
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -87,7 +96,11 @@ const settingsStore = useSettingsStore();
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -99,6 +112,8 @@ const settingsStore = useSettingsStore();
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .text-input {
@@ -110,6 +125,9 @@ const settingsStore = useSettingsStore();
   color: var(--text-primary);
   outline: none;
   width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
@@ -121,9 +139,33 @@ const settingsStore = useSettingsStore();
 .tray-tip {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
   margin: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tray-tip i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.tray-tip span {
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .text-input {
+    width: 100%;
+  }
+}
+
+@container privacy-settings (max-width: 560px) {
+  .text-input {
+    width: 100%;
+  }
 }
 </style>

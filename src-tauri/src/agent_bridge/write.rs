@@ -1281,12 +1281,20 @@ fn normalize_image_url(raw: &str) -> Option<String> {
     None
 }
 
-/// confirm 模式的一次性确认通道：同一时刻只保留一个待确认请求。
+/// confirm 模式的确认通道：同一时刻只弹一个确认框，后来的请求排队等待。
 ///
 /// 应用窗口最小化/隐藏时不会自动抢焦点，超时即按拒绝处理；迟到的结果会被忽略。
-#[derive(Default)]
+/// 排队而不是替换：旧实现把仍在等待的请求直接判否，并发的两次写操作必丢一次。
 pub(super) struct ConfirmBroker {
+    /// 单令牌信号量充当确认槽：拿到令牌才允许弹窗，排队顺序由信号量保证 FIFO。
+    slot: tokio::sync::Semaphore,
     pending: Mutex<Option<PendingConfirm>>,
+}
+
+impl Default for ConfirmBroker {
+    fn default() -> Self {
+        Self { slot: tokio::sync::Semaphore::new(1), pending: Mutex::new(None) }
+    }
 }
 
 struct PendingConfirm {
@@ -1295,23 +1303,30 @@ struct PendingConfirm {
 }
 
 impl ConfirmBroker {
-    /// 注册请求并触发 `emit`，等待用户结果；超时、通道关闭或请求被新请求替换都返回 false。
+    /// 排队后触发 `emit`，等待用户结果；排队超时、确认超时、通道关闭都返回 false。
+    ///
+    /// `timeout` 覆盖「排队 + 等待用户」的总时长，避免排队请求无限占用调用方。
     pub(super) async fn request<F>(&self, id: &str, timeout: Duration, emit: F) -> bool
     where
         F: FnOnce(),
     {
+        let deadline = tokio::time::Instant::now() + timeout;
+        let Ok(Ok(slot)) = tokio::time::timeout_at(deadline, self.slot.acquire()).await else {
+            return false;
+        };
         let (tx, rx) = oneshot::channel();
         {
             let Ok(mut pending) = self.pending.lock() else {
                 return false;
             };
+            // 拿到令牌说明没有别的确认在等待，这里的替换分支只是兜底。
             if let Some(previous) = pending.take() {
                 let _ = previous.tx.send(false);
             }
             *pending = Some(PendingConfirm { id: id.to_string(), tx });
         }
         emit();
-        let approved = tokio::time::timeout(timeout, rx)
+        let approved = tokio::time::timeout_at(deadline, rx)
             .await
             .ok()
             .and_then(Result::ok)
@@ -1321,6 +1336,7 @@ impl ConfirmBroker {
                 pending.take();
             }
         }
+        drop(slot);
         approved
     }
 

@@ -23,7 +23,7 @@
       </div>
 
       <!-- 更新渠道只在启动与行为设置中编辑，这里只读展示当前值并提供跳转。 -->
-      <div class="setting-row">
+      <div v-if="!isWebBuild" class="setting-row">
         <div class="row-info">
           <span class="row-label">更新渠道</span>
           <span class="row-sub">仅显示当前值，更新渠道在“启动与行为 → 更新渠道”中修改</span>
@@ -171,7 +171,12 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: about-settings;
 }
 
 .section-title {
@@ -186,20 +191,22 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0 0 var(--space-1);
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin-bottom: var(--space-1);
 }
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -207,8 +214,11 @@ onMounted(() => {
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
   min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -220,6 +230,8 @@ onMounted(() => {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 /* 应用信息头 */
@@ -268,7 +280,7 @@ onMounted(() => {
   font-weight: 600;
   color: var(--brand-primary);
   background-color: var(--brand-soft);
-  border: 1px solid var(--brand-green-border);
+  border: 1px solid rgba(16, 185, 129, 0.25);
   padding: 1px 8px;
   border-radius: var(--radius-pill);
 }
@@ -291,9 +303,12 @@ onMounted(() => {
 
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-3);
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .channel-value {
@@ -320,13 +335,14 @@ onMounted(() => {
   gap: var(--space-1);
   flex-wrap: wrap;
   justify-content: flex-end;
+  max-width: 100%;
 }
 
 .tech-badge {
   font-size: 11px;
   background-color: var(--brand-soft);
   color: var(--brand-primary);
-  border: 1px solid var(--brand-green-border);
+  border: 1px solid rgba(16, 185, 129, 0.25);
   padding: 2px 8px;
   border-radius: var(--radius-pill);
   font-weight: var(--font-weight-medium);
@@ -334,7 +350,10 @@ onMounted(() => {
 
 .repo-stats {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-3);
+  max-width: 100%;
 }
 
 .repo-stat {
@@ -362,12 +381,14 @@ onMounted(() => {
 }
 
 .feedback-guide-group {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(5, 150, 105, 0.02) 100%);
-  border: 1px solid rgba(16, 185, 129, 0.15);
+  padding: var(--space-4);
+  border-radius: var(--radius-card);
+  background: rgba(16, 185, 129, 0.05);
+  border: 1px solid rgba(16, 185, 129, 0.25);
 }
 
 .feedback-guide-group .group-title {
-  color: var(--brand-primary, #10b981);
+  color: var(--brand-primary);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -377,14 +398,15 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 4px 0;
+  padding: 4px 0 0;
 }
 
 .guide-item {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--font-size-caption);
   line-height: 1.6;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 
 .guide-item strong {
@@ -398,5 +420,23 @@ onMounted(() => {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
   padding: var(--space-2) 0 var(--space-4);
+}
+
+@media (max-width: 600px) {
+  .row-actions,
+  .tech-badges,
+  .repo-stats {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@container about-settings (max-width: 560px) {
+  .row-actions,
+  .tech-badges,
+  .repo-stats {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
 }
 </style>

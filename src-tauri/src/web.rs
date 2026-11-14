@@ -3,7 +3,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, ensure};
@@ -33,6 +33,9 @@ use crate::web_commands::dispatch_web_command;
 
 const SESSION_COOKIE: &str = "coolapk_web_session";
 const SECURE_SESSION_COOKIE: &str = "__Host-coolapk_web_session";
+const DEMO_SESSION_COOKIE: &str = "coolapk_web_demo_session";
+const SECURE_DEMO_SESSION_COOKIE: &str = "__Host-coolapk_web_demo_session";
+const DEMO_LOGIN_DISABLED: &str = "演示模式不支持登录";
 const MAX_SESSIONS: usize = 512;
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_UPLOAD_BYTES: usize = 272 * 1024 * 1024;
@@ -40,6 +43,7 @@ const MAX_UPLOAD_BYTES: usize = 272 * 1024 * 1024;
 struct Session {
     client: Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>,
     persisted: Option<Mutex<(PathBuf, Value)>>,
+    last_used: Mutex<Instant>,
 }
 
 impl Session {
@@ -71,6 +75,7 @@ impl Session {
 
 struct WebState {
     desktop_origin: Option<String>,
+    demo_mode: bool,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     desktop: Option<Arc<tokio::sync::Mutex<Arc<CoolapkClient>>>>,
     session_dir: Option<PathBuf>,
@@ -108,15 +113,24 @@ impl WebState {
         if sessions.len() < MAX_SESSIONS {
             return Ok(());
         }
-        // Standalone sessions can leave the cache only after their snapshot has been saved.
-        let evictable = sessions.iter().find(|(_, session)| {
-            Arc::strong_count(session) == 1
-                && (self.desktop.is_some()
-                    || session.persisted.as_ref().is_some_and(|saved| {
-                        !saved.lock().expect("web session snapshot lock").1.is_null()
-                    }))
-        });
-        if let Some((key, _)) = evictable {
+        // 优先回收最久未使用的访客会话。含账号的会话只有能完整恢复时才移出内存。
+        let evictable = sessions.iter().filter_map(|(key, session)| {
+            if Arc::strong_count(session) != 1 {
+                return None;
+            }
+            let client = session.client.try_lock().ok()?;
+            let saved = session.persisted.as_ref().map(|saved| saved.lock().expect("web session snapshot lock"));
+            let has_account = self.desktop.is_none() && client.has_web_account_state();
+            if has_account && saved.as_ref().is_none_or(|saved| saved.1 != client.web_session_snapshot()) {
+                return None;
+            }
+            // 有磁盘目录时，保留尚未完成初次落盘的会话。
+            if saved.is_some_and(|saved| saved.1.is_null()) {
+                return None;
+            }
+            Some((key, has_account, *session.last_used.lock().expect("web session access lock")))
+        }).min_by_key(|(_, has_account, last_used)| (*has_account, *last_used));
+        if let Some((key, _, _)) = evictable {
             let key = key.clone();
             sessions.remove(&key);
             return Ok(());
@@ -133,13 +147,15 @@ impl WebState {
         // Older builds used Path=/api, so browsers can send the stale cookie before the new one.
         // Same-origin GET requests may omit Origin. The browser sends Secure cookies
         // according to the public URL, even when a proxy forwards over HTTP.
+        let names = self.cookie_names();
         let cookie_names: &[&str] = match self.origin(headers) {
-            Some(origin) if origin.starts_with("https://") => &[SECURE_SESSION_COOKIE],
-            Some(_) => &[SESSION_COOKIE],
-            None => &[SECURE_SESSION_COOKIE, SESSION_COOKIE],
+            Some(origin) if origin.starts_with("https://") => &names[..1],
+            Some(_) => &names[1..],
+            None => &names,
         };
         for key in cookie_names.iter().flat_map(|name| session_cookies(headers, name)) {
             if let Some(session) = sessions.get(key) {
+                *session.last_used.lock().expect("web session access lock") = Instant::now();
                 return Ok((Arc::clone(session), None));
             }
             if let Some(dir) = &self.session_dir
@@ -154,6 +170,7 @@ impl WebState {
                     let session = Arc::new(Session {
                         client: Arc::new(tokio::sync::Mutex::new(Arc::new(client))),
                         persisted: Some(Mutex::new((path, snapshot))),
+                        last_used: Mutex::new(Instant::now()),
                     });
                     sessions.insert(key.to_owned(), Arc::clone(&session));
                     return Ok((session, None));
@@ -172,6 +189,7 @@ impl WebState {
             client: self.desktop.as_ref().map(Arc::clone)
                 .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(Arc::new(CoolapkClient::new_web())))),
             persisted: self.session_dir.as_ref().map(|dir| Mutex::new((dir.join(format!("{token}.json")), Value::Null))),
+            last_used: Mutex::new(Instant::now()),
         });
         sessions.insert(token.clone(), Arc::clone(&session));
         Ok((session, Some(token)))
@@ -179,6 +197,15 @@ impl WebState {
 
     fn origin<'a>(&'a self, headers: &'a HeaderMap) -> Option<&'a str> {
         self.desktop_origin.as_deref().or_else(|| headers.get(header::ORIGIN)?.to_str().ok())
+    }
+
+    fn cookie_names(&self) -> [&'static str; 2] {
+        // 演示模式使用独立 Cookie，保留浏览器原有会话以便关闭演示模式后恢复。
+        if self.demo_mode {
+            [SECURE_DEMO_SESSION_COOKIE, DEMO_SESSION_COOKIE]
+        } else {
+            [SECURE_SESSION_COOKIE, SESSION_COOKIE]
+        }
     }
 }
 
@@ -242,10 +269,11 @@ async fn initialize_session(
     let mut response = StatusCode::NO_CONTENT.into_response();
     if let Some(token) = token {
         let secure_cookie = state.origin(&headers).is_some_and(|origin| origin.starts_with("https://"));
+        let [secure_name, plain_name] = state.cookie_names();
         let (name, secure) = if secure_cookie {
-            (SECURE_SESSION_COOKIE, "; Secure")
+            (secure_name, "; Secure")
         } else {
-            (SESSION_COOKIE, "")
+            (plain_name, "")
         };
         let cookie = format!(
             "{name}={token}; Path=/; HttpOnly; SameSite=Strict{secure}"
@@ -254,7 +282,7 @@ async fn initialize_session(
             header::SET_COOKIE,
             HeaderValue::from_str(&cookie).expect("valid session cookie"),
         );
-        if !secure_cookie {
+        if !secure_cookie && !state.demo_mode {
             response.headers_mut().append(
                 header::SET_COOKIE,
                 HeaderValue::from_static(
@@ -272,6 +300,13 @@ async fn command(
     headers: HeaderMap,
     Json(args): Json<Value>,
 ) -> Result<Json<Value>, WebError> {
+    if state.demo_mode && matches!(
+        name.as_str(),
+        "import_web_account" | "login_as" | "login_by_account" | "login_by_mobile"
+            | "send_sms_vcode" | "save_cookie_securely" | "save_account" | "persist_current_account"
+    ) {
+        return Err(error(StatusCode::FORBIDDEN, DEMO_LOGIN_DISABLED));
+    }
     let (session, _) = state.session(&headers, false)?;
     if name == "get_image_data_url" {
         let url = args
@@ -307,6 +342,7 @@ async fn command(
     // Account switches and their requests share a lock so credentials cannot change midway.
     let client = session.client.lock().await;
     let result = match name.as_str() {
+        "check_login_info" if state.demo_mode => Ok(json!({ "code": 200, "data": null })),
         "check_login_status" if client.get_user_cookie().is_none() => {
             Ok(json!({ "code": 200, "data": null }))
         }
@@ -785,25 +821,39 @@ fn is_page_navigation(request: &Request) -> bool {
 #[cfg_attr(all(feature = "native", desktop), allow(dead_code))]
 fn router(state: Arc<WebState>, dist: PathBuf) -> Router {
     let index = dist.join("index.html");
-    let pages = Router::new().fallback(get(move |request: Request| {
+    let demo_mode = state.demo_mode;
+    let page = move |request: Request| {
         let index = index.clone();
         async move {
-            if !is_page_navigation(&request) {
+            if !matches!(request.uri().path(), "/" | "/index.html") && !is_page_navigation(&request) {
                 return StatusCode::NOT_FOUND.into_response();
             }
             match tokio::fs::read_to_string(index).await {
-                Ok(html) => ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response(),
+                Ok(html) => {
+                    let html = if demo_mode {
+                        html.replacen("<head>", "<head><meta name=\"coolapk-web-demo\">", 1)
+                    } else {
+                        html
+                    };
+                    ([(header::CACHE_CONTROL, "no-cache")], Html(html)).into_response()
+                }
                 Err(_) => StatusCode::NOT_FOUND.into_response(),
             }
         }
-    }));
-    let assets = Router::new().fallback_service(ServeDir::new(dist).fallback(pages));
+    };
+    let pages = Router::new().fallback(get(page.clone()));
+    let mut assets = Router::new().fallback_service(ServeDir::new(dist).fallback(pages));
+    // ServeDir 会直接返回首页文件，演示模式下由同一处理器为所有页面注入模式标记。
+    if demo_mode {
+        assets = assets.route("/", get(page.clone())).route("/index.html", get(page));
+    }
     router_with_assets(state, assets, Router::new())
 }
 
 fn new_state(desktop_origin: Option<String>) -> WebState {
     WebState {
         desktop_origin,
+        demo_mode: false,
         sessions: Mutex::new(HashMap::new()),
         desktop: None,
         session_dir: None,
@@ -989,7 +1039,15 @@ pub async fn run() -> anyhow::Result<()> {
         "找不到 Web 构建产物，请先执行 npm run build:web"
     );
     let mut state = new_state(None);
-    if let Some(dir) = std::env::var_os("COOLAPK_WEB_DATA_DIR").map(PathBuf::from) {
+    state.demo_mode = match std::env::var("COOLAPK_WEB_DEMO").as_deref() {
+        Ok("1" | "true") => true,
+        Ok("0" | "false") | Err(std::env::VarError::NotPresent) => false,
+        _ => anyhow::bail!("COOLAPK_WEB_DEMO 必须为 0、1、false 或 true"),
+    };
+    // 演示模式不读取或写入保存过账号的会话目录。
+    if !state.demo_mode
+        && let Some(dir) = std::env::var_os("COOLAPK_WEB_DATA_DIR").map(PathBuf::from)
+    {
         std::fs::create_dir_all(&dir).context("无法创建 Web 会话目录")?;
         state.session_dir = Some(dir);
     }
@@ -1008,17 +1066,7 @@ mod tests {
     const ORIGIN: &str = "https://coolapk.example";
 
     fn state() -> Arc<WebState> {
-        Arc::new(WebState {
-            desktop_origin: None,
-            sessions: Mutex::new(HashMap::new()),
-            desktop: None,
-            session_dir: None,
-            requests: tokio::sync::Semaphore::new(16),
-            media_requests: tokio::sync::Semaphore::new(8),
-            public_media: CoolapkClient::new(),
-            uploads: tokio::sync::Semaphore::new(2),
-            downloads: Arc::new(tokio::sync::Semaphore::new(4)),
-        })
+        Arc::new(new_state(None))
     }
 
     async fn post(app: &Router, path: &str, origin: &str, cookie: &str, args: Value) -> Response {
@@ -1187,6 +1235,74 @@ mod tests {
             assert_eq!(data["data"].as_array().unwrap().len(), count);
             assert!(!String::from_utf8_lossy(&bytes).contains("fake-test-value"));
         }
+    }
+
+    #[tokio::test]
+    async fn memory_session_limit_reclaims_old_guest_but_preserves_account_and_active_requests() {
+        let state = new_state(None);
+        let headers = HeaderMap::new();
+        let (signed_in, signed_in_key) = state.session(&headers, true).unwrap();
+        signed_in.client.lock().await.set_user_cookie("SESSID=fake; uid=123".into()).unwrap();
+        drop(signed_in);
+        let (busy, busy_key) = state.session(&headers, true).unwrap();
+        let (saved_account, saved_account_key) = state.session(&headers, true).unwrap();
+        saved_account.client.lock().await.save_account("456", "example", "", "SESSID=fake; uid=456").await.unwrap();
+        saved_account.client.lock().await.clear_user_cookie().unwrap();
+        drop(saved_account);
+        let (old_guest, old_guest_key) = state.session(&headers, true).unwrap();
+        *old_guest.last_used.lock().unwrap() = Instant::now() - Duration::from_secs(60);
+        drop(old_guest);
+        for _ in 4..MAX_SESSIONS {
+            state.session(&headers, true).unwrap();
+        }
+
+        state.session(&headers, true).unwrap();
+        let sessions = state.sessions.lock().unwrap();
+        assert_eq!(sessions.len(), MAX_SESSIONS);
+        assert!(!sessions.contains_key(&old_guest_key.unwrap()));
+        assert!(sessions.contains_key(&signed_in_key.unwrap()));
+        assert!(sessions.contains_key(&saved_account_key.unwrap()));
+        assert!(Arc::ptr_eq(sessions.get(&busy_key.unwrap()).unwrap(), &busy));
+    }
+
+    #[tokio::test]
+    async fn demo_uses_guest_sessions_and_rejects_login_commands() {
+        let normal_state = state();
+        let normal_app = router(Arc::clone(&normal_state), PathBuf::from("dist-web"));
+        let normal_cookie = open_session(&normal_app, ORIGIN).await;
+        let mut demo_state = new_state(None);
+        demo_state.demo_mode = true;
+        let demo_app = router(Arc::new(demo_state), PathBuf::from("dist-web"));
+
+        let guest_status = "/api/command/check_login_status";
+        let old_session = post(&demo_app, guest_status, ORIGIN, &normal_cookie, json!({})).await;
+        assert_eq!(old_session.status(), StatusCode::UNAUTHORIZED);
+
+        let response = post(&demo_app, "/api/session", ORIGIN, &normal_cookie, json!({})).await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+        assert!(cookie.starts_with(SECURE_DEMO_SESSION_COOKIE));
+        let cookie = cookie.split(';').next().unwrap();
+        let cookies = format!("{normal_cookie}; {cookie}");
+        let guest = post(&demo_app, guest_status, ORIGIN, &cookies, json!({})).await;
+        assert_eq!(guest.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(guest.into_body(), 4096).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), json!({ "code": 200, "data": null }));
+
+        for (command, args) in [
+            ("import_web_account", json!({ "cookieStr": "SESSID=unused; uid=123" })),
+            ("login_as", json!({ "uid": "123" })),
+            ("login_by_account", json!({ "account": "example", "password": "unused" })),
+            ("login_by_mobile", json!({ "mobile": "13800000000", "vcode": "123456" })),
+            ("send_sms_vcode", json!({ "mobile": "13800000000" })),
+            ("save_cookie_securely", json!({ "cookieStr": "SESSID=unused; uid=123" })),
+        ] {
+            let response = post(&demo_app, &format!("/api/command/{command}"), ORIGIN, &cookies, args).await;
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{command}");
+        }
+
+        let normal = post(&normal_app, guest_status, ORIGIN, &cookies, json!({})).await;
+        assert_eq!(normal.status(), StatusCode::OK);
     }
 
     #[tokio::test]

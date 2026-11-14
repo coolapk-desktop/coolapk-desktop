@@ -1,6 +1,7 @@
 <template>
   <div class="page-tab-bar" aria-label="已打开页面">
-    <div ref="tabScroll" class="page-tab-scroll custom-scrollbar" @wheel="handleWheel">
+    <PageNavigation v-if="showNavigation" compact class="page-tab-navigation" />
+    <div v-if="showTabs" ref="tabScroll" class="page-tab-scroll custom-scrollbar" @wheel="handleWheel">
       <div
         v-for="tab in tabsStore.tabs"
         :key="tab.id"
@@ -36,11 +37,11 @@
       </div>
     </div>
 
-    <button type="button" class="page-tab-list-button" title="全部标签页" aria-label="全部标签页" @click.stop="toggleTabList">
+    <button v-if="showTabs" type="button" class="page-tab-list-button" title="全部标签页" aria-label="全部标签页" @click.stop="toggleTabList">
       <i class="fas fa-chevron-down"></i>
     </button>
 
-    <div v-if="tabListOpen" class="page-tab-menu page-tab-list-menu">
+    <div v-if="showTabs && tabListOpen" class="page-tab-menu page-tab-list-menu">
       <div class="page-tab-menu-heading">已打开</div>
       <button v-for="tab in tabsStore.tabs" :key="tab.id" type="button" :class="{ active: tab.id === tabsStore.activeId }" @click="openTabFromList(tab.id)">
         <OfficialNavIcon class="page-tab-menu-icon" :route="tab.route" :active="tab.id === tabsStore.activeId" :fallback="tab.icon" />
@@ -58,7 +59,7 @@
       </template>
     </div>
 
-    <div v-if="contextMenu" class="page-tab-menu page-tab-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop>
+    <div v-if="showTabs && contextMenu" class="page-tab-menu page-tab-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop>
       <button v-if="contextTab?.id !== 'home'" type="button" @click="runContextAction('favorite')"><i :class="contextTab?.favorite ? 'fas fa-star' : 'far fa-star'"></i><span>{{ contextTab?.favorite ? '取消收藏此页面' : '收藏此页面' }}</span></button>
       <button v-if="contextTab?.id !== 'home'" type="button" @click="runContextAction('pin')"><i class="fas fa-thumbtack"></i><span>{{ contextTab?.pinned ? '取消固定标签页' : '固定标签页' }}</span></button>
       <div v-if="contextTab?.id !== 'home'" class="page-tab-menu-divider"></div>
@@ -71,10 +72,13 @@
 
 <script setup lang="ts">
 import OfficialNavIcon from './OfficialNavIcon.vue';
+import PageNavigation from './PageNavigation.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePageTabsStore } from '../../stores/pageTabs';
 import { activateHomeTab } from '../../utils/homeTab';
+
+withDefaults(defineProps<{ showTabs?: boolean; showNavigation?: boolean }>(), { showTabs: true });
 
 const router = useRouter();
 const tabsStore = usePageTabsStore();
@@ -266,6 +270,11 @@ onUnmounted(() => {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+}
+
+.page-tab-navigation {
+  align-self: center;
+  margin: -4px 6px 0 0;
 }
 
 .page-tab-scroll::-webkit-scrollbar {

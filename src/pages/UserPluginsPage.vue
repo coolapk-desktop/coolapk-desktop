@@ -6,7 +6,8 @@
         <h1>{{ storeMode ? '挂件商店' : '挂件管理' }}</h1>
         <button v-if="!storeMode" type="button" @click="router.push('/my-plugins/store')"><i class="fas fa-store"></i> 挂件商店</button>
       </header>
-      <div v-if="!auth.isLoggedIn" class="plugin-notice"><p>登录后管理和获取你的挂件</p><button class="primary" @click="auth.openLoginModal()">登录酷安</button></div>
+      <DemoLoginState v-if="auth.isWebDemo && !auth.isLoggedIn" />
+      <div v-else-if="!auth.isLoggedIn" class="plugin-notice"><p>登录后管理和获取你的挂件</p><button class="primary" @click="auth.openLoginModal()">登录酷安</button></div>
       <template v-else>
         <div class="plugins-layout">
           <section class="plugin-preview" aria-label="挂件预览">
@@ -48,6 +49,7 @@
 </template>
 
 <script setup lang="ts">
+import DemoLoginState from '../components/common/DemoLoginState.vue';
 import { vPullRefresh } from '../directives/pullRefresh';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';

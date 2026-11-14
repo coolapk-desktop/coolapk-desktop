@@ -3,7 +3,7 @@
     <div class="section-heading">
       <div>
         <h3 class="section-title">个人信息</h3>
-        <p class="section-description">修改后会立即同步到酷安账号</p>
+        <p v-if="!authStore.isWebDemo" class="section-description">修改后会立即同步到酷安账号</p>
       </div>
       <span v-if="profile.uid" class="profile-uid">UID {{ profile.uid }}</span>
     </div>
@@ -11,10 +11,10 @@
     <div v-if="!authStore.isLoggedIn" class="login-card">
       <div class="login-card-icon"><i class="fas fa-user-circle"></i></div>
       <div class="login-card-info">
-        <strong>登录后才能修改个人资料</strong>
-        <span>头像、签名和其他资料会直接保存到酷安账号。</span>
+        <strong>{{ authStore.isWebDemo ? '演示模式不支持登录' : '登录后才能修改个人资料' }}</strong>
+        <span v-if="!authStore.isWebDemo">头像、签名和其他资料会直接保存到酷安账号。</span>
       </div>
-      <AppButton variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
+      <AppButton v-if="!authStore.isWebDemo" variant="primary" size="sm" @click="authStore.openLoginModal()">账号登录</AppButton>
     </div>
 
     <template v-else>
@@ -603,10 +603,21 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.profile-settings { gap: var(--space-5); }
+.profile-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: profile-settings;
+}
 
 .section-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
@@ -615,7 +626,7 @@ onMounted(() => {
 }
 
 .section-title { margin: 0; border: 0; padding: 0; }
-.section-description { margin: 5px 0 0; color: var(--text-tertiary); font-size: var(--font-size-caption); }
+.section-description { margin: 5px 0 0; color: var(--text-tertiary); font-size: var(--font-size-caption); line-height: 1.5; }
 .profile-uid { color: var(--text-tertiary); font-size: var(--font-size-caption); padding-top: 4px; }
 
 .login-card,
@@ -623,7 +634,17 @@ onMounted(() => {
 .profile-fields {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
+  min-width: 0;
+}
+
+.login-card,
+.profile-overview {
+  background: var(--background);
+}
+
+.profile-fields {
   background: var(--surface);
+  overflow: hidden;
 }
 
 .login-card {
@@ -633,10 +654,10 @@ onMounted(() => {
   padding: var(--space-5);
 }
 
-.login-card-icon { color: var(--brand-primary); font-size: 28px; }
-.login-card-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.login-card-icon { color: var(--brand-primary); font-size: 28px; flex-shrink: 0; }
+.login-card-info { display: flex; flex: 1 1 200px; min-width: 0; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 .login-card-info strong { color: var(--text-primary); font-size: var(--font-size-sub); }
-.login-card-info span { color: var(--text-tertiary); font-size: var(--font-size-caption); }
+.login-card-info span { color: var(--text-tertiary); font-size: var(--font-size-caption); line-height: 1.5; }
 
 .profile-loading {
   display: flex;
@@ -648,43 +669,45 @@ onMounted(() => {
   font-size: var(--font-size-sub);
 }
 
-.profile-content { display: flex; flex-direction: column; gap: var(--space-4); }
+.profile-content { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .profile-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-5); }
-.profile-overview-main { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
-.profile-overview-text { min-width: 0; }
+.profile-overview-main { display: flex; align-items: center; gap: var(--space-4); flex: 1 1 200px; min-width: 0; }
+.profile-overview-text { min-width: 0; overflow-wrap: anywhere; }
 .profile-overview-text h4 { margin: 0; color: var(--text-primary); font-size: var(--font-size-title-sm); }
 .profile-overview-text p { margin: 6px 0 0; overflow: hidden; color: var(--text-secondary); font-size: var(--font-size-sub); text-overflow: ellipsis; white-space: nowrap; }
 .sync-hint { flex-shrink: 0; color: var(--brand-primary); font-size: var(--font-size-caption); }
 .sync-hint i { margin-right: 4px; }
 
-.profile-fields { overflow: hidden; }
-.profile-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); min-height: 72px; padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-light); }
+.profile-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-5); min-height: 72px; padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-light); }
 .profile-row:last-child { border-bottom: 0; }
-.row-info { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.row-info { display: flex; flex: 1 1 180px; min-width: 0; max-width: 100%; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 .row-label { color: var(--text-primary); font-size: var(--font-size-sub); font-weight: var(--font-weight-medium); }
-.row-sub { color: var(--text-tertiary); font-size: var(--font-size-caption); }
+.row-sub { color: var(--text-tertiary); font-size: var(--font-size-caption); line-height: 1.5; overflow-wrap: anywhere; }
 .row-value { max-width: 260px; overflow: hidden; color: var(--text-secondary); font-size: var(--font-size-sub); text-overflow: ellipsis; white-space: nowrap; }
 .muted-value { color: var(--text-tertiary); }
 .row-value-action,
 .image-row-action,
-.cover-action { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); min-width: 0; }
+.cover-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-3); min-width: 0; max-width: 100%; }
 .profile-image-row { min-height: 88px; }
 .profile-cover-row { min-height: 104px; }
 .hidden-file-input { display: none; }
 
-.cover-preview { width: 156px; height: 68px; overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-control); background: var(--background); }
+.cover-preview { width: 156px; max-width: 100%; height: 68px; overflow: hidden; border: 1px solid var(--border-light); border-radius: var(--radius-control); background: var(--background); }
 .cover-placeholder { display: flex; height: 100%; align-items: center; justify-content: center; gap: 6px; color: var(--text-tertiary); font-size: var(--font-size-caption); }
 .cover-preview :deep(.cover-image) { width: 100%; height: 100%; }
 .field-input,
 .field-select,
-.signature-input { box-sizing: border-box; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-primary); font: inherit; outline: none; transition: border-color var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default); }
+.signature-input { box-sizing: border-box; max-width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--background); color: var(--text-primary); font: inherit; outline: none; transition: border-color var(--duration-fast) var(--ease-default), box-shadow var(--duration-fast) var(--ease-default); }
+.field-input:hover:not(:disabled),
+.field-select:hover:not(:disabled),
+.signature-input:hover:not(:disabled) { border-color: var(--brand-primary); }
 .field-input:focus,
 .field-select:focus,
 .signature-input:focus { border-color: var(--brand-primary); box-shadow: 0 0 0 3px var(--brand-soft); }
-.field-input { width: 190px; height: 36px; padding: 0 10px; }
-.field-select { width: 136px; height: 34px; padding: 0 8px; }
-.gender-select { width: 72px; height: 30px; padding: 0 6px; font-size: 14px; }
-.date-input { width: 142px; height: 30px; padding: 0 8px; font-size: 14px; }
+.field-input { width: 220px; padding: 6px 12px; font-size: var(--font-size-sub); }
+.field-select { width: 136px; padding: 6px 12px; font-size: var(--font-size-sub); cursor: pointer; }
+.gender-select { width: 120px; }
+.date-input { width: 172px; }
 .field-input:disabled,
 .field-select:disabled { opacity: .6; }
 .signature-action { max-width: 55%; }
@@ -694,19 +717,39 @@ onMounted(() => {
 .dialog-field { display: flex; flex-direction: column; gap: 7px; color: var(--text-secondary); font-size: var(--font-size-sub); }
 .dialog-field .field-input,
 .dialog-field .field-select { width: 100%; }
-.location-select { height: 40px; }
-.signature-input { width: 100%; min-height: 108px; padding: 10px 12px; resize: vertical; }
+.location-select { min-height: 40px; }
+.signature-input { width: 100%; min-height: 108px; padding: 10px 12px; resize: vertical; font-size: var(--font-size-sub); }
 .character-count { align-self: flex-end; margin-top: -10px; color: var(--text-tertiary); font-size: var(--font-size-caption); }
 
 @media (max-width: 720px) {
   .login-card,
   .profile-overview { align-items: flex-start; flex-wrap: wrap; }
-  .profile-row { align-items: flex-start; flex-direction: column; gap: var(--space-2); }
+  .profile-overview-text p { white-space: normal; overflow-wrap: anywhere; }
+  .profile-row { align-items: flex-start; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); }
+  .profile-row > .row-info { flex: 0 0 auto; width: 100%; }
   .row-value-action,
   .image-row-action,
   .cover-action { width: 100%; justify-content: flex-start; }
   .row-value { max-width: 100%; }
   .signature-action { max-width: 100%; }
   .cover-preview { width: min(100%, 260px); }
+  .gender-select,
+  .date-input { width: 100%; }
+}
+
+@container profile-settings (max-width: 600px) {
+  .login-card,
+  .profile-overview { align-items: flex-start; flex-wrap: wrap; }
+  .profile-overview-text p { white-space: normal; overflow-wrap: anywhere; }
+  .profile-row { align-items: flex-start; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); }
+  .profile-row > .row-info { flex: 0 0 auto; width: 100%; }
+  .row-value-action,
+  .image-row-action,
+  .cover-action { width: 100%; justify-content: flex-start; }
+  .row-value { max-width: 100%; }
+  .signature-action { max-width: 100%; }
+  .cover-preview { width: min(100%, 260px); }
+  .gender-select,
+  .date-input { width: 100%; }
 }
 </style>

@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory, createWebHistory, type RouteLocationNormalized } from 'vue-router';
-import { isWebBuild } from '../api/runtime';
+import { isWebBuild, isWebDemo } from '../api/runtime';
+import { webRouteFallback } from './webRoutes';
 import HomePage from '../pages/HomePage.vue';
 import ProductSelectorPage from '../pages/ProductSelectorPage.vue';
 
@@ -78,7 +79,9 @@ const AuthCallbackView = () => import('../pages/AuthCallbackView.vue');
 
 const routes = [
   { path: '/', name: 'Home', component: HomePage },
-  { path: '/auth_callback', name: 'AuthCallback', component: AuthCallbackView },
+  isWebDemo
+    ? { path: '/auth_callback', name: 'AuthCallback', redirect: '/' }
+    : { path: '/auth_callback', name: 'AuthCallback', component: AuthCallbackView },
   { path: '/feeds', name: 'Feeds', redirect: '/' },
   { path: '/discover', name: 'Discover', component: DiscoverPage },
   { path: '/apps', name: 'Apps', component: AppsPage },
@@ -182,11 +185,13 @@ export const router = createRouter({
 let pendingHistoryNavigation = false;
 router.options.history.listen(() => { pendingHistoryNavigation = true; });
 
-router.beforeEach((_to, from) => {
+router.beforeEach((to, from) => {
   routeNavigationIsHistory.value = pendingHistoryNavigation;
   pendingHistoryNavigation = false;
   // 位置按页面实例身份记录，与 App.vue 的 keep-alive key 一致；实例被淘汰重建后仍能恢复。
   saveRouteScrollPosition(getRouteScrollKey(from));
+  const fallback = webRouteFallback(to.path);
+  if (fallback) return { path: fallback, replace: true };
 });
 
 router.onError(error => logDiagnostic('error', 'navigation', 'failed', summarizeDiagnosticError(error)));

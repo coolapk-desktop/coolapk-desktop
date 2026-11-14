@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { CoolapkTauriAPI } from '../api/coolapk';
-import { isWebBuild } from '../api/runtime';
+import { isWebBuild, isWebDemo } from '../api/runtime';
 import { clearResourceMemoryCache } from '../utils/resourceCache';
 import { clearUserProfileCache } from '../utils/userProfilePreloader';
 import { useUserRelationsStore } from './userRelations';
@@ -9,6 +9,13 @@ import { useTopicHubStore } from './topicHub';
 import { clearFeedFavorites } from './feedFavorites';
 import { clearGoodsRows } from './goodsRows';
 import { clearFeedStatisticsCache } from '../utils/feedStatisticsCache';
+import { showToast } from '../utils/toast';
+
+const demoLoginDisabled = '演示模式不支持登录';
+
+function requireLoginEnabled() {
+  if (isWebDemo) throw new Error(demoLoginDisabled);
+}
 
 export interface UserProfile {
   uid: string | number;
@@ -80,6 +87,10 @@ export const useAuthStore = defineStore('auth', () => {
    * 打开登录弹窗
    */
   function openLoginModal() {
+    if (isWebDemo) {
+      showToast(demoLoginDisabled, 'info');
+      return;
+    }
     isLoginModalOpen.value = true;
   }
 
@@ -94,6 +105,7 @@ export const useAuthStore = defineStore('auth', () => {
    * 通过 Cookie 凭据提交登录并验证
    */
   async function loginWithCookie(cookieStr: string): Promise<UserProfile> {
+    requireLoginEnabled();
     const trimmed = cookieStr.trim();
     if (!trimmed) {
       throw new Error('请输入有效的 Cookie 凭据字符串');
@@ -207,6 +219,10 @@ export const useAuthStore = defineStore('auth', () => {
    * 加载已保存的多账户列表
    */
   async function loadAccounts() {
+    if (isWebDemo) {
+      accounts.value = [];
+      return;
+    }
     try {
       const res = await CoolapkTauriAPI.listAccounts();
       accounts.value = (res && res.data && Array.isArray(res.data)) ? res.data : [];
@@ -220,6 +236,7 @@ export const useAuthStore = defineStore('auth', () => {
    * 切换到已保存的账户
    */
   async function loginAs(uid: string): Promise<UserProfile> {
+    requireLoginEnabled();
     const res = await CoolapkTauriAPI.loginAs(String(uid));
     const data = res?.data || {};
     if (!data.uid) {
@@ -249,6 +266,11 @@ export const useAuthStore = defineStore('auth', () => {
    * （凭据只允许存在于 Rust 侧，前端不持久化、不读取原文）
    */
   async function initAuth() {
+    if (isWebDemo) {
+      clearFrontendAuthState();
+      accounts.value = [];
+      return;
+    }
     // 加载多账户列表
     await loadAccounts();
     // 历史遗留清理：旧版本把 Cookie 明文存在 localStorage，启动时一律清除
@@ -295,6 +317,7 @@ export const useAuthStore = defineStore('auth', () => {
    * 账号/手机号 + 密码登录
    */
   async function loginWithAccount(account: string, password: string): Promise<UserProfile> {
+    requireLoginEnabled();
     const acc = account.trim();
     const pwd = password.trim();
     if (!acc || !pwd) {
@@ -336,6 +359,7 @@ export const useAuthStore = defineStore('auth', () => {
    * 发送手机短信验证码
    */
   async function sendSmsCode(mobile: string) {
+    requireLoginEnabled();
     const phone = mobile.trim();
     if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
       throw new Error('请输入正确的 11 位手机号码');
@@ -347,6 +371,7 @@ export const useAuthStore = defineStore('auth', () => {
    * 手机号 + 短信验证码登录
    */
   async function loginWithMobile(mobile: string, vcode: string): Promise<UserProfile> {
+    requireLoginEnabled();
     const phone = mobile.trim();
     const code = vcode.trim();
     if (!phone || !code) {
@@ -396,6 +421,7 @@ export const useAuthStore = defineStore('auth', () => {
    * 这里直接让 Rust 带凭据校验，前端不读取 Cookie 原文。
    */
   async function checkStatus(): Promise<boolean> {
+    if (isWebDemo) return false;
     try {
       let res: any;
       try {
@@ -521,6 +547,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
+    isWebDemo,
     isLoggedIn,
     user,
     rawCookie,

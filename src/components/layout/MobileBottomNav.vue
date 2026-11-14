@@ -12,7 +12,7 @@
       <span>{{ item.label }}</span>
     </button>
 
-    <button type="button" class="mobile-publish" aria-label="发布动态" @click="appStore.openPublish">
+    <button v-if="!isWebDemo" type="button" class="mobile-publish" aria-label="发布动态" @click="appStore.openPublish">
       <!-- 官方 APK 的 ic_v15_plus。 -->
       <svg class="mobile-publish-icon" viewBox="0 0 15 15" aria-hidden="true">
         <path d="M7.5,0L7.5,0A1.5,1.5 0,0 1,9 1.5L9,13.5A1.5,1.5 0,0 1,7.5 15L7.5,15A1.5,1.5 0,0 1,6 13.5L6,1.5A1.5,1.5 0,0 1,7.5 0z" />
@@ -38,6 +38,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../../stores/app';
+import { isWebDemo } from '../../api/runtime';
 import { useSettingsStore } from '../../stores/settings';
 import OfficialNavIcon from './OfficialNavIcon.vue';
 import { activateRootTab } from '../../utils/homeTab';

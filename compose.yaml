@@ -2,6 +2,8 @@ services:
   coolapk-web:
     image: ${COOLAPK_WEB_IMAGE:-ghcr.io/coolapk-desktop/coolapk-desktop:latest}
     restart: unless-stopped
+    environment:
+      COOLAPK_WEB_DEMO: "${COOLAPK_WEB_DEMO:-0}"
     ports:
       - "127.0.0.1:${COOLAPK_WEB_PORT:-17521}:8080"
     volumes:

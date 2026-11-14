@@ -64,7 +64,7 @@
       </div>
       <p class="tray-tip">
         <i class="fas fa-info-circle"></i>
-        {{ isWebBuild ? '开启时需要允许此站点发送通知。' : '桌面通知需要系统授权，首次提醒时会自动请求权限。' }}
+        <span>{{ isWebBuild ? '开启时需要允许此站点发送通知。' : '桌面通知需要系统授权，首次提醒时会自动请求权限。' }}</span>
       </p>
     </div>
   </div>
@@ -93,7 +93,12 @@ async function setNotifications(enabled: boolean) {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  max-width: 720px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: notification-settings;
 }
 
 .section-title {
@@ -108,9 +113,11 @@ async function setNotifications(enabled: boolean) {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
+  margin: 0;
   font-size: var(--font-size-title-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -118,8 +125,10 @@ async function setNotifications(enabled: boolean) {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
@@ -127,7 +136,11 @@ async function setNotifications(enabled: boolean) {
 .row-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1 1 200px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -139,6 +152,8 @@ async function setNotifications(enabled: boolean) {
 .row-sub {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .select-control {
@@ -150,19 +165,48 @@ async function setNotifications(enabled: boolean) {
   color: var(--text-primary);
   cursor: pointer;
   outline: none;
+  width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
-.select-control:hover {
+.select-control:hover,
+.select-control:focus {
   border-color: var(--brand-primary);
 }
 
 .tray-tip {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
+  line-height: 1.5;
   margin: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tray-tip i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.tray-tip span {
+  min-width: 0;
+}
+
+@media (max-width: 600px) {
+  .select-control {
+    width: 100%;
+  }
+}
+
+@container notification-settings (max-width: 560px) {
+  .select-control {
+    width: 100%;
+  }
 }
 </style>

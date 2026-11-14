@@ -1,12 +1,17 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { markNetworkReachable } from '../utils/networkState';
 
 export const isDesktopWeb = typeof document !== 'undefined'
   && document.querySelector('meta[name="coolapk-desktop-web"]') !== null;
 export const isWebBuild = import.meta.env.MODE === 'web' || isDesktopWeb;
+export const isWebDemo = isWebBuild && !isDesktopWeb && typeof document !== 'undefined'
+  && document.querySelector('meta[name="coolapk-web-demo"]') !== null;
 
 let sessionReady: Promise<void> | undefined;
 
 async function checkResponse(response: Response) {
+  // 已收到同源服务响应，即使浏览器还报告离线，网络也已恢复。
+  markNetworkReachable();
   if (response.ok) return;
   const payload = await response.json().catch(() => null);
   throw new Error(payload?.error || `Web 服务请求失败（HTTP ${response.status}）`);
@@ -20,6 +25,15 @@ export function initializeSession(): Promise<void> {
       throw error;
     });
   return sessionReady;
+}
+
+export async function renewSession(): Promise<void> {
+  const previous = sessionReady;
+  if (previous) {
+    await previous;
+    if (sessionReady === previous) sessionReady = undefined;
+  }
+  await initializeSession();
 }
 
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

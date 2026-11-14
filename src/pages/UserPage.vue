@@ -240,7 +240,7 @@
         <div v-else-if="userFeeds.length === 0" class="empty-wrapper">
           <EmptyState title="暂无相关内容" />
         </div>
-        <div v-else class="feed-list">
+        <div v-else :class="activeTab === 'apk_follow' ? 'catalog-app-grid followed-app-grid' : 'feed-list'">
           <UserEntityCard v-for="(item, index) in userFeeds" :key="item.id || item.entityId || index" :entity="item" :profile-uid="effectiveUid" @pin-changed="handleFeedPinChanged" :tab="activeTab" @deleted="handleFeedDeleted" />
         </div>
       </div>
@@ -2396,6 +2396,10 @@ async function refreshMobilePage() { await fetchUserProfile(); await fetchTabFee
 .feed-list :deep(.feed-card),
 .feed-list :deep(.user-entity-card) {
   margin-bottom: 8px;
+}
+
+.followed-app-grid {
+  padding-inline: var(--space-4);
 }
 
 .loading-wrapper,

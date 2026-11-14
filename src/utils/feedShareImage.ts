@@ -200,7 +200,7 @@ async function loadShareEmojiImages(texts: string[]): Promise<Map<string, HTMLIm
     try {
       const sourceUrl = getEmojiUrl(name);
       if (!sourceUrl) return [name, null];
-      if (sourceUrl.startsWith('data:')) {
+      if (sourceUrl.startsWith('data:') || sourceUrl.startsWith('/assets/emoji-') || sourceUrl.startsWith(`${window.location.origin}/assets/emoji-`)) {
         return [name, await loadImage(sourceUrl)];
       }
       const dataUrl = await CoolapkTauriAPI.getImageDataUrl(sourceUrl);

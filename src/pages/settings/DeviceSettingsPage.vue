@@ -233,35 +233,43 @@
         </div>
 
         <div class="field-row">
-          <div class="row-info"><span class="row-label">制造商</span><span class="row-sub">如 Xiaomi、samsung、OPPO</span></div>
-          <input v-model="settingsStore.settings.deviceFingerprint.manufacturer" class="text-input" :placeholder="deviceIdentity.manufacturer" maxlength="40" />
-          <div class="row-info"><span class="row-label">品牌</span><span class="row-sub">如 Redmi、OnePlus、google</span></div>
-          <input v-model="settingsStore.settings.deviceFingerprint.brand" class="text-input" :placeholder="deviceIdentity.brand" maxlength="40" />
+          <div class="field-item">
+            <div class="row-info"><span class="row-label">制造商</span><span class="row-sub">如 Xiaomi、samsung、OPPO</span></div>
+            <input v-model="settingsStore.settings.deviceFingerprint.manufacturer" class="text-input" :placeholder="deviceIdentity.manufacturer" maxlength="40" />
+          </div>
+          <div class="field-item">
+            <div class="row-info"><span class="row-label">品牌</span><span class="row-sub">如 Redmi、OnePlus、google</span></div>
+            <input v-model="settingsStore.settings.deviceFingerprint.brand" class="text-input" :placeholder="deviceIdentity.brand" maxlength="40" />
+          </div>
         </div>
 
         <div class="field-row">
-          <div class="row-info">
-            <span class="row-label">Android 版本</span>
-            <span class="row-sub">UA 中的 Android 版本号</span>
+          <div class="field-item">
+            <div class="row-info">
+              <span class="row-label">Android 版本</span>
+              <span class="row-sub">UA 中的 Android 版本号</span>
+            </div>
+            <input
+              v-model="settingsStore.settings.deviceFingerprint.androidVersion"
+              type="text"
+              class="text-input small-input"
+              placeholder="16"
+              maxlength="8"
+            />
           </div>
-          <input
-            v-model="settingsStore.settings.deviceFingerprint.androidVersion"
-            type="text"
-            class="text-input small-input"
-            placeholder="16"
-            maxlength="8"
-          />
-          <div class="row-info">
-            <span class="row-label">Build 号</span>
-            <span class="row-sub">按“关于手机”填写；默认模板不代表该机型的真实固件</span>
+          <div class="field-item">
+            <div class="row-info">
+              <span class="row-label">Build 号</span>
+              <span class="row-sub">按“关于手机”填写；默认模板不代表该机型的真实固件</span>
+            </div>
+            <input
+              v-model="settingsStore.settings.deviceFingerprint.build"
+              type="text"
+              class="text-input"
+              placeholder="AQ3A.250226.002"
+              maxlength="40"
+            />
           </div>
-          <input
-            v-model="settingsStore.settings.deviceFingerprint.build"
-            type="text"
-            class="text-input"
-            placeholder="AQ3A.250226.002"
-            maxlength="40"
-          />
         </div>
         <div class="setting-row">
           <div class="row-info">
@@ -275,53 +283,89 @@
       <div class="setting-group">
         <h4 class="group-title">应用与系统信息</h4>
         <div class="field-row">
-          <div class="row-info">
-            <span class="row-label">App 版本（X-App-Version）</span>
-            <span class="row-sub">不得低于酷安官方最低支持版本</span>
+          <div class="field-item">
+            <div class="row-info">
+              <span class="row-label">App 版本（X-App-Version）</span>
+              <span class="row-sub">不得低于酷安官方最低支持版本</span>
+            </div>
+            <input
+              v-model="settingsStore.settings.deviceFingerprint.appVersion"
+              type="text"
+              class="text-input small-input"
+              placeholder="16.6.5"
+              maxlength="20"
+            />
           </div>
-          <input
-            v-model="settingsStore.settings.deviceFingerprint.appVersion"
-            type="text"
-            class="text-input small-input"
-            placeholder="16.6.5"
-            maxlength="20"
-          />
-          <div class="row-info">
-            <span class="row-label">版本号（X-App-Code）</span>
-            <span class="row-sub">同步作用于 X-App-Supported</span>
+          <div class="field-item">
+            <div class="row-info">
+              <span class="row-label">版本号（X-App-Code）</span>
+            </div>
+            <input
+              v-model="settingsStore.settings.deviceFingerprint.appCode"
+              type="text"
+              class="text-input small-input"
+              placeholder="2610162"
+              maxlength="12"
+            />
           </div>
-          <input
-            v-model="settingsStore.settings.deviceFingerprint.appCode"
-            type="text"
-            class="text-input small-input"
-            placeholder="2610162"
-            maxlength="12"
-          />
         </div>
 
         <div class="field-row">
-          <div class="row-info">
-            <span class="row-label">SDK Int（X-Sdk-Int）</span>
-            <span class="row-sub">Android SDK 版本号</span>
+          <div class="field-item">
+            <label for="device-api-version" class="row-info row-label">API 版本（X-Api-Version）</label>
+            <input id="device-api-version" v-model="fingerprint.apiVersion" type="text" class="text-input small-input" inputmode="numeric" :placeholder="DEFAULT_DEVICE_API_VERSION" maxlength="12" :aria-invalid="invalidApiVersion || undefined" :aria-describedby="invalidApiVersion ? 'device-api-version-warning' : undefined" />
           </div>
-          <input
-            v-model="settingsStore.settings.deviceFingerprint.sdkInt"
-            type="text"
-            class="text-input small-input"
-            placeholder="36"
-            maxlength="4"
-          />
-          <div class="row-info">
-            <span class="row-label">语言（X-Sdk-Locale）</span>
-            <span class="row-sub">如 zh-CN / en-US</span>
+          <div class="field-item">
+            <label for="device-app-supported" class="row-info row-label">支持版本（X-App-Supported）</label>
+            <input id="device-app-supported" v-model="fingerprint.appSupported" type="text" class="text-input small-input" inputmode="numeric" placeholder="跟随版本号" maxlength="12" :aria-invalid="invalidAppSupported || undefined" :aria-describedby="invalidAppSupported ? 'device-app-supported-warning' : undefined" />
           </div>
-          <input
-            v-model="settingsStore.settings.deviceFingerprint.locale"
-            type="text"
-            class="text-input small-input"
-            placeholder="zh-CN"
-            maxlength="16"
-          />
+        </div>
+        <p v-if="invalidApiVersion" id="device-api-version-warning" class="version-warning">API 版本仅支持数字，当前使用默认值 {{ DEFAULT_DEVICE_API_VERSION }}。</p>
+        <p v-if="invalidAppSupported" id="device-app-supported-warning" class="version-warning">支持版本仅支持数字，当前跟随版本号。</p>
+
+        <div class="field-row">
+          <div class="field-item">
+            <label for="device-app-channel" class="row-info row-label">渠道（X-App-Channel）</label>
+            <input id="device-app-channel" v-model="fingerprint.appChannel" type="text" class="text-input small-input" :placeholder="DEFAULT_DEVICE_APP_CHANNEL" maxlength="64" autocapitalize="off" spellcheck="false" :aria-invalid="invalidAppChannel || undefined" :aria-describedby="invalidAppChannel ? 'device-app-channel-warning' : undefined" />
+          </div>
+          <div class="field-item">
+            <label for="device-app-mode" class="row-info row-label">应用模式（X-App-Mode）</label>
+            <select id="device-app-mode" v-model="fingerprint.appMode" class="text-input small-input">
+              <option value="universal">通用</option>
+              <option value="community">社区</option>
+              <option value="market">应用市场</option>
+            </select>
+          </div>
+        </div>
+        <p v-if="invalidAppChannel" id="device-app-channel-warning" class="version-warning">渠道仅支持不含空格的半角字符，当前使用默认渠道 {{ DEFAULT_DEVICE_APP_CHANNEL }}。</p>
+
+        <div class="field-row">
+          <div class="field-item">
+            <div class="row-info">
+              <span class="row-label">SDK Int（X-Sdk-Int）</span>
+              <span class="row-sub">Android SDK 版本号</span>
+            </div>
+            <input
+              v-model="settingsStore.settings.deviceFingerprint.sdkInt"
+              type="text"
+              class="text-input small-input"
+              placeholder="36"
+              maxlength="4"
+            />
+          </div>
+          <div class="field-item">
+            <div class="row-info">
+              <span class="row-label">语言（X-Sdk-Locale）</span>
+              <span class="row-sub">如 zh-CN / en-US</span>
+            </div>
+            <input
+              v-model="settingsStore.settings.deviceFingerprint.locale"
+              type="text"
+              class="text-input small-input"
+              placeholder="zh-CN"
+              maxlength="16"
+            />
+          </div>
         </div>
 
         <div class="setting-row">
@@ -348,6 +392,18 @@
             <code class="preview-value">{{ fingerprint.appVersion || '16.6.5' }}</code>
             <span class="preview-key">X-App-Code</span>
             <code class="preview-value">{{ fingerprint.appCode || '2610162' }}</code>
+          </div>
+          <div class="preview-row">
+            <span class="preview-key">X-Api-Version</span>
+            <code class="preview-value">{{ effectiveApiVersion }}</code>
+            <span class="preview-key">X-App-Supported</span>
+            <code class="preview-value">{{ appSupportedOverride || fingerprint.appCode || '2610162' }}</code>
+          </div>
+          <div class="preview-row">
+            <span class="preview-key">X-App-Channel</span>
+            <code class="preview-value">{{ appChannelOverride || DEFAULT_DEVICE_APP_CHANNEL }}</code>
+            <span class="preview-key">X-App-Mode</span>
+            <code class="preview-value">{{ fingerprint.appMode }}</code>
           </div>
           <div class="preview-row">
             <span class="preview-key">X-Sdk-Int</span>
@@ -389,7 +445,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { useSettingsStore, buildDeviceUserAgent } from '../../stores/settings';
+import { useSettingsStore, buildDeviceUserAgent, DEFAULT_DEVICE_API_VERSION, DEFAULT_DEVICE_APP_CHANNEL, normalizeDeviceApiVersion, normalizeDeviceAppSupported, normalizeDeviceAppChannel } from '../../stores/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import { loadDevicePresets, searchDevicePresets, groupDevicePresets, getDeviceSeries, getAndroidSdkWarning, resolveDeviceIdentity, type DevicePreset } from '../../utils/devicePresets';
 import { invoke, isWebBuild } from '../../api/runtime';
@@ -617,6 +673,15 @@ watch(selectedPreset, (preset) => {
 const deviceIdentity = computed(() => resolveDeviceIdentity(fingerprint.value));
 const sdkWarning = computed(() => getAndroidSdkWarning(fingerprint.value.androidVersion, fingerprint.value.sdkInt));
 const previewUserAgent = computed(() => buildDeviceUserAgent(fingerprint.value));
+const effectiveApiVersion = computed(() => normalizeDeviceApiVersion(fingerprint.value.apiVersion));
+const appSupportedOverride = computed(() => normalizeDeviceAppSupported(fingerprint.value.appSupported));
+const appChannelOverride = computed(() => normalizeDeviceAppChannel(fingerprint.value.appChannel));
+const invalidAppSupported = computed(() => !!fingerprint.value.appSupported.trim() && !appSupportedOverride.value);
+const invalidAppChannel = computed(() => !!fingerprint.value.appChannel.trim() && !appChannelOverride.value);
+const invalidApiVersion = computed(() => {
+  const value = fingerprint.value.apiVersion.trim();
+  return value !== '' && value !== effectiveApiVersion.value;
+});
 
 const presetModel = computed({
   get: () => forceCustomPreset.value ? '' : selectedPreset.value?.id || '',
@@ -668,6 +733,10 @@ async function resetToDefault() {
     rom: '',
     appVersion: '16.6.5',
     appCode: '2610162',
+    appSupported: '',
+    appChannel: '',
+    appMode: 'universal',
+    apiVersion: DEFAULT_DEVICE_API_VERSION,
     sdkInt: '36',
     locale: 'zh-CN',
     darkMode: '0',
@@ -682,7 +751,12 @@ async function resetToDefault() {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+  width: 100%;
   max-width: 760px;
+  min-width: 0;
+  box-sizing: border-box;
+  container-type: inline-size;
+  container-name: device-settings;
 }
 .catalog-section {
   display: flex;
@@ -690,17 +764,16 @@ async function resetToDefault() {
   gap: var(--space-3);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--border-light);
+  min-width: 0;
 }
 .catalog-section p { margin: 0; }
 .catalog-picker { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .catalog-picker .text-input { width: 100%; min-width: 0; box-sizing: border-box; }
 .catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
 .catalog-field { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.catalog-field select { overflow: hidden; text-overflow: ellipsis; }
 .catalog-field select:disabled { cursor: default; color: var(--text-tertiary); }
 .catalog-selection { font-size: var(--font-size-caption); color: var(--text-secondary); overflow-wrap: anywhere; }
-@media (max-width: 600px) {
-  .catalog-grid { grid-template-columns: minmax(0, 1fr); }
-}
 
 .section-title {
   font-size: var(--font-size-title-md);
@@ -714,6 +787,7 @@ async function resetToDefault() {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .group-title {
@@ -724,19 +798,35 @@ async function resetToDefault() {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3) var(--space-4);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
 }
 
+.setting-row > .row-info {
+  flex: 1 1 200px;
+}
+
 .field-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3) var(--space-5);
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-light);
+}
+
+.field-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 100%;
+  gap: var(--space-3);
 }
 
 .row-info {
@@ -744,7 +834,9 @@ async function resetToDefault() {
   flex-direction: column;
   gap: 2px;
   flex: 1;
-  min-width: 120px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .row-label {
@@ -767,6 +859,9 @@ async function resetToDefault() {
   color: var(--text-primary);
   outline: none;
   width: 220px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   transition: border-color var(--duration-fast) var(--ease-default);
 }
 
@@ -792,6 +887,8 @@ async function resetToDefault() {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   padding: var(--space-4);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .preview-row {
@@ -799,6 +896,7 @@ async function resetToDefault() {
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .preview-key {
@@ -815,12 +913,15 @@ async function resetToDefault() {
   border-radius: var(--radius-control);
   padding: 2px 8px;
   word-break: break-all;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .version-warning {
   font-size: var(--font-size-caption);
   color: #e0533d;
   margin: var(--space-2) 0 0;
+  overflow-wrap: anywhere;
 }
 
 .status-box {
@@ -831,6 +932,8 @@ async function resetToDefault() {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   padding: var(--space-4);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .status-row {
@@ -844,7 +947,7 @@ async function resetToDefault() {
   font-size: var(--font-size-caption);
   color: var(--text-tertiary);
   white-space: nowrap;
-  flex: 0 0 190px;
+  flex: 0 0 216px;
 }
 
 .native-ua { display: block; margin-top: var(--space-2); font-size: var(--font-size-caption); overflow-wrap: anywhere; }
@@ -895,6 +998,7 @@ async function resetToDefault() {
   font-size: var(--font-size-sub);
   color: var(--text-secondary);
   cursor: pointer;
+  max-width: 100%;
   transition: all var(--duration-fast) var(--ease-default);
 }
 
@@ -910,10 +1014,13 @@ async function resetToDefault() {
   gap: var(--space-2);
   align-items: flex-start;
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tray-tip i {
   margin-top: 2px;
+  flex-shrink: 0;
 }
 
 .status-warn {
@@ -928,6 +1035,8 @@ async function resetToDefault() {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   padding: var(--space-4);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .card-desc {
@@ -935,6 +1044,8 @@ async function resetToDefault() {
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .save-timing-note {
@@ -947,6 +1058,7 @@ async function resetToDefault() {
 .save-timing-note i {
   margin-top: 3px;
   color: var(--brand-primary);
+  flex-shrink: 0;
 }
 
 .device-id-input-row {
@@ -954,12 +1066,14 @@ async function resetToDefault() {
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .input-wrapper {
   position: relative;
-  flex: 1;
-  min-width: 260px;
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
 }
@@ -1003,6 +1117,7 @@ async function resetToDefault() {
   cursor: pointer;
   transition: all var(--duration-fast) var(--ease-default);
   white-space: nowrap;
+  max-width: 100%;
 }
 
 .action-btn:hover:not(:disabled) {
@@ -1039,6 +1154,17 @@ async function resetToDefault() {
   font-size: 12px;
   padding: 8px 12px;
   border-radius: var(--radius-control);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.extract-tip i {
+  flex-shrink: 0;
+}
+
+.extract-tip span {
+  min-width: 0;
 }
 
 .success-tip {
@@ -1065,12 +1191,14 @@ async function resetToDefault() {
   border-radius: var(--radius-control);
   background: var(--surface);
   overflow: hidden;
+  min-width: 0;
 }
 
 .tutorial-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 10px 14px;
   cursor: pointer;
   user-select: none;
@@ -1088,10 +1216,17 @@ async function resetToDefault() {
   font-size: 13px;
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
+  min-width: 0;
+}
+
+.tutorial-title span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tutorial-title i {
   color: var(--brand-primary);
+  flex-shrink: 0;
 }
 
 .tutorial-steps {
@@ -1107,6 +1242,7 @@ async function resetToDefault() {
   align-items: flex-start;
   gap: 10px;
   margin-top: 8px;
+  min-width: 0;
 }
 
 .tut-num {
@@ -1128,6 +1264,9 @@ async function resetToDefault() {
   font-size: 12px;
   line-height: 1.6;
   color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tut-subclicks {
@@ -1144,5 +1283,131 @@ async function resetToDefault() {
 .tut-sub-highlight {
   color: var(--brand-primary);
   font-weight: 500;
+}
+
+@media (max-width: 720px) {
+  .field-row {
+    gap: 0;
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .field-item {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .field-item > .row-info {
+    flex: 1 1 10rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .catalog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .status-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .status-key {
+    flex: none;
+    width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .status-value {
+    width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .status-code {
+    flex: none;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .setting-row > .text-input:not(.small-input),
+  .field-item > .text-input:not(.small-input) {
+    width: 100%;
+  }
+}
+
+@media (max-width: 400px) {
+  .action-btn {
+    white-space: normal;
+  }
+}
+
+@container device-settings (max-width: 680px) {
+  .field-row {
+    gap: 0;
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .field-item {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .field-item > .row-info {
+    flex: 1 1 10rem;
+  }
+}
+
+@container device-settings (max-width: 560px) {
+  .catalog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .status-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .status-key {
+    flex: none;
+    width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .status-value {
+    width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .status-code {
+    flex: none;
+    max-width: 100%;
+  }
+}
+
+@container device-settings (max-width: 480px) {
+  .setting-row > .text-input:not(.small-input),
+  .field-item > .text-input:not(.small-input) {
+    width: 100%;
+  }
+}
+
+@container device-settings (max-width: 360px) {
+  .action-btn {
+    white-space: normal;
+  }
 }
 </style>
