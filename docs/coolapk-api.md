@@ -1,5 +1,7 @@
 # 酷安（CoolAPK）API 总览与可用性测试报告
 
+> 定位：**本项目实际接入**的端点与可用性实测。要查官方还有哪些端点、字段含义，见 [`COOLAPK_API_DOCUMENTATION.md`](COOLAPK_API_DOCUMENTATION.md)（反编译全量清单，不保证已接入）。入口见 [`INDEX.md`](INDEX.md)。
+>
 > 文档数据来源：
 > - [Coolapk-UWP/Coolapk-API-Collect](https://github.com/Coolapk-UWP/Coolapk-API-Collect)（酷安-API收集整理）
 > - [Coolapk-kotlin](https://github.com/bjzhou/Coolapk-kotlin) 等第三方开源客户端

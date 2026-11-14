@@ -1,4 +1,6 @@
-# 移动页面下拉刷新评估与实现
+# 移动页面下拉刷新评估与实现（2026-10-19 审计快照）
+
+> 审计快照，非现行规范：结论已落地进代码，实现以代码为准。入口见 [`INDEX.md`](INDEX.md)。
 
 评估日期：2026-10-19。范围为当前仓库全部路由页面与实际承载内容的公共组件；不会通过重新加载应用或重建路由实现刷新。
 
@@ -6,7 +8,7 @@
 
 ## 官方 APK 依据
 
-本地反编译目录：`D:/code/github/coolapk_all_decompiled/java_sources/`。
+本地反编译目录（当时的一次性证据，该绝对路径已失效，不保证可访问）：`D:/code/github/coolapk_all_decompiled/java_sources/`。
 
 - `sources/com/coolapk/market/widget/ScrollChildSwipeRefreshLayout.java`：`setScrollUpChild` 指定真实列表；`canChildScrollUp` 优先判断该列表能否向上滚动，构造时关闭缩放式进场。
 - `sources/com/coolapk/market/view/base/refresh/RefreshRecyclerFragment.java`：主题强调色指示器、内容背景色圆盘、`OnRefreshListener` 回调；刷新状态由列表请求结束回收。
