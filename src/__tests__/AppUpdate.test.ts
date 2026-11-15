@@ -137,7 +137,7 @@ describe('桌面自动更新交互', () => {
     expect(mocks.downloadUpdate).not.toHaveBeenCalled();
   });
 
-  it('下载完成但系统桌面通知关闭时，只给一次可跳转通知设置的轻量提示', async () => {
+  it('下载完成但系统桌面通知关闭时，在安装弹窗内提示并可打开通知设置', async () => {
     mocks.checkLatestRelease.mockResolvedValue({ hasNew: true, latestVersion: 'v9.9.9',
       installerUrl: 'https://github.com/download/new.dmg', installerName: 'coolapk-desktop_9.9.9_aarch64.dmg',
       packageType: 'installer', releaseNotes: '更新说明',
@@ -152,12 +152,18 @@ describe('桌面自动更新交互', () => {
     await flushPromises();
     // 系统通知总开关关闭时不再尝试系统气泡，改为应用内提示并保留设置入口。
     expect(mocks.desktopNotify).not.toHaveBeenCalled();
-    expect(mocks.showToast).toHaveBeenCalledOnce();
-    const [message, type, , action] = mocks.showToast.mock.calls[0]!;
-    expect(String(message)).toContain('更新包已下载完成');
-    expect(type).toBe('info');
-    action.onClick();
+    expect(mocks.showToast).not.toHaveBeenCalled();
+    const hint = wrapper.get('.update-notification-hint');
+    expect(hint.text()).toContain('系统桌面通知已关闭');
+    await hint.get('button').trigger('click');
     expect(mocks.push).toHaveBeenCalledWith('/settings/notifications');
+    expect(wrapper.text()).not.toContain('更新包已下载');
+    expect(localStorage.getItem('coolapk_pending_update')).not.toBeNull();
+
+    window.dispatchEvent(new Event('check-for-update'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('更新包已下载');
+    expect(wrapper.find('.update-notification-hint').exists()).toBe(false);
   });
 
   it('系统桌面通知开启时仍走系统气泡，不再额外弹应用内提示', async () => {
@@ -175,6 +181,7 @@ describe('桌面自动更新交互', () => {
     await flushPromises();
     expect(mocks.desktopNotify).toHaveBeenCalledOnce();
     expect(mocks.showToast).not.toHaveBeenCalled();
+    expect(wrapper.find('.update-notification-hint').exists()).toBe(false);
   });
 
   it('手动检查 macOS 更新后可以下载并记录待安装包', async () => {

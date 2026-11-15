@@ -105,9 +105,14 @@
       </div>
     </AppDialog>
 
-    <AppDialog :is-open="Boolean(readyInfo) && canInstallInApp && readyUpdateVisible" title="更新包已下载" dialog-class="update-content-dialog" :width="660" @close="readyUpdateVisible = false">
+    <AppDialog :is-open="Boolean(readyInfo) && canInstallInApp && readyUpdateVisible" title="更新包已下载" dialog-class="update-content-dialog" :width="660" @close="closeReadyUpdate">
       <div v-if="readyInfo" class="startup-update">
         <p class="startup-update-notes">{{ appUpdateName }} {{ readyInfo.version }}</p>
+        <div v-if="downloadNotificationHint === 'visible' && !settingsStore.settings.desktopNotifications" class="update-notification-hint">
+          <i class="fas fa-bell-slash" aria-hidden="true"></i>
+          <span>系统桌面通知已关闭</span>
+          <button type="button" @click="openDownloadNotificationSettings">去设置</button>
+        </div>
         <div
           v-if="readyInfo.releaseNotes"
           class="startup-update-notes update-release-notes custom-scrollbar"
@@ -132,7 +137,7 @@
           请在系统设置中允许酷安安装应用，返回后再次点击“打开安装界面”。
         </p>
         <div class="startup-update-actions">
-          <button class="startup-update-later" @click="readyUpdateVisible = false">稍后再说</button>
+          <button class="startup-update-later" @click="closeReadyUpdate">稍后再说</button>
           <button class="startup-update-button" :disabled="installingUpdate" @click="installNow">
             {{ installingUpdate ? '正在启动更新…' : isAndroid ? '打开安装界面' : '立即更新' }}
           </button>
@@ -283,7 +288,17 @@ const lastUpdateAttempt = ref<UpdateInfo | null>(null);
 // 当前更新任务在下载中心 store 里的镜像 id；下载本体仍由本组件驱动。
 let updateTaskId = '';
 // 本次运行内是否已经用应用内提示替代过桌面通知，保证每会话只打扰一次。
-let downloadToastHintShown = false;
+const downloadNotificationHint = ref<'idle' | 'visible' | 'dismissed'>('idle');
+
+function closeReadyUpdate() {
+  readyUpdateVisible.value = false;
+  if (downloadNotificationHint.value === 'visible') downloadNotificationHint.value = 'dismissed';
+}
+
+function openDownloadNotificationSettings() {
+  closeReadyUpdate();
+  void router.push('/settings/notifications');
+}
 
 // 下载中心里更新包镜像记录是「用户还想要这个更新包」的单一真值：
 // 记录被用户删除（单条删除 / 批量删除记录）时，更新器必须同步放弃，
@@ -304,7 +319,7 @@ watch(trackedUpdateMirrorStillExists, (stillExists) => {
   trackedUpdateMirrorVersion.value = '';
   localStorage.removeItem(PENDING_UPDATE_KEY);
   readyInfo.value = null;
-  readyUpdateVisible.value = false;
+  closeReadyUpdate();
   if (!updateDownloadInFlight) {
     void CoolapkTauriAPI.cleanupUpdatePackages().catch(() => undefined);
   }
@@ -316,7 +331,7 @@ watch(() => settingsStore.settings.updateChannel, () => {
   if (readyInfo.value && !isVersionAllowedInChannel(readyInfo.value.version, settingsStore.settings.updateChannel)) {
     localStorage.removeItem(PENDING_UPDATE_KEY);
     readyInfo.value = null;
-    readyUpdateVisible.value = false;
+    closeReadyUpdate();
   }
   // 下载中心的更新任务只是镜像：渠道切换后，渠道不再提供的版本同步移除记录，
   // 避免列表仍显示「安装」，引导用户安装渠道已不提供的版本。
@@ -382,7 +397,7 @@ async function checkForUpdate(manual = false) {
     if (shouldReplacePending) {
       localStorage.removeItem(PENDING_UPDATE_KEY);
       readyInfo.value = null;
-      readyUpdateVisible.value = false;
+      closeReadyUpdate();
       // 切换到最新版本后，旧版本的更新任务镜像一并移除，避免残留「安装」旧包的入口。
       removeDisallowedUpdateRecords((version) => normalizeVersion(version) === latestVersion);
       try {
@@ -547,16 +562,8 @@ async function startBackgroundDownload(info: UpdateInfo, manual = false) {
           },
           settingsStore.settings.notificationSound
         );
-      } else if (!downloadToastHintShown) {
-        // 用户要下载提示但关掉了系统桌面通知时，系统气泡不会出现；
-        // 改为每会话最多一次的轻量提示，并给出通知设置入口。
-        downloadToastHintShown = true;
-        showToast(
-          `${appUpdateName.value} ${info.latestVersion || ''} 更新包已下载完成。系统桌面通知已关闭，可在通知设置中开启提醒。`,
-          'info',
-          6000,
-          { label: '去设置', onClick: () => { void router.push('/settings/notifications'); } }
-        );
+      } else if (downloadNotificationHint.value === 'idle') {
+        downloadNotificationHint.value = 'visible';
       }
     }
   } catch (err) {
@@ -580,7 +587,7 @@ function installNow() {
     || !isVersionAllowedInChannel(info.version, settingsStore.settings.updateChannel))) {
     localStorage.removeItem(PENDING_UPDATE_KEY);
     readyInfo.value = null;
-    readyUpdateVisible.value = false;
+    closeReadyUpdate();
     // 该版本已不可安装（本地已不低于它，或渠道不再允许），镜像记录一并移除。
     removeDisallowedUpdateRecords((version) => isVersionAllowedInChannel(version, settingsStore.settings.updateChannel));
     void CoolapkTauriAPI.cleanupUpdatePackages().catch(() => undefined);
@@ -670,7 +677,7 @@ async function restorePendingUpdate(): Promise<boolean> {
   const clearInvalidPending = async () => {
     localStorage.removeItem(PENDING_UPDATE_KEY);
     readyInfo.value = null;
-    readyUpdateVisible.value = false;
+    closeReadyUpdate();
     try {
       await CoolapkTauriAPI.cleanupUpdatePackages();
     } catch (cleanupError) {
@@ -961,6 +968,52 @@ body {
 
 .update-content-dialog .startup-update > :not(.update-release-notes) {
   flex-shrink: 0;
+}
+
+.update-notification-hint {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.update-notification-hint > i {
+  font-size: 14px;
+}
+
+.update-notification-hint > button {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.update-notification-hint > button:hover {
+  background: var(--surface-active);
+}
+
+.update-notification-hint > button:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+  .update-notification-hint > button {
+    min-height: 44px;
+  }
 }
 
 .update-content-dialog .update-release-notes {
