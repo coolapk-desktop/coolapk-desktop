@@ -1,7 +1,5 @@
 # 酷安 (Coolapk) 官方原生 API 接口全量文档
 
-> 定位：**官方客户端反编译全量清单**（路径/参数/字段含义），不保证本项目已接入或当前可用。要查「本项目能不能调、现在通不通」，见 [`coolapk-api.md`](coolapk-api.md)。入口见 [`INDEX.md`](INDEX.md)。
->
 > **说明**：本文档基于酷安 Android 客户端全量反编译源码（`com.coolapk.market`、`UriActionUtils`、`ActionManager`、`DataManager`、`AuthUtils`、`HttpClientFactory` 等）逆向分析与梳理整理而成。包含全部网络接口定义、请求方式、Header 鉴权规范、URL 路径、请求参数以及字段含义。
 
 ---
