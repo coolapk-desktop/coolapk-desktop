@@ -157,6 +157,51 @@ describe('评论完整信息展示', () => {
     } finally { wrapper.unmount(); }
   });
 
+  describe('评论正文点击的选字判定', () => {
+    const pressAt = (element: Element, x: number, y: number) => {
+      // jsdom 没有 PointerEvent：用 MouseEvent 走同名事件即可触发 Vue 的 pointerdown 监听。
+      element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y }));
+    };
+    const stubSelection = () => {
+      const removeAllRanges = vi.fn();
+      const spy = vi.spyOn(window, 'getSelection').mockReturnValue({
+        isCollapsed: false, rangeCount: 1, toString: () => '评论正文', removeAllRanges,
+        containsNode: () => false,
+      } as unknown as Selection);
+      return { removeAllRanges, restore: () => spy.mockRestore() };
+    };
+
+    it('正文微小抖动产生的选区不再吞掉点击，仍然设回复对象', async () => {
+      const wrapper = mountSection();
+      const selection = stubSelection();
+      try {
+        pressAt(wrapper.get('.comment-row').element, 100, 100);
+        await wrapper.get('.comment-text').trigger('click', { clientX: 101, clientY: 102 });
+        const composer = new DOMWrapper(document.body.querySelector('.desktop-reply-composer')!);
+        expect(composer.get('.reply-target-name').text()).toBe('@测试酷友');
+        // 抖动选区不是复制意图，顺手清掉，避免界面留着半截高亮。
+        expect(selection.removeAllRanges).toHaveBeenCalled();
+      } finally {
+        selection.restore();
+        wrapper.unmount();
+      }
+    });
+
+    it('真正的选字拖动仍然不设回复对象', async () => {
+      const wrapper = mountSection();
+      const selection = stubSelection();
+      try {
+        pressAt(wrapper.get('.comment-row').element, 100, 100);
+        await wrapper.get('.comment-text').trigger('click', { clientX: 160, clientY: 118 });
+        expect(document.body.querySelector('.desktop-reply-composer')).toBeNull();
+        expect(selection.removeAllRanges).not.toHaveBeenCalled();
+      } finally {
+        selection.restore();
+        wrapper.unmount();
+      }
+    });
+  });
+
   it('没有用户标识时点击昵称不误触回复', async () => {
     const wrapper = mountSection({ uid: undefined, userId: undefined, userInfo: undefined });
     try {

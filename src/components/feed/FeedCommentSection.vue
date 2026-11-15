@@ -224,6 +224,7 @@
         :data-context-comment-id="c.id"
         :data-comment-username="c.username || c.userInfo?.username || '酷友'"
         :data-comment-text="getCommentText(c)"
+        @pointerdown="recordCommentPointerStart"
       >
         <!-- 1. 一级评论人头像 -->
         <UserHoverCard
@@ -589,7 +590,18 @@ import { logDiagnostic, summarizeDiagnosticError } from '../../utils/diagnosticL
 import { reactiveUserProfileMap, getCachedUserProfileSync } from '../../utils/userProfilePreloader';
 import { verifyWithCaptcha, extractCaptchaParamsFromResponse } from '../../utils/neteaseCaptcha';
 import { openShuzilmGuide, isRiskControlError, hasActiveShuzilmDeviceId } from '../../utils/shuzilmDeviceGuide';
-import { hasActiveTextSelection } from '../../utils/selection';
+import { recordSelectionPointerStart, shouldSkipClickForSelection, type SelectionDragStart } from '../../utils/selection';
+// 评论正文同样是可选中文本：按下位置用来区分「抖动产生的零星选区」与真正的选字拖动。
+let commentPointerStart: SelectionDragStart = null;
+function recordCommentPointerStart(event: PointerEvent) {
+  commentPointerStart = recordSelectionPointerStart(event);
+}
+/** 读取并清空按下起点：每次点击只结算一次，避免旧起点污染下一次点击。 */
+function consumeCommentPointerStart(): SelectionDragStart {
+  const start = commentPointerStart;
+  commentPointerStart = null;
+  return start;
+}
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import {
   COMMENT_SORT_OPTIONS,
@@ -1800,8 +1812,9 @@ onUnmounted(() => {
 });
 
 function handleCommentTextClick(e: MouseEvent, c: any) {
-  // 选中文本准备复制时，不触发点击回复
-  if (hasActiveTextSelection()) return;
+  // 选中文本准备复制时不触发点击回复；抖动形成的选区会清掉后照常点击。
+  const pointerStart = consumeCommentPointerStart();
+  if (shouldSkipClickForSelection(e, pointerStart)) return;
   // 点中了评论内的链接则交给统一链接处理，否则视为点击评论（设置为回复对象）
   if ((e.target as HTMLElement).closest('a')) {
     if (handleCommentMoreClick(e, c)) return;
@@ -1844,8 +1857,9 @@ function openCommentUser(comment: any) {
 }
 
 function handleSubReplyClick(e: MouseEvent, sub: any, floor: any) {
-  // 选中文本准备复制时，不触发点击回复
-  if (hasActiveTextSelection()) return;
+  // 选中文本准备复制时不触发点击回复；抖动形成的选区会清掉后照常点击。
+  const pointerStart = consumeCommentPointerStart();
+  if (shouldSkipClickForSelection(e, pointerStart)) return;
   const target = e.target as HTMLElement;
   if (target.closest('a') || target.closest('button') || target.closest('.comment-image-grid')) return;
   setReplyTarget(sub.username || sub.fromUserName, sub.id || floor.id);
