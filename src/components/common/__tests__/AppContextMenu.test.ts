@@ -364,6 +364,7 @@ describe('AppContextMenu', () => {
     try {
       comment.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 160 }));
       await wrapper.vm.$nextTick();
+      expect(document.querySelector<HTMLElement>('.app-context-menu')?.style.width).toBe('136px');
       const likeItem = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(
         el => el.textContent?.trim() === '点赞评论',
       );

@@ -107,7 +107,7 @@ let selectionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 const menuStyle = computed(() => ({
   left: `${menu.value?.x || 0}px`,
   top: `${menu.value?.y || 0}px`,
-  width: `${menu.value?.width || 258}px`,
+  width: `${menu.value?.width || 136}px`,
 }));
 
 function selectedText(): string {
@@ -716,10 +716,32 @@ function resolveMenuState(point: ContextPoint): ContextState | null {
   return buildContext(point);
 }
 
+function estimateTextWidth(text = ''): number {
+  let width = 0;
+  for (const char of text) {
+    width += char.charCodeAt(0) > 255 ? 13 : 7.5;
+  }
+  return width;
+}
+
+function estimateMenuWidth(items: MenuItem[]): number {
+  const contentWidth = items.reduce((max, entry) => {
+    if (entry.separator) return max;
+    const labelWidth = estimateTextWidth(entry.label);
+    const shortcutWidth = showShortcutHints.value && entry.shortcut
+      ? 16 + estimateTextWidth(entry.shortcut)
+      : 0;
+    return Math.max(max, Math.ceil(74 + labelWidth + shortcutWidth));
+  }, 0);
+  return Math.max(136, Math.min(258, contentWidth));
+}
+
 function applyMenu(state: ContextState) {
   const items = createItems(state);
   const mobileSelection = isTouchMobilePlatform() && Boolean(state.selectedText);
-  const width = mobileSelection ? Math.min(460, window.visualViewport?.width || window.innerWidth) - 16 : 258;
+  const width = mobileSelection
+    ? Math.min(460, window.visualViewport?.width || window.innerWidth) - 16
+    : estimateMenuWidth(items);
   const estimatedHeight = Math.min(520, items.length * 38 + 16);
   menu.value = {
     ...state,
@@ -894,7 +916,7 @@ async function run(itemToRun: MenuItem) {
 .app-context-menu {
   position: fixed;
   z-index: 20000;
-  width: 258px;
+  width: 136px;
   max-height: min(520px, calc(100vh - 16px));
   overflow-y: auto;
   padding: 7px;
