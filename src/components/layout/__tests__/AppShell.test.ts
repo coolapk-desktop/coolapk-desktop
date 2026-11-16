@@ -473,7 +473,7 @@ describe('AppShell', () => {
     expect(wrapper.findComponent(MobileBottomNavStub).exists()).toBe(false);
   });
 
-  it('非首页阅读收起使用合成层 FLIP 状态并在结束、跳转或切回宽屏时清理', async () => {
+  it('非核心列表的阅读收起使用合成层 FLIP 状态，并在结束、跳转或切回宽屏时清理；数码与发现直接走纯合成位移', async () => {
     const previousWidth = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
     window.dispatchEvent(new Event('resize'));
@@ -485,13 +485,13 @@ describe('AppShell', () => {
       removeListener: vi.fn(),
     }));
     setActivePinia(createPinia());
-    routeState.value.path = routeState.value.fullPath = '/discover';
+    routeState.value.path = routeState.value.fullPath = '/favorites';
     useSettingsStore().settings.disableAutoMobileMode = false;
     useSettingsStore().settings.autoHideMobileNavigation = true;
 
     const createdAnims: Array<{ cancel: ReturnType<typeof vi.fn>; onfinish: null | (() => void); oncancel: null | (() => void) }> = [];
     const wrapper = mount(AppShell, {
-      slots: { default: '<div class="discovery-pager"><section aria-hidden="false"><div class="discover-scroll-container">阅读内容</div></section></div>' },
+      slots: { default: '<div class="fav-page"><div data-reading-scroll style="height: 200px; overflow: auto">阅读内容</div></div>' },
       global: {
         stubs: {
           TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub,
@@ -514,7 +514,7 @@ describe('AppShell', () => {
         }) as unknown as typeof target.animate;
       }
 
-      const list = wrapper.get('.discover-scroll-container');
+      const list = wrapper.get('[data-reading-scroll]');
       await list.trigger('wheel', { deltaY: 120 });
       (list.element as HTMLElement).scrollTop = 120;
       await list.trigger('scroll');
@@ -541,7 +541,7 @@ describe('AppShell', () => {
       expect(body.style.transform).toBe('');
 
       // 在详情回退切宽屏时也会取消收起动画。
-      Object.assign(routeState.value, { path: '/discover', fullPath: '/discover' });
+      Object.assign(routeState.value, { path: '/favorites', fullPath: '/favorites' });
       await nextTick();
       (list.element as HTMLElement).scrollTop = 0;
       await list.trigger('scroll');
@@ -563,6 +563,40 @@ describe('AppShell', () => {
       routeState.value.path = routeState.value.fullPath = '/';
       vi.restoreAllMocks();
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('发现与数码栏目使用零重排纯 CSS 位移收起，不触发 is-reading-topbar-animating', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
+    window.dispatchEvent(new Event('resize'));
+    setActivePinia(createPinia());
+    routeState.value.path = routeState.value.fullPath = '/discover';
+    useSettingsStore().settings.disableAutoMobileMode = false;
+    useSettingsStore().settings.autoHideMobileNavigation = true;
+    const wrapper = mount(AppShell, {
+      slots: { default: '<div class="discovery-pager"><section aria-hidden="false"><div class="discover-scroll-container">阅读内容</div></section></div>' },
+      global: {
+        stubs: {
+          TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub,
+          NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub,
+        },
+      },
+    });
+    try {
+      const list = wrapper.get('.discover-scroll-container');
+      await list.trigger('wheel', { deltaY: 120 });
+      (list.element as HTMLElement).scrollTop = 120;
+      await list.trigger('scroll');
+      await nextTick();
+      expect(wrapper.classes()).toContain('reading-navigation-hidden');
+      expect(wrapper.classes()).toContain('has-discovery-navigation');
+      expect(wrapper.classes()).not.toContain('is-reading-topbar-animating');
+    } finally {
+      wrapper.unmount();
+      Object.defineProperty(window, 'innerWidth', { value: previousWidth, configurable: true, writable: true });
+      window.dispatchEvent(new Event('resize'));
+      routeState.value.path = routeState.value.fullPath = '/';
     }
   });
 });

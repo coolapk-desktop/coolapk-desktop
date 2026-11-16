@@ -384,7 +384,7 @@ watch(displaySrc, () => {
 
 const mediaTransformStyle = computed(() => ({
   ...scaledImageSize(imageSize.value, scale.value),
-  transform: `translate(${translateX.value + swipeOffsetX.value + slideOffsetX.value}px, ${translateY.value + swipeOffsetY.value}px) rotate(${rotation.value}deg)`,
+  transform: `translate3d(${translateX.value + swipeOffsetX.value + slideOffsetX.value}px, ${translateY.value + swipeOffsetY.value}px, 0) rotate(${rotation.value}deg)`,
   cursor: isDragging.value ? 'grabbing' : 'grab',
 }));
 
@@ -395,7 +395,7 @@ const ghostTransformStyle = computed(() => {
   return {
     // 保留离场图片的阅读布局，避免下一张是否为实况图改变旧图的适配方式。
     ...ghost.imageStyle,
-    transform: `translate(${ghost.offsetX}px, 0) rotate(${ghost.rotation}deg)`,
+    transform: `translate3d(${ghost.offsetX}px, 0, 0) rotate(${ghost.rotation}deg)`,
   };
 });
 
@@ -1439,7 +1439,7 @@ onUnmounted(() => {
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: background-color 0.18s ease, color 0.18s ease;
   user-select: none;
 }
 
@@ -1457,7 +1457,7 @@ onUnmounted(() => {
   height: 5px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.9);
-  transition: all 0.2s ease;
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.18s ease;
 }
 
 .topbar-live-badge.is-playing .live-badge-dot {
@@ -1483,7 +1483,7 @@ onUnmounted(() => {
   border: none;
   border-radius: var(--radius-control, 8px);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.18s ease, color 0.18s ease, opacity 0.18s ease;
 }
 
 .viewer-btn:hover {
@@ -1558,6 +1558,7 @@ onUnmounted(() => {
   display: block;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
   border-radius: 4px;
+  will-change: transform;
   transition: transform 0.05s ease-out;
   pointer-events: auto;
 }
@@ -1586,6 +1587,7 @@ onUnmounted(() => {
   display: block;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
   border-radius: 4px;
+  will-change: transform;
   pointer-events: none;
 }
 
@@ -1626,7 +1628,7 @@ onUnmounted(() => {
   letter-spacing: 0.08em;
   cursor: pointer;
   user-select: none;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .viewer-live-badge:hover {
@@ -1732,7 +1734,7 @@ onUnmounted(() => {
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
 .viewer-retry-btn:hover {

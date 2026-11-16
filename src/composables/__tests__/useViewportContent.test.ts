@@ -178,3 +178,32 @@ it('preserves a text selection spanning an offscreen card', async () => {
   expect(h.wrapper.find('input').exists()).toBe(true);
   h.wrapper.unmount();
 });
+
+it('keeps currently visible content intact across KeepAlive deactivation and reactivation', async () => {
+  vi.stubGlobal('IntersectionObserver', vi.fn(function() {
+    return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+  }));
+  const shown = ref(true);
+  const page = defineComponent({
+    setup() {
+      const element = ref<HTMLElement | null>(null);
+      return { element, ...useViewportContent(element, ref(false)) };
+    },
+    template: '<article ref="element" :style="viewportPlaceholderStyle"><input v-if="renderViewportContent" /></article>',
+  });
+  const wrapper = mount(defineComponent({
+    components: { TestPage: page },
+    setup: () => ({ shown }),
+    template: '<KeepAlive><TestPage v-if="shown" /></KeepAlive>',
+  }));
+  await nextTick();
+  const comp = wrapper.findComponent(page);
+  const inputEl = wrapper.get('input').element;
+  shown.value = false;
+  await nextTick();
+  expect((comp.vm as { renderViewportContent: boolean }).renderViewportContent).toBe(true);
+  shown.value = true;
+  await nextTick();
+  expect(wrapper.get('input').element).toBe(inputEl);
+  wrapper.unmount();
+});

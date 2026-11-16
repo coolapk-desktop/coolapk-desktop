@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: searching }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: searching }" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div class="top-nav-bar">
       <div class="search-box">
         <i class="fas fa-search search-icon"></i>

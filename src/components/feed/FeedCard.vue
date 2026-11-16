@@ -1607,19 +1607,51 @@ function updateFloatingCollapse() {
 }
 
 let scrollListenerAttached = false;
+let floatingUpdateFrame = 0;
+let floatingUpdatePending = false;
+
+function scheduleFloatingCollapseUpdate() {
+  if (floatingUpdateFrame) {
+    floatingUpdatePending = true;
+    return;
+  }
+  updateFloatingCollapse();
+  if (typeof requestAnimationFrame === 'undefined') return;
+  floatingUpdateFrame = requestAnimationFrame(() => {
+    floatingUpdateFrame = 0;
+    if (floatingUpdatePending) {
+      floatingUpdatePending = false;
+      updateFloatingCollapse();
+    }
+  });
+}
+
+function handleFloatingResize() {
+  floatingUpdatePending = false;
+  if (floatingUpdateFrame) {
+    cancelAnimationFrame(floatingUpdateFrame);
+    floatingUpdateFrame = 0;
+  }
+  updateFloatingCollapse();
+}
 
 function bindScrollListener() {
   if (scrollListenerAttached) return;
   scrollListenerAttached = true;
-  window.addEventListener('scroll', updateFloatingCollapse, true);
-  window.addEventListener('resize', updateFloatingCollapse);
+  window.addEventListener('scroll', scheduleFloatingCollapseUpdate, { capture: true, passive: true });
+  window.addEventListener('resize', handleFloatingResize, { passive: true });
 }
 
 function unbindScrollListener() {
   if (!scrollListenerAttached) return;
   scrollListenerAttached = false;
-  window.removeEventListener('scroll', updateFloatingCollapse, true);
-  window.removeEventListener('resize', updateFloatingCollapse);
+  floatingUpdatePending = false;
+  if (floatingUpdateFrame) {
+    cancelAnimationFrame(floatingUpdateFrame);
+    floatingUpdateFrame = 0;
+  }
+  window.removeEventListener('scroll', scheduleFloatingCollapseUpdate, true);
+  window.removeEventListener('resize', handleFloatingResize);
 }
 
 function findScrollContainer(element: HTMLElement): HTMLElement | null {
@@ -2278,7 +2310,6 @@ defineExpose({
   position: fixed;
   z-index: 900;
   pointer-events: auto;
-  transition: bottom 0.2s cubic-bezier(0.4, 0, 0.2, 1), right 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .btn-floating-collapse {

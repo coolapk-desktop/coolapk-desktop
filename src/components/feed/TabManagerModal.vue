@@ -638,7 +638,7 @@ useAndroidBackButton(() => props.visible, handleClose);
   align-items: center;
   justify-content: center;
   font-size: 15px;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .close-btn:hover {
@@ -720,7 +720,7 @@ useAndroidBackButton(() => props.visible, handleClose);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .edit-toggle-btn:hover {
@@ -755,7 +755,7 @@ useAndroidBackButton(() => props.visible, handleClose);
 
 .channel-flip-enter-active,
 .channel-flip-leave-active {
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), opacity 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 
 .channel-flip-enter-from,
@@ -932,7 +932,7 @@ useAndroidBackButton(() => props.visible, handleClose);
   padding: 8px 18px;
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .secondary-btn {

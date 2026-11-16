@@ -143,6 +143,11 @@ onUnmounted(() => { sequence += 1; });
   display: flex;
   flex-direction: column;
 }
+.loading-wrapper {
+  min-height: 230px;
+  display: grid;
+  place-items: center;
+}
 
 .trending-item {
   display: flex;

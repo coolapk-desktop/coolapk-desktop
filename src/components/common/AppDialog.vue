@@ -164,7 +164,7 @@ onUnmounted(unbindGlobalListeners);
   justify-content: center;
   border-radius: var(--radius-control);
   color: var(--text-secondary);
-  transition: all var(--duration-fast) var(--ease-default);
+  transition: background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
 }
 
 .dialog-close:hover {

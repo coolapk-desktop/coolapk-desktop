@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" ref="pageContainerRef" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" ref="pageContainerRef" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div class="page-header">
       <div class="header-main">
         <button type="button" class="back-button" @click="goBack">

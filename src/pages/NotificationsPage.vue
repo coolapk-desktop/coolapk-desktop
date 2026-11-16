@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" ref="pageContainerRef" class="page-container custom-scrollbar" @scroll.passive="handlePageScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" ref="pageContainerRef" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handlePageScroll">
     <div class="page-header">
       <div class="notification-title-row">
         <div class="notification-heading" :class="{ 'notification-tab-heading': !subNoteType }">

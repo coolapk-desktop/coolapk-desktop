@@ -12,7 +12,7 @@
         <h2>私信</h2>
       </div>
       
-      <div class="session-list" v-if="sessions.length" @scroll="handleSessionScroll">
+      <div class="session-list" v-if="sessions.length" data-resource-scroll-root @scroll.passive="handleSessionScroll">
         <div 
           v-for="session in sessions" 
           :key="session.ukey || session.id" 

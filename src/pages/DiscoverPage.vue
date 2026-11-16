@@ -11,7 +11,7 @@
       <DiscoverySkeleton v-else-if="!tabs.length" />
       <DiscoveryPager v-else :tabs="tabs" :active-key="selectedKey" @select="selectTab" @prepare="prepareTab" @progress="updateSwipeProgress">
       <template #default="{ tab }">
-      <div class="discover-scroll-container custom-scrollbar" @scroll.passive="handleScroll($event, tab)">
+      <div class="discover-scroll-container custom-scrollbar" data-resource-scroll-root @scroll.passive="handleScroll($event, tab)">
       <template v-for="state in [states[tab.key]]" :key="tab.key">
         <section v-if="state?.webUrl" class="web-route-card">
           <i class="fas fa-globe"></i>
@@ -399,7 +399,8 @@ function refresh() {
 }
 
 function handleScroll(event: Event, tab: DiscoveryTab) {
-  if (tab.key !== selectedKey.value || states[tab.key]?.error) return;
+  const state = states[tab.key];
+  if (tab.key !== selectedKey.value || !state || state.loading || !state.hasMore || state.error) return;
   const element = event.currentTarget as HTMLElement;
   if (element.scrollHeight - element.scrollTop - element.clientHeight < 500) {
     void loadSelected(false, true);

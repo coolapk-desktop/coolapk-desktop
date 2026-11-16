@@ -391,7 +391,7 @@ function handleLogout() {
   display: flex;
   flex-direction: column;
   height: 100%;
-  transition: width var(--duration-normal) var(--ease-default);
+  /* 侧边栏切换宽度时直接单帧完成，避免 140ms 逐帧宽度变化带动右侧整栏重排与重绘 */
   /* 按钮会向内容区伸出少量空间，层级需要高于标签栏才能保证显示和点击。 */
   z-index: 750;
 }

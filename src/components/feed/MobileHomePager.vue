@@ -118,6 +118,7 @@ async function loadTabs() {
   }
   // 更新栏目配置时保留当前选择，仅在栏目已移除或首次加载时采用默认项。
   if (!tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = resolvePreferredHomeTab(tabs.value, settings.settings.defaultHomeTab);
+  preparePreview(activeIndex.value);
   setPosition(activeIndex.value);
   visited.add(activeKey.value);
   await nextTick(); measure();
@@ -164,8 +165,15 @@ async function selectSubTab(selection: HomeSubChannelSelection) {
 function nestedScroller(target: EventTarget | null) {
   let el = target instanceof HTMLElement ? target : null;
   while (el && el !== viewport.value) {
-    const overflow = getComputedStyle(el).overflowX;
-    if ((overflow === 'auto' || overflow === 'scroll') && el.scrollWidth > el.clientWidth + 1) return true;
+    if (el.hasAttribute('data-discovery-horizontal-scroll')
+      || ((el.classList.contains('hot-channel-tabs') || el.classList.contains('hot-search-chips'))
+        && el.scrollWidth > el.clientWidth + 1)) {
+      return true;
+    }
+    if (el.scrollWidth > el.clientWidth + 1) {
+      const overflow = getComputedStyle(el).overflowX;
+      if (overflow === 'auto' || overflow === 'scroll') return true;
+    }
     el = el.parentElement;
   }
   return false;
@@ -185,7 +193,6 @@ function moveDrag(event: PointerEvent) {
     if (Math.abs(dx) <= 8) return;
     if (nestedScroller(drag.target)) { drag = null; return; }
     drag.axis = 'horizontal'; viewport.value?.setPointerCapture(event.pointerId);
-    preparePreview(activeIndex.value);
     moving.value = true;
   }
   pendingPosition = Math.max(0, Math.min(tabs.value.length - 1, drag.origin - dx / width));
@@ -260,7 +267,8 @@ function unbind() {
 function resetGesture() {
   drag = null; stopAnimation(); cancelAnimationFrame(moveFrame); moveFrame = 0; setPosition(activeIndex.value); moving.value = false; clearTimeout(wheelTimer); wheelDelta = 0;
 }
-watch(tabs, () => { if (tabs.value.length && !tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = getHomeTabKey(tabs.value[0]!); if (!drag && !frame) setPosition(activeIndex.value); });
+watch(activeIndex, (index) => { if (!moving.value && !frame) preparePreview(index); });
+watch(tabs, () => { if (tabs.value.length && !tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = getHomeTabKey(tabs.value[0]!); if (!drag && !frame) { preparePreview(activeIndex.value); setPosition(activeIndex.value); } });
 function observeViewport() {
   stopObservingResize?.();
   stopObservingResize = viewport.value ? observeResizeOnFrame(viewport.value, measure) : undefined;
@@ -303,7 +311,7 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
   .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .feed-scroll-container) { scroll-padding-top: 0; }
   .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .feed-scroll-container::before) { display: none; }
 }
-.mobile-home-pager:not(.is-pager-moving) .pager-page[aria-hidden="true"] :deep(*),
-.mobile-home-pager:not(.is-pager-moving) .pager-page[aria-hidden="true"] :deep(*::before),
-.mobile-home-pager:not(.is-pager-moving) .pager-page[aria-hidden="true"] :deep(*::after) { animation-play-state: paused !important; }
+.pager-page[aria-hidden="true"] :deep(*),
+.pager-page[aria-hidden="true"] :deep(*::before),
+.pager-page[aria-hidden="true"] :deep(*::after) { animation-play-state: paused !important; }
 </style>

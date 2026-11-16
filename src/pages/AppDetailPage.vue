@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || followLoading || discussionsLoading || commentsLoading || versionsLoading || discoverersLoading || giftsLoading || relatedAppsLoading || relatedAlbumsLoading }" class="page-container custom-scrollbar" @scroll="handlePageScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || followLoading || discussionsLoading || commentsLoading || versionsLoading || discoverersLoading || giftsLoading || relatedAppsLoading || relatedAlbumsLoading }" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handlePageScroll">
     <!-- 当前应用标题 -->
     <div class="detail-nav-bar">
       <span v-if="appTitle" class="nav-app-name">{{ appTitle }}</span>

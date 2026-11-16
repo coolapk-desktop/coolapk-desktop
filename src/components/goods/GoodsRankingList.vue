@@ -1,5 +1,5 @@
 <template>
-  <div ref="pageRef" v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading }" class="page-container custom-scrollbar">
+  <div ref="pageRef" v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading }" data-resource-scroll-root class="page-container custom-scrollbar">
     <div class="page-header">
       <div class="header-main">
         <h2 class="page-title"><i :class="[icon, 'icon']"></i> {{ title }}</h2>

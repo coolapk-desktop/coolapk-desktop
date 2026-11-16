@@ -160,6 +160,7 @@ describe('按实际尺寸缩放图片，避免合成图层放大接缝', () => {
       innerWidth: { configurable: true, value: originalWidth },
       innerHeight: { configurable: true, value: originalHeight },
     });
+    window.dispatchEvent(new Event('resize'));
   });
 
   it('大图按视口适配，放大修改宽高，旋转和平移不通过 transform 缩放', async () => {
@@ -347,7 +348,10 @@ describe.each(['Android', 'Desktop'])('移动布局官方长图阅读策略：%s
     loadResourceMock.mockImplementation(async url => dataOf(url));
     memoryCacheMock.mockReturnValue(null);
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.dispatchEvent(new Event('resize'));
+  });
 
   it('超长图按宽度从顶部显示，可滑动读到底部且不会误关闭', async () => {
     const { wrapper, store, stage } = await mountViewer();
@@ -357,9 +361,9 @@ describe.each(['Android', 'Desktop'])('移动布局官方长图阅读策略：%s
     expect(image.style.height).toBe('8000px');
     expect(image.style.top).toBe('calc(50% - 400px)');
     await swipe(stage, point(200, 600), point(200, -10000));
-    expect(image.style.transform).toContain('translate(0px, -7200px)');
+    expect(image.style.transform).toContain('translate3d(0px, -7200px, 0)');
     await swipe(stage, point(200, 200), point(200, 10000));
-    expect(image.style.transform).toContain('translate(0px, 0px)');
+    expect(image.style.transform).toContain('translate3d(0px, 0px, 0)');
     expect(store.activeImageViewer).not.toBeNull();
     await swipe(stage, point(300, 400), point(100, 400));
     expect(counter(wrapper)).toBe('2 / 3');
@@ -416,7 +420,7 @@ describe.each(['Android', 'Desktop'])('移动布局官方长图阅读策略：%s
     expect(image.style.top).toBe('calc(50% - 370px)');
     await wrapper.get('.viewer-img').trigger('mousedown', { button: 0, clientX: 200, clientY: 600 });
     await wrapper.get('.image-stage').trigger('mousemove', { clientX: 200, clientY: -10000 });
-    expect(image.style.transform).toContain('translate(0px, -7260px)');
+    expect(image.style.transform).toContain('translate3d(0px, -7260px, 0)');
     wrapper.unmount();
   });
 });
@@ -467,12 +471,12 @@ describe('图片查看器触摸手势', () => {
     const ghost = wrapper.get('.viewer-ghost');
     // 幽灵层承接上一张，朝左侧继续滑出。
     expect(ghost.attributes('src')).toBe(dataOf('https://img.example/0.jpg'));
-    expect(ghost.attributes('style')).toMatch(/translate\(-\d+px/);
+    expect(ghost.attributes('style')).toMatch(/translate3d\(-\d+px, 0, 0\)/);
     expect(ghost.classes()).toContain('is-sliding');
     // 新画面从右侧滑入，最终停在居中位置。
     const img = wrapper.get('.viewer-img');
     expect(img.classes()).toContain('is-sliding');
-    expect(img.attributes('style')).toContain('translate(0px, 0px)');
+    expect(img.attributes('style')).toContain('translate3d(0px, 0px, 0)');
     wrapper.unmount();
   });
 
@@ -494,7 +498,7 @@ describe('图片查看器触摸手势', () => {
 
     expect(counter(wrapper)).toBe('1 / 3');
     expect(wrapper.get('.viewer-img').classes()).toContain('is-sliding');
-    expect(wrapper.get('.viewer-img').attributes('style')).toContain('translate(0px, 0px)');
+    expect(wrapper.get('.viewer-img').attributes('style')).toContain('translate3d(0px, 0px, 0)');
     wrapper.unmount();
   });
 
@@ -529,7 +533,7 @@ describe('图片查看器触摸手势', () => {
     await swipe(stage, point(300, 400), point(180, 400));
 
     expect(counter(wrapper)).toBe('1 / 3');
-    expect(wrapper.get('.viewer-img').attributes('style')).toContain('translate(-120px');
+    expect(wrapper.get('.viewer-img').attributes('style')).toContain('translate3d(-120px, 0px, 0)');
     wrapper.unmount();
   });
 
@@ -684,7 +688,7 @@ describe('图片查看器触摸手势', () => {
     await flushPromises();
 
     expect(store.activeImageViewer).not.toBeNull();
-    expect(wrapper.get('.viewer-img').attributes('style')).toContain('translate(0px, 0px)');
+    expect(wrapper.get('.viewer-img').attributes('style')).toContain('translate3d(0px, 0px, 0)');
     wrapper.unmount();
   });
 

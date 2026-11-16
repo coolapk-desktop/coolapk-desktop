@@ -167,6 +167,8 @@ const usesFlexTopbarAnimation = computed(() => !isMobileLayoutDisabled.value
   && readingViewportWidth.value <= 720
   && !hasPageToolbar.value
   && route.path !== '/'
+  && route.path !== '/digital'
+  && route.path !== '/discover'
   && !route.path.startsWith('/topic/')
   && !route.path.startsWith('/my-plugins'));
 
@@ -241,11 +243,22 @@ watch(isReadingTopbarAnimating, animating => {
   }
 }, { flush: 'post' });
 
+let cachedTopicControls: HTMLElement | null = null;
+let cachedMobileTopbar: HTMLElement | null = null;
+
 /** 话题栏目吸顶后由下方玻璃向上延伸，避免上下两次独立模糊在接缝处产生色差。 */
 function updateTopicGlass(scroller?: Element) {
-  const controls = (scroller || mainContent.value)?.querySelector('.topic-sticky-controls');
-  const topbar = mainContent.value?.closest('.app-shell')?.querySelector('.mobile-reading-topbar');
-  topicGlassJoined.value = route.path.startsWith('/topic/') && window.innerWidth <= 720 && Boolean(controls && topbar && controls.getBoundingClientRect().top <= topbar.getBoundingClientRect().bottom + 1);
+  if (!route.path.startsWith('/topic/') || window.innerWidth > 720) {
+    topicGlassJoined.value = false;
+    return;
+  }
+  const controls = cachedTopicControls?.isConnected
+    ? cachedTopicControls
+    : (cachedTopicControls = (scroller || mainContent.value)?.querySelector<HTMLElement>('.topic-sticky-controls') || null);
+  const topbar = cachedMobileTopbar?.isConnected
+    ? cachedMobileTopbar
+    : (cachedMobileTopbar = mainContent.value?.closest('.app-shell')?.querySelector<HTMLElement>('.mobile-reading-topbar') || null);
+  topicGlassJoined.value = Boolean(controls && topbar && controls.getBoundingClientRect().top <= topbar.getBoundingClientRect().bottom + 1);
 }
 
 type LayoutSample = 'user_enter' | 'user_scroll' | 'home_return';
@@ -429,7 +442,9 @@ onUnmounted(() => {
   .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls :deep(.top-bar.has-window-controls) { position: relative; z-index: 35; }
   .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { will-change: transform, opacity; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translate3d(0, calc(100% + var(--mobile-bottom-nav-offset, 20px) + 16px), 0); opacity: 0; pointer-events: none; }
-  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav { --mobile-bottom-overlay-space: env(safe-area-inset-bottom, 0px); }
+  /* 仅更新阅读容器本身的内边距与定位属性，不改祖先节点的 CSS 变量，避免全树 3000+ 节点样式重算。 */
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.feed-scroll-container) { padding-bottom: calc(var(--keyboard-inset, 0px) + env(safe-area-inset-bottom, 0px)); }
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.mobile-sidebar-backdrop) { bottom: env(safe-area-inset-bottom, 0px); }
   @media (prefers-reduced-motion: reduce) {
     .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { transition: none; }
   }
@@ -453,22 +468,34 @@ onUnmounted(() => {
     --mobile-glass-topbar-space: calc(var(--mobile-topbar-height) + var(--app-safe-area-top, 0px));
     --mobile-home-header-fixed-space: calc(var(--mobile-glass-topbar-space) + 48px);
   }
-  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; grid-template-rows: 1fr; padding-top: 0; }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation, .has-discovery-navigation) .mobile-reading-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; grid-template-rows: 1fr; padding-top: 0; }
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar { background: var(--topic-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; pointer-events: none; }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-discovery-navigation) .mobile-reading-topbar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; pointer-events: none; }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--app-safe-area-top, 0px); background: var(--home-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); opacity: 0; transition: opacity 180ms ease; pointer-events: none; z-index: 1; }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls).reading-navigation-hidden .mobile-reading-topbar::before { opacity: 1; }
-  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar-content { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .app-shell:not(.prevent-mobile-layout).has-discovery-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--app-safe-area-top, 0px); background: var(--surface); pointer-events: none; z-index: 1; }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation, .has-discovery-navigation) .mobile-reading-topbar-content { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation { --mobile-home-header-space: var(--mobile-home-header-fixed-space); }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { display: block; pointer-events: auto; background: var(--home-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); will-change: transform; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden .mobile-reading-topbar-stack { transform: translate3d(0, -100%, 0); pointer-events: none; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden { --mobile-home-header-space: var(--app-safe-area-top, 0px); }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation.has-mobile-window-controls.reading-navigation-hidden { --mobile-home-header-space: 0px; }
+  /* 数码与发现顶栏、正文区同步做纯合成层位移，避免收起/展开触发 flex 容器重排与布局偏移。 */
+  .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar-stack { display: block; pointer-events: auto; background: var(--surface); will-change: transform; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .app-shell:not(.prevent-mobile-layout).has-discovery-navigation:not(.has-mobile-window-controls) .app-body { margin-top: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .app-body { will-change: transform; transform: translate3d(0, var(--mobile-topbar-height), 0); transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-discovery-navigation).reading-navigation-hidden .mobile-reading-topbar-stack { transform: translate3d(0, -100%, 0); pointer-events: none; }
+  .app-shell:not(.prevent-mobile-layout).has-discovery-navigation.reading-navigation-hidden .app-body { transform: translate3d(0, 0, 0); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden :deep(.mobile-home-pager.has-joined-toolbar .feed-scroll-container) { scroll-padding-top: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden :deep(.mobile-home-pager.has-joined-toolbar .hot-channel-tabs.is-fixed) { top: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden :deep(.mobile-home-pager.has-joined-toolbar .has-follow-subchannels .main-feed-column) { padding-top: var(--app-safe-area-top, 0px); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.has-mobile-window-controls.reading-navigation-hidden :deep(.mobile-home-pager.has-joined-toolbar .feed-scroll-container) { scroll-padding-top: 0px; }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.has-mobile-window-controls.reading-navigation-hidden :deep(.mobile-home-pager.has-joined-toolbar .hot-channel-tabs.is-fixed) { top: 0px; }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.has-mobile-window-controls.reading-navigation-hidden :deep(.mobile-home-pager.has-joined-toolbar .has-follow-subchannels .main-feed-column) { padding-top: 0px; }
   @media (prefers-reduced-motion: reduce) {
     .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack,
+    .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar-stack,
+    .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .app-body,
     .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { transition: none; }
   }
-  .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls:is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { top: var(--mobile-window-controls-height); }
+  .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls:is(.has-home-navigation, .has-topic-navigation, .has-discovery-navigation) .mobile-reading-topbar { top: var(--mobile-window-controls-height); }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar { background: var(--surface); }
     .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack,

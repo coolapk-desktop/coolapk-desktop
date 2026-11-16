@@ -79,6 +79,8 @@ function checkOverflow() {
     return;
   }
   const el = bodyRef.value;
+  // 容器被 KeepAlive 缓存切走或尚未排版（尺寸为 0）时保留当前展开态判定，避免返回首帧先隐藏按钮再弹出触发整列偏移
+  if (!el.isConnected || el.clientWidth <= 0 || el.clientHeight <= 0) return;
   // 只有在元素真实内容高度大于可视高度（发生了 CSS line-clamp 截断）时才判定为需要展开
   isOverflowing.value = el.scrollHeight > el.clientHeight + 4;
 }
@@ -253,7 +255,7 @@ watch(
   text-decoration: none;
   padding: 0 4px;
   border-radius: 4px;
-  transition: all 0.18s ease;
+  transition: background-color 0.18s ease, color 0.18s ease;
 }
 
 .feed-body :deep(a):hover {
@@ -278,7 +280,7 @@ watch(
   background: var(--brand-soft, rgba(16, 185, 129, 0.08));
   border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .expand-btn:hover {

@@ -649,7 +649,7 @@ async function toggleDyhFollow() {
   font-weight: 500;
   border-radius: var(--radius-pill, 14px);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
 }
 
@@ -710,7 +710,7 @@ async function toggleDyhFollow() {
   padding: 3px 10px;
   border-radius: 6px;
   font-weight: 500;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .discovery-expand-btn:hover {
   background: var(--brand-soft, rgba(16, 185, 129, 0.12));
@@ -742,7 +742,7 @@ async function toggleDyhFollow() {
   color: var(--text-primary);
   cursor: pointer;
   font: inherit;
-  transition: all 0.18s ease;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
 .discovery-icon-grid-item.is-category-item {
   width: 100%;
@@ -932,7 +932,7 @@ async function toggleDyhFollow() {
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   user-select: none;
   white-space: nowrap;
 }
@@ -989,7 +989,7 @@ async function toggleDyhFollow() {
 .carousel-control.previous { left: 12px; }
 .carousel-control.next { right: 12px; }
 .carousel-dots { position: absolute; bottom: 10px; left: 50%; display: flex; gap: 5px; transform: translateX(-50%); z-index: 10; }
-.carousel-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); transition: all 0.2s ease; }
+.carousel-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.6); transition: opacity 0.2s ease, transform 0.2s ease, background-color 0.2s ease; }
 .carousel-dots span.active { width: 16px; border-radius: 4px; background: white; }
 .discovery-image-card:hover,
 .discovery-generic-card:hover,

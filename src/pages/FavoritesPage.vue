@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <!-- 分类快捷标签栏与操作栏 -->
     <div v-if="authStore.isLoggedIn" class="category-toolbar">
       <div class="category-tabs">

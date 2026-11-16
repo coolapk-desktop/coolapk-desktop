@@ -79,7 +79,7 @@
         </div>
       </aside>
 
-      <main ref="productScrollContainer" class="digital-content" @scroll.passive="handleScroll">
+      <main ref="productScrollContainer" data-resource-scroll-root class="digital-content" @scroll.passive="handleScroll">
         <template v-if="isCategoryTab">
           <div v-if="!selected" class="digital-content-empty"><i class="fas fa-arrow-left"></i><span>从左侧选择服务端品牌或分类</span></div>
           <template v-else>
@@ -183,7 +183,7 @@
       </div>
     </template>
 
-    <main ref="tabScrollContainer" v-else class="digital-server-content" @scroll.passive="handleTabScroll">
+    <main ref="tabScrollContainer" v-else data-resource-scroll-root class="digital-server-content" @scroll.passive="handleTabScroll">
       <div v-if="tabItems.length > 0 && !mobilePresentation" class="digital-content-toolbar">
         <div class="toolbar-left">
           <span class="toolbar-title">{{ selectedTabTitle }}</span>
@@ -941,6 +941,11 @@ function navigateNative(target: string, title: string) {
 }
 
 function handleScroll(event: Event) {
+  if (isDynamicCategoryView.value) {
+    if (dynamicCategoryLoading.value || dynamicCategoryNoMore.value) return;
+  } else if (productLoading.value || productNoMore.value) {
+    return;
+  }
   const element = event.target as HTMLElement;
   if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 480) {
     if (isDynamicCategoryView.value) void loadDynamicCategory(true);
@@ -949,8 +954,9 @@ function handleScroll(event: Event) {
 }
 
 function handleTabScroll(event: Event) {
+  if (selectedTabWebUrl.value || tabLoading.value || tabNoMore.value) return;
   const element = event.target as HTMLElement;
-  if (!selectedTabWebUrl.value && element && element.scrollHeight - element.scrollTop - element.clientHeight < 480) void loadTabItems(true);
+  if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 480) void loadTabItems(true);
 }
 
 function observePaginationSentinels() {
@@ -1116,7 +1122,7 @@ async function refreshMobilePage() { if (!digitalTabs.value.length) { await load
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 .view-btn:hover {
   color: var(--text-primary);

@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <!-- 未登录引导 -->
     <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
     <div v-else-if="!authStore.isLoggedIn" class="empty-wrapper">

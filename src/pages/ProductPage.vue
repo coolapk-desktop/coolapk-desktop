@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: headerLoading || feedsLoading || externalLoading || mediaLoading || ratingsLoading }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: headerLoading || feedsLoading || externalLoading || mediaLoading || ratingsLoading }" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div v-if="headerLoading" class="product-header-card skeleton-header">
       <LoadingState text="正在加载产品信息..." />
     </div>

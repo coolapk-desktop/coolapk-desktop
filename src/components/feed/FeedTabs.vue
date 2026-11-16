@@ -80,7 +80,7 @@ function setSwipeProgress(progress: number) {
   if (!indicator.value || !tabCenters.length) return;
   const value = Math.max(0, Math.min(tabCenters.length - 1, progress));
   const from = tabCenters[Math.floor(value)], to = tabCenters[Math.ceil(value)];
-  indicator.value.classList.add('follows-pager');
+  if (!indicator.value.classList.contains('follows-pager')) indicator.value.classList.add('follows-pager');
   indicator.value.style.transform = `translate3d(${from + (to - from) * (value % 1)}px, 0, 0)`;
   indicator.value.style.opacity = '1';
 }

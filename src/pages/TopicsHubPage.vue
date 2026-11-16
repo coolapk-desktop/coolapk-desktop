@@ -32,7 +32,7 @@
         </div>
       </div>
 
-      <div class="topics-scroll-container custom-scrollbar" @scroll="handleScroll">
+      <div class="topics-scroll-container custom-scrollbar" data-resource-scroll-root @scroll.passive="handleScroll">
         <!-- 加载中状态 -->
         <div v-if="loading && page === 1" class="loading-wrapper">
           <LoadingState text="正在加载话题列表..." />
@@ -134,6 +134,7 @@
         <div
           ref="sidebarSubtopicsListRef"
           class="sidebar-subtopics-list"
+          data-resource-scroll-root
           :class="{ 'show-scrollbar': isSidebarHovered }"
           @scroll.passive="handleSidebarScroll"
         >
@@ -522,12 +523,19 @@ let isUnmounted = false;
 const ghostStyle = computed(() => {
   if (!ghostData.value) return {};
   const g = ghostData.value;
+  const dx = g.isAnimating ? g.targetLeft - g.left : 0;
+  const dy = g.isAnimating ? g.targetTop - g.top : 0;
+  const sx = g.isAnimating && g.width > 0 ? g.targetWidth / g.width : 1;
+  const sy = g.isAnimating && g.height > 0 ? g.targetHeight / g.height : 1;
   return {
     top: `${g.top}px`,
     left: `${g.left}px`,
     width: `${g.width}px`,
     height: `${g.height}px`,
-    transition: g.isAnimating ? 'all 320ms cubic-bezier(0.2, 0, 0, 1)' : 'none',
+    transformOrigin: 'top left',
+    transform: `translate3d(${dx}px, ${dy}px, 0) scale3d(${sx}, ${sy}, 1)`,
+    opacity: g.isAnimating ? 0 : 1,
+    transition: g.isAnimating ? 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease' : 'none',
   };
 });
 
@@ -590,14 +598,14 @@ function scrollSubtopicIntoView(tagName: string, smooth = true) {
 
   nextTick(() => {
     if (isUnmounted) return;
-    doScroll();
-    for (const delay of [80, 200, 380]) {
-      const timer = setTimeout(() => {
-        subtopicScrollTimers.delete(timer);
-        if (!isUnmounted) doScroll();
-      }, delay);
-      subtopicScrollTimers.add(timer);
-    }
+    requestAnimationFrame(() => {
+      if (!isUnmounted) doScroll();
+    });
+    const timer = setTimeout(() => {
+      subtopicScrollTimers.delete(timer);
+      if (!isUnmounted) doScroll();
+    }, 320);
+    subtopicScrollTimers.add(timer);
   });
 }
 
@@ -639,7 +647,7 @@ function handleOpenTopic(topic: any, event: MouseEvent) {
   // 自动将左侧栏滚动到当前点击的话题位置（居中呈现）
   scrollSubtopicIntoView(name, true);
 
-  // 在 nextTick 获取左侧栏对应项位置并执行 FLIP 位移动画
+  // 在 nextTick 获取左侧栏对应项位置并执行纯合成层 FLIP 位移动画
   nextTick(() => {
     const targetItem = subtopicItemRefs.get(name);
     if (targetItem && ghostData.value && showLeftSidebarActual.value) {
@@ -647,15 +655,17 @@ function handleOpenTopic(topic: any, event: MouseEvent) {
       requestAnimationFrame(() => {
         if (ghostData.value) {
           ghostData.value.isAnimating = true;
-          ghostData.value.top = targetRect.top;
-          ghostData.value.left = targetRect.left;
-          ghostData.value.width = targetRect.width;
-          ghostData.value.height = targetRect.height;
+          ghostData.value.targetTop = targetRect.top;
+          ghostData.value.targetLeft = targetRect.left;
+          ghostData.value.targetWidth = targetRect.width;
+          ghostData.value.targetHeight = targetRect.height;
         }
 
-        setTimeout(() => {
+        const clearTimer = setTimeout(() => {
+          subtopicScrollTimers.delete(clearTimer);
           ghostData.value = null;
-        }, 340);
+        }, 280);
+        subtopicScrollTimers.add(clearTimer);
       });
     } else {
       ghostData.value = null;
@@ -968,6 +978,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   align-items: center;
   overflow: hidden;
   box-sizing: border-box;
+  will-change: transform, opacity;
 }
 
 .ghost-inner {
@@ -1152,7 +1163,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: background-color 0.2s cubic-bezier(0.2, 0, 0, 1), color 0.2s cubic-bezier(0.2, 0, 0, 1), border-color 0.2s cubic-bezier(0.2, 0, 0, 1), transform 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 
 .btn-back-grid:hover {
@@ -1221,7 +1232,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   justify-content: center;
   font-size: 12px;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .btn-collapse-sidebar:hover {
@@ -1295,7 +1306,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .picker-item:hover {
@@ -1607,7 +1618,7 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
   font-weight: 600;
   box-shadow: 0 4px 16px rgba(16, 185, 129, 0.45);
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), background-color 0.2s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
 
 .floating-expand-aside-btn:hover {

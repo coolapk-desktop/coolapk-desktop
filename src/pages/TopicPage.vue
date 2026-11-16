@@ -1,9 +1,10 @@
 <template>
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: headerLoading || feedsLoading }"
     ref="pageContainerRef"
+    data-resource-scroll-root
     :data-reading-scroll="embedded ? '' : undefined"
     :class="['page-container', 'custom-scrollbar', { 'is-embedded': embedded, 'has-topic-publish': showTopicPublish && mobileLayout }]"
-    @scroll="handleScroll"
+    @scroll.passive="handleScroll"
   >
     <!-- 1. 话题头部卡片 -->
     <div v-if="topicDetail && !isRatingView" class="topic-official-hero" :class="{ 'has-rating': ratingAvailable }" :style="{ '--topic-color': /^#[\da-f]{6}$/i.test(topicDetail.bgColor || '') ? topicDetail.bgColor : '#4a6263' }">
@@ -816,12 +817,10 @@ let savedScrollTop = 0;
 function handleScroll(e: Event) {
   const target = e.target as HTMLElement;
   savedScrollTop = target.scrollTop;
-  if (isRatingView.value) return;
+  if (isRatingView.value || feedsLoading.value || noMore.value) return;
   const { scrollTop, clientHeight, scrollHeight } = target;
   if (scrollTop + clientHeight >= scrollHeight - 300) {
-    if (!feedsLoading.value && !noMore.value) {
-      fetchFeeds(true);
-    }
+    fetchFeeds(true);
   }
 }
 
@@ -1058,7 +1057,7 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease, opacity 0.2s ease;
 }
 
 .btn-follow.followed {
@@ -1171,7 +1170,7 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
   justify-content: center;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: all 0.15s ease;
+  transition: color 0.15s ease;
 }
 
 .topic-tab-item:hover {

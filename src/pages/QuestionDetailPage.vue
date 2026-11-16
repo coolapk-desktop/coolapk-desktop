@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="question-detail-page page-container custom-scrollbar" :class="{ 'no-image-detail-enabled': detailImagesEnabled }">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" data-resource-scroll-root class="question-detail-page page-container custom-scrollbar" :class="{ 'no-image-detail-enabled': detailImagesEnabled }">
     <div class="question-detail-shell">
       <div v-if="questionLoading && !question" class="state-wrapper">
         <LoadingState text="正在加载问题详情..." />

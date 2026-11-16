@@ -20,7 +20,9 @@ const track = ref<HTMLElement>();
 let width = 1, position = 0, moveFrame = 0;
 const visited = ref(new Set<string>([props.activeKey]));
 const activeIndex = computed(() => Math.max(0, props.tabs.findIndex(tab => tab.key === props.activeKey)));
-let stopObservingResize: (() => void) | undefined, animation = 0;
+let stopObservingResize: (() => void) | undefined;
+let animation = 0;
+let prepareTimer = 0;
 let drag: { id: number; x: number; y: number; time: number; index: number; horizontal: boolean } | undefined;
 let suppressClickUntil = 0;
 
@@ -29,15 +31,27 @@ function setPosition(value: number) {
   if (track.value) track.value.style.transform = `translate3d(${-value * width}px, 0, 0)`;
   emit('progress', value);
 }
+function schedulePrepareNeighbors() {
+  clearTimeout(prepareTimer);
+  prepareTimer = window.setTimeout(() => {
+    prepareTimer = 0;
+    if (!drag) prepareNeighbors();
+  }, 0);
+}
 function settle(target: number) {
   cancelAnimationFrame(animation);
+  clearTimeout(prepareTimer);
   const from = position, started = performance.now();
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || Math.abs(from - target) < .001) { setPosition(target); return; }
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || Math.abs(from - target) < .001) {
+    setPosition(target);
+    schedulePrepareNeighbors();
+    return;
+  }
   const tick = (now: number) => {
     const fraction = Math.min(1, (now - started) / 280);
     setPosition(from + (target - from) * (1 - Math.pow(1 - fraction, 3)));
     if (fraction < 1) animation = requestAnimationFrame(tick);
-    else prepareNeighbors();
+    else schedulePrepareNeighbors();
   };
   animation = requestAnimationFrame(tick);
 }
@@ -102,7 +116,7 @@ onMounted(() => {
     if (nextWidth !== width) { width = nextWidth; cancel(); }
   });
 });
-onUnmounted(() => { stopObservingResize?.(); cancelAnimationFrame(animation); cancelAnimationFrame(moveFrame); });
+onUnmounted(() => { stopObservingResize?.(); cancelAnimationFrame(animation); cancelAnimationFrame(moveFrame); clearTimeout(prepareTimer); });
 </script>
 
 <style scoped>

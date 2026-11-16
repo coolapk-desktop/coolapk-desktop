@@ -3,7 +3,7 @@
     <router-view v-slot="{ Component, route }">
       <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面按「页面实例身份」入栈（见 getPageComponentKey） -->
       <div class="route-transition-stage" :style="{ '--feed-detail-native-easing': feedDetailEasing }">
-      <Transition :name="feedDetailTransition">
+      <Transition :name="feedDetailTransition" :css="Boolean(feedDetailTransition)">
       <!-- 缓存槽位随已开页签增长：长浏览不会把仍在使用的列表挤出缓存，返回时位置与分页都还在 -->
       <keep-alive :max="keepAliveMax">
         <component
@@ -1188,7 +1188,7 @@ body {
   font-size: 12px;
   cursor: pointer;
   border-radius: 4px;
-  transition: all 0.18s ease;
+  transition: background-color 0.18s ease, color 0.18s ease;
 }
 
 .startup-update-actions .btn-text:hover {
@@ -1206,7 +1206,7 @@ body {
   font-weight: 500;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
 
 .startup-update-later {

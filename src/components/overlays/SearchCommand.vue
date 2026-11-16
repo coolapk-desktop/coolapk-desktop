@@ -525,7 +525,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleGlobalKeydown));
   border-radius: var(--radius-pill);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-default);
+  transition: background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
 }
 
 .suggest-tag:hover {

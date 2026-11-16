@@ -1123,7 +1123,6 @@ function handleUserClick() {
   flex: 0 0 var(--sidebar-width);
   display: flex;
   align-items: center;
-  transition: flex-basis var(--duration-normal) var(--ease-default);
 }
 
 .titlebar-brand {
