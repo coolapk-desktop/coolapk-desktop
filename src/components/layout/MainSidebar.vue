@@ -43,6 +43,7 @@
 
         <button v-if="webDesktopNavigation" type="button" class="nav-item action-item" title="搜索" aria-label="搜索" @click="appStore.openSearch">
           <i class="fas fa-magnifying-glass nav-icon" aria-hidden="true"></i>
+          <span v-if="!isCollapsed" class="nav-label">搜索</span>
         </button>
 
         <router-link
@@ -105,7 +106,10 @@
       </router-link>
 
       <button v-if="webDesktopNavigation" type="button" class="nav-item action-item sidebar-account" :title="accountLabel" :aria-label="accountLabel" @click="openAccount($event)" @mouseenter="openSidebarPreview('account', $event)" @mouseleave="closeSidebarPreview('account')" @keydown.esc="closeSidebarPreview('account', $event)">
-        <AppAvatar :src="authStore.user?.userAvatar" :size="24" />
+        <span class="sidebar-account-avatar" aria-hidden="true">
+          <AppAvatar v-if="!authStore.isWebDemo && authStore.isLoggedIn && authStore.user?.userAvatar" :src="authStore.user.userAvatar" :size="34" />
+          <i v-else class="fas fa-user"></i>
+        </span>
         <span v-if="!isCollapsed" class="nav-label">{{ accountLabel }}</span>
       </button>
 
@@ -114,7 +118,7 @@
         <div class="nav-group">
           <button v-if="webDesktopNavigation" type="button" class="nav-item action-item" :title="themeLabel" :aria-label="themeLabel" @click="settingsStore.setTheme(isDark ? 'light' : 'dark')">
             <i :class="[isDark ? 'fas fa-sun' : 'fas fa-moon', 'nav-icon']" aria-hidden="true"></i>
-            <span v-if="!isCollapsed" class="nav-label">{{ themeLabel }}</span>
+            <span v-if="!isCollapsed" class="nav-label">{{ isDark ? '日间' : '夜间' }}</span>
           </button>
           <router-link to="/settings" class="nav-item" active-class="is-active" title="设置" @click="handleNavSelection">
             <OfficialNavIcon class="nav-icon" route="/settings" :active="isNavIconActive('/settings')" />
@@ -180,7 +184,7 @@ const router = useRouter();
 const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
 const appStore = useAppStore();
-const accountLabel = computed(() => authStore.isWebDemo ? '演示模式' : authStore.isLoggedIn ? '个人中心' : '登录账号');
+const accountLabel = computed(() => authStore.isWebDemo || authStore.isLoggedIn ? '资料' : '登录');
 
 function openAccount(event: MouseEvent) {
   if (event.detail === 0 || authStore.isWebDemo) {
@@ -481,8 +485,54 @@ function handleLogout() {
   color: var(--text-primary);
 }
 
+.action-item .nav-icon {
+  display: grid;
+  flex: 0 0 20px;
+  height: 20px;
+  place-items: center;
+}
+
+.action-item .nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar-account {
-  gap: var(--space-3);
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.sidebar-account-avatar {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-primary);
+  font-size: 16px;
+}
+
+.sidebar-account .nav-label {
+  font-weight: var(--font-weight-semibold);
+}
+
+@media (min-width: 1101px) {
+  .main-sidebar:not(.is-collapsed) .sidebar-account {
+    height: 68px;
+    margin-top: var(--space-1);
+    background: var(--background);
+  }
+
+  .main-sidebar:not(.is-collapsed) .sidebar-account:hover,
+  .main-sidebar:not(.is-collapsed) .sidebar-account:focus-visible {
+    background: var(--surface-hover);
+  }
 }
 
 .action-item:focus-visible {
