@@ -347,4 +347,44 @@ describe('AppContextMenu', () => {
     document.body.removeChild(container);
     wrapper.unmount();
   });
+
+  it('评论支持桌面右键和移动端长按触发点赞与取消点赞', async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(AppContextMenu, { attachTo: document.body });
+    const comment = document.createElement('div');
+    comment.setAttribute('data-context-kind', 'comment');
+    comment.setAttribute('data-context-feed-id', 'feed-1');
+    comment.setAttribute('data-context-comment-id', 'sub-1');
+    comment.setAttribute('data-can-like-reply', 'true');
+    comment.setAttribute('data-comment-liked', 'false');
+    comment.setAttribute('data-comment-text', '楼中楼内容');
+    const likeEvents = vi.fn();
+    comment.addEventListener('coolapk-like-reply', likeEvents);
+    document.body.appendChild(comment);
+    try {
+      comment.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 160 }));
+      await wrapper.vm.$nextTick();
+      const likeItem = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(
+        el => el.textContent?.trim() === '点赞评论',
+      );
+      expect(likeItem).toBeDefined();
+      likeItem!.click();
+      expect(likeEvents).toHaveBeenCalledTimes(1);
+
+      comment.setAttribute('data-comment-liked', 'true');
+      vi.advanceTimersByTime(800);
+      dispatchTouch(comment, 'touchstart', [{ clientX: 120, clientY: 160 }]);
+      vi.advanceTimersByTime(500);
+      await wrapper.vm.$nextTick();
+      const unlikeItem = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(
+        el => el.textContent?.trim() === '取消点赞',
+      );
+      expect(unlikeItem).toBeDefined();
+      unlikeItem!.click();
+      expect(likeEvents).toHaveBeenCalledTimes(2);
+    } finally {
+      comment.remove();
+      wrapper.unmount();
+    }
+  });
 });

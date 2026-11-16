@@ -537,35 +537,39 @@ describe('评论完整信息展示', () => {
     expect(mocks.getSubReplies).not.toHaveBeenCalled();
   });
 
-  it('移动端可展开只有预览回复的会话并用回复 ID 点赞和取消点赞', async () => {
+  it('评论和楼中楼支持通过右键或长按菜单事件点赞与取消点赞，移动端只有预览回复时不显示额外展开按钮', async () => {
     const auth = useAuthStore();
     auth.isLoggedIn = true;
-    mocks.likeReply.mockResolvedValueOnce({ code: 200 });
-    mocks.unlikeReply.mockResolvedValueOnce({ code: 200 });
+    mocks.likeReply.mockResolvedValue({ code: 200 });
+    mocks.unlikeReply.mockResolvedValue({ code: 200 });
     const wrapper = mountSection({
       replyRows: [{ id: 'sub-1', message: '楼中楼', likenum: 2 }],
       replynum: 1,
     }, { officialDetail: true });
     try {
       const thread = wrapper.get('.sub-reply-thread');
-      expect(thread.classes()).not.toContain('is-expanded');
-      expect(thread.get('.sub-more-btn').text()).toContain('查看会话');
-      await thread.get('.sub-more-btn').trigger('click');
-      expect(thread.classes()).toContain('is-expanded');
-      expect(mocks.getSubReplies).not.toHaveBeenCalled();
-      const like = thread.get('.sub-like-btn');
-      await like.trigger('click');
+      expect(thread.find('.sub-more-btn').exists()).toBe(false);
+      const subRow = thread.get('.sub-reply-row');
+      expect(subRow.attributes('data-can-like-reply')).toBe('true');
+      expect(subRow.attributes('data-comment-liked')).toBe('false');
+      subRow.element.dispatchEvent(new Event('coolapk-like-reply'));
       await flushPromises();
       expect(mocks.likeReply).toHaveBeenCalledExactlyOnceWith('sub-1');
-      expect(like.attributes('aria-pressed')).toBe('true');
-      expect(like.text()).toBe('3');
-      await like.trigger('click');
+      expect(subRow.attributes('data-comment-liked')).toBe('true');
+      expect(thread.get('.sub-like-btn').text()).toBe('3');
+      subRow.element.dispatchEvent(new Event('coolapk-like-reply'));
       await flushPromises();
       expect(mocks.unlikeReply).toHaveBeenCalledExactlyOnceWith('sub-1');
-      expect(like.text()).toBe('2');
-      await thread.get('.sub-collapse-btn').trigger('click');
-      expect(thread.classes()).not.toContain('is-expanded');
-      expect(thread.get('.sub-reply-text').text()).toBe('楼中楼');
+      expect(subRow.attributes('data-comment-liked')).toBe('false');
+      expect(thread.get('.sub-like-btn').text()).toBe('2');
+
+      const commentRow = wrapper.get('.comment-row');
+      expect(commentRow.attributes('data-can-like-reply')).toBe('true');
+      expect(commentRow.attributes('data-comment-liked')).toBe('false');
+      commentRow.element.dispatchEvent(new Event('coolapk-like-reply'));
+      await flushPromises();
+      expect(mocks.likeReply).toHaveBeenLastCalledWith('reply-1');
+      expect(commentRow.attributes('data-comment-liked')).toBe('true');
     } finally { wrapper.unmount(); }
   });
 

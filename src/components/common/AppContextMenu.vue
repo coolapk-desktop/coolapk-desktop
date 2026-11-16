@@ -379,11 +379,24 @@ function createItems(state: ContextState): MenuItem[] {
   }
 
   if (state.kind === 'comment') {
+    const comment = state.commentElement;
+    const liked = comment?.dataset.commentLiked === 'true';
     const items = [
+      ...(comment && (comment.dataset.canLikeReply === 'true' || Boolean(state.commentId))
+        ? [
+            item(
+              'like-comment',
+              liked ? '取消点赞' : '点赞评论',
+              liked ? 'fas fa-thumbs-up' : 'far fa-thumbs-up',
+              () => {
+                comment.dispatchEvent(new Event('coolapk-like-reply'));
+              },
+            ),
+          ]
+        : []),
       item('reply-comment', '回复评论', 'fas fa-reply', () => replyComment(state)),
       item('copy-comment', '复制评论', 'far fa-copy', () => copyText(state.commentText)),
     ];
-    const comment = state.commentElement;
     if (comment?.dataset.canDeleteReply === 'true') {
       items.push(item('delete-reply', '删除回复', 'far fa-trash-alt', () => {
         comment.dispatchEvent(new Event('coolapk-delete-reply'));

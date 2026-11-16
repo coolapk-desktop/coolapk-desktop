@@ -222,6 +222,11 @@
         data-context-kind="comment"
         :data-context-feed-id="feedId"
         :data-context-comment-id="c.id"
+        :data-can-like-reply="!!c.id"
+        :data-comment-liked="isLiked(c)"
+        :data-can-delete-reply="isOwn(c) && !!c.id"
+        @coolapk-like-reply.stop="toggleLike(c)"
+        @coolapk-delete-reply.stop="handleDeleteComment(c)"
         :data-comment-username="c.username || c.userInfo?.username || '酷友'"
         :data-comment-text="getCommentText(c)"
         @pointerdown="recordCommentPointerStart"
@@ -347,7 +352,7 @@
           </div>
 
           <!-- 2. 带竖线的多层级楼中楼回复 -->
-          <div v-if="commentSearchTerms.length ? getVisibleSubReplies(c).length > 0 : getSubReplyRows(c).length > 0 || hasSubReplyMore(c)" class="sub-reply-thread" :class="{ 'is-expanded': expandedFloorIds.has(subReplyFloorId(c)) }">
+          <div v-if="commentSearchTerms.length ? getVisibleSubReplies(c).length > 0 : getSubReplyRows(c).length > 0 || hasSubReplyMore(c)" class="sub-reply-thread">
             <div
               v-for="sub in getVisibleSubReplies(c)"
               :key="sub.id || sub.uid"
@@ -356,7 +361,10 @@
               data-context-kind="comment"
               :data-context-feed-id="feedId"
               :data-context-comment-id="sub.id"
+              :data-can-like-reply="!!sub.id"
+              :data-comment-liked="isLiked(sub)"
               :data-can-delete-reply="isOwn(sub) && !!sub.id"
+              @coolapk-like-reply.stop="toggleLike(sub)"
               @coolapk-delete-reply.stop="handleDeleteSubReply(sub)"
               :data-comment-username="sub.username || sub.fromUserName || '酷友'"
               :data-comment-text="getCommentText(sub)"
@@ -485,8 +493,7 @@
                 class="sub-more-btn"
                 @click.stop="toggleExpandSub(c)"
               >
-                <template v-if="officialDetail && !hasSubReplyMore(c)">查看会话</template>
-                <template v-else-if="getSubReplyTotal(c) !== null">
+                <template v-if="getSubReplyTotal(c) !== null">
                   查看更多回复({{ getSubReplyTotal(c) }})
                 </template>
                 <template v-else>
@@ -1381,9 +1388,7 @@ function hasSubReplyMore(floor: any): boolean {
 }
 
 function canExpandSubReplies(floor: any): boolean {
-  const rows = getSubReplyRows(floor);
-  return hasSubReplyMore(floor) || rows.length > getEmbeddedSubReplies(floor).length
-    || (props.officialDetail && !!subReplyFloorId(floor) && rows.length > 0);
+  return hasSubReplyMore(floor) || getSubReplyRows(floor).length > getEmbeddedSubReplies(floor).length;
 }
 
 function getVisibleSubReplies(floor: any): any[] {
@@ -2343,8 +2348,7 @@ async function handleSend() {
 .official-detail-comments .sub-reply-thread { grid-row: 5; grid-column: 1 / -1; margin: 12px 0 0; }
 .official-detail-comments .sub-reply-thread { border: 0; padding: 8px; border-radius: 8px; background: var(--surface-hover); }
 .official-detail-comments .sub-reply-row { display: block; padding: 2px 0; }
-.official-detail-comments .sub-reply-avatar, .official-detail-comments .sub-reply-row .user-hover-trigger:has(.sub-reply-avatar), .official-detail-comments .sub-detail-row, .official-detail-comments .sub-reply-thread:not(.is-expanded) .sub-reply-actions { display: none; }
-.official-detail-comments .sub-reply-thread.is-expanded .sub-like-btn { min-height: 32px; padding: 0 8px; font-size: 13px; }
+.official-detail-comments .sub-reply-avatar, .official-detail-comments .sub-reply-row .user-hover-trigger:has(.sub-reply-avatar), .official-detail-comments .sub-detail-row, .official-detail-comments .sub-reply-actions { display: none; }
 .official-detail-comments .sub-reply-main { display: block; }
 .official-detail-comments .sub-reply-meta { display: inline; font-size: 14px; line-height: 1.65; }
 .official-detail-comments .sub-reply-meta :deep(.user-hover-trigger) { display: inline; }
