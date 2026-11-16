@@ -81,20 +81,18 @@
       </div>
     </AppDialog>
 
-    <AppDialog :is-open="Boolean(downloadNotice)" title="正在下载更新" :width="460" @close="downloadNotice = null">
+    <AppDialog :is-open="Boolean(downloadNotice)" title="正在下载更新" dialog-class="update-content-dialog" :width="660" @close="downloadNotice = null">
       <div v-if="downloadNotice" class="startup-update">
-        <p class="startup-update-version">{{ appUpdateName }} {{ downloadNotice.version }}</p>
-        <div v-if="downloadNotice.releaseNotes" class="startup-update-notes-block">
-          <div class="startup-update-notes-header">
-            <i class="fas fa-sparkles text-brand"></i>
-            <span class="startup-update-notes-label">更新日志</span>
-          </div>
-          <div
-            class="startup-update-notes custom-scrollbar"
-            v-html="renderReleaseMarkdown(downloadNotice.releaseNotes)"
-            @click="handleAnchorClick"
-          ></div>
-        </div>
+        <p class="startup-update-notes">{{ appUpdateName }} {{ downloadNotice.version }}</p>
+        <div
+          v-if="downloadNotice.releaseNotes"
+          class="startup-update-notes update-release-notes custom-scrollbar"
+          role="region"
+          aria-label="更新日志"
+          tabindex="0"
+          v-html="renderReleaseMarkdown(downloadNotice.releaseNotes)"
+          @click="handleAnchorClick"
+        ></div>
         <p class="startup-update-notes">已发现新版本，更新包正在后台下载。下载完成后会再次提示是否立即更新。</p>
         <p v-if="downloading" class="startup-update-notes">
           当前进度：{{ downloading.percent }}%（{{ formatBytes(downloading.downloaded) }} / {{ formatBytes(downloading.total) }}）
@@ -905,28 +903,6 @@ body {
 
 .startup-update-date i {
   font-size: 11px;
-}
-
-.startup-update-notes-block {
-  display: flex;
-  flex-direction: column;
-  background: var(--background-secondary, rgba(0, 0, 0, 0.02));
-  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.06));
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-
-.startup-update-notes-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.startup-update-notes-label {
-  color: var(--text-primary);
-  font-weight: 600;
-  font-size: 13px;
 }
 
 .startup-update-notes {
