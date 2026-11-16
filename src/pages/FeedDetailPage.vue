@@ -331,9 +331,7 @@ async function refreshMobilePage() { await fetchDetail(); await refreshFeedCard.
 .is-official-mobile :deep(.feed-card.is-official-mobile-detail) { overflow: visible; }
 .is-official-mobile :deep(.official-detail-comments .comment-toolbar) { top: var(--feed-detail-header-height, 60px); scroll-margin-top: var(--feed-detail-header-height, 60px); }
 .is-official-mobile .feed-detail-shell { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
-.is-official-mobile .feed-detail-shell { transition: padding-bottom 200ms ease; }
 .is-official-mobile.reading-actions-hidden .feed-detail-shell { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
-@media (prefers-reduced-motion: reduce) { .is-official-mobile .feed-detail-shell { transition: none; } }
 .feed-detail-page {
   width: 100%;
   height: 100%;

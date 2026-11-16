@@ -1,8 +1,8 @@
 <template>
-  <div class="mobile-home-pager" :class="{ 'desktop-home-pager': !mobile, 'is-pager-moving': moving, 'has-joined-toolbar': joinedToolbar }">
+  <div class="mobile-home-pager" :class="{ 'desktop-home-pager': !mobile, 'is-pager-moving': moving, 'has-joined-toolbar': joinedToolbar || keepHomeHeaderSpace }">
     <div class="home-main-column">
     <Teleport :to="homeToolbarTarget || undefined" :disabled="!joinedToolbar">
-    <div class="home-toolbar" :class="{ 'is-mobile-toolbar': mobile }">
+    <div class="home-toolbar" :class="{ 'is-mobile-toolbar': mobile, 'is-detached-mobile-toolbar': keepHomeHeaderSpace && !joinedToolbar }">
     <FeedTabs ref="tabBar" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="activeIndex" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
     <FeedLayoutToggle v-if="!mobile" v-model="settings.settings.feedLayout" />
     </div>
@@ -42,7 +42,9 @@ const desktopCommentsOpen = inject(desktopFeedCommentsOpenKey, ref(false));
 const readingNavigation = inject(mobileReadingNavigationKey, undefined);
 const homeToolbarTarget = inject(mobileHomeToolbarTargetKey, undefined);
 const toolbarActive = ref(true);
+const hasExternalToolbarHost = homeToolbarTarget !== undefined;
 const joinedToolbar = computed(() => props.mobile && toolbarActive.value && Boolean(homeToolbarTarget?.value));
+const keepHomeHeaderSpace = computed(() => props.mobile && hasExternalToolbarHost);
 onActivated(() => { toolbarActive.value = true; });
 onDeactivated(() => { toolbarActive.value = false; });
 const sidebarMounted = ref(!props.mobile && !isWebBuild);
@@ -288,12 +290,20 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
 /* 移动首页栏目浮在动态上方，滚动内容进入玻璃背后；顶部留白保证首屏内容可见。 */
 @media (max-width: 720px) {
   .home-toolbar.is-mobile-toolbar { height: 48px; }
+  /* 离开首页触发路由退场过渡时保留原头部位置而不回落撑开列表。 */
+  .home-toolbar.is-detached-mobile-toolbar { position: absolute; top: var(--mobile-glass-topbar-space, 0px); left: 0; right: 0; visibility: hidden; pointer-events: none; }
   .home-toolbar.is-mobile-toolbar :deep(.feed-tabs-wrapper) { background: transparent; border-bottom: 0; }
   .home-toolbar.is-mobile-toolbar :deep(.tab-manage-btn) { background: transparent; border-radius: 0; }
-  .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container) { padding-top: var(--mobile-home-header-space, 0px); scroll-padding-top: var(--mobile-home-header-space, 0px); transition: padding-top 200ms ease, padding-bottom 200ms ease; }
+  .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container) { padding-top: 0; scroll-padding-top: var(--mobile-home-header-space, 0px); }
+  /* 以流内占位代替滚动容器 padding-top，避免 position:sticky（如热榜分类栏）被锁在顶部留白下方。 */
+  .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container::before) { content: ''; display: flow-root; height: var(--mobile-home-header-fixed-space, 0px); pointer-events: none; }
+  .mobile-home-pager.has-joined-toolbar :deep(.hot-channel-tabs.is-fixed) { top: var(--mobile-home-header-space, 0px); }
   /* 关注子栏目位于滚动容器外，先为悬浮主栏目让位，动态区不再重复留白。 */
-  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .main-feed-column) { box-sizing: border-box; padding-top: var(--mobile-home-header-space, 0px); transition: padding-top 200ms ease; }
-  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .feed-scroll-container) { padding-top: 0; scroll-padding-top: 0; }
-  @media (prefers-reduced-motion: reduce) { .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container), .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .main-feed-column) { transition: none; } }
+  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .main-feed-column) { box-sizing: border-box; padding-top: var(--mobile-home-header-space, 0px); }
+  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .feed-scroll-container) { scroll-padding-top: 0; }
+  .mobile-home-pager.has-joined-toolbar :deep(.has-follow-subchannels .feed-scroll-container::before) { display: none; }
 }
+.mobile-home-pager:not(.is-pager-moving) .pager-page[aria-hidden="true"] :deep(*),
+.mobile-home-pager:not(.is-pager-moving) .pager-page[aria-hidden="true"] :deep(*::before),
+.mobile-home-pager:not(.is-pager-moving) .pager-page[aria-hidden="true"] :deep(*::after) { animation-play-state: paused !important; }
 </style>

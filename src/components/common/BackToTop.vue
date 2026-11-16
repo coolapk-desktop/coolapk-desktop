@@ -55,6 +55,9 @@ function checkScroll(e?: Event) {
   let scrollTop = 0;
   if (e && e.target && (e.target as HTMLElement).scrollTop !== undefined) {
     const el = e.target as HTMLElement;
+    if (el.scrollTop === 0 && !showButton.value) {
+      return;
+    }
     // 排除聊天区域内的内部滚动
     if (el.closest?.('.messages-page') || el.classList?.contains('chat-area') || el.classList?.contains('session-list')) {
       showButton.value = false;
@@ -154,7 +157,8 @@ onUnmounted(() => {
   justify-content: center;
   cursor: pointer;
   z-index: 990;
-  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: transform, opacity;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease, background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
 }
 
 .back-to-top-btn:hover {
@@ -190,12 +194,13 @@ onUnmounted(() => {
 /* 动画过渡 */
 .back-to-top-fade-enter-active,
 .back-to-top-fade-leave-active {
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: transform, opacity;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
 }
 
 .back-to-top-fade-enter-from,
 .back-to-top-fade-leave-to {
   opacity: 0;
-  transform: translateY(20px) scale(0.6);
+  transform: translate3d(0, 20px, 0) scale3d(0.6, 0.6, 1);
 }
 </style>

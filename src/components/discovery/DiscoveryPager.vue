@@ -110,5 +110,7 @@ onUnmounted(() => { stopObservingResize?.(); cancelAnimationFrame(animation); ca
 .discovery-pager-track { position: relative; width: 100%; height: 100%; will-change: transform; }
 .discovery-pager-page { position: absolute; top: 0; width: 100%; height: 100%; display: flex; flex-direction: column; min-width: 0; }
 .discovery-pager-page:not(.is-nearby) { content-visibility: hidden; }
-.discovery-pager-page:not(.is-nearby) :deep(*) { animation-play-state: paused !important; }
+.discovery-pager-page[aria-hidden="true"] :deep(*),
+.discovery-pager-page[aria-hidden="true"] :deep(*::before),
+.discovery-pager-page[aria-hidden="true"] :deep(*::after) { animation-play-state: paused !important; }
 </style>

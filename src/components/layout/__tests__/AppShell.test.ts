@@ -472,4 +472,97 @@ describe('AppShell', () => {
     expect(wrapper.findComponent(MobileTopBarStub).exists()).toBe(false);
     expect(wrapper.findComponent(MobileBottomNavStub).exists()).toBe(false);
   });
+
+  it('非首页阅读收起使用合成层 FLIP 状态并在结束、跳转或切回宽屏时清理', async () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
+    window.dispatchEvent(new Event('resize'));
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }));
+    setActivePinia(createPinia());
+    routeState.value.path = routeState.value.fullPath = '/discover';
+    useSettingsStore().settings.disableAutoMobileMode = false;
+    useSettingsStore().settings.autoHideMobileNavigation = true;
+
+    const createdAnims: Array<{ cancel: ReturnType<typeof vi.fn>; onfinish: null | (() => void); oncancel: null | (() => void) }> = [];
+    const wrapper = mount(AppShell, {
+      slots: { default: '<div class="discovery-pager"><section aria-hidden="false"><div class="discover-scroll-container">阅读内容</div></section></div>' },
+      global: {
+        stubs: {
+          TopBar: TopBarStub, MainSidebar: MainSidebarStub, PageTabBar: PageTabBarStub,
+          NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub,
+        },
+      },
+    });
+    try {
+      const topbar = wrapper.get('.mobile-reading-topbar').element as HTMLElement;
+      const stack = wrapper.get('.mobile-reading-topbar-stack').element as HTMLElement;
+      const body = wrapper.get('.app-body').element as HTMLElement;
+      vi.spyOn(topbar, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, 390, wrapper.classes().includes('reading-navigation-hidden') && !wrapper.classes().includes('is-reading-topbar-animating') ? 0 : 80));
+      vi.spyOn(stack, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 390, 80));
+      vi.spyOn(body, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, wrapper.classes().includes('reading-navigation-hidden') || wrapper.classes().includes('is-reading-topbar-animating') ? 0 : 80, 390, 760));
+      for (const target of [stack, body]) {
+        target.animate = vi.fn().mockImplementation(() => {
+          const anim = { cancel: vi.fn(), onfinish: null as null | (() => void), oncancel: null as null | (() => void) };
+          createdAnims.push(anim);
+          return anim as unknown as Animation;
+        }) as unknown as typeof target.animate;
+      }
+
+      const list = wrapper.get('.discover-scroll-container');
+      await list.trigger('wheel', { deltaY: 120 });
+      (list.element as HTMLElement).scrollTop = 120;
+      await list.trigger('scroll');
+      await nextTick();
+      expect(wrapper.classes()).toContain('reading-navigation-hidden');
+      expect(wrapper.classes()).toContain('is-reading-topbar-animating');
+      expect(createdAnims.length).toBeGreaterThanOrEqual(2);
+
+      // 完成后清理动画状态。
+      createdAnims.forEach(a => a.onfinish?.());
+      await nextTick();
+      expect(wrapper.classes()).not.toContain('is-reading-topbar-animating');
+
+      // 再次展开期间发生路由切换时立即取消并复位，避免跨页残留。
+      await list.trigger('wheel', { deltaY: -40 });
+      (list.element as HTMLElement).scrollTop = 80;
+      await list.trigger('scroll');
+      await nextTick();
+      expect(wrapper.classes()).toContain('is-reading-topbar-animating');
+
+      Object.assign(routeState.value, { path: '/me', fullPath: '/me' });
+      await nextTick();
+      expect(wrapper.classes()).not.toContain('is-reading-topbar-animating');
+      expect(body.style.transform).toBe('');
+
+      // 在详情回退切宽屏时也会取消收起动画。
+      Object.assign(routeState.value, { path: '/discover', fullPath: '/discover' });
+      await nextTick();
+      (list.element as HTMLElement).scrollTop = 0;
+      await list.trigger('scroll');
+      await list.trigger('wheel', { deltaY: 120 });
+      (list.element as HTMLElement).scrollTop = 120;
+      await list.trigger('scroll');
+      await nextTick();
+      expect(wrapper.classes()).toContain('is-reading-topbar-animating');
+
+      Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true, writable: true });
+      window.dispatchEvent(new Event('resize'));
+      await nextTick();
+      expect(wrapper.classes()).not.toContain('is-reading-topbar-animating');
+      expect(wrapper.classes()).not.toContain('reading-navigation-hidden');
+    } finally {
+      wrapper.unmount();
+      Object.defineProperty(window, 'innerWidth', { value: previousWidth, configurable: true, writable: true });
+      window.dispatchEvent(new Event('resize'));
+      routeState.value.path = routeState.value.fullPath = '/';
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
 });

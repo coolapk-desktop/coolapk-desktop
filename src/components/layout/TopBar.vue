@@ -1208,14 +1208,14 @@ function handleUserClick() {
   border-radius: var(--radius-pill);
   padding: 0 var(--space-4);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-default);
+  transition: border-color var(--duration-fast) var(--ease-default), background-color var(--duration-fast) var(--ease-default);
   overflow: hidden;
 }
 
 .theme-toggle-icon-btn {
   flex-shrink: 0;
   color: var(--text-secondary);
-  transition: all var(--duration-fast) var(--ease-default);
+  transition: color var(--duration-fast) var(--ease-default), background-color var(--duration-fast) var(--ease-default), transform var(--duration-fast) var(--ease-default);
 }
 
 .theme-toggle-icon-btn:hover {
@@ -1266,7 +1266,7 @@ function handleUserClick() {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   white-space: nowrap;
   flex-shrink: 0;
-  transition: all var(--duration-fast);
+  transition: border-color var(--duration-fast), color var(--duration-fast);
 }
 
 .top-bar-right {

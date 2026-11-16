@@ -472,7 +472,7 @@ function handleLogout() {
   color: var(--text-secondary);
   font-size: var(--font-size-sub);
   font-weight: var(--font-weight-medium);
-  transition: all var(--duration-fast) var(--ease-default);
+  transition: background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
   text-decoration: none;
   border: none;
   background: transparent;
@@ -761,7 +761,7 @@ function handleLogout() {
   padding: 4px 6px;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s ease;
+  transition: color 0.18s ease, background-color 0.18s ease;
   line-height: 1;
 }
 

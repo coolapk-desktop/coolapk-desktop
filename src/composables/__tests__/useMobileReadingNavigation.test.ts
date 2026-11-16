@@ -73,3 +73,31 @@ it('关闭设置或进入禁用场景立即恢复，重新开启后不沿用旧�
   enabled.value = false; expect(navigation.hidden.value).toBe(false);
   enabled.value = true; move(200); expect(navigation.hidden.value).toBe(false);
 });
+
+it('触摸零位移帧与方向锁定后忽略横向抖动，非列表滚动快速跳过', () => {
+  const { navigation, root, scroll, touch, move } = setup();
+  // 先有一次零位移 touchmove，后续纵向移动仍能锁定并触发收起。
+  touch('touchstart', 100, 300);
+  touch('touchmove', 100, 300);
+  touch('touchmove', 100, 210);
+  move(120);
+  expect(navigation.hidden.value).toBe(true);
+
+  // 先锁定横向滑动后，后续轻微纵向偏移不会误触展开。
+  touch('touchstart', 100, 200);
+  touch('touchmove', 140, 202);
+  touch('touchmove', 160, 240);
+  move(80);
+  expect(navigation.hidden.value).toBe(true);
+
+  // 非目标滚动容器的 scroll 事件在快速路径中直接忽略。
+  const other = document.createElement('div');
+  other.className = 'other-scroll';
+  root.append(other);
+  touch('touchstart', 100, 200);
+  touch('touchmove', 100, 280);
+  other.scrollTop = 10;
+  other.dispatchEvent(new Event('scroll'));
+  expect(navigation.hidden.value).toBe(true);
+  void scroll;
+});

@@ -302,4 +302,30 @@ describe('移动首页一体滑动', () => {
     expect(w.findAll('.pager-page')).toHaveLength(3);
     w.unmount();
   });
+
+  it('离开首页导致外置顶栏宿主暂时卸载时保持合并留白并隐藏临时工具栏，不顶开内容区', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const target = ref<HTMLElement | null>(host);
+    const w = mount(MobileHomePager, {
+      props: { mobile: true },
+      global: {
+        provide: { [mobileHomeToolbarTargetKey as symbol]: target },
+        stubs: { HomeTabPanel: Panel, FeedTabs: Tabs },
+      },
+    });
+    await flushPromises();
+    expect(w.classes()).toContain('has-joined-toolbar');
+    expect(w.find('.home-toolbar').exists()).toBe(false);
+
+    target.value = null;
+    await flushPromises();
+    expect(w.classes()).toContain('has-joined-toolbar');
+    const detached = w.find('.home-toolbar');
+    expect(detached.exists()).toBe(true);
+    expect(detached.classes()).toContain('is-detached-mobile-toolbar');
+
+    w.unmount();
+    host.remove();
+  });
 });

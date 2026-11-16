@@ -2170,7 +2170,7 @@ defineExpose({
   background: var(--background-secondary, rgba(0, 0, 0, 0.04));
   border: 1px solid var(--border-light, rgba(0, 0, 0, 0.06));
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
   user-select: none;
   box-sizing: border-box;
 }
@@ -2296,7 +2296,7 @@ defineExpose({
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.06);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
 
 .btn-floating-collapse:hover {
@@ -2317,13 +2317,14 @@ defineExpose({
 
 .floating-collapse-fade-enter-active,
 .floating-collapse-fade-leave-active {
-  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
 }
 
 .floating-collapse-fade-enter-from,
 .floating-collapse-fade-leave-to {
   opacity: 0;
-  transform: translateY(12px) scale(0.94);
+  transform: translate3d(0, 12px, 0) scale3d(0.94, 0.94, 1);
 }
 
 .history-dialog {

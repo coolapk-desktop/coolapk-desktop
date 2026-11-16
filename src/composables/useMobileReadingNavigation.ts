@@ -9,7 +9,7 @@ export function useMobileReadingNavigation(enabled: Readonly<Ref<boolean>>, scro
   const hidden = ref(false);
   let scroller: HTMLElement | null = null;
   let lastTop = 0, distance = 0, direction = 0, intent = 0, intentUntil = 0;
-  let touch: { x: number; y: number; previousY: number; scroller: HTMLElement } | null = null;
+  let touch: { x: number; y: number; previousY: number; scroller: HTMLElement; axis: 'pending' | 'vertical' | 'horizontal' } | null = null;
 
   function reset() {
     hidden.value = false;
@@ -48,18 +48,34 @@ export function useMobileReadingNavigation(enabled: Readonly<Ref<boolean>>, scro
   function onTouchStart(event: TouchEvent) {
     const element = findScroller(event.target);
     const point = event.touches.length === 1 ? event.touches[0] : null;
-    touch = element && point ? { x: point.clientX, y: point.clientY, previousY: point.clientY, scroller: element } : null;
+    touch = element && point ? { x: point.clientX, y: point.clientY, previousY: point.clientY, scroller: element, axis: 'pending' } : null;
     if (touch) { scroller = element; lastTop = element!.scrollTop; distance = direction = intent = 0; }
   }
   function onTouchMove(event: TouchEvent) {
     if (!touch || event.touches.length !== 1) { intent = 0; return; }
     const point = event.touches[0];
-    const dx = point.clientX - touch.x, dy = point.clientY - touch.y;
-    if (Math.abs(dy) > 6 && Math.abs(dy) > Math.abs(dx) * 1.2) markIntent(touch.scroller, touch.previousY - point.clientY);
-    else intent = 0;
+    if (touch.axis === 'horizontal') { intent = 0; return; }
+    if (touch.axis === 'pending') {
+      const dx = point.clientX - touch.x, dy = point.clientY - touch.y;
+      if (Math.abs(dx) > 6 && Math.abs(dx) >= Math.abs(dy)) {
+        touch.axis = 'horizontal';
+        intent = 0;
+        return;
+      }
+      if (Math.abs(dy) > 6 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+        touch.axis = 'vertical';
+      }
+    }
+    if (touch.axis === 'vertical') {
+      const step = touch.previousY - point.clientY;
+      if (step !== 0) markIntent(touch.scroller, step);
+    }
     touch.previousY = point.clientY;
   }
   function onScroll(event: Event) {
+    if (!enabled.value || !(event.target instanceof HTMLElement)) return;
+    const selector = typeof scrollContainer === 'function' ? scrollContainer() : scrollContainer;
+    if (!event.target.matches(selector || '.feed-scroll-container')) return;
     const element = findScroller(event.target);
     if (!element || event.target !== element) return;
     const top = Math.max(0, element.scrollTop);

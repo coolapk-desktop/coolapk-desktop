@@ -234,7 +234,7 @@ defineExpose({ notifyShareSuccess });
   border: none;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0.2, 1);
+  transition: color 0.16s ease, background-color 0.16s ease;
 }
 
 .action-btn span {
@@ -334,7 +334,8 @@ defineExpose({ notifyShareSuccess });
 
 /* 两个独立玻璃表面，外层不遮挡滚动到下方的评论。 */
 .feed-action-bar.official-detail-actions {
-  transition: transform 200ms ease, opacity 200ms ease;
+  will-change: transform, opacity;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
   --detail-glass-tint: color-mix(in srgb, var(--surface) 56%, transparent);
   --detail-glass-edge: #ffffffb8;
   position: fixed;
@@ -352,7 +353,7 @@ defineExpose({ notifyShareSuccess });
   background: transparent;
   isolation: isolate;
 }
-.feed-action-bar.official-detail-actions.reading-hidden { transform: translateY(calc(100% + 20px + env(safe-area-inset-bottom, 0px))); opacity: 0; pointer-events: none; }
+.feed-action-bar.official-detail-actions.reading-hidden { transform: translate3d(0, calc(100% + 20px + env(safe-area-inset-bottom, 0px)), 0); opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .feed-action-bar.official-detail-actions { transition: none; } }
 .official-detail-actions::before,
 .official-detail-actions .official-write-comment {

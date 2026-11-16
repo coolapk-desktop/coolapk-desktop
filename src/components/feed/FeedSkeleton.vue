@@ -81,7 +81,8 @@ withDefaults(
   right: 0;
   bottom: 0;
   left: 0;
-  transform: translateX(-100%);
+  transform: translate3d(-100%, 0, 0);
+  will-change: transform;
   background-image: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0) 0,
@@ -100,7 +101,7 @@ withDefaults(
 
 @keyframes skeleton-shimmer {
   100% {
-    transform: translateX(100%);
+    transform: translate3d(100%, 0, 0);
   }
 }
 </style>

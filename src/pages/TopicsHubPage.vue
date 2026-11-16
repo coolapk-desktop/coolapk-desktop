@@ -1456,11 +1456,14 @@ async function refreshMobilePage() { await fetchTopicData(activeCategoryUrl.valu
 /* 顶栏保留吸顶位置，收起时正文不跳动，合并玻璃也能继续按原位置判定。 */
 .split-center-main.has-topic-top-nav .single-column-top-nav,
 .split-center-main.has-topic-top-nav :deep(.topic-sticky-controls),
-.split-center-main.has-topic-top-nav :deep(.topic-publish-fab) { transition: transform 200ms ease, opacity 200ms ease, visibility 0s; }
+.split-center-main.has-topic-top-nav :deep(.topic-publish-fab) {
+  will-change: transform, opacity;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, visibility 0s;
+}
 .split-center-main.topic-reading-hidden .single-column-top-nav,
 .split-center-main.topic-reading-hidden :deep(.topic-sticky-controls),
-.split-center-main.topic-reading-hidden :deep(.topic-publish-fab) { opacity: 0; visibility: hidden; pointer-events: none; transition-delay: 0s, 0s, 200ms; }
-.split-center-main.topic-reading-hidden :deep(.topic-publish-fab) { transform: translateY(calc(100% + 16px + env(safe-area-inset-bottom, 0px))); }
+.split-center-main.topic-reading-hidden :deep(.topic-publish-fab) { opacity: 0; visibility: hidden; pointer-events: none; transition-delay: 0s, 0s, 220ms; }
+.split-center-main.topic-reading-hidden :deep(.topic-publish-fab) { transform: translate3d(0, calc(100% + 16px + env(safe-area-inset-bottom, 0px)), 0); }
 @media (prefers-reduced-motion: reduce) {
   .split-center-main.has-topic-top-nav .single-column-top-nav,
   .split-center-main.has-topic-top-nav :deep(.topic-sticky-controls),

@@ -1,6 +1,6 @@
 <template>
   <div class="home-page-layout" :class="{ 'has-follow-subchannels': isFollowingTab && followSubChannels.length > 0 }">
-    <div class="main-feed-column">
+    <div ref="mainFeedColumnRef" class="main-feed-column">
       <div v-if="!props.embedded" class="feed-toolbar-row">
         <FeedTabs
           v-model:active-key="activeTab"
@@ -137,7 +137,7 @@
         </div>
 
         <!-- SelectorLinkViewHolder：默认 selectedTab，点击替换当前列表，分类栏按 cardFixedToTop 吸顶。 -->
-        <div v-if="isHotTab && hotChannels.length" class="hot-channel-tabs custom-scrollbar" role="tablist" aria-label="热榜分类" :class="{ 'is-fixed': hotChannelsFixed }">
+        <div v-if="isHotTab && hotChannels.length" ref="hotChannelTabsRef" class="hot-channel-tabs custom-scrollbar" role="tablist" aria-label="热榜分类" :class="{ 'is-fixed': hotChannelsFixed }">
           <button v-for="channel in hotChannels" :key="channel.url" type="button" role="tab" :aria-selected="selectedHotChannelUrl === channel.url" :class="['hot-channel-tab', { active: selectedHotChannelUrl === channel.url }]" @click="selectHotChannel(channel)">{{ channel.title }}</button>
         </div>
 
@@ -392,10 +392,141 @@ import { isRatingFeedEntity } from '../utils/rating';
 const emit = defineEmits<{ 'initial-load-settled': [] }>();
 const props = withDefaults(defineProps<{ embedded?: boolean; tabKey?: string; tabs?: ConfigPageTab[]; selected?: boolean; preview?: boolean }>(), { embedded: false, selected: true, preview: false });
 import { feedPageVisibleKey, feedPageRenderKey, homePagerMovingKey } from '../utils/feedPageVisibility';
+import { mobileReadingNavigationKey } from '../composables/useMobileReadingNavigation';
+import {
+  animateTransformSlide,
+  cancelTransformSlide,
+  prefersReducedMotion,
+  readTranslateOffset,
+} from '../utils/compositorMotion';
 const pagerMoving = inject(homePagerMovingKey, ref(false));
 const desktopCommentsOpen = inject(desktopFeedCommentsOpenKey, ref(false));
+const readingNavigation = inject(mobileReadingNavigationKey, undefined);
+const mainFeedColumnRef = ref<HTMLElement | null>(null);
+const hotChannelTabsRef = ref<HTMLElement | null>(null);
 provide(feedPageVisibleKey, computed(() => props.selected && !pagerMoving.value));
 provide(feedPageRenderKey, computed(() => props.selected || props.preview));
+
+let panelActive = true;
+let pendingFollowHeaderFlip: { col: HTMLElement; beforePad: number; beforeVisual: number } | null = null;
+let pendingHotTabsFlip: { el: HTMLElement; beforeTop: number } | null = null;
+
+function resetHotTabsMotion(el: HTMLElement | null = hotChannelTabsRef.value) {
+  pendingHotTabsFlip = null;
+  if (!el) return;
+  cancelTransformSlide(el);
+  el.style.transform = '';
+  el.style.willChange = '';
+}
+
+function resetFollowColumnMotion(el: HTMLElement | null = mainFeedColumnRef.value) {
+  pendingFollowHeaderFlip = null;
+  resetHotTabsMotion();
+  if (!el) return;
+  cancelTransformSlide(el);
+  el.style.paddingTop = '';
+  el.style.transform = '';
+  el.style.willChange = '';
+}
+
+watch(
+  () => readingNavigation?.hidden.value,
+  (next, prev) => {
+    pendingFollowHeaderFlip = null;
+    pendingHotTabsFlip = null;
+    if (!panelActive || next === undefined || prev === undefined || next === prev || !props.selected) return;
+    const reduced = prefersReducedMotion();
+
+    if (isHotTab.value && hotChannelsFixed.value) {
+      const hotEl = hotChannelTabsRef.value;
+      if (hotEl && hotEl.closest('.app-shell.has-home-navigation')) {
+        if (reduced) {
+          resetHotTabsMotion(hotEl);
+        } else {
+          const beforeTop = hotEl.getBoundingClientRect().top;
+          cancelTransformSlide(hotEl);
+          hotEl.style.transform = '';
+          hotEl.style.willChange = '';
+          pendingHotTabsFlip = { el: hotEl, beforeTop };
+        }
+      }
+    }
+
+    if (!isFollowingTab.value || followSubChannels.value.length === 0) return;
+    const col = mainFeedColumnRef.value;
+    if (!col || !col.closest('.app-shell.has-home-navigation')) return;
+    if (reduced) {
+      resetFollowColumnMotion(col);
+      return;
+    }
+    const beforePad = parseFloat(getComputedStyle(col).paddingTop) || 0;
+    const beforeOffset = readTranslateOffset(col, 'y');
+    const beforeVisual = beforePad + beforeOffset;
+    cancelTransformSlide(col);
+    col.style.paddingTop = '';
+    col.style.transform = '';
+    col.style.willChange = '';
+    pendingFollowHeaderFlip = { col, beforePad, beforeVisual };
+  },
+  { flush: 'pre' },
+);
+
+watch(
+  () => readingNavigation?.hidden.value,
+  () => {
+    const hotPending = pendingHotTabsFlip;
+    pendingHotTabsFlip = null;
+    if (hotPending) {
+      const { el, beforeTop } = hotPending;
+      if (panelActive && props.selected && isHotTab.value && el.isConnected) {
+        const afterTop = el.getBoundingClientRect().top;
+        const deltaY = beforeTop - afterTop;
+        if (Math.abs(deltaY) >= 0.5) {
+          animateTransformSlide(el, 'y', deltaY, 0, {
+            onFinish: () => { el.style.willChange = ''; },
+            onCancel: () => { el.style.willChange = ''; },
+          });
+        }
+      } else {
+        resetHotTabsMotion(el);
+      }
+    }
+
+    const pending = pendingFollowHeaderFlip;
+    pendingFollowHeaderFlip = null;
+    if (!pending) return;
+    const { col, beforePad, beforeVisual } = pending;
+    if (!panelActive || !props.selected || !isFollowingTab.value || !col.isConnected) {
+      resetFollowColumnMotion(col);
+      return;
+    }
+    const targetPad = parseFloat(getComputedStyle(col).paddingTop) || 0;
+    const basePad = beforeVisual >= targetPad ? targetPad : Math.min(beforePad, targetPad);
+    const fromY = beforeVisual - basePad;
+    const toY = targetPad - basePad;
+    if (Math.abs(fromY - toY) < 0.5) {
+      resetFollowColumnMotion(col);
+      return;
+    }
+    if (basePad !== targetPad) {
+      col.style.paddingTop = `${basePad}px`;
+    }
+    col.style.willChange = 'transform';
+    if (toY !== 0) {
+      col.style.transform = `translate3d(0, ${toY}px, 0)`;
+    }
+    const anim = animateTransformSlide(col, 'y', fromY, toY, {
+      onFinish: () => resetFollowColumnMotion(col),
+      onCancel: () => {
+        col.style.willChange = '';
+      },
+    });
+    if (!anim) {
+      resetFollowColumnMotion(col);
+    }
+  },
+  { flush: 'post' },
+);
 
 const settingsStore = useSettingsStore();
 
@@ -1762,10 +1893,21 @@ onActivated(() => {
 watch(() => props.selected, (selected) => {
   unbindGlobalListeners();
   if (selected) { bindGlobalListeners(); restoreHeadlineRecommendation(); }
+  else { resetFollowColumnMotion(); }
 });
 watch(() => props.tabs, (tabs) => { if (props.embedded && tabs) serverTabs.value = tabs; });
-onDeactivated(unbindGlobalListeners);
-onUnmounted(() => { feedRequestSequence += 1; unbindGlobalListeners(); });
+onActivated(() => { panelActive = true; });
+onDeactivated(() => {
+  panelActive = false;
+  resetFollowColumnMotion();
+  unbindGlobalListeners();
+});
+onUnmounted(() => {
+  panelActive = false;
+  resetFollowColumnMotion();
+  feedRequestSequence += 1;
+  unbindGlobalListeners();
+});
 defineExpose({ handleHomeSubChannelSelected, activeFollowSubChannelKey });
 
 // 下拉仅刷新当前栏目，不切换筛选、路由或页面实例。
@@ -2298,7 +2440,7 @@ async function refreshMobilePage() { await loadFeeds(true); }
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .chip-btn:hover {

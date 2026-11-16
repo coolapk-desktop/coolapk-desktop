@@ -110,6 +110,8 @@ function activate(path: string) {
     -webkit-backdrop-filter: blur(22px) saturate(165%);
     backdrop-filter: blur(22px) saturate(165%);
     isolation: isolate;
+    transform: translate3d(0, 0, 0);
+    will-change: transform, opacity;
     z-index: 30;
   }
 
@@ -137,7 +139,7 @@ function activate(path: string) {
     font: inherit;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
-    transition: transform 180ms ease, color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), color 160ms ease, background-color 160ms ease;
   }
 
   .mobile-nav-item {

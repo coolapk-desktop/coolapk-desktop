@@ -15,6 +15,7 @@
       'has-web-desktop-navigation': useWebDesktopNavigation,
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
+      'is-reading-topbar-animating': isReadingTopbarAnimating,
     }"
     @scroll.capture="handleShellScroll"
     @wheel.capture="reading.onWheel"
@@ -29,7 +30,7 @@
       </template>
     </TopBar>
     <div class="mobile-reading-topbar"><div class="mobile-reading-topbar-content" :inert="reading.hidden.value || undefined" :aria-hidden="reading.hidden.value || undefined">
-    <div class="mobile-reading-topbar-stack">
+    <div ref="readingTopbarStack" class="mobile-reading-topbar-stack">
     <MobileTopBar
       v-if="!isMobileLayoutDisabled && !hasPageToolbar && !route.path.startsWith('/my-plugins')"
       :navigation-open="mobileNavigationOpen"
@@ -39,7 +40,7 @@
     <div v-show="route.path === '/'" ref="homeToolbarTarget"></div>
     </div>
     </div></div>
-    <div class="app-body">
+    <div ref="appBody" class="app-body">
       <MainSidebar
         :web-desktop-navigation="useWebDesktopNavigation"
         @open-preview="(key, anchor, focus) => topBar?.openSidebarPreview(key, anchor, focus)"
@@ -65,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
 import DesktopFeedCommentPanel from '../feed/DesktopFeedCommentPanel.vue';
 import { desktopFeedCommentsOpenKey, openDesktopFeedCommentsKey } from '../../utils/desktopFeedComments';
 import { useMobileLayout, useWideSplitLayout } from '../../composables/useOfficialMobileFeedDetail';
@@ -92,6 +93,7 @@ import { navigateBack } from '../../utils/navigation';
 import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey, useMobileReadingNavigation } from '../../composables/useMobileReadingNavigation';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { logDiagnostic } from '../../utils/diagnosticLogger';
+import { animateTransformSlide, cancelTransformSlide, readTranslateOffset } from '../../utils/compositorMotion';
 
 const route = useRoute();
 const router = useRouter();
@@ -104,6 +106,9 @@ function updateReadingViewport() { readingViewportWidth.value = window.innerWidt
 const mainContent = ref<HTMLElement | null>(null);
 const topBar = ref<InstanceType<typeof TopBar> | null>(null);
 const homeToolbarTarget = ref<HTMLElement | null>(null);
+const readingTopbarStack = ref<HTMLElement | null>(null);
+const appBody = ref<HTMLElement | null>(null);
+const isReadingTopbarAnimating = ref(false);
 provide(mobileHomeToolbarTargetKey, homeToolbarTarget);
 const desktopCommentFeed = shallowRef<FeedItem | null>(null);
 const mobileLayout = useMobileLayout();
@@ -156,6 +161,85 @@ let readingRoute = route.fullPath;
 watch(reading.hidden, hidden => {
   if (route.fullPath === readingRoute && readingScrollSelectors.has(route.path)) readingStates.set(readingRoute, hidden);
 }, { flush: 'sync' });
+
+const usesFlexTopbarAnimation = computed(() => !isMobileLayoutDisabled.value
+  && mobileLayout.value
+  && readingViewportWidth.value <= 720
+  && !hasPageToolbar.value
+  && route.path !== '/'
+  && !route.path.startsWith('/topic/')
+  && !route.path.startsWith('/my-plugins'));
+
+let readingTopbarRouteTransition = false;
+let pendingTopbarFlip: { next: boolean; wasAnimating: boolean; prevStackY: number; prevBodyY: number; barHeight: number } | null = null;
+let topbarAnimationEpoch = 0;
+
+function resetReadingTopbarAnimation() {
+  topbarAnimationEpoch += 1;
+  pendingTopbarFlip = null;
+  cancelTransformSlide(readingTopbarStack.value);
+  cancelTransformSlide(appBody.value);
+  if (readingTopbarStack.value) readingTopbarStack.value.style.transform = '';
+  if (appBody.value) appBody.value.style.transform = '';
+  isReadingTopbarAnimating.value = false;
+}
+
+watch(usesFlexTopbarAnimation, active => {
+  if (!active) resetReadingTopbarAnimation();
+});
+
+watch(() => reading.hidden.value, (next, previous) => {
+  if (next === previous || readingTopbarRouteTransition || !usesFlexTopbarAnimation.value) {
+    pendingTopbarFlip = null;
+    return;
+  }
+  const stackEl = readingTopbarStack.value;
+  const bodyEl = appBody.value;
+  if (!stackEl || !bodyEl) return;
+  const wasAnimating = isReadingTopbarAnimating.value;
+  const prevStackY = wasAnimating ? readTranslateOffset(stackEl, 'y') : 0;
+  const prevBodyY = wasAnimating ? readTranslateOffset(bodyEl, 'y') : 0;
+  pendingTopbarFlip = { next, wasAnimating, prevStackY, prevBodyY, barHeight: 0 };
+  isReadingTopbarAnimating.value = true;
+}, { flush: 'pre' });
+
+watch(() => reading.hidden.value, () => {
+  const flip = pendingTopbarFlip;
+  pendingTopbarFlip = null;
+  if (!flip) return;
+  const stackEl = readingTopbarStack.value;
+  const bodyEl = appBody.value;
+  if (!stackEl || !bodyEl) {
+    isReadingTopbarAnimating.value = false;
+    return;
+  }
+  const barHeight = stackEl.getBoundingClientRect().height;
+  if (barHeight < 1) {
+    isReadingTopbarAnimating.value = false;
+    return;
+  }
+  const epoch = ++topbarAnimationEpoch;
+  const { next, wasAnimating, prevStackY, prevBodyY } = flip;
+  const fromStack = wasAnimating ? prevStackY : (next ? 0 : -barHeight);
+  const toStack = next ? -barHeight : 0;
+  const fromBody = wasAnimating ? prevBodyY : (next ? barHeight : 0);
+  const toBody = next ? 0 : barHeight;
+  stackEl.style.transform = toStack ? `translate3d(0, ${toStack}px, 0)` : '';
+  bodyEl.style.transform = toBody ? `translate3d(0, ${toBody}px, 0)` : '';
+  animateTransformSlide(stackEl, 'y', fromStack, toStack);
+  animateTransformSlide(bodyEl, 'y', fromBody, toBody, {
+    onFinish: () => {
+      if (epoch === topbarAnimationEpoch) isReadingTopbarAnimating.value = false;
+    },
+  });
+}, { flush: 'post' });
+
+watch(isReadingTopbarAnimating, animating => {
+  if (!animating) {
+    if (readingTopbarStack.value) readingTopbarStack.value.style.transform = '';
+    if (appBody.value) appBody.value.style.transform = '';
+  }
+}, { flush: 'post' });
 
 /** 话题栏目吸顶后由下方玻璃向上延伸，避免上下两次独立模糊在接缝处产生色差。 */
 function updateTopicGlass(scroller?: Element) {
@@ -231,7 +315,10 @@ watch(() => route.fullPath, (next, previous) => {
   topicGlassJoined.value = false;
   desktopCommentFeed.value = null;
   closeMobileNavigation();
+  readingTopbarRouteTransition = true;
+  resetReadingTopbarAnimation();
   reading.restoreHidden(restoreHidden);
+  void nextTick(() => { readingTopbarRouteTransition = false; });
   rootBack.reset();
 });
 
@@ -242,6 +329,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   clearTimeout(layoutSampleTimer);
+  resetReadingTopbarAnimation();
   window.removeEventListener('keydown', handleMobileNavigationKeydown);
   window.removeEventListener('resize', updateReadingViewport);
 });
@@ -320,8 +408,8 @@ onUnmounted(() => {
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar-content { background: var(--surface); } }
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar-content { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
-  /* 网格折叠同时释放高度，不能只把导航移出屏幕而留下占位。 */
-  .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar { display: grid; grid-template-rows: 1fr; flex: 0 0 auto; transition: grid-template-rows 200ms ease, padding-top 200ms ease; }
+  /* 网格折叠同时释放高度，不能只把导航移出屏幕而留下占位；过渡过程由 GPU transform 接管，避免逐帧重排。 */
+  .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar { display: grid; grid-template-rows: 1fr; flex: 0 0 auto; }
   .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar-content { display: block; min-height: 0; overflow: hidden; }
   /* 页面自带工具栏时，外壳仅保留顶部安全区。 */
   .app-shell:not(.prevent-mobile-layout).has-page-toolbar .mobile-reading-topbar { padding-top: var(--app-safe-area-top, 0px); }
@@ -332,12 +420,18 @@ onUnmounted(() => {
   .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar { background: var(--surface); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden .mobile-reading-topbar { grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
-  .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { transition: transform 200ms ease, opacity 200ms ease; }
-  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translateY(calc(100% + var(--mobile-bottom-nav-offset, 20px))); opacity: 0; pointer-events: none; }
+  .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating .mobile-reading-topbar { position: relative; grid-template-rows: 0fr; padding-top: var(--app-safe-area-top, 0px); overflow: visible; z-index: 30; }
+  .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating.has-mobile-window-controls .mobile-reading-topbar { padding-top: 0; }
+  .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating .mobile-reading-topbar-content { position: absolute; top: var(--app-safe-area-top, 0px); left: 0; right: 0; overflow: hidden; z-index: 30; }
+  .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating.has-mobile-window-controls .mobile-reading-topbar-content { top: 0; }
+  .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating .mobile-reading-topbar-stack { display: block; background: var(--surface); }
+  .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating :deep(.mobile-top-bar) { min-height: var(--mobile-topbar-height); padding-top: 0; }
+  .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls :deep(.top-bar.has-window-controls) { position: relative; z-index: 35; }
+  .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { will-change: transform, opacity; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translate3d(0, calc(100% + var(--mobile-bottom-nav-offset, 20px) + 16px), 0); opacity: 0; pointer-events: none; }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav { --mobile-bottom-overlay-space: env(safe-area-inset-bottom, 0px); }
-  .app-shell:not(.prevent-mobile-layout) :deep(.feed-scroll-container) { transition: padding-bottom 200ms ease; }
   @media (prefers-reduced-motion: reduce) {
-    .app-shell:not(.prevent-mobile-layout) .mobile-reading-topbar, .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav), .app-shell:not(.prevent-mobile-layout) :deep(.feed-scroll-container) { transition: none; }
+    .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { transition: none; }
   }
 
   .app-shell:not(.prevent-mobile-layout) {
@@ -355,18 +449,36 @@ onUnmounted(() => {
   }
 
   /* 首页与话题的滚动区域延伸至屏幕顶部，玻璃顶栏覆盖其上；首屏按钮和正文分别预留安全区。 */
-  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) { --mobile-glass-topbar-space: calc(var(--mobile-topbar-height) + var(--app-safe-area-top, 0px)); }
-  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; background: var(--home-glass-tint, var(--topic-glass-tint)); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); }
+  .app-shell:not(.prevent-mobile-layout) {
+    --mobile-glass-topbar-space: calc(var(--mobile-topbar-height) + var(--app-safe-area-top, 0px));
+    --mobile-home-header-fixed-space: calc(var(--mobile-glass-topbar-space) + 48px);
+  }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; grid-template-rows: 1fr; padding-top: 0; }
+  .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar { background: var(--topic-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; pointer-events: none; }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--app-safe-area-top, 0px); background: var(--home-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); opacity: 0; transition: opacity 180ms ease; pointer-events: none; z-index: 1; }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls).reading-navigation-hidden .mobile-reading-topbar::before { opacity: 1; }
   .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar-content { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation { --mobile-home-header-space: calc(var(--mobile-glass-topbar-space) + 48px); }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { display: block; transition: transform 200ms ease; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden .mobile-reading-topbar-stack { transform: translateY(-100%); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation { --mobile-home-header-space: var(--mobile-home-header-fixed-space); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { display: block; pointer-events: auto; background: var(--home-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); will-change: transform; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden .mobile-reading-topbar-stack { transform: translate3d(0, -100%, 0); pointer-events: none; }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation.reading-navigation-hidden { --mobile-home-header-space: var(--app-safe-area-top, 0px); }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation.has-mobile-window-controls.reading-navigation-hidden { --mobile-home-header-space: 0px; }
-  @media (prefers-reduced-motion: reduce) { .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { transition: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack,
+    .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { transition: none; }
+  }
   .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls:is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { top: var(--mobile-window-controls-height); }
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { background: var(--surface); } }
-  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation) .mobile-reading-topbar { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; } }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar { background: var(--surface); }
+    .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack,
+    .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { background: var(--surface); }
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack,
+    .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  }
 
   /* 话题仍由吸顶筛选向上延伸玻璃。 */
   .app-shell:not(.prevent-mobile-layout).topic-glass-joined .mobile-reading-topbar { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
