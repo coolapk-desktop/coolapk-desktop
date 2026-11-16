@@ -139,7 +139,7 @@ export function extractUserSpaceItems(value: unknown): UserSpaceEntity[] {
   return result;
 }
 
-export function normalizeEntityPage(value: unknown, page = 1): EntityPage {
+export function normalizeEntityPage(value: unknown, page = 1, minimumPageSize = 10): EntityPage {
   const response = (value && typeof value === 'object' ? value : {}) as any;
   const payload = response.data ?? response;
   const rows = Array.isArray(payload)
@@ -155,7 +155,7 @@ export function normalizeEntityPage(value: unknown, page = 1): EntityPage {
   return {
     items,
     page: Math.max(page, Number(response.page ?? payload?.page ?? page)),
-    hasMore: typeof explicitHasMore === 'boolean' ? explicitHasMore : items.length >= 10,
+    hasMore: typeof explicitHasMore === 'boolean' ? explicitHasMore : items.length >= minimumPageSize,
     firstItem,
     lastItem,
   };

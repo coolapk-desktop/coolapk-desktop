@@ -95,32 +95,21 @@
               </button>
             </div>
 
-            <div class="sidebar-search">
-              <i class="fas fa-search search-icon"></i>
-              <input
-                v-model="userSearchQuery"
-                type="text"
-                :placeholder="sidebarTab === 'fans' ? '搜索粉丝...' : '搜索已关注酷友...'"
-                class="sidebar-search-input"
-              />
-              <button v-if="userSearchQuery" class="clear-btn" @click="userSearchQuery = ''">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
+            <RelationSearchField v-model="userSearchQuery" :placeholder="sidebarTab === 'fans' ? '搜索粉丝' : '搜索已关注酷友'" />
           </div>
 
-          <div v-if="(sidebarTab === 'users' ? usersLoading : fansLoading) && currentSourceList.length === 0" class="loading-wrapper">
-            <LoadingState text="加载酷友中..." />
+          <div v-if="(sidebarLoading || searching) && !filteredUsers.length" class="loading-wrapper">
+            <LoadingState :text="keyword ? '正在搜索…' : '加载酷友中…'" />
           </div>
 
-          <div v-else-if="filteredUsers.length === 0" class="empty-wrapper">
-            <EmptyState :title="sidebarTab === 'fans' ? '暂无粉丝' : '未找到匹配酷友'" />
+          <div v-else-if="!sidebarError && !filteredUsers.length" class="empty-wrapper">
+            <EmptyState :title="keyword ? '未找到匹配酷友' : sidebarTab === 'fans' ? '暂无粉丝' : '暂无关注酷友'" />
           </div>
 
-          <div v-else class="sidebar-user-list custom-scrollbar" @scroll="onSidebarScroll">
+          <div v-if="filteredUsers.length" class="sidebar-user-list custom-scrollbar" @scroll="onSidebarScroll">
             <!-- 全部动态 汇总 -->
             <div
-              v-if="sidebarTab === 'users'"
+              v-if="sidebarTab === 'users' && !keyword"
               :class="['sidebar-user-item', { active: !selectedUid }]"
               @click="selectUserFilter(null)"
             >
@@ -147,7 +136,7 @@
                 size="sm"
               />
               <div class="user-item-meta">
-                <span class="user-item-name">{{ u.userInfo?.username || u.fUserInfo?.username || u.displayUsername || u.fusername || u.username || '酷友' }}</span>
+                <span class="user-item-name">{{ getSidebarUserName(u) }}</span>
                 <span v-if="relationUserBio(u, sidebarTab === 'fans' ? 'fans' : 'follow')" class="user-item-desc">{{ relationUserBio(u, sidebarTab === 'fans' ? 'fans' : 'follow') }}</span>
               </div>
               <button
@@ -166,6 +155,13 @@
                 <i class="fas fa-chevron-right"></i>
               </button>
             </div>
+          </div>
+          <div v-if="sidebarError" class="sidebar-search-status" role="status">
+            {{ keyword ? '搜索未完成' : '列表加载失败' }}
+            <button type="button" @click="activeList.loadNext()">重试</button>
+          </div>
+          <div v-else-if="searching && filteredUsers.length" class="sidebar-search-status" role="status">
+            <i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i> 正在搜索…
           </div>
         </div>
       </div>
@@ -187,11 +183,13 @@ import FeedCard from '../components/feed/FeedCard.vue';
 import UpdatedFollowUsers from '../components/feed/UpdatedFollowUsers.vue';
 import { isFollowUpdateCard } from '../utils/followUpdates';
 import AppAvatar from '../components/common/AppAvatar.vue';
+import RelationSearchField from '../components/user/RelationSearchField.vue';
 import AppButton from '../components/common/AppButton.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import MoreDataPage from './MoreDataPage.vue';
 import { relationUserBio } from '../types/userSpace';
+import { useRelationList, useRelationSearch } from '../composables/useRelationList';
 
 const router = useRouter();
 const route = useRoute();
@@ -229,22 +227,27 @@ watch(() => route.query.category, value => {
 });
 
 const loading = ref(false);
-const usersLoading = ref(false);
-const fansLoading = ref(false);
 const feeds = ref<any[]>([]);
 // 单个酷友筛选不覆盖关注动态汇总，避免将粉丝的动态混入更新名单。
 const followingUpdateFeeds = ref<any[]>([]);
 const updatedFollowUsers = ref<InstanceType<typeof UpdatedFollowUsers> | null>(null);
-const users = ref<any[]>([]);
-const fansUsers = ref<any[]>([]);
 const selectedUid = ref<string | null>(null);
-const userSearchQuery = ref('');
 /** 侧栏页签由地址栏 `?tab=fans` 决定（顶栏「我的粉丝」入口），切换 query 时在同一实例内跟随。 */
 function sidebarTabFromRoute(value: unknown): 'users' | 'fans' {
   const tab = Array.isArray(value) ? value[0] : value;
   return tab === 'fans' ? 'fans' : 'users';
 }
 const sidebarTab = ref<'users' | 'fans'>(sidebarTabFromRoute(route.query.tab));
+const myUid = computed(() => String(authStore.user?.uid ?? '').trim());
+const followList = useRelationList(myUid, page => CoolapkTauriAPI.getFollowUserList(myUid.value, page), getTargetUid);
+const fansList = useRelationList(myUid, page => CoolapkTauriAPI.getFansList(myUid.value, page), getTargetUid);
+const { users } = followList;
+const { users: fansUsers } = fansList;
+const activeList = computed(() => sidebarTab.value === 'fans' ? fansList : followList);
+const sidebarLoading = computed(() => activeList.value.loading.value);
+const sidebarError = computed(() => activeList.value.error.value);
+const sidebarRelation = computed(() => sidebarTab.value === 'fans' ? 'fans' : 'follow');
+const { search: userSearchQuery, keyword, matches: filteredUsers, searching } = useRelationSearch(activeList, sidebarRelation, getSidebarUserName, getTargetUid);
 
 function switchSidebarTab(tab: 'users' | 'fans') {
   sidebarTab.value = tab;
@@ -252,24 +255,14 @@ function switchSidebarTab(tab: 'users' | 'fans') {
   // watch(route.query.tab) 在 nextTab === sidebarTab 时直接返回，不会触发重复加载。
   void router.replace({ path: route.path, query: { ...route.query, tab } });
   if (tab === 'fans' && fansUsers.value.length === 0) {
-    void loadFansUsers(true);
+    void fansList.loadNext(10);
   }
 }
 
-const currentSourceList = computed(() => {
-  return sidebarTab.value === 'fans' ? fansUsers.value : users.value;
-});
-
-const filteredUsers = computed(() => {
-  const list = currentSourceList.value;
-  if (!userSearchQuery.value.trim()) return list;
-  const q = userSearchQuery.value.trim().toLowerCase();
-  return list.filter((u: any) => {
-    const name = (u.userInfo?.username || u.fUserInfo?.username || u.displayUsername || u.fusername || u.username || '').toLowerCase();
-    const bio = relationUserBio(u, sidebarTab.value === 'fans' ? 'fans' : 'follow').toLowerCase();
-    return name.includes(q) || bio.includes(q);
-  });
-});
+function getSidebarUserName(user: any): string {
+  if (sidebarRelation.value === 'fans') return String(user.userInfo?.username || user.username || user.displayUsername || '酷友');
+  return String(user.fUserInfo?.username || user.userInfo?.username || user.displayUsername || user.fusername || user.username || '酷友');
+}
 
 const selectedUser = computed(() => {
   if (!selectedUid.value) return null;
@@ -358,97 +351,11 @@ async function loadFollowingFeeds(isRefresh: boolean = false) {
   }
 }
 
-const usersPage = ref(1);
-const usersHasMore = ref(true);
-const fansPage = ref(1);
-const fansHasMore = ref(true);
-
-async function loadFollowUsers(isRefresh: boolean = true) {
-  if (usersLoading.value) return;
-  if (isRefresh) {
-    usersPage.value = 1;
-    usersHasMore.value = true;
-    users.value = [];
-  }
-  if (!usersHasMore.value) return;
-  const myUid = String(authStore.user?.uid ?? '').trim();
-  if (!myUid) return;
-
-  usersLoading.value = true;
-  try {
-    let p = usersPage.value;
-    // 自动连续翻页获取（单次最多同步读取 10 页 / 200 人，确保用户拥有的 50+ 关注酷友全部完整呈现）
-    while (p <= 10) {
-      const res = await CoolapkTauriAPI.getFollowUserList(myUid, p);
-      const list = extractList(res);
-      if (list.length === 0) {
-        usersHasMore.value = false;
-        break;
-      }
-      const existingUids = new Set(users.value.map(u => getTargetUid(u)));
-      const uniqueNew = list.filter(u => !existingUids.has(getTargetUid(u)));
-      users.value.push(...uniqueNew);
-      p++;
-      if (list.length < 20) {
-        usersHasMore.value = false;
-        break;
-      }
-    }
-    usersPage.value = p;
-  } catch (err) {
-    console.error('获取关注用户列表失败:', err);
-  } finally {
-    usersLoading.value = false;
-  }
-}
-
-async function loadFansUsers(isRefresh: boolean = true) {
-  if (fansLoading.value) return;
-  if (isRefresh) {
-    fansPage.value = 1;
-    fansHasMore.value = true;
-    fansUsers.value = [];
-  }
-  if (!fansHasMore.value) return;
-  const myUid = String(authStore.user?.uid ?? '').trim();
-  if (!myUid) return;
-
-  fansLoading.value = true;
-  try {
-    let p = fansPage.value;
-    while (p <= 10) {
-      const res = await CoolapkTauriAPI.getFansList(myUid, p);
-      const list = extractList(res);
-      if (list.length === 0) {
-        fansHasMore.value = false;
-        break;
-      }
-      const existingUids = new Set(fansUsers.value.map(u => getTargetUid(u)));
-      const uniqueNew = list.filter(u => !existingUids.has(getTargetUid(u)));
-      fansUsers.value.push(...uniqueNew);
-      p++;
-      if (list.length < 20) {
-        fansHasMore.value = false;
-        break;
-      }
-    }
-    fansPage.value = p;
-  } catch (err) {
-    console.error('获取粉丝用户列表失败:', err);
-  } finally {
-    fansLoading.value = false;
-  }
-}
-
 function onSidebarScroll(e: Event) {
   const el = e.target as HTMLElement;
-  if (!el) return;
+  if (!el || keyword.value || sidebarError.value) return;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
-    if (sidebarTab.value === 'users' && usersHasMore.value && !usersLoading.value) {
-      loadFollowUsers(false);
-    } else if (sidebarTab.value === 'fans' && fansHasMore.value && !fansLoading.value) {
-      loadFansUsers(false);
-    }
+    void activeList.value.loadNext();
   }
 }
 
@@ -508,11 +415,18 @@ function unbindGlobalListeners() {
 
 onMounted(() => {
   if (authStore.isLoggedIn) {
-    void loadFollowUsers();
+    void followList.loadNext(10);
     void loadFollowingFeeds(true);
     // 直接以 ?tab=fans 进入时首个实例的侧栏页签由 setup 快照决定，这里补上粉丝列表。
     if (sidebarTab.value === 'fans') switchSidebarTab('fans');
   }
+});
+
+watch(myUid, () => {
+  userSearchQuery.value = '';
+  if (!authStore.isLoggedIn) return;
+  void followList.loadNext(10);
+  if (sidebarTab.value === 'fans') void fansList.loadNext(10);
 });
 
 onActivated(bindGlobalListeners);
@@ -697,46 +611,23 @@ async function refreshMobilePage() { await loadFollowingFeeds(true); }
   font-weight: 700;
 }
 
-.sidebar-search {
-  position: relative;
+.sidebar-search-status {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  width: 100%;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
-.sidebar-search .search-icon {
-  position: absolute;
-  left: 10px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
-
-.sidebar-search-input {
-  width: 100%;
-  height: 32px;
-  padding: 0 28px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background-color: var(--background);
-  color: var(--text-primary);
-  font-size: 12px;
-  outline: none;
-  transition: all var(--duration-fast);
-}
-
-.sidebar-search-input:focus {
-  border-color: var(--brand-primary);
-}
-
-.clear-btn {
-  position: absolute;
-  right: 8px;
+.sidebar-search-status button {
+  min-height: 32px;
   border: none;
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--brand-primary);
+  font: inherit;
   cursor: pointer;
-  font-size: 11px;
 }
 
 .sidebar-user-list {

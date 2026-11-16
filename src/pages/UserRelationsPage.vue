@@ -12,29 +12,31 @@
 
     <!-- 主体内容区 -->
     <main class="relations-content">
+      <RelationSearchField v-model="search" class="relations-search" :placeholder="`搜索${currentTabLabel}用户`" />
+
       <!-- 初始加载状态 -->
-      <div v-if="loading && !users.length" class="state-wrapper">
-        <LoadingState :text="`正在加载${currentTabLabel}列表...`" />
+      <div v-if="(loading || searching) && !matches.length" class="state-wrapper">
+        <LoadingState :text="keyword ? '正在搜索…' : `正在加载${currentTabLabel}列表...`" />
       </div>
 
       <!-- 错误状态 -->
-      <div v-else-if="error && !users.length" class="state-wrapper">
-        <ErrorState title="列表加载失败" :message="error" @retry="load(true)" />
+      <div v-else-if="error && !matches.length" class="state-wrapper">
+        <ErrorState :title="keyword ? '搜索未完成' : '列表加载失败'" :message="error" @retry="loadNext()" />
       </div>
 
       <!-- 空列表状态 -->
-      <div v-else-if="!users.length" class="state-wrapper">
+      <div v-else-if="!matches.length" class="state-wrapper">
         <EmptyState
-          :title="emptyTitle"
-          :description="emptyDescription"
+          :title="keyword ? '未找到匹配酷友' : emptyTitle"
+          :description="keyword ? undefined : emptyDescription"
         />
       </div>
 
       <!-- 酷友用户列表 -->
       <div v-else class="user-list">
         <div
-          v-for="(user, index) in users"
-          :key="String(user.uid || user.id || index)"
+          v-for="user in matches"
+          :key="relationUid(user)"
           class="user-card"
           @click="openUser(user)"
         >
@@ -76,10 +78,11 @@
 
         <!-- 底部加载更多指示器 -->
         <div class="pagination-footer">
-          <div v-if="loading && users.length" class="loading-more-text">
-            <i class="fas fa-circle-notch fa-spin"></i> 正在加载更多...
+          <ErrorState v-if="error" :title="keyword ? '搜索未完成' : '列表加载失败'" :message="error" @retry="loadNext()" />
+          <div v-else-if="loading || searching" class="loading-more-text" role="status">
+            <i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i> {{ keyword ? '正在搜索…' : '正在加载更多…' }}
           </div>
-          <div v-else-if="!hasMore && users.length > 8" class="no-more-text">
+          <div v-else-if="!keyword && !hasMore && users.length > 8" class="no-more-text">
             已无更多用户
           </div>
         </div>
@@ -90,28 +93,24 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { useUserRelationsStore } from '../stores/userRelations';
 import AppAvatar from '../components/common/AppAvatar.vue';
+import RelationSearchField from '../components/user/RelationSearchField.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import LoadingState from '../components/common/LoadingState.vue';
 import ErrorState from '../components/common/ErrorState.vue';
-import { normalizeEntityPage, relationUserBio } from '../types/userSpace';
+import { relationUserBio } from '../types/userSpace';
+import { useRelationList, useRelationSearch } from '../composables/useRelationList';
 import { navigateBack } from '../utils/navigation';
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const userRelations = useUserRelationsStore();
-
-const users = ref<any[]>([]);
-const page = ref(1);
-const hasMore = ref(true);
-const loading = ref(false);
-const error = ref('');
 
 const uid = computed(() => String(route.params.uid || ''));
 /** 深链直接打开酷友列表时没有上一页，退回该用户主页而不是退出应用。 */
@@ -128,6 +127,12 @@ const category = computed<Category>(() => {
   return isOwnList.value && (tab === 'special' || tab === 'friend') ? tab : 'follow';
 });
 const currentTabLabel = computed(() => tabs.value.find(tab => tab.key === category.value)?.label || '关注');
+const scope = computed(() => uid.value ? `${uid.value}:${category.value}` : '');
+const list = useRelationList(scope, page => category.value === 'fans'
+  ? CoolapkTauriAPI.getFansList(uid.value, page)
+  : CoolapkTauriAPI.getFollowUserList(uid.value, page, category.value), relationUid);
+const { users, loading, hasMore, error, loadNext, reset } = list;
+const { search, keyword, matches, searching } = useRelationSearch(computed(() => list), relation, getUserName, relationUid);
 const emptyTitle = computed(() => `暂无${currentTabLabel.value}用户`);
 const emptyDescription = computed(() => {
   if (category.value === 'fans') return isOwnList.value ? '分享你的想法和生活，吸引更多粉丝关注你！' : '还没有酷友关注该用户';
@@ -143,12 +148,12 @@ function switchCategory(target: Category) {
 }
 
 function getUserName(user: any): string {
-  const info = user.fUserInfo || user.userInfo || {};
+  const info = relation.value === 'fans' ? user.userInfo : (user.fUserInfo || user.userInfo);
   return String(
-    user.fusername ||
+    (relation.value === 'follow' && user.fusername) ||
     user.username ||
-    info.username ||
-    info.displayUserName ||
+    info?.username ||
+    info?.displayUserName ||
     user.displayUsername ||
     user.name ||
     '酷友'
@@ -266,37 +271,6 @@ async function handleFollowToggle(user: any) {
   }
 }
 
-let loadVersion = 0;
-async function load(refresh = false) {
-  if (!uid.value || loading.value || (!refresh && !hasMore.value)) return;
-  if (refresh) {
-    page.value = 1;
-    users.value = [];
-    hasMore.value = true;
-    error.value = '';
-  }
-  loading.value = true;
-  const version = ++loadVersion;
-  try {
-    const response: any = category.value === 'fans'
-      ? await CoolapkTauriAPI.getFansList(uid.value, page.value)
-      : await CoolapkTauriAPI.getFollowUserList(uid.value, page.value, category.value);
-    if (version !== loadVersion) return;
-    const normalized = normalizeEntityPage(response, page.value);
-    const list = normalized.items;
-    const known = new Set(users.value.map((user) => String(user.uid || user.fuid || user.id || '')));
-    const incoming = list.filter((user: any) => !known.has(String(user.uid || user.fuid || user.id || '')));
-    users.value = refresh ? incoming : [...users.value, ...incoming];
-    page.value = Math.max(page.value + 1, normalized.page + 1);
-    hasMore.value = normalized.hasMore;
-  } catch (cause) {
-    if (version !== loadVersion) return;
-    error.value = cause instanceof Error ? cause.message : '用户列表加载失败';
-  } finally {
-    if (version === loadVersion) loading.value = false;
-  }
-}
-
 function openUser(user: any) {
   const target = user.uid || user.fuid || user.id;
   if (target) void router.push(`/user/${target}`);
@@ -306,20 +280,23 @@ function handleScroll(e: Event) {
   const el = e.target as HTMLElement;
   if (!el) return;
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
-    if (!loading.value && hasMore.value) {
-      void load(false);
+    if (!keyword.value && !error.value && hasMore.value) {
+      void loadNext();
     }
   }
 }
 
-watch([uid, category], () => {
-  loading.value = false;
-  void load(true);
+watch(uid, () => { search.value = ''; });
+watch(scope, () => {
+  void loadNext();
 }, { immediate: true });
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
 const mobileRefreshBusy = computed(() => loading.value);
-async function refreshMobilePage() { await load(true); }
+async function refreshMobilePage() {
+  reset();
+  await loadNext();
+}
 </script>
 
 <style scoped>
@@ -594,6 +571,7 @@ async function refreshMobilePage() { await load(true); }
 .tab-btn { flex: 1; min-width: 0; border-radius: 0; padding: 13px 8px; font-size: 14px; white-space: nowrap; }
 .tab-btn.active { background: transparent; border-bottom: 2px solid var(--brand-primary, #10b981); }
 .relations-content { flex: 1 0 auto; max-width: 920px; padding: 20px 24px; }
+.relations-search { margin-bottom: 12px; }
 .user-list { gap: 12px; }
 .user-card { padding: 16px 20px; }
 .user-title-row { flex-wrap: nowrap; }
@@ -611,6 +589,7 @@ async function refreshMobilePage() { await load(true); }
   .header-tabs { top: 52px; max-width: none; }
   .tab-btn { padding: 12px 2px; font-size: 14px; }
   .relations-content { max-width: none; padding: 0; }
+  .relations-search { margin: 12px 16px; }
   .user-list { gap: 0; }
   .user-card { padding: 10px 16px; gap: 8px; border-radius: 0; border-left: 0; border-right: 0; border-top: 0; box-shadow: none; }
   .user-card:hover { transform: none; box-shadow: none; }

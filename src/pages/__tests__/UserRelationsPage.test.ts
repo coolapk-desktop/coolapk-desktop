@@ -47,4 +47,24 @@ describe('酷友关系列表', () => {
     expect(mocks.specialFollow).toHaveBeenCalledWith('2', true);
     wrapper.unmount();
   });
+
+  it.each(['follow', 'fans'])('在 %s 列表中搜索未加载的用户，并在清空后恢复列表', async relation => {
+    mocks.route.params.relation = relation;
+    const fetchList = relation === 'fans' ? mocks.fansList : mocks.followList;
+    fetchList.mockImplementation(async (_uid, page) => ({
+      data: page === 1 ? [{ uid: '2', username: '第一页酷友' }] : page === 2 ? [{ uid: '30', username: 'Alice' }] : [],
+    }));
+    const wrapper = mount(UserRelationsPage, { global: { stubs: { AppAvatar: true, LoadingState: true, ErrorState: true } } });
+    await flushPromises();
+    expect(fetchList).toHaveBeenCalledTimes(1);
+
+    const search = wrapper.get('input[type="search"]');
+    await search.setValue(' aLi ');
+    await vi.waitFor(() => expect(wrapper.findAll('.user-card').map(row => row.text())).toEqual([expect.stringContaining('Alice')]));
+    expect(fetchList.mock.calls.map(call => call[1])).toEqual([1, 2, 3]);
+
+    await wrapper.get('button[aria-label="清空搜索"]').trigger('click');
+    expect(wrapper.findAll('.user-card')).toHaveLength(2);
+    wrapper.unmount();
+  });
 });

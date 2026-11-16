@@ -224,4 +224,28 @@ describe('关注页账号 UID', () => {
     expect(wrapper.get('.sidebar-user-item[role="link"]').text()).toContain('粉丝酷友');
     wrapper.unmount();
   });
+
+  it('侧栏搜索可继续加载第 10 页之后的关注，并在请求失败后从当页重试', async () => {
+    useAuthStore().user = { uid: '100', username: '自己', userAvatar: '' };
+    let failed = false;
+    mocks.getFollowUserList.mockImplementation(async (_uid, page) => {
+      if (page <= 10) return { data: Array.from({ length: 20 }, (_, index) => ({ uid: String(page * 1000 + index), username: '已加载酷友' })) };
+      if (page === 11 && !failed) {
+        failed = true;
+        throw new Error('暂时无法加载');
+      }
+      return { data: page === 11 ? [{ uid: '99001', username: '后面的酷友' }] : [] };
+    });
+    const wrapper = mountFollowingPage();
+    await flushPromises();
+    expect(mocks.getFollowUserList).toHaveBeenCalledTimes(10);
+
+    await wrapper.get('input[type="search"]').setValue('99001');
+    await vi.waitFor(() => expect(wrapper.get('.sidebar-search-status').text()).toContain('搜索未完成'));
+    await wrapper.get('.sidebar-search-status button').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('.sidebar-user-item[role="link"]').text()).toContain('后面的酷友');
+    expect(mocks.getFollowUserList.mock.calls.slice(10).map(call => call[1])).toEqual([11, 11, 12]);
+    wrapper.unmount();
+  });
 });
