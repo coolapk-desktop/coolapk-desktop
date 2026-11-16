@@ -25,6 +25,26 @@
         </div>
         <AppSwitch v-model="settingsStore.settings.notifyPm" />
       </div>
+      <div class="setting-row">
+        <div class="row-info">
+          <span class="row-label">忽略点赞提醒</span>
+          <span class="row-sub">{{ likeMuteDescription }}</span>
+        </div>
+        <div class="mute-duration-group" role="radiogroup" aria-label="忽略点赞提醒时长">
+          <button
+            v-for="option in LIKE_MUTE_OPTIONS"
+            :key="option.key"
+            type="button"
+            class="mute-duration-chip"
+            :class="{ 'is-active': selectedLikeMuteKey === option.key }"
+            role="radio"
+            :aria-checked="selectedLikeMuteKey === option.key"
+            @click="applyLikeMuteOption(option.key)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="setting-group">
@@ -71,12 +91,45 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useSettingsStore } from '../../stores/settings';
+import {
+  LIKE_MUTE_OPTIONS,
+  formatLikeNotificationMuteDescription,
+  getSelectedLikeMuteKey,
+  resolveLikeNotificationMuteUntil,
+  type LikeMuteOptionKey,
+} from '../../utils/likeNotificationMute';
 import { isWebBuild } from '../../api/runtime';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 
 const settingsStore = useSettingsStore();
 const isAndroid = !isWebBuild && /android/i.test(navigator.userAgent);
+const now = ref(Date.now());
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+
+const selectedLikeMuteKey = computed(() =>
+  getSelectedLikeMuteKey(settingsStore.settings.likeNotificationMuteUntil, now.value),
+);
+const likeMuteDescription = computed(() =>
+  formatLikeNotificationMuteDescription(settingsStore.settings.likeNotificationMuteUntil, now.value),
+);
+
+function applyLikeMuteOption(optionKey: LikeMuteOptionKey) {
+  const currentNow = Date.now();
+  now.value = currentNow;
+  settingsStore.settings.likeNotificationMuteUntil = resolveLikeNotificationMuteUntil(optionKey, currentNow);
+}
+
+onMounted(() => {
+  clockTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 30_000);
+});
+
+onBeforeUnmount(() => {
+  if (clockTimer) clearInterval(clockTimer);
+});
 
 async function setNotifications(enabled: boolean) {
   if (isWebBuild && enabled) {
@@ -175,6 +228,40 @@ async function setNotifications(enabled: boolean) {
 .select-control:hover,
 .select-control:focus {
   border-color: var(--brand-primary);
+}
+
+.mute-duration-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.mute-duration-chip {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full, 999px);
+  background: var(--background);
+  color: var(--text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease-default),
+    background-color var(--duration-fast) var(--ease-default),
+    color var(--duration-fast) var(--ease-default);
+}
+
+.mute-duration-chip:hover {
+  border-color: var(--brand-primary);
+  color: var(--text-primary);
+}
+
+.mute-duration-chip.is-active {
+  border-color: var(--brand-primary);
+  background: var(--brand-soft, color-mix(in srgb, var(--brand-primary) 12%, transparent));
+  color: var(--brand-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .tray-tip {

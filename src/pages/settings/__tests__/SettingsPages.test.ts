@@ -263,8 +263,11 @@ describe('设置页面交互', () => {
     const switches = wrapper.findAll('.switch-input');
     await switches[3].setValue(true);
     await wrapper.find('select').setValue('30');
+    const oneDayChip = wrapper.findAll('.mute-duration-chip').find(chip => chip.text().includes('忽略 1 天'))!;
+    await oneDayChip.trigger('click');
     expect(settings.settings.desktopNotifications).toBe(true);
     expect(settings.settings.notificationPollInterval).toBe(30);
+    expect(settings.settings.likeNotificationMuteUntil).toBeGreaterThan(Date.now());
   });
 
   it('隐私页同步设备签名', async () => {

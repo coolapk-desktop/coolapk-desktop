@@ -20,9 +20,11 @@ export function setupAndroidBackgroundNotifications(settings: () => AppSettings,
         return;
       }
       if (current !== revision) return;
+      const likeMuteUntil = Number(value.likeNotificationMuteUntil) || 0;
       await invoke('configure_android_background_notifications', { config: {
         enabled, uid: uid(), intervalMinutes: value.notificationPollInterval,
         notifyReplies: value.notifyReplies, notifyAt: value.notifyAt, notifyPm: value.notifyPm,
+        ...(likeMuteUntil !== 0 ? { likeMuteUntil } : {}),
         sound: Boolean(value.notificationSound),
       } });
     }).catch((error) => {
@@ -32,7 +34,7 @@ export function setupAndroidBackgroundNotifications(settings: () => AppSettings,
   };
   const stop = watch(() => {
     const value = settings();
-    return [uid(), value.androidBackgroundNotifications, value.desktopNotifications, value.notificationPollInterval, value.notifyReplies, value.notifyAt, value.notifyPm, value.notificationSound];
+    return [uid(), value.androidBackgroundNotifications, value.desktopNotifications, value.notificationPollInterval, value.notifyReplies, value.notifyAt, value.notifyPm, value.likeNotificationMuteUntil, value.notificationSound];
   }, synchronize, { immediate: true });
   document.addEventListener('visibilitychange', handleVisibility);
   function handleVisibility() { if (document.visibilityState === 'visible') synchronize(); }

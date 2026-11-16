@@ -131,8 +131,8 @@ onBeforeUnmount(() => close());
 .option-popup {
   position: absolute;
   z-index: 20;
-  inset-block-start: calc(100% + var(--space-1));
-  inset-inline-start: 0;
+  top: calc(100% + var(--space-1));
+  left: 0;
   width: max(100%, 170px);
   max-width: calc(100vw - 2 * var(--space-3));
   max-height: min(280px, 48vh);
@@ -145,7 +145,7 @@ onBeforeUnmount(() => close());
   box-shadow: var(--shadow-dropdown);
 }
 
-.option-popup.align-end { inset-inline: auto 0; }
+.option-popup.align-end { left: auto; right: 0; }
 
 .option-row {
   display: flex;

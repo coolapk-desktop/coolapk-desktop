@@ -12,7 +12,31 @@ pub struct BackgroundConfig {
     pub notify_at: bool,
     pub notify_pm: bool,
     #[serde(default)]
+    pub like_mute_until: i64,
+    #[serde(default)]
     pub sound: bool,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn current_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn is_like_muted_at(config: &BackgroundConfig, now_ms: i64) -> bool {
+    config.like_mute_until > 0 && config.like_mute_until > now_ms
+}
+
+#[cfg(any(target_os = "android", test))]
+fn apply_like_mute(mut result: [u64; 7], like_muted: bool) -> [u64; 7] {
+    if like_muted {
+        result[6] = result[6].saturating_sub(result[3]);
+        result[3] = 0;
+    }
+    result
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -37,11 +61,19 @@ fn counts(response: &Value) -> [u64; 7] {
 }
 
 #[cfg(any(target_os = "android", test))]
-fn increased(previous: [u64; 7], current: [u64; 7], config: &BackgroundConfig) -> bool {
-    let enabled = [config.notify_replies || config.notify_at, config.notify_at, config.notify_at, true, true, config.notify_pm];
+fn increased_at(previous: [u64; 7], current: [u64; 7], config: &BackgroundConfig, now_ms: i64) -> bool {
+    let like_muted = is_like_muted_at(config, now_ms);
+    let previous = apply_like_mute(previous, like_muted);
+    let current = apply_like_mute(current, like_muted);
+    let enabled = [config.notify_replies || config.notify_at, config.notify_at, config.notify_at, !like_muted, true, config.notify_pm];
     (0..6).any(|index| enabled[index] && current[index] > previous[index])
         || (current[..6].iter().all(|count| *count == 0) && current[6] > previous[6]
             && (config.notify_replies || config.notify_at || config.notify_pm))
+}
+
+#[cfg(any(target_os = "android", test))]
+fn increased(previous: [u64; 7], current: [u64; 7], config: &BackgroundConfig) -> bool {
+    increased_at(previous, current, config, current_time_ms())
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -93,7 +125,9 @@ pub async fn configure_android_background_notifications(app: tauri::AppHandle, c
                 }
                 if state.is_err() || matches!(state.as_deref(), Ok("stopped")) { break; }
                 if let Ok(response) = app.state::<AppState>().client.get_notification_count().await {
-                    let mut current = counts(&response);
+                    let now_ms = current_time_ms();
+                    let like_muted = is_like_muted_at(&config, now_ms);
+                    let mut current = apply_like_mute(counts(&response), like_muted);
                     if current[5] > 0 {
                         if let Ok(messages) = app.state::<AppState>().client.list_messages(1, "", "").await {
                             let own = self_message_count(&messages, &config.uid).min(current[5]);
@@ -103,9 +137,9 @@ pub async fn configure_android_background_notifications(app: tauri::AppHandle, c
                     }
                     if GENERATION.load(Ordering::SeqCst) != generation { break; }
                     if matches!(state.as_deref(), Ok("background")) {
-                        if let Some(last) = previous.filter(|last| increased(*last, current, &config)) {
+                        if let Some(last) = previous.filter(|last| increased_at(*last, current, &config, now_ms)) {
                             let total = current[6];
-                            let enabled = [config.notify_replies || config.notify_at, config.notify_at, config.notify_at, true, true, config.notify_pm];
+                            let enabled = [config.notify_replies || config.notify_at, config.notify_at, config.notify_at, !like_muted, true, config.notify_pm];
                             let categories = ["notification", "atMe", "atComment", "like", "follow", "message"];
                             let increased_category = (0..6).find(|index| enabled[*index] && current[*index] > last[*index]);
                             let index = increased_category.unwrap_or(0);
@@ -154,7 +188,7 @@ pub async fn configure_android_background_notifications(app: tauri::AppHandle, c
         Ok(())
     }
     #[cfg(not(target_os = "android"))]
-    { let _ = (app, config.enabled, config.uid, config.interval_minutes, config.notify_replies, config.notify_at, config.notify_pm, config.sound); Ok(()) }
+    { let _ = (app, config.enabled, config.uid, config.interval_minutes, config.notify_replies, config.notify_at, config.notify_pm, config.like_mute_until, config.sound); Ok(()) }
 }
 
 #[cfg(test)]
@@ -163,12 +197,20 @@ mod tests {
     use serde_json::json;
     #[test]
     fn filters_disabled_categories_and_handles_total_only_responses() {
-        let config = BackgroundConfig { enabled: true, uid: "1".into(), interval_minutes: 1, notify_replies: false, notify_at: true, notify_pm: false, sound: false };
+        let config = BackgroundConfig { enabled: true, uid: "1".into(), interval_minutes: 1, notify_replies: false, notify_at: true, notify_pm: false, like_mute_until: 0, sound: false };
         let empty = counts(&json!({"data": {"badge_v18": 0}}));
         assert!(!increased(empty, counts(&json!({"data": {"message": 1, "badge_v18": 1}})), &config));
         assert!(increased(empty, counts(&json!({"data": {"atme": "1", "badge_v18": 1}})), &config));
         assert!(increased(empty, counts(&json!({"data": {"badge_v18": 1}})), &config));
         assert!(!increased(counts(&json!({"badge": 2})), counts(&json!({"badge": 2})), &config));
+    }
+    #[test]
+    fn suppresses_like_notifications_while_muted_and_resumes_after_expiry() {
+        let empty = counts(&json!({"data": {"notification_v18": 0, "feedlike": 0, "badge_v18": 0}}));
+        let liked = counts(&json!({"data": {"notification_v18": 0, "feedlike": 2, "badge_v18": 2}}));
+        let timed_config = BackgroundConfig { enabled: true, uid: "1".into(), interval_minutes: 1, notify_replies: true, notify_at: true, notify_pm: true, like_mute_until: 2000, sound: false };
+        assert!(!increased_at(empty, liked, &timed_config, 1500));
+        assert!(increased_at(empty, liked, &timed_config, 2500));
     }
     #[test]
     fn official_v18_total_does_not_double_count_reply_at_or_follow() {

@@ -89,4 +89,28 @@ describe('官方通知状态', () => {
     expect(store.notificationCount).toBe(4);
     expect(store.messageCount).toBe(2);
   });
+
+  it('忽略点赞通知期间隐藏点赞角标与增量，恢复或到期后重新显示', () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ notification_v18: 2, feedlike: 3, message: 1, dateline: 100 });
+    expect(store.categoryCounts.like).toBe(3);
+    expect(store.notificationCount).toBe(5);
+    expect(store.unreadCount).toBe(6);
+
+    store.setLikeNotificationMute(Date.now() + 60_000);
+    expect(store.categoryCounts.like).toBe(0);
+    expect(store.notificationCount).toBe(2);
+    expect(store.unreadCount).toBe(3);
+
+    const increasedWhileMuted = store.applyServerResponse({ notification_v18: 2, feedlike: 5, message: 1, dateline: 101 });
+    expect(increasedWhileMuted.increasedCategories).toEqual([]);
+    expect(store.categoryCounts.like).toBe(0);
+    expect(store.notificationCount).toBe(2);
+    expect(store.unreadCount).toBe(3);
+
+    store.setLikeNotificationMute(0);
+    expect(store.categoryCounts.like).toBe(5);
+    expect(store.notificationCount).toBe(7);
+    expect(store.unreadCount).toBe(8);
+  });
 });

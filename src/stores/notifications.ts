@@ -1,6 +1,11 @@
-import { computed, reactive, ref } from 'vue';
-import { defineStore } from 'pinia';
+import { computed, onScopeDispose, reactive, ref } from 'vue';
+import { defineStore, getActivePinia } from 'pinia';
+import {
+  isLikeNotificationMuted,
+  normalizeLikeNotificationMuteUntil,
+} from '../utils/likeNotificationMute';
 import { normalizeNotificationCounts, reconcileViewedCount, type NotificationCategory } from '../utils/notificationCount';
+import { useSettingsStore } from './settings';
 
 const CATEGORY_NAMES: NotificationCategory[] = ['notification', 'comment', 'atMe', 'atComment', 'like', 'follow', 'message'];
 function createCategoryCounts(): Record<NotificationCategory, number> {
@@ -13,13 +18,98 @@ export const useNotificationStore = defineStore('notifications', () => {
   const categoryCounts = reactive(createCategoryCounts());
   const notificationStateVersion = ref(0);
   const notificationClearVersion = ref(0);
+  const likeMuteUntil = ref(0);
   const notificationCount = computed(() => Math.max(0, unreadCount.value - categoryCounts.message));
   const messageCount = computed(() => categoryCounts.message);
   let serverTotal: number | null = null;
   let serverMessageCount: number | null = null;
+  let serverLikeCount = 0;
+  let locallyViewedLikeCount = 0;
   let locallyViewedMessages = 0;
   let notifyCountDateline = 0;
   let officialCounts = false;
+  let likeMuteExpireTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearLikeMuteExpireTimer() {
+    if (!likeMuteExpireTimer) return;
+    clearTimeout(likeMuteExpireTimer);
+    likeMuteExpireTimer = null;
+  }
+
+  function getSettingsStoreInstance(ensureCreated = false): { settings?: { likeNotificationMuteUntil?: unknown } } | undefined {
+    const pinia = getActivePinia();
+    if (!pinia) return undefined;
+    const existing = (pinia as { _s?: Map<string, unknown> })._s?.get('settings') as { settings?: { likeNotificationMuteUntil?: unknown } } | undefined;
+    if (existing || !ensureCreated) return existing;
+    try {
+      return useSettingsStore(pinia);
+    } catch {
+      return undefined;
+    }
+  }
+
+  function getEffectiveLikeMuteUntil(): number {
+    const settingsStore = getSettingsStoreInstance(false);
+    if (settingsStore?.settings && 'likeNotificationMuteUntil' in settingsStore.settings) {
+      return normalizeLikeNotificationMuteUntil(settingsStore.settings.likeNotificationMuteUntil);
+    }
+    return normalizeLikeNotificationMuteUntil(likeMuteUntil.value);
+  }
+
+  function recalculateCounts() {
+    if (serverTotal === null) return;
+    const muteUntil = getEffectiveLikeMuteUntil();
+    const likeMuted = isLikeNotificationMuted(muteUntil);
+    categoryCounts.like = likeMuted ? 0 : Math.max(0, serverLikeCount - locallyViewedLikeCount);
+    const suppressedLikes = likeMuted ? serverLikeCount : locallyViewedLikeCount;
+    unreadCount.value = Math.max(0, serverTotal - locallyViewedMessages - suppressedLikes);
+  }
+
+  function scheduleLikeMuteExpiration(muteUntil = getEffectiveLikeMuteUntil()) {
+    clearLikeMuteExpireTimer();
+    const now = Date.now();
+    if (muteUntil <= 0) return;
+    if (muteUntil <= now) {
+      likeMuteUntil.value = 0;
+      const settingsStore = getSettingsStoreInstance(false);
+      if (settingsStore?.settings) settingsStore.settings.likeNotificationMuteUntil = 0;
+      recalculateCounts();
+      return;
+    }
+    // 浏览器单次 setTimeout 上限约为 2^31 - 1 毫秒（约 24.8 天），超出时分段等待。
+    const delay = Math.min(muteUntil - now, 2_147_483_647);
+    likeMuteExpireTimer = setTimeout(() => {
+      likeMuteExpireTimer = null;
+      scheduleLikeMuteExpiration(getEffectiveLikeMuteUntil());
+    }, delay);
+  }
+
+  function syncLikeMuteState(nextMuteUntil?: unknown): void {
+    if (nextMuteUntil !== undefined) {
+      likeMuteUntil.value = normalizeLikeNotificationMuteUntil(nextMuteUntil);
+    } else {
+      likeMuteUntil.value = getEffectiveLikeMuteUntil();
+    }
+    recalculateCounts();
+    scheduleLikeMuteExpiration(likeMuteUntil.value);
+  }
+
+  function setLikeNotificationMute(nextMuteUntil: unknown): number {
+    const normalized = normalizeLikeNotificationMuteUntil(nextMuteUntil);
+    likeMuteUntil.value = normalized;
+    const settingsStore = getSettingsStoreInstance(true);
+    if (settingsStore?.settings) {
+      settingsStore.settings.likeNotificationMuteUntil = normalized;
+    }
+    syncLikeMuteState(normalized);
+    return normalized;
+  }
+
+  likeMuteUntil.value = getEffectiveLikeMuteUntil();
+
+  if (typeof getActivePinia === 'function' && getActivePinia()) {
+    onScopeDispose(() => clearLikeMuteExpireTimer());
+  }
 
   function applyServerResponse(response: unknown): { previous: number | null; count: number; increasedCategories: NotificationCategory[] } {
     const snapshot = normalizeNotificationCounts(response);
@@ -34,10 +124,12 @@ export const useNotificationStore = defineStore('notifications', () => {
     const messages = reconcileViewedCount(serverMessageCount, snapshot.categories.message, locallyViewedMessages);
     locallyViewedMessages = messages.locallyViewedCount;
     serverMessageCount = snapshot.categories.message;
+    serverLikeCount = snapshot.categories.like;
+    locallyViewedLikeCount = 0;
     for (const category of CATEGORY_NAMES) categoryCounts[category] = snapshot.categories[category];
     categoryCounts.message = messages.count;
     serverTotal = snapshot.total;
-    unreadCount.value = Math.max(0, snapshot.total - locallyViewedMessages);
+    syncLikeMuteState();
     return { previous, count: unreadCount.value, increasedCategories: previous === null ? [] : CATEGORY_NAMES.filter(category => categoryCounts[category] > oldCounts[category]) };
   }
 
@@ -79,6 +171,7 @@ export const useNotificationStore = defineStore('notifications', () => {
     if (!['like', 'follow', 'message'].includes(category)) return 0;
     const count = categoryCounts[category];
     categoryCounts[category] = 0;
+    if (category === 'like') locallyViewedLikeCount = serverLikeCount;
     if (category === 'message') locallyViewedMessages += count;
     // 官方总数不包含独立关注数，清关注不能降低通知或私信角标。
     if (category !== 'follow') unreadCount.value = Math.max(0, unreadCount.value - count);
@@ -137,20 +230,23 @@ export const useNotificationStore = defineStore('notifications', () => {
     unreadCount.value = remainingMessages;
     serverTotal = remainingMessages;
     serverMessageCount = remainingMessages;
+    serverLikeCount = 0;
+    locallyViewedLikeCount = 0;
     locallyViewedMessages = 0;
   }
 
   function reset(): void {
+    clearLikeMuteExpireTimer();
     suppressedSelfUnread.clear();
     notificationClearVersion.value += 1;
     beginNotificationClear();
     unreadCount.value = 0;
     for (const category of CATEGORY_NAMES) categoryCounts[category] = 0;
     serverTotal = serverMessageCount = null;
-    locallyViewedMessages = notifyCountDateline = 0;
+    serverLikeCount = locallyViewedLikeCount = locallyViewedMessages = notifyCountDateline = 0;
     officialCounts = false;
   }
 
-  return { unreadCount, categoryCounts, notificationCount, messageCount, notificationStateVersion, notificationClearVersion, applyServerResponse, applyNotifyCount,
-    markViewed, markMessagesViewed, markCategoryViewed, suppressMessageCount, suppressMessageCounts, beginNotificationClear, markNotificationsCleared, reset };
+  return { unreadCount, categoryCounts, notificationCount, messageCount, notificationStateVersion, notificationClearVersion, likeMuteUntil, applyServerResponse, applyNotifyCount,
+    markViewed, markMessagesViewed, markCategoryViewed, suppressMessageCount, suppressMessageCounts, syncLikeMuteState, setLikeNotificationMute, beginNotificationClear, markNotificationsCleared, reset };
 });

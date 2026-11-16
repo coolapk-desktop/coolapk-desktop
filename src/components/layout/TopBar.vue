@@ -341,6 +341,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { androidNotificationContent } from '../../utils/androidNotificationContent';
 import { desktopNotify } from '../../utils/desktopNotify';
+import { isLikeNotificationItem, isLikeNotificationMuted } from '../../utils/likeNotificationMute';
 import {
   hasNotificationCountIncreased,
   type NotificationCategory,
@@ -430,6 +431,7 @@ let messagePreviewLoadedAt = 0;
 
 function isDesktopNotificationEnabledFor(categories: NotificationCategory[]): boolean {
   if (!settingsStore.settings.desktopNotifications) return false;
+  const likeMuted = isLikeNotificationMuted(settingsStore.settings.likeNotificationMuteUntil);
   if (categories.length === 0) {
     return settingsStore.settings.notifyReplies
       || settingsStore.settings.notifyAt
@@ -440,8 +442,8 @@ function isDesktopNotificationEnabledFor(categories: NotificationCategory[]): bo
     if (category === 'comment') return settingsStore.settings.notifyReplies;
     if (category === 'atMe' || category === 'atComment') return settingsStore.settings.notifyAt;
     if (category === 'message') return settingsStore.settings.notifyPm;
-    // 收到的赞和新关注目前没有独立开关，开启桌面通知后默认提醒。
-    return category === 'like' || category === 'follow';
+    if (category === 'like') return !likeMuted;
+    return category === 'follow';
   });
 }
 
@@ -560,19 +562,26 @@ async function fetchNotificationPreviews(force = false) {
   const requestUid = authStore.user?.uid;
   const requestStateVersion = notificationStore.notificationStateVersion;
   try {
-    const sourcesWithUnread = notificationPreviewSources.filter(
+    const likeMuted = isLikeNotificationMuted(settingsStore.settings.likeNotificationMuteUntil);
+    const activeSources = likeMuted
+      ? notificationPreviewSources.filter((source) => source.category !== 'like')
+      : notificationPreviewSources;
+    const sourcesWithUnread = activeSources.filter(
       (source) => notificationStore.categoryCounts[source.category] > 0
     );
     const sources = sourcesWithUnread.length > 0
       ? sourcesWithUnread
       : notificationStore.notificationCount > 0
-        ? notificationPreviewSources
+        ? activeSources
         : [];
     const responses = await Promise.all(sources.map(async (source) => {
       try {
         const response = await CoolapkTauriAPI.getNotifications(source.apiType, 1);
         if (!authStore.isLoggedIn || requestUid !== authStore.user?.uid || requestStateVersion !== notificationStore.notificationStateVersion) return [];
-        const data = Array.isArray(response?.data) ? response.data : [];
+        const rawData = Array.isArray(response?.data) ? response.data : [];
+        const data = likeMuted && source.category === 'notification'
+          ? rawData.filter((item: any) => !isLikeNotificationItem(item))
+          : rawData;
         notificationStore.applyNotifyCount(response);
         const limit = Math.max(1, Math.min(notificationStore.categoryCounts[source.category] || 1, 3));
         return data.slice(0, limit).map((item: any, index: number): NotificationPreview => ({
@@ -872,6 +881,18 @@ watch(
     settingsStore.settings.desktopNotifications,
   ],
   () => startPolling()
+);
+
+watch(
+  () => settingsStore.settings.likeNotificationMuteUntil,
+  (muteUntil) => {
+    notificationPreviewLoadedAt = 0;
+    if (isLikeNotificationMuted(muteUntil)) {
+      notificationPreviews.value = notificationPreviews.value.filter(
+        (preview) => preview.category !== 'like' && !isLikeNotificationItem(preview.item),
+      );
+    }
+  }
 );
 
 watch(

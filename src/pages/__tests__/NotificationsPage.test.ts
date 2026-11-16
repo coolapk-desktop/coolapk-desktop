@@ -711,4 +711,49 @@ describe('通知页自动刷新增量合并（角标增长不丢阅读位置）'
       expect(container.scrollTop).toBe(500);
     } finally { wrapper.unmount(); }
   });
+
+  it('支持在通知页顶栏按时长设置忽略点赞提醒，期间隐藏点赞角标与列表并可一键恢复', async () => {
+    const store = useNotificationStore();
+    store.applyServerResponse({ data: { notification_v18: 1, feedlike: 4, dateline: 100 } });
+    const rows = [
+      { id: 'like-1', fromuid: '101', note: '赞了你的评论', message: '点赞通知正文', url: '/feed/333?notificationV18Id=9001&notificationV18Type=feedlike' },
+      { id: 'reply-1', fromuid: '102', note: '回复了你的评论', message: '普通回复正文', url: '/feed/333?notificationV18Id=9002&notificationV18Type=reply' },
+    ];
+    mocks.notifications.mockImplementation(async (tab: string, page: number) => ({
+      data: page === 1
+        ? (tab === 'feedLikeList' ? [{ id: 'fl-1', likeUid: '201', likeUsername: '点赞酷友', feedTypeName: '动态' }] : rows)
+        : [],
+    }));
+    const wrapper = mount(defineComponent({ components: { NotificationsPage, KeepAlive }, template: '<KeepAlive><NotificationsPage /></KeepAlive>' }), {
+      global: { stubs: { AppAvatar: true, AppImage: true, LoadingState: true, ErrorState: true, EmptyState: false, AppButton: false, FeedCommentSection: true } },
+    });
+    try {
+      await flushPromises();
+      expect(store.categoryCounts.like).toBe(4);
+      expect(wrapper.find('.quick-nav-btn.like .quick-nav-badge').text()).toBe('4');
+      expect(wrapper.findAll('.notify-card')).toHaveLength(2);
+
+      const oneHourButton = wrapper.findAll('.like-mute-option').find(btn => btn.text().includes('忽略 1 小时'))!;
+      await oneHourButton.trigger('click');
+      await flushPromises();
+
+      expect(store.categoryCounts.like).toBe(0);
+      expect(wrapper.find('.quick-nav-btn.like .quick-nav-badge').exists()).toBe(false);
+      expect(wrapper.get('.like-mute-trigger').text()).toContain('已忽略 1小时');
+      expect(wrapper.findAll('.notify-card')).toHaveLength(1);
+      expect(wrapper.text()).toContain('普通回复正文');
+      expect(wrapper.text()).not.toContain('点赞通知正文');
+
+      await wrapper.get('.quick-nav-btn.like').trigger('click');
+      await flushPromises();
+      expect(wrapper.text()).toContain('已忽略点赞通知提醒');
+      expect(wrapper.findAll('.notify-card')).toHaveLength(0);
+
+      const restoreButton = wrapper.findAll('button').find(btn => btn.text().includes('恢复显示'))!;
+      await restoreButton.trigger('click');
+      await flushPromises();
+      expect(wrapper.get('.like-mute-trigger').text()).toContain('忽略点赞');
+      expect(wrapper.findAll('.notify-card')).toHaveLength(1);
+    } finally { wrapper.unmount(); }
+  });
 });

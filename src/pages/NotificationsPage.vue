@@ -6,10 +6,43 @@
           <button type="button" class="header-action-btn" :aria-label="isNotificationRoot ? '返回' : '返回通知中心'" @click="goBack"><i class="fas fa-arrow-left" aria-hidden="true"></i></button>
           <h2 class="page-title">{{ currentTabTitle }}</h2>
         </div>
-        <div v-if="isNotificationRoot" class="notification-actions">
-          <button type="button" class="header-action-btn" aria-label="全部已读" title="全部已读" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="markAllViewed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19,4C19,4.17 18.96,4.34 18.87,4.49L9.87,20.49C9.6,20.97 8.99,21.14 8.51,20.87C8.39,20.8 8.28,20.71 8.2,20.6L2.2,12.6C2.07,12.43 2,12.22 2,12C2,11.45 2.45,11 3,11C3.31,11 3.61,11.15 3.8,11.4L8.88,18.17L17.13,3.51C17.31,3.2 17.64,3 18,3C18.55,3 19,3.45 19,4ZM18,11C17.45,11 17,11.45 17,12C17,12.55 17.45,13 18,13L21,13C21.55,13 22,12.55 22,12C22,11.45 21.55,11 21,11L18,11ZM16,15C15.45,15 15,15.45 15,16C15,16.55 15.45,17 16,17L21,17C21.55,17 22,16.55 22,16C22,15.45 21.55,15 21,15L16,15ZM14,19C13.45,19 13,19.45 13,20C13,20.55 13.45,21 14,21L21,21C21.55,21 22,20.55 22,20C22,19.45 21.55,19 21,19L14,19Z" /></svg></button>
-          <button type="button" class="header-action-btn notification-mobile-delete" aria-label="全部删除" title="全部删除" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="deleteAllNotifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,3V4H4V6H5V19A2,2 0,0 0,7 21H17A2,2 0,0 0,19 19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z" /></svg></button>
-          <details ref="desktopActions" class="notification-desktop-actions" @focusout="closeDesktopActionsOnBlur" @keydown.esc.stop="closeDesktopActions">
+        <div v-if="isNotificationRoot || currentTab === 'feedLikeList'" class="notification-actions">
+          <details
+            ref="likeMuteActions"
+            class="notification-like-mute"
+            @toggle="handleLikeMuteToggle"
+            @focusout="closeLikeMuteOnBlur"
+            @keydown.esc.stop="closeLikeMuteActions"
+          >
+            <summary
+              class="like-mute-trigger"
+              :class="{ 'is-active': isLikeMuted }"
+              aria-label="忽略点赞提醒"
+              :title="likeMuteTriggerTitle"
+            >
+              <i :class="['fas', isLikeMuted ? 'fa-bell-slash' : 'fa-thumbs-up']" aria-hidden="true"></i>
+              <span class="like-mute-trigger-text">{{ likeMuteTriggerLabel }}</span>
+              <i class="fas fa-chevron-down like-mute-chevron" aria-hidden="true"></i>
+            </summary>
+            <div class="notification-like-mute-menu" role="menu" aria-label="忽略点赞提醒时长">
+              <button
+                v-for="option in LIKE_MUTE_OPTIONS"
+                :key="option.key"
+                type="button"
+                class="like-mute-option"
+                :class="{ 'is-selected': selectedLikeMuteKey === option.key }"
+                role="menuitemradio"
+                :aria-checked="selectedLikeMuteKey === option.key"
+                @click="selectLikeMuteOption(option.key)"
+              >
+                <span>{{ option.label }}</span>
+                <i v-if="selectedLikeMuteKey === option.key" class="fas fa-check" aria-hidden="true"></i>
+              </button>
+            </div>
+          </details>
+          <button v-if="isNotificationRoot" type="button" class="header-action-btn" aria-label="全部已读" title="全部已读" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="markAllViewed"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19,4C19,4.17 18.96,4.34 18.87,4.49L9.87,20.49C9.6,20.97 8.99,21.14 8.51,20.87C8.39,20.8 8.28,20.71 8.2,20.6L2.2,12.6C2.07,12.43 2,12.22 2,12C2,11.45 2.45,11 3,11C3.31,11 3.61,11.15 3.8,11.4L8.88,18.17L17.13,3.51C17.31,3.2 17.64,3 18,3C18.55,3 19,3.45 19,4ZM18,11C17.45,11 17,11.45 17,12C17,12.55 17.45,13 18,13L21,13C21.55,13 22,12.55 22,12C22,11.45 21.55,11 21,11L18,11ZM16,15C15.45,15 15,15.45 15,16C15,16.55 15.45,17 16,17L21,17C21.55,17 22,16.55 22,16C22,15.45 21.55,15 21,15L16,15ZM14,19C13.45,19 13,19.45 13,20C13,20.55 13.45,21 14,21L21,21C21.55,21 22,20.55 22,20C22,19.45 21.55,19 21,19L14,19Z" /></svg></button>
+          <button v-if="isNotificationRoot" type="button" class="header-action-btn notification-mobile-delete" aria-label="全部删除" title="全部删除" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="deleteAllNotifications"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,3V4H4V6H5V19A2,2 0,0 0,7 21H17A2,2 0,0 0,19 19V6H20V4H15V3H9M7,6H17V19H7V6M9,8V17H11V8H9M13,8V17H15V8H13Z" /></svg></button>
+          <details v-if="isNotificationRoot" ref="desktopActions" class="notification-desktop-actions" @toggle="handleDesktopActionsToggle" @focusout="closeDesktopActionsOnBlur" @keydown.esc.stop="closeDesktopActions">
             <summary class="header-action-btn" aria-label="更多操作" title="更多操作"><i class="fas fa-ellipsis" aria-hidden="true"></i></summary>
             <button type="button" class="notification-menu-delete" :disabled="!authStore.isLoggedIn || clearingNotifications || deletingNotifications" @click="closeDesktopActions(); deleteAllNotifications()">全部删除</button>
           </details>
@@ -38,15 +71,22 @@
         </div>
       </div>
 
-      <div v-else-if="loading && items.length === 0" class="loading-wrapper">
+      <div v-else-if="currentTab === 'feedLikeList' && isLikeMuted" class="empty-wrapper">
+        <EmptyState title="已忽略点赞通知提醒" :description="likeMuteMenuSubtitle" />
+        <div class="notification-login-hint">
+          <AppButton variant="primary" size="sm" @click="selectLikeMuteOption('0')">恢复显示</AppButton>
+        </div>
+      </div>
+
+      <div v-else-if="loading && visibleItems.length === 0" class="loading-wrapper">
         <LoadingState text="正在获取通知..." />
       </div>
 
-      <div v-else-if="notificationError && items.length === 0" class="empty-wrapper">
+      <div v-else-if="notificationError && visibleItems.length === 0" class="empty-wrapper">
         <ErrorState title="通知加载失败" :message="notificationError" @retry="refreshNotifications" />
       </div>
 
-      <div v-else-if="!loading && items.length === 0" class="empty-wrapper">
+      <div v-else-if="!loading && visibleItems.length === 0" class="empty-wrapper">
         <EmptyState title="暂无通知" description="当有新动态时会在这里提醒你" />
       </div>
 
@@ -86,7 +126,7 @@
           </div>
         </div>
 
-        <div class="load-more-wrapper" v-if="items.length > 0">
+        <div class="load-more-wrapper" v-if="visibleItems.length > 0">
           <div v-if="notificationError" class="notification-inline-error">{{ notificationError }} <button type="button" @click="retryFailedLoad">重试</button></div>
           <button 
             v-if="hasMore" 
@@ -123,12 +163,22 @@ import { navigateBack } from '../utils/navigation';
 import { loadFeedFullText } from '../utils/feedFullTextCache';
 import { htmlToPlainText } from '../utils/htmlText';
 import { routeNavigationIsHistory } from '../utils/routeScroll';
-import { computed, nextTick, onActivated, onDeactivated, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
 import { useNotificationStore } from '../stores/notifications';
+import {
+  LIKE_MUTE_OPTIONS,
+  formatLikeNotificationMuteDescription,
+  formatLikeNotificationMuteTriggerLabel,
+  getSelectedLikeMuteKey,
+  isLikeNotificationItem,
+  isLikeNotificationMuted,
+  resolveLikeNotificationMuteUntil,
+  type LikeMuteOptionKey,
+} from '../utils/likeNotificationMute';
 import type { NotificationCategory } from '../utils/notificationCount';
 import { getNotificationActionTarget, getNotificationActor, getNotificationImage } from '../utils/notificationItem';
 import { isCoarsePointer, isTouchMobilePlatform } from '../utils/platform';
@@ -185,6 +235,15 @@ const notificationError = ref('');
 // 区分「首屏加载失败」与「翻页失败」：翻页失败不能清空已加载的 2+ 页内容。
 const loadMoreFailed = ref(false);
 const desktopActions = ref<HTMLDetailsElement | null>(null);
+const likeMuteActions = ref<HTMLDetailsElement | null>(null);
+const likeMuteNow = ref(Date.now());
+let likeMuteClockTimer: ReturnType<typeof setInterval> | null = null;
+const currentLikeMuteUntil = computed(() => notificationStore.likeMuteUntil);
+const isLikeMuted = computed(() => isLikeNotificationMuted(currentLikeMuteUntil.value, likeMuteNow.value));
+const selectedLikeMuteKey = computed(() => getSelectedLikeMuteKey(currentLikeMuteUntil.value, likeMuteNow.value));
+const likeMuteTriggerLabel = computed(() => formatLikeNotificationMuteTriggerLabel(currentLikeMuteUntil.value, likeMuteNow.value));
+const likeMuteMenuSubtitle = computed(() => formatLikeNotificationMuteDescription(currentLikeMuteUntil.value, likeMuteNow.value));
+const likeMuteTriggerTitle = computed(() => isLikeMuted.value ? likeMuteMenuSubtitle.value : '按时长忽略点赞通知提醒');
 type NotificationActionTarget = NonNullable<ReturnType<typeof getNotificationActionTarget>>;
 const likedTargets = ref(new Map<string, boolean>());
 const pendingLikes = ref(new Set<string>());
@@ -200,7 +259,15 @@ function resetTargetLikeState() {
 const pendingReply = ref<symbol>();
 const replyComposer = ref<{ feedId: string; rid?: string; username: string; item?: any }>();
 const mobileReplyComposer = isTouchMobilePlatform() || isCoarsePointer();
-const notificationCards = computed(() => items.value.map(item => {
+const visibleItems = computed(() => {
+  if (!isLikeMuted.value) return items.value;
+  if (currentTab.value === 'feedLikeList') return [];
+  if (currentTab.value === 'list' && !subNoteType.value) {
+    return items.value.filter(item => !isLikeNotificationItem(item));
+  }
+  return items.value;
+});
+const notificationCards = computed(() => visibleItems.value.map(item => {
   const target = currentTab.value === 'list' ? getNotificationActionTarget(item) : null;
   return { item, target, actionKey: target ? `${target.type}:${target.id}` : '' };
 }));
@@ -266,7 +333,70 @@ function closeDesktopActions() {
 
 function closeDesktopActionsOnBlur(event: FocusEvent) {
   const details = desktopActions.value;
-  if (details && !(event.relatedTarget instanceof Node && details.contains(event.relatedTarget))) details.open = false;
+  if (details && event.relatedTarget instanceof Node && !details.contains(event.relatedTarget)) details.open = false;
+}
+
+function handleDesktopActionsToggle() {
+  if (desktopActions.value?.open && likeMuteActions.value?.open) {
+    likeMuteActions.value.open = false;
+  }
+}
+
+function closeLikeMuteActions() {
+  const details = likeMuteActions.value;
+  if (!details?.open) return;
+  details.open = false;
+  details.querySelector('summary')?.focus();
+}
+
+function closeLikeMuteOnBlur(event: FocusEvent) {
+  const details = likeMuteActions.value;
+  if (details && event.relatedTarget instanceof Node && !details.contains(event.relatedTarget)) details.open = false;
+}
+
+function handleLikeMuteToggle() {
+  if (likeMuteActions.value?.open) {
+    likeMuteNow.value = Date.now();
+    if (desktopActions.value?.open) desktopActions.value.open = false;
+  }
+}
+
+function selectLikeMuteOption(optionKey: LikeMuteOptionKey) {
+  const now = Date.now();
+  const nextMuteUntil = resolveLikeNotificationMuteUntil(optionKey, now);
+  likeMuteNow.value = now;
+  notificationStore.setLikeNotificationMute(nextMuteUntil);
+  closeLikeMuteActions();
+  const option = LIKE_MUTE_OPTIONS.find(item => item.key === optionKey);
+  if (optionKey === '0') {
+    showToast('已恢复点赞通知提醒', 'success');
+  } else if (option) {
+    showToast(`已设置点赞通知提醒：${option.label}`, 'success');
+  }
+}
+
+function handleOutsideHeaderMenuPointerDown(event: PointerEvent) {
+  const target = event.target as Node | null;
+  if (desktopActions.value?.open && (!target || !desktopActions.value.contains(target))) {
+    desktopActions.value.open = false;
+  }
+  if (likeMuteActions.value?.open && (!target || !likeMuteActions.value.contains(target))) {
+    likeMuteActions.value.open = false;
+  }
+}
+
+function startLikeMuteClock() {
+  if (likeMuteClockTimer) return;
+  likeMuteNow.value = Date.now();
+  likeMuteClockTimer = setInterval(() => {
+    likeMuteNow.value = Date.now();
+  }, 30_000);
+}
+
+function stopLikeMuteClock() {
+  if (!likeMuteClockTimer) return;
+  clearInterval(likeMuteClockTimer);
+  likeMuteClockTimer = null;
 }
 
 const pageContainerRef = ref<HTMLElement | null>(null);
@@ -325,7 +455,7 @@ function handlePageScroll(event: Event) {
 }
 
 function loadMoreWhenNearBottom(container = pageContainerRef.value) {
-  if (!container || loading.value || !hasMore.value) return;
+  if (!container || loading.value || !hasMore.value || (currentTab.value === 'feedLikeList' && isLikeMuted.value)) return;
   const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
   if (remaining <= 240) void loadMore();
 }
@@ -897,13 +1027,29 @@ function loadNotificationEntry(restoreHistory = false) {
   void refreshNotifications();
 }
 
+onMounted(() => {
+  document.addEventListener('pointerdown', handleOutsideHeaderMenuPointerDown);
+  startLikeMuteClock();
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleOutsideHeaderMenuPointerDown);
+  stopLikeMuteClock();
+});
+
 onActivated(() => {
+  document.addEventListener('pointerdown', handleOutsideHeaderMenuPointerDown);
+  startLikeMuteClock();
   window.addEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
   loadNotificationEntry(routeNavigationIsHistory.value);
 });
 
 onDeactivated(() => {
   closeReplyComposer();
+  closeDesktopActions();
+  closeLikeMuteActions();
+  document.removeEventListener('pointerdown', handleOutsideHeaderMenuPointerDown);
+  stopLikeMuteClock();
   window.removeEventListener('coolapk-notification-count-increased', handleNotificationCountIncrease);
 });
 
@@ -967,10 +1113,80 @@ async function refreshMobilePage() { await refreshNotifications(); }
   align-items: center;
   padding-inline: max(4px, env(safe-area-inset-left)) max(4px, env(safe-area-inset-right));
 }
-.notification-heading, .notification-actions { display: flex; align-items: center; gap: 8px; }
+.notification-heading, .notification-actions { display: flex; align-items: center; gap: 6px; }
 .notification-heading { min-height: 56px; }
 .notification-actions { grid-column: 2; grid-row: 1; }
 .notification-desktop-actions { display: none; }
+.notification-like-mute { position: relative; flex-shrink: 0; }
+.notification-like-mute summary { list-style: none; }
+.notification-like-mute summary::-webkit-details-marker { display: none; }
+.like-mute-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full, 999px);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: var(--notification-font-caption);
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.2s, background-color 0.2s, color 0.2s;
+}
+.like-mute-trigger:hover { background: var(--background); color: var(--text-primary); }
+.like-mute-trigger.is-active,
+.notification-like-mute[open] .like-mute-trigger {
+  border-color: var(--brand-primary);
+  background: var(--brand-soft, color-mix(in srgb, var(--brand-primary) 12%, transparent));
+  color: var(--brand-primary);
+}
+.like-mute-trigger-text { white-space: nowrap; }
+.like-mute-chevron { font-size: 10px; opacity: 0.75; transition: transform 0.2s; }
+.notification-like-mute[open] .like-mute-chevron { transform: rotate(180deg); }
+.notification-like-mute-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  z-index: 30;
+  min-width: 136px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-dropdown, 0 8px 24px rgba(0, 0, 0, 0.14));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.like-mute-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--notification-font-secondary);
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+.like-mute-option:hover { background: var(--background); }
+.like-mute-option.is-selected {
+  background: var(--brand-soft, color-mix(in srgb, var(--brand-primary) 12%, transparent));
+  color: var(--brand-primary);
+  font-weight: 600;
+}
 .page-title { margin: 0; color: var(--text-primary); font-size: calc(var(--font-size-body) + 4px); font-weight: 500; }
 .header-action-btn { display: grid; place-items: center; width: 48px; height: 48px; padding: 0; color: var(--text-primary); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
 .header-action-btn svg { width: 24px; height: 24px; fill: currentColor; }
@@ -1127,7 +1343,7 @@ async function refreshMobilePage() { await refreshNotifications(); }
     }
     .notification-title-row { display: contents; }
     .notification-tab-heading, .notification-mobile-delete, .quick-nav-icon { display: none; }
-    .notification-actions { margin-inline-start: auto; gap: 2px; }
+    .notification-actions { margin-left: auto; gap: 4px; }
     .notification-heading { min-height: 52px; flex-shrink: 0; }
     .notification-quick-nav { grid-area: 1 / 1; display: flex; gap: 16px; padding: 0; }
     .quick-nav-btn {
@@ -1163,15 +1379,19 @@ async function refreshMobilePage() { await refreshNotifications(); }
     .notification-desktop-actions summary::-webkit-details-marker { display: none; }
     .notification-menu-delete {
       position: absolute;
-      inset-inline-end: 0;
+      right: 0;
+      left: auto;
       top: calc(100% + 4px);
+      z-index: 30;
       min-width: 112px;
       padding: 8px 12px;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: var(--surface);
+      box-shadow: var(--shadow-dropdown, 0 8px 24px rgba(0, 0, 0, 0.14));
       color: var(--danger);
       font-size: var(--notification-font-secondary);
+      white-space: nowrap;
       cursor: pointer;
     }
     .notification-menu-delete:disabled { color: var(--text-disabled); cursor: default; }
@@ -1179,6 +1399,14 @@ async function refreshMobilePage() { await refreshNotifications(); }
 }
 
 @media (max-width: 720px) {
+  .notification-actions {
+    gap: 4px;
+    padding-right: 4px;
+  }
+
+  .like-mute-trigger {
+    padding: 0 8px;
+  }
   .empty-wrapper :deep(.error-state) {
     width: 100%;
     max-width: 100%;

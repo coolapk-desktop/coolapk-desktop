@@ -10,6 +10,7 @@ import { normalizeSearchTabOrder } from '../utils/searchTabOrder';
 import { normalizeLightBackground, buildLightBackground } from '../utils/lightBackground';
 import { isLinuxDesktopRuntime, observeLinuxSystemTheme, type SystemTheme } from '../utils/linuxSystemTheme';
 import { isTouchMobilePlatform } from '../utils/platform';
+import { normalizeLikeNotificationMuteUntil } from '../utils/likeNotificationMute';
 import { showToast } from '../utils/toast';
 import type {
   AppSettings,
@@ -210,6 +211,7 @@ const defaultSettings: AppSettings = {
   notifyReplies: true,
   notifyAt: true,
   notifyPm: true,
+  likeNotificationMuteUntil: 0,
   desktopNotifications: false,
   androidBackgroundNotifications: false,
   notificationSound: true,
@@ -375,6 +377,7 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.notifyReplies = readBoolean(source.notifyReplies, result.notifyReplies);
   result.notifyAt = readBoolean(source.notifyAt, result.notifyAt);
   result.notifyPm = readBoolean(source.notifyPm, result.notifyPm);
+  result.likeNotificationMuteUntil = normalizeLikeNotificationMuteUntil(source.likeNotificationMuteUntil);
   result.desktopNotifications = readBoolean(source.desktopNotifications, result.desktopNotifications);
   result.androidBackgroundNotifications = readBoolean(source.androidBackgroundNotifications, result.androidBackgroundNotifications);
   result.notificationSound = readBoolean(source.notificationSound, result.notificationSound);
@@ -669,6 +672,10 @@ export const useSettingsStore = defineStore('settings', () => {
     invoke('update_desktop_tile', { source }).catch((err) => {
       console.warn('[settings] 触发磁贴刷新失败', err);
     });
+  }, { flush: 'sync' });
+  watch(() => settings.value.likeNotificationMuteUntil, (muteUntil) => {
+    const notificationStore = (boundPinia as { _s?: Map<string, { syncLikeMuteState?: (value: unknown) => void }> } | undefined)?._s?.get('notifications');
+    notificationStore?.syncLikeMuteState?.(muteUntil);
   }, { flush: 'sync' });
 
   void initializeSettings();

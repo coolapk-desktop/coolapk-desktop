@@ -15,6 +15,9 @@ describe('Android 后台消息检查', () => {
     const stop = setupAndroidBackgroundNotifications(() => settings, () => account.uid);
     await settle();
     expect(mocks.invoke).toHaveBeenLastCalledWith('configure_android_background_notifications', { config: { enabled: true, uid: '123', intervalMinutes: 5, notifyReplies: true, notifyAt: true, notifyPm: true, sound: false } });
+    settings.likeNotificationMuteUntil = 1700000000000;
+    await settle();
+    expect(mocks.invoke).toHaveBeenLastCalledWith('configure_android_background_notifications', { config: { enabled: true, uid: '123', intervalMinutes: 5, notifyReplies: true, notifyAt: true, notifyPm: true, likeMuteUntil: 1700000000000, sound: false } });
     account.uid = '';
     await settle();
     expect(mocks.invoke.mock.calls.at(-1)?.[1].config.enabled).toBe(false);

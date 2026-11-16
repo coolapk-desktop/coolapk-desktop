@@ -211,6 +211,7 @@ export interface AppSettings {
   notifyReplies: boolean;
   notifyAt: boolean;
   notifyPm: boolean;
+  likeNotificationMuteUntil: number;
   desktopNotifications: boolean;
   androidBackgroundNotifications: boolean;
   notificationSound: boolean;
