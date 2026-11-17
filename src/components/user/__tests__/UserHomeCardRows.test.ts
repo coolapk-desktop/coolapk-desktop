@@ -50,4 +50,25 @@ describe('用户主页聚合卡片的实体归并', () => {
       expect(wrapper.findAll('.home-follow-user').length).toBe(1);
     } finally { wrapper.unmount(); }
   });
+
+  it('TA关注的板块仅对详情路由项绑定共享容器过渡锚点', () => {
+    const rows = [
+      {
+        title: 'TA关注的板块',
+        entities: [
+          { entityType: 'topic', title: 'OPPO Find X10', url: '/product/5735' },
+          { entityType: 'topic', title: 'OPPO Find X9', url: 'https://www.coolapk.com/product/5000' },
+          { entityType: 'topic', title: '摄影话题', url: '/t/摄影' },
+        ],
+      },
+    ];
+    const wrapper = mountRows(rows);
+    try {
+      const items = wrapper.findAll('.home-follow-topic');
+      expect(items).toHaveLength(3);
+      expect(items[0]!.attributes('data-transition-anchor')).toBe('product:5735');
+      expect(items[1]!.attributes('data-transition-anchor')).toBe('product:5000');
+      expect(items[2]!.attributes('data-transition-anchor')).toBeUndefined();
+    } finally { wrapper.unmount(); }
+  });
 });

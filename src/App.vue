@@ -233,7 +233,7 @@ import { logDiagnostic } from './utils/diagnosticLogger';
 import { setupKeyboardScrollAssist, setupViewportHeight } from './utils/viewport';
 import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
 
-const { isSidebarTransitionActive, resetSidebarTransition } = useSidebarTransition();
+const { isSidebarTransitionActive, resetSidebarTransition, consumePageTabTransition } = useSidebarTransition();
 
 function getRouteKey(route: RouteLocationNormalizedLoaded): string {
   // 组件 key 与「页面身份」对齐：同一实体的临时 query（排序、筛选、定位、标题）不再各自占用
@@ -306,6 +306,7 @@ watch(() => route.fullPath, (_next, _previous) => {
     style: settingsStore.settings.pageTransitionStyle || 'fluid',
     reduceMotion: settingsStore.settings.reduceMotion,
     sidebarTriggered: isSidebarTransitionActive.value,
+    pageTabTriggered: Boolean(consumePageTabTransition?.()),
     fromTabIndex: findPageTabIndexByPath(fromPath),
     toTabIndex: findPageTabIndexByPath(route.path),
   });

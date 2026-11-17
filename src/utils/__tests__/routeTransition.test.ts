@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   triggerSidebarTransition,
   resetSidebarTransition,
+  triggerPageTabTransition,
+  resetPageTabTransition,
+  consumePageTabTransition,
   useSidebarTransition,
   getFeedDetailTransition,
   officialFeedDetailEasing,
@@ -141,11 +144,75 @@ describe('routeTransition', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     resetSidebarTransition();
+    resetPageTabTransition();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     resetSidebarTransition();
+    resetPageTabTransition();
+  });
+
+  it('PC 顶部标签切换详情页签时不触发 container-expand，按左右顺序走页签平切或 desktop-fluid', () => {
+    // 用户主页 -> 已打开的产品详情标签：应按页签顺序向右平切，而不是从小到大展开
+    expect(resolveRouteTransition({
+      fromPath: '/user/123',
+      toPath: '/product/5735',
+      backward: false,
+      mobile: false,
+      style: 'fluid',
+      pageTabTriggered: true,
+      fromTabIndex: 1,
+      toTabIndex: 3,
+    })).toBe('desktop-tab-next');
+
+    // 右侧详情标签 -> 左侧详情标签：向左平切，保证对称
+    expect(resolveRouteTransition({
+      fromPath: '/product/5735',
+      toPath: '/product/5000',
+      backward: false,
+      mobile: false,
+      style: 'fluid',
+      pageTabTriggered: true,
+      fromTabIndex: 3,
+      toTabIndex: 2,
+    })).toBe('desktop-tab-prev');
+
+    // 关闭当前详情标签后落回相邻详情标签（原索引已从 tabs 移除）：走柔和 desktop-fluid
+    expect(resolveRouteTransition({
+      fromPath: '/product/5735',
+      toPath: '/product/5000',
+      backward: false,
+      mobile: false,
+      style: 'fluid',
+      pageTabTriggered: true,
+      fromTabIndex: -1,
+      toTabIndex: 2,
+    })).toBe('desktop-fluid');
+
+    // 原生模式在页签栏切页也不多余播放详情进入动画
+    expect(resolveRouteTransition({
+      fromPath: '/',
+      toPath: '/feed/42',
+      backward: false,
+      mobile: false,
+      style: 'native',
+      pageTabTriggered: true,
+      fromTabIndex: 0,
+      toTabIndex: 1,
+    })).toBe('');
+
+    // 从页面内部点击卡片跳转（非标签栏触发），即使目标已有标签或为详情页仍保留从小到大展开
+    expect(resolveRouteTransition({
+      fromPath: '/user/123',
+      toPath: '/product/5735',
+      backward: false,
+      mobile: false,
+      style: 'fluid',
+      pageTabTriggered: false,
+      fromTabIndex: 1,
+      toTabIndex: 3,
+    })).toBe('container-expand');
   });
 
   it('初始状态下侧边栏动效为未激活', () => {
@@ -175,5 +242,23 @@ describe('routeTransition', () => {
 
     vi.advanceTimersByTime(600);
     expect(isSidebarTransitionActive.value).toBe(false);
+  });
+
+  it('页签切换标记为一次性消费且与侧栏导航互斥', () => {
+    const { isSidebarTransitionActive, isPageTabTransitionActive } = useSidebarTransition();
+    triggerSidebarTransition(500);
+    expect(isSidebarTransitionActive.value).toBe(true);
+
+    triggerPageTabTransition(500);
+    expect(isSidebarTransitionActive.value).toBe(false);
+    expect(isPageTabTransitionActive.value).toBe(true);
+
+    expect(consumePageTabTransition()).toBe(true);
+    expect(isPageTabTransitionActive.value).toBe(false);
+    expect(consumePageTabTransition()).toBe(false);
+
+    triggerPageTabTransition(300);
+    vi.advanceTimersByTime(301);
+    expect(isPageTabTransitionActive.value).toBe(false);
   });
 });

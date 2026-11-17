@@ -77,7 +77,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePageTabsStore } from '../../stores/pageTabs';
 import { activateHomeTab } from '../../utils/homeTab';
-import { resetSidebarTransition } from '../../utils/routeTransition';
+import { resetSidebarTransition, triggerPageTabTransition } from '../../utils/routeTransition';
 
 withDefaults(defineProps<{ showTabs?: boolean; showNavigation?: boolean }>(), { showTabs: true });
 
@@ -103,12 +103,20 @@ function visibleTitle(tab: { title: string; icon: string }): string {
   return title.startsWith('#') && title.endsWith('#') ? title.slice(1, -1).trim() || '话题' : title || '话题';
 }
 
+function performTabRoute(method: 'push' | 'replace', route: string | null) {
+  if (!route) return;
+  const currentFullPath = router.currentRoute?.value?.fullPath;
+  if (currentFullPath && route === currentFullPath) return;
+  triggerPageTabTransition();
+  void router[method](route);
+}
+
 /**
  * 激活已打开的页签：用 push 而不是 replace，
  * 否则「首页 → 页签跳到明细 → 后退」会跳过刚看过的那一页。
  */
 function navigate(route: string | null) {
-  if (route) void router.push(route);
+  performTabRoute('push', route);
 }
 
 /**
@@ -116,7 +124,7 @@ function navigate(route: string | null) {
  * 历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
  */
 function replaceRoute(route: string | null) {
-  if (route) void router.replace(route);
+  performTabRoute('replace', route);
 }
 
 function openTab(id: string) {
@@ -124,6 +132,7 @@ function openTab(id: string) {
   resetSidebarTransition();
   // 固定首页标签：已在首页时不再重复导航，改为回到顶部（双击再刷新当前栏目）。
   if (id === 'home') {
+    if (router.currentRoute?.value?.path !== '/') triggerPageTabTransition();
     activateHomeTab(router);
     closeMenus();
     return;

@@ -39,6 +39,7 @@
             :key="entityKey(entity, entityIndex)"
             class="home-follow-topic"
             type="button"
+            :data-transition-anchor="topicTransitionAnchor(entity) || undefined"
             @click="openEntity(entity)"
           >
             <AppImage
@@ -86,6 +87,7 @@ import UserEntityCard from './UserEntityCard.vue';
 import AppAvatar from '../common/AppAvatar.vue';
 import AppImage from '../common/AppImage.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { getDetailTransitionTargetKey } from '../../utils/containerTransform';
 import { entityKey, extractUserSpaceItems } from '../../types/userSpace';
 import type { UserSpaceEntity } from '../../types/userSpace';
 
@@ -304,6 +306,17 @@ async function openUrl(url: string) {
     await CoolapkTauriAPI.openUrl(parsed.toString());
   } catch {
     // 服务端下发的异常链接不执行跳转。
+  }
+}
+
+function topicTransitionAnchor(entity: UserSpaceEntity): string {
+  const url = typeof (entity as any)?.url === 'string' ? String((entity as any).url).trim() : '';
+  if (!url) return '';
+  if (url.startsWith('/')) return getDetailTransitionTargetKey(url);
+  try {
+    return getDetailTransitionTargetKey(new URL(url).pathname);
+  } catch {
+    return '';
   }
 }
 

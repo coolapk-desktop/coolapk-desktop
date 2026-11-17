@@ -3,6 +3,7 @@ import { registerGlobalHotkeys, REGISTERED_HOTKEY_IDS, EXTERNAL_HOTKEY_IDS } fro
 import { SHORTCUT_BRANCH_IDS, SHORTCUT_DEFINITIONS } from '../shortcuts';
 import * as commentTracker from '../activeCommentTracker';
 import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
+import { consumePageTabTransition, resetPageTabTransition } from '../routeTransition';
 
 const { push, replace, back, cycle, closeTab, historyState, currentRoute } = vi.hoisted(() => ({
   push: vi.fn(),
@@ -106,6 +107,7 @@ describe('registerGlobalHotkeys', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetPageTabTransition();
     historyState.state.back = null;
     // `vi.clearAllMocks` 会清掉实现，这里每个用例重新给出关闭结果。
     closeTab.mockResolvedValue('/feed/123');
@@ -117,6 +119,7 @@ describe('registerGlobalHotkeys', () => {
 
   afterEach(() => {
     unregister();
+    resetPageTabTransition();
     commentTracker.resetActiveComments();
   });
 
@@ -136,6 +139,7 @@ describe('registerGlobalHotkeys', () => {
     // 切换页签用 push，保证随后后退能回到刚看过的那一页。
     expect(push).toHaveBeenCalledExactlyOnceWith('/feed/123');
     expect(replace).not.toHaveBeenCalled();
+    expect(consumePageTabTransition()).toBe(true);
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -171,6 +175,7 @@ describe('registerGlobalHotkeys', () => {
     // 关闭入口是带守卫的异步方法，确认通过后才 replace。
     await vi.waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith('/feed/123'));
     expect(push).not.toHaveBeenCalled();
+    expect(consumePageTabTransition()).toBe(true);
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -180,6 +185,7 @@ describe('registerGlobalHotkeys', () => {
     await vi.waitFor(() => expect(closeTab).toHaveBeenCalledOnce());
     await Promise.resolve();
     expect(replace).not.toHaveBeenCalled();
+    expect(consumePageTabTransition()).toBe(false);
   });
 
   it('Alt+← 有应用内上一页时后退', () => {

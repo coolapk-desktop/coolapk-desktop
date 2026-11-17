@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import type { PageTransitionStyle } from '../types/settings';
 
 const isSidebarTransitionActive = ref(false);
+const isPageTabTransitionActive = ref(false);
 
 export const ROOT_TAB_PATHS = ['/', '/digital', '/discover', '/me'] as const;
 export const FLUID_ROUTE_EASING = 'cubic-bezier(0.2, 0.9, 0.25, 1)';
@@ -29,6 +30,7 @@ export interface ResolveRouteTransitionContext {
   style: PageTransitionStyle;
   reduceMotion?: boolean;
   sidebarTriggered?: boolean;
+  pageTabTriggered?: boolean;
   fromTabIndex?: number;
   toTabIndex?: number;
 }
@@ -71,9 +73,21 @@ export function isDetailRoutePath(path: string): boolean {
 
 /** 统一决策桌面端与移动端页面切换与详情展开/收起过场类型。 */
 export function resolveRouteTransition(context: ResolveRouteTransitionContext): RouteTransitionMode {
-  const { fromPath, toPath, backward, mobile, style, reduceMotion = false, sidebarTriggered = false, fromTabIndex = -1, toTabIndex = -1 } = context;
+  const {
+    fromPath,
+    toPath,
+    backward,
+    mobile,
+    style,
+    reduceMotion = false,
+    sidebarTriggered = false,
+    pageTabTriggered = false,
+    fromTabIndex = -1,
+    toTabIndex = -1,
+  } = context;
   if (reduceMotion || !fromPath || fromPath === toPath) return '';
   if (style === 'native') {
+    if (pageTabTriggered && !mobile) return '';
     return getFeedDetailTransition(fromPath, toPath, backward, mobile) as RouteTransitionMode;
   }
 
@@ -81,6 +95,14 @@ export function resolveRouteTransition(context: ResolveRouteTransitionContext): 
   const toRootIndex = ROOT_TAB_PATHS.indexOf(toPath as (typeof ROOT_TAB_PATHS)[number]);
   if (mobile && fromRootIndex >= 0 && toRootIndex >= 0) {
     return toRootIndex > fromRootIndex ? 'root-tab-next' : 'root-tab-prev';
+  }
+
+  // PC 顶部页签切换属于平行视图切换，即便是已打开的详情标签也不再重复播放容器放大动效。
+  if (pageTabTriggered && !mobile) {
+    if (fromTabIndex >= 0 && toTabIndex >= 0 && fromTabIndex !== toTabIndex) {
+      return toTabIndex > fromTabIndex ? 'desktop-tab-next' : 'desktop-tab-prev';
+    }
+    return 'desktop-fluid';
   }
 
   const fromDetail = isDetailRoutePath(fromPath);
@@ -102,12 +124,14 @@ export function resolveRouteTransition(context: ResolveRouteTransitionContext): 
   return 'desktop-fluid';
 }
 let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+let pageTabFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * 触发侧边栏导航平滑过渡动效
  * @param durationMs 超时自动回退时间，默认 600ms（覆盖 out-in 动画时长）
  */
 export function triggerSidebarTransition(durationMs = 600): void {
+  resetPageTabTransition();
   isSidebarTransitionActive.value = true;
   if (fallbackTimer) {
     clearTimeout(fallbackTimer);
@@ -130,12 +154,51 @@ export function resetSidebarTransition(): void {
 }
 
 /**
- * 侧边栏导航过渡动效状态组合函数
+ * 标记即将发生的导航来自 PC 顶部页签切换/关闭/快捷键轮换。
+ */
+export function triggerPageTabTransition(durationMs = 600): void {
+  resetSidebarTransition();
+  isPageTabTransitionActive.value = true;
+  if (pageTabFallbackTimer) {
+    clearTimeout(pageTabFallbackTimer);
+  }
+  pageTabFallbackTimer = setTimeout(() => {
+    isPageTabTransitionActive.value = false;
+    pageTabFallbackTimer = null;
+  }, durationMs);
+}
+
+/**
+ * 立即清除 PC 页签切换过渡标记及定时器。
+ */
+export function resetPageTabTransition(): void {
+  if (pageTabFallbackTimer) {
+    clearTimeout(pageTabFallbackTimer);
+    pageTabFallbackTimer = null;
+  }
+  isPageTabTransitionActive.value = false;
+}
+
+/**
+ * 读取并一次性消费 PC 页签切换过渡标记，避免影响随后在页面内点击卡片展开详情。
+ */
+export function consumePageTabTransition(): boolean {
+  const active = isPageTabTransitionActive.value;
+  resetPageTabTransition();
+  return active;
+}
+
+/**
+ * 侧边栏与页签栏导航过渡动效状态组合函数
  */
 export function useSidebarTransition() {
   return {
     isSidebarTransitionActive,
+    isPageTabTransitionActive,
     triggerSidebarTransition,
     resetSidebarTransition,
+    triggerPageTabTransition,
+    resetPageTabTransition,
+    consumePageTabTransition,
   };
 }

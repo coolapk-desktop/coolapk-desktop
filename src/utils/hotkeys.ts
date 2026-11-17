@@ -7,6 +7,7 @@ import { hasActiveComments, collapseActiveComments } from './activeCommentTracke
 import { usePageTabsStore } from '../stores/pageTabs';
 import { refreshPageTabGeneration } from './pageTabs';
 import { navigateBack } from './navigation';
+import { triggerPageTabTransition } from './routeTransition';
 import type { ShortcutBranchId } from './shortcuts';
 
 /**
@@ -92,7 +93,10 @@ export function registerGlobalHotkeys() {
       // 关闭前守卫（如代理页未应用修改的确认）是异步的，确认通过后才离开当前页面。
       void tabsStore.closeTab(tabsStore.activeId).then(route => {
         // 关闭页签沿用 replace：历史里不应留下已经关掉的页面，否则后退会回到不存在的标签。
-        if (route) void router.replace(route);
+        if (route && router.currentRoute?.value?.fullPath !== route) {
+          triggerPageTabTransition();
+          void router.replace(route);
+        }
       });
       return;
     }
@@ -110,7 +114,10 @@ export function registerGlobalHotkeys() {
         : e.code === 'BracketLeft' || e.key === '[' || e.key === '{';
       const route = usePageTabsStore().cycle(previous ? -1 : 1);
       // 切换页签属于「打开另一个页面」，用 push 保证随后后退能回到刚看过的那一页。
-      if (route) void router.push(route);
+      if (route && router.currentRoute?.value?.fullPath !== route) {
+        triggerPageTabTransition();
+        void router.push(route);
+      }
       return;
     }
 
