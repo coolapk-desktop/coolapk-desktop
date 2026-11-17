@@ -52,7 +52,7 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
 
   function resolveActivePage(stage: HTMLElement): HTMLElement | null {
     const children = Array.from(stage.children) as HTMLElement[];
-    return children.find((el) => !el.classList.contains('route-leaving-active') && !el.classList.contains('edge-swipe-scrim')) || null;
+    return children.find((el) => !el.matches('[data-route-leaving], .edge-swipe-scrim')) || null;
   }
 
   function clearVisualState() {

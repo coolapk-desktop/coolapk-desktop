@@ -86,6 +86,29 @@ describe('route scroll restoration', () => {
     expect(list.scrollTop).toBe(1400);
   });
 
+  it('详情底栏状态更新后仍能跳过正在退场的详情页', async () => {
+    document.body.innerHTML = '<main class="app-main-content"><div class="route-transition-stage"><div id="home"><div class="custom-scrollbar"></div></div></div></main>';
+    const home = document.querySelector<HTMLElement>('#home')!;
+    const list = home.querySelector<HTMLElement>('.custom-scrollbar')!;
+    list.scrollTop = 1440;
+    saveRouteScrollPosition('/home-after-detail-scroll');
+
+    const detail = document.createElement('div');
+    detail.setAttribute('data-route-leaving', '');
+    detail.className = 'feed-detail-page custom-scrollbar reading-actions-hidden';
+    detail.scrollTop = 360;
+    home.before(detail);
+    // 返回时详情底栏复位，Vue 会重新写入详情根元素的整条 class。
+    detail.className = 'feed-detail-page custom-scrollbar';
+    list.scrollTop = 0;
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    await restoreRouteScrollPosition('/home-after-detail-scroll');
+    expect(list.scrollTop).toBe(1440);
+    expect(detail.scrollTop).toBe(360);
+  });
+
   it.each(['new-page', 'comments-entry'])('快速切到 %s 后，旧页面的待执行恢复不能再写入位置', async destination => {
     document.body.innerHTML = '<main class="app-main-content"></main>';
     const root = document.querySelector<HTMLElement>('main')!;

@@ -27,7 +27,7 @@ const SCROLL_CONTAINER_SELECTOR = '[data-route-scroll], .custom-scrollbar';
 // 外框虽然禁止用户滚动，scrollIntoView/输入聚焦仍可能改变其滚动偏移。
 const SCROLL_FRAME_SELECTOR = '.app-page-content, .route-transition-stage';
 const LEAVING_ROUTE_SELECTOR = [
-  '.route-leaving-active',
+  '[data-route-leaving]',
   '.feed-detail-forward-leave-active',
   '.feed-detail-back-leave-active',
   '.feed-detail-desktop-leave-active',

@@ -103,7 +103,7 @@ describe('containerTransform', () => {
     const root = document.createElement('div');
     root.innerHTML = `
       <section aria-hidden="true"><article data-feed-id="42"></article></section>
-      <section class="route-leaving-active"><article data-feed-id="42"></article></section>
+      <section data-route-leaving><article data-feed-id="42"></article></section>
       <section><article id="live-card" data-feed-id="42"></article></section>
     `;
     document.body.appendChild(root);

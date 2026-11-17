@@ -423,7 +423,7 @@ export function findVisibleAnchorElement(root: HTMLElement | null, targetKey: st
 
   const candidates = Array.from(root.querySelectorAll<HTMLElement>(selectors.join(', ')));
   for (const candidate of candidates) {
-    if (candidate.closest('[aria-hidden="true"], [inert], .route-leaving-active')) continue;
+    if (candidate.closest('[aria-hidden="true"], [inert], [data-route-leaving]')) continue;
     const rect = candidate.getBoundingClientRect();
     if (rect.width >= 16 && rect.height >= 16) return candidate;
   }
@@ -641,7 +641,6 @@ export function createRouteMorphCoordinator() {
       createdNodes.length = 0;
       for (let i = restoredStyles.length - 1; i >= 0; i--) restoredStyles[i]!();
       restoredStyles.length = 0;
-      if (leaveEl) leaveEl.classList.remove('route-leaving-active');
       isRouteContainerMorphing.value = false;
     };
 
@@ -865,7 +864,6 @@ export function createRouteMorphCoordinator() {
     prepare,
     onBeforeLeave(el: Element) {
       if (!(el instanceof HTMLElement)) return;
-      el.classList.add('route-leaving-active');
       pendingSession.leaveEl = el;
     },
     onBeforeEnter(el: Element) {

@@ -356,12 +356,13 @@ watch(() => route.fullPath, (_next, _previous) => {
 }, { flush: 'sync' });
 
 function handleRouteBeforeLeave(el: Element) {
-  if (el instanceof HTMLElement) el.classList.add('route-leaving-active');
+  // 详情退场时仍可能更新响应式 class，退场标记必须独立于 Vue 管理的样式类。
+  if (el instanceof HTMLElement) el.setAttribute('data-route-leaving', '');
   if (isContainerJsTransition.value) morphCoordinator.onBeforeLeave(el);
 }
 
 function handleRouteAfterLeave(el: Element) {
-  if (el instanceof HTMLElement) el.classList.remove('route-leaving-active');
+  if (el instanceof HTMLElement) el.removeAttribute('data-route-leaving');
   if (isContainerJsTransition.value) morphCoordinator.onFinishHook();
   else handleRouteCssTransitionEnd();
 }
