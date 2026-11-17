@@ -1,12 +1,24 @@
 <template>
-  <button v-if="featured" type="button" class="ranking-featured" @click="emit('open', entity)">
+  <button
+    v-if="featured"
+    type="button"
+    class="ranking-featured"
+    :data-feed-id="rankingFeedId || undefined"
+    :data-transition-anchor="rankingFeedId ? `feed:${rankingFeedId}` : undefined"
+    @click="emit('open', entity)"
+  >
     <AppImage v-if="cover" :src="cover" fit="cover" image-class="ranking-banner-image" />
     <span class="ranking-featured-shade"></span>
     <span class="ranking-recommend"><i class="fas fa-fire"></i> 推荐</span>
     <strong>{{ title }}</strong>
     <span class="ranking-featured-stats">{{ stats }}</span>
   </button>
-  <article v-else class="discovery-ranking-card">
+  <article
+    v-else
+    class="discovery-ranking-card"
+    :data-feed-id="rankingFeedId || undefined"
+    :data-transition-anchor="rankingFeedId ? `feed:${rankingFeedId}` : undefined"
+  >
     <header><h3>{{ title }}</h3><button type="button" @click="emit('open', entity)">查看更多</button></header>
     <button type="button" class="ranking-products" :aria-label="`查看${title}`" @click="emit('open', entity)">
       <div v-for="(product, index) in products" :key="index" class="ranking-product">
@@ -25,6 +37,7 @@ import { getRankingDate, getRankingProduct } from '../../utils/goodsRanking';
 const props = defineProps<{ entity: DiscoveryEntity; featured?: boolean }>();
 const emit = defineEmits<{ (event: 'open', entity: DiscoveryEntity): void }>();
 const info = computed(() => (props.entity.goodsListInfo || props.entity) as Record<string, any>);
+const rankingFeedId = computed(() => String(props.entity.id ?? props.entity.entityId ?? info.value.feed_id ?? info.value.id ?? '').trim());
 const title = computed(() => String(info.value.title || props.entity.title || '好物榜'));
 const cover = computed(() => String(props.entity.pic || props.entity.picUrl || props.entity.cover || info.value.cover || info.value.coverPic || info.value.logo || props.entity.logo || ''));
 const products = computed(() => (Array.isArray(props.entity.goodsListItem) ? props.entity.goodsListItem : []).slice(0, 3).map(getRankingProduct));

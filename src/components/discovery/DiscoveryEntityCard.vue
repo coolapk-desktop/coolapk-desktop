@@ -18,7 +18,13 @@
   <LiveCard v-else-if="isLive" :entity="entity" :compact="compact" />
 
   <section v-else-if="templateName.includes('imagesquarescrollcard')" class="discovery-square-links" data-discovery-horizontal-scroll>
-    <button v-for="(child, index) in entity.entities" :key="getEntityKey(child, index)" type="button" @click="$emit('open', child)">
+    <button
+      v-for="(child, index) in entity.entities"
+      :key="getEntityKey(child, index)"
+      type="button"
+      :data-transition-anchor="childTransitionAnchor(child) || undefined"
+      @click="$emit('open', child)"
+    >
       <AppImage :src="getEntityImage(child)" fit="cover" />
       <strong>{{ child.title }}</strong>
     </button>
@@ -36,7 +42,7 @@
     <i class="fas fa-chevron-right discovery-card-arrow"></i>
   </article>
 
-  <article v-else-if="isCarousel" :class="['discovery-carousel-card', { 'is-compact': compact }]">
+  <article v-else-if="isCarousel" :class="['discovery-carousel-card', { 'is-compact': compact }]" :data-transition-anchor="childTransitionAnchor(carouselItems[carouselIndex] || entity) || undefined">
     <div class="carousel-viewport" @click="$emit('open', carouselItems[carouselIndex] || entity)">
       <AppImage v-if="carouselImage" :src="carouselImage" fit="cover" image-class="discovery-carousel-image" />
       <button v-if="carouselItems.length > 1" type="button" class="carousel-control previous" @click.stop="moveCarousel(-1)">
@@ -62,7 +68,14 @@
       <button v-if="route" type="button" @click="emitOpen">更多 <i class="fas fa-chevron-right"></i></button>
     </header>
     <div class="discovery-mini-grid-items">
-      <button v-for="(child, index) in entity.entities" :key="getEntityKey(child, index)" type="button" class="discovery-mini-grid-item" @click="$emit('open', child)">
+      <button
+        v-for="(child, index) in entity.entities"
+        :key="getEntityKey(child, index)"
+        type="button"
+        class="discovery-mini-grid-item"
+        :data-transition-anchor="childTransitionAnchor(child) || undefined"
+        @click="$emit('open', child)"
+      >
         <AppImage v-if="getEntityImage(child)" :src="getEntityImage(child)" fit="cover" image-class="discovery-mini-icon" />
         <span v-else class="discovery-mini-icon discovery-mini-fallback"><i :class="getEntityFallbackIcon(child)"></i></span>
         <span class="discovery-mini-name">{{ child.title || child.name || child.tag || '内容' }}</span>
@@ -206,7 +219,7 @@
     </div>
   </section>
 
-  <article v-else-if="entityKind === 'app'" :class="['discovery-special-card app-card', { 'is-compact': compact }]" @click="emitOpen">
+  <article v-else-if="entityKind === 'app'" :class="['discovery-special-card app-card', { 'is-compact': compact }]" :data-transition-anchor="transitionAnchor || undefined" @click="emitOpen">
     <AppImage v-if="image" :src="image" fit="cover" image-class="special-card-image" />
     <div class="special-card-copy">
       <strong>{{ title || '应用' }}</strong>
@@ -222,7 +235,7 @@
 
   <TopicCard v-else-if="entityKind === 'topic'" :topic="entity" layout-mode="card" @select="emitOpen" />
 
-  <article v-else-if="entityKind === 'goods'" :class="['discovery-special-card product-card', { 'is-compact': compact, 'is-goods-grid': entityKind === 'goods' }]" @click="emitOpen">
+  <article v-else-if="entityKind === 'goods'" :class="['discovery-special-card product-card', { 'is-compact': compact, 'is-goods-grid': entityKind === 'goods' }]" :data-transition-anchor="transitionAnchor || undefined" @click="emitOpen">
     <AppImage v-if="image" :src="image" fit="cover" image-class="special-card-image" />
     <div class="special-card-copy">
       <strong>{{ title || '商品' }}</strong>
@@ -235,7 +248,7 @@
     <i class="fas fa-chevron-right discovery-card-arrow"></i>
   </article>
 
-  <article v-else-if="entityKind === 'dyh'" :class="['discovery-special-card dyh-card', { 'is-compact': compact }]" @click="emitOpen">
+  <article v-else-if="entityKind === 'dyh'" :class="['discovery-special-card dyh-card', { 'is-compact': compact }]" :data-transition-anchor="transitionAnchor || undefined" @click="emitOpen">
     <AppImage v-if="image" :src="image" fit="cover" image-class="special-card-image" />
     <div class="special-card-copy">
       <strong>{{ title || '看看号' }}</strong>
@@ -245,7 +258,7 @@
     <button type="button" @click.stop="toggleDyhFollow">{{ dyhFollowed ? '已关注' : '关注' }}</button>
   </article>
 
-  <article v-else-if="entityKind === 'article' || entityKind === 'question'" :class="['discovery-text-card', { 'is-compact': compact }]" @click="emitOpen">
+  <article v-else-if="entityKind === 'article' || entityKind === 'question'" :class="['discovery-text-card', { 'is-compact': compact }]" :data-transition-anchor="transitionAnchor || undefined" @click="emitOpen">
     <div class="text-card-heading">
       <span class="text-card-badge">{{ entityKind === 'question' ? '问答' : '图文' }}</span>
       <strong>{{ title || '社区内容' }}</strong>
@@ -258,7 +271,7 @@
     </div>
   </article>
 
-  <article v-else-if="isImage" :class="['discovery-image-card', { 'is-compact': compact }]" @click="emitOpen">
+  <article v-else-if="isImage" :class="['discovery-image-card', { 'is-compact': compact }]" :data-transition-anchor="transitionAnchor || undefined" @click="emitOpen">
     <AppImage v-if="image" :src="image" fit="cover" image-class="discovery-card-image" />
     <div class="discovery-card-copy">
       <strong>{{ title || '发现内容' }}</strong>
@@ -266,7 +279,7 @@
     </div>
   </article>
 
-  <article v-else :class="['discovery-generic-card', { 'is-compact': compact, 'is-untitled': !title }]" @click="emitOpen">
+  <article v-else :class="['discovery-generic-card', { 'is-compact': compact, 'is-untitled': !title }]" :data-transition-anchor="transitionAnchor || undefined" @click="emitOpen">
     <AppImage v-if="image" :src="image" fit="cover" image-class="discovery-generic-image" />
     <span v-else :class="['discovery-generic-icon', { 'is-derived': fallbackIcon !== 'fas fa-link' }]"><i :class="fallbackIcon"></i></span>
     <div class="discovery-generic-copy">
@@ -304,6 +317,7 @@ import {
   isImageCard,
   resolveDiscoveryRoute,
 } from '../../utils/discovery';
+import { getDetailTransitionTargetKey } from '../../utils/containerTransform';
 import { isLiveEntity } from '../../utils/live';
 
 defineOptions({ name: 'DiscoveryEntityCard' });
@@ -325,6 +339,11 @@ const secondHandCount = computed(() => String(props.entity.secondHandFeedNum ?? 
 const image = computed(() => getEntityImage(props.entity));
 const fallbackIcon = computed(() => getEntityFallbackIcon(props.entity));
 const route = computed(() => resolveDiscoveryRoute(props.entity));
+const transitionAnchor = computed(() => route.value?.kind === 'native' ? getDetailTransitionTargetKey(route.value.target) : '');
+function childTransitionAnchor(item: DiscoveryEntity): string {
+  const targetRoute = resolveDiscoveryRoute(item);
+  return targetRoute?.kind === 'native' ? getDetailTransitionTargetKey(targetRoute.target) : '';
+}
 const hasChildren = computed(() => Array.isArray(props.entity.entities) && props.entity.entities.length > 0);
 const isPictureTopicLink = computed(() => plainTopicLabels.value && !hasChildren.value && /^#.+#$/.test(title.value.trim()));
 const pictureTopic = computed(() => ({ ...props.entity, logo: image.value || props.entity.logo }));

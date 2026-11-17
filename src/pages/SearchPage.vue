@@ -1,7 +1,7 @@
 <template>
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: activeState.loading || activeState.loadingMore }" class="search-page-layout" :class="{ 'is-mobile-search': mobileLayout }">
-    <div ref="searchMainColRef" class="search-main-column" :class="{ 'is-toolbar-animating': isToolbarAnimating }">
-      <div ref="searchToolbarFrameRef" class="search-toolbar-frame" :class="{ 'is-collapsed': toolbarHidden }" :inert="toolbarHidden || undefined" :aria-hidden="toolbarHidden || undefined">
+    <div class="search-main-column">
+      <div class="search-toolbar-frame" :class="{ 'is-collapsed': toolbarHidden }" :inert="toolbarHidden || undefined" :aria-hidden="toolbarHidden || undefined">
       <div class="search-toolbar-clip">
       <div ref="searchToolbarRef" class="search-toolbar">
         <div class="search-toolbar-content">
@@ -56,7 +56,7 @@
       </div>
       </div>
 
-      <div ref="searchScrollRef" data-resource-scroll-root class="search-scroll-container custom-scrollbar" :data-reading-scroll="queryStr ? '' : undefined" @scroll.passive="handleScroll">
+      <div ref="searchScrollRef" data-resource-scroll-root class="search-scroll-container custom-scrollbar" :style="mobileLayout && searchToolbarSpace > 0 ? { '--search-toolbar-space': `${searchToolbarSpace}px` } : undefined" :data-reading-scroll="queryStr ? '' : undefined" @scroll.passive="handleScroll">
         <template v-if="queryStr">
           <section class="search-results-section">
             <div v-if="activeState.loading && !activeState.items.length" class="loading-wrapper"><LoadingState text="正在搜索..." /></div>
@@ -99,7 +99,7 @@
 
 <script setup lang="ts">
 import { vPullRefresh } from '../directives/pullRefresh';
-import { computed, getCurrentInstance, inject, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch } from 'vue';
+import { computed, getCurrentInstance, inject, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import EmptyState from '../components/common/EmptyState.vue';
@@ -120,11 +120,7 @@ import { readSearchUsersCollapsed, writeSearchUsersCollapsed } from '../utils/se
 import { FEED_SEARCH_SORT_OPTIONS, resolveFeedSearchSort } from '../utils/coolapkFeedSearch';
 import { useMobileLayout } from '../composables/useOfficialMobileFeedDetail';
 import { mobileReadingNavigationKey } from '../composables/useMobileReadingNavigation';
-import {
-  animateTransformSlide,
-  cancelTransformSlide,
-  prefersReducedMotion,
-} from '../utils/compositorMotion';
+import { observeResizeOnFrame } from '../utils/observeResizeOnFrame';
 import { navigateBack } from '../utils/navigation';
 import { getSearchPageScopeKey, getSearchScopeFromComponentKey } from '../utils/pageTabs';
 import { showToast } from '../utils/toast';
@@ -153,142 +149,29 @@ const initialPageParam = readQueryString(route.query.pageParam);
 const initialScopedSearch = ['tag', 'user'].includes(initialPageType) && initialPageParam;
 const queryStr = ref(readQueryString(route.query.q));
 const toolbarHidden = computed(() => Boolean(mobileLayout.value && queryStr.value && readingNavigation?.hidden.value));
-const searchMainColRef = ref<HTMLElement | null>(null);
-const searchToolbarFrameRef = ref<HTMLElement | null>(null);
 const searchToolbarRef = ref<HTMLElement | null>(null);
 const searchScrollRef = ref<HTMLElement | null>(null);
-const isToolbarAnimating = ref(false);
+const searchToolbarSpace = ref(0);
+let stopObservingToolbarResize: (() => void) | undefined;
 
-interface PendingSearchToolbarFlip {
-  nextCollapsed: boolean;
-  beforeToolbarTop: number;
-  beforeScrollTop: number;
-  beforeInnerScrollTop: number;
-}
-let pendingSearchToolbarFlip: PendingSearchToolbarFlip | null = null;
-let searchToolbarFlipToken = 0;
-
-function resetSearchToolbarMotion() {
-  searchToolbarFlipToken += 1;
-  pendingSearchToolbarFlip = null;
-  const toolbar = searchToolbarRef.value;
-  const scroll = searchScrollRef.value;
-  if (toolbar) {
-    cancelTransformSlide(toolbar);
-    toolbar.style.transform = '';
-    toolbar.style.willChange = '';
-  }
-  if (scroll) {
-    cancelTransformSlide(scroll);
-    scroll.style.transform = '';
-    scroll.style.willChange = '';
-  }
-  isToolbarAnimating.value = false;
+function measureSearchToolbarSpace() {
+  if (!mobileLayout.value) return;
+  const el = searchToolbarRef.value;
+  if (!el) return;
+  const h = Math.round(el.getBoundingClientRect().height || el.offsetHeight || 0);
+  if (h > 0 && h !== searchToolbarSpace.value) searchToolbarSpace.value = h;
 }
 
-watch(
-  toolbarHidden,
-  (next, prev) => {
-    pendingSearchToolbarFlip = null;
-    if (!searchPageActive || prev === undefined || next === prev) return;
-    const mainCol = searchMainColRef.value;
-    const toolbar = searchToolbarRef.value;
-    const scroll = searchScrollRef.value;
-    if (!mainCol || !toolbar || !scroll || !mobileLayout.value) {
-      resetSearchToolbarMotion();
-      return;
-    }
-    if (prefersReducedMotion()) {
-      resetSearchToolbarMotion();
-      return;
-    }
-    const mainTop = mainCol.getBoundingClientRect().top;
-    const beforeToolbarTop = toolbar.getBoundingClientRect().top - mainTop;
-    const beforeScrollTop = scroll.getBoundingClientRect().top - mainTop;
-    const beforeInnerScrollTop = scroll.scrollTop;
-    cancelTransformSlide(toolbar);
-    cancelTransformSlide(scroll);
-    toolbar.style.transform = '';
-    scroll.style.transform = '';
-    pendingSearchToolbarFlip = { nextCollapsed: next, beforeToolbarTop, beforeScrollTop, beforeInnerScrollTop };
-    isToolbarAnimating.value = true;
-  },
-  { flush: 'pre' },
-);
+function observeToolbarSpace() {
+  stopObservingToolbarResize?.();
+  stopObservingToolbarResize = searchToolbarRef.value ? observeResizeOnFrame(searchToolbarRef.value, measureSearchToolbarSpace) : undefined;
+  measureSearchToolbarSpace();
+}
 
-watch(
-  toolbarHidden,
-  () => {
-    const pending = pendingSearchToolbarFlip;
-    pendingSearchToolbarFlip = null;
-    if (!pending) return;
-    const mainCol = searchMainColRef.value;
-    const toolbar = searchToolbarRef.value;
-    const scroll = searchScrollRef.value;
-    if (!searchPageActive || !mainCol || !toolbar || !scroll || !toolbar.isConnected) {
-      resetSearchToolbarMotion();
-      return;
-    }
-    const toolbarHeight = searchToolbarFrameRef.value?.getBoundingClientRect().height || toolbar.getBoundingClientRect().height;
-    if (toolbarHeight <= 0.5) {
-      resetSearchToolbarMotion();
-      return;
-    }
-    const targetToolbarY = pending.nextCollapsed ? -toolbarHeight : 0;
-    const targetScrollY = pending.nextCollapsed ? 0 : toolbarHeight;
-    const fromToolbarY = pending.beforeToolbarTop;
-    const clampedInnerShift = pending.nextCollapsed ? Math.max(0, pending.beforeInnerScrollTop - scroll.scrollTop) : 0;
-    const fromScrollY = pending.beforeScrollTop - clampedInnerShift;
-    if (Math.abs(fromToolbarY - targetToolbarY) < 0.5 && Math.abs(fromScrollY - targetScrollY) < 0.5) {
-      resetSearchToolbarMotion();
-      return;
-    }
-    searchToolbarFlipToken += 1;
-    const token = searchToolbarFlipToken;
-    toolbar.style.willChange = 'transform';
-    scroll.style.willChange = 'transform';
-    toolbar.style.transform = targetToolbarY !== 0 ? `translate3d(0, ${targetToolbarY}px, 0)` : '';
-    scroll.style.transform = targetScrollY !== 0 ? `translate3d(0, ${targetScrollY}px, 0)` : '';
-    const finishIfCurrent = () => {
-      if (token === searchToolbarFlipToken) {
-        isToolbarAnimating.value = false;
-      }
-    };
-    const toolbarAnim = animateTransformSlide(toolbar, 'y', fromToolbarY, targetToolbarY, {
-      onFinish: finishIfCurrent,
-      onCancel: () => {
-        toolbar.style.willChange = '';
-      },
-    });
-    const scrollAnim = animateTransformSlide(scroll, 'y', fromScrollY, targetScrollY, {
-      onCancel: () => {
-        scroll.style.willChange = '';
-      },
-    });
-    if (!toolbarAnim || !scrollAnim) {
-      resetSearchToolbarMotion();
-    }
-  },
-  { flush: 'post' },
-);
-
-watch(
-  isToolbarAnimating,
-  (animating) => {
-    if (animating) return;
-    const toolbar = searchToolbarRef.value;
-    const scroll = searchScrollRef.value;
-    if (toolbar) {
-      toolbar.style.transform = '';
-      toolbar.style.willChange = '';
-    }
-    if (scroll) {
-      scroll.style.transform = '';
-      scroll.style.willChange = '';
-    }
-  },
-  { flush: 'post' },
-);
+watch([() => mobileLayout.value, queryStr, () => settingsStore.settings.searchTabOrder], () => {
+  void nextTick(measureSearchToolbarSpace);
+}, { flush: 'post' });
+watch(searchToolbarRef, observeToolbarSpace);
 const searchQuery = ref(queryStr.value);
 const configuredSearchTabs = ref<SearchTabDefinition[]>(DEFAULT_SEARCH_TABS);
 // 配置只改变展示顺序；当前分类、结果缓存和范围搜索继续使用原来的键。
@@ -792,21 +675,22 @@ function unbindGlobalListeners() {
 }
 
 onMounted(() => {
+  observeToolbarSpace();
   void loadSearchHistory();
   void loadHotItems();
   void loadSearchConfig();
 });
 
-onActivated(() => { searchPageActive = true; bindGlobalListeners(); });
+onActivated(() => { searchPageActive = true; bindGlobalListeners(); observeToolbarSpace(); });
 onDeactivated(() => {
   searchPageActive = false;
-  resetSearchToolbarMotion();
   closeSearchDropdowns();
   unbindGlobalListeners();
 });
 onUnmounted(() => {
   searchPageActive = false;
-  resetSearchToolbarMotion();
+  stopObservingToolbarResize?.();
+  stopObservingToolbarResize = undefined;
   closeSearchDropdowns();
   unbindGlobalListeners();
 });
@@ -880,16 +764,20 @@ async function refreshMobilePage() { if (queryStr.value) await fetchTab(activeTa
   .search-feed-sort { padding: 8px 12px; }
   .search-results-section, .search-welcome { padding: 12px 12px 24px; }
 }
+.is-mobile-search .search-main-column { position: relative; }
+.is-mobile-search .search-toolbar-frame { position: absolute; top: 0; left: 0; right: 0; z-index: 20; display: block; }
+.is-mobile-search .search-toolbar { will-change: transform; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
 .is-mobile-search .search-toolbar-content { padding: 6px 16px; }
 .is-mobile-search .search-input-wrapper { height: 36px; gap: 0; padding: 0 2px; border: 0; border-radius: 8px; background: var(--surface-hover); }
 .is-mobile-search .search-field { height: 100%; font-size: 14px; }
 .is-mobile-search .clear-btn { display: none; }
 .is-mobile-search .search-input-wrapper:focus-within .clear-btn { display: grid; }
-.is-mobile-search .search-main-column.is-toolbar-animating { position: relative; }
-.is-mobile-search .search-main-column.is-toolbar-animating .search-toolbar-frame { position: absolute; top: 0; left: 0; right: 0; z-index: 20; grid-template-rows: 1fr; pointer-events: none; }
-.is-mobile-search .search-main-column.is-toolbar-animating .search-toolbar-clip { overflow: hidden; }
-.is-mobile-search .search-main-column.is-toolbar-animating .search-toolbar-frame.is-collapsed .search-toolbar { transform: none; }
+/* 移动端搜索滚动容器始终预留顶部工具栏占位，收起/展开仅对绝对定位工具栏做纯 GPU transform 位移，彻底消除布局偏移。 */
+.is-mobile-search .search-scroll-container { padding-top: var(--search-toolbar-space, 48px); scroll-padding-top: var(--search-toolbar-space, 48px); }
 .search-toolbar-frame.is-collapsed { grid-template-rows: 0fr; pointer-events: none; }
 .search-toolbar-frame.is-collapsed .search-toolbar-clip { overflow: hidden; }
 .search-toolbar-frame.is-collapsed .search-toolbar { transform: translate3d(0, -100%, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .is-mobile-search .search-toolbar { transition: none; }
+}
 </style>

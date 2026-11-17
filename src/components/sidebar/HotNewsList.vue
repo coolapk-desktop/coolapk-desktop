@@ -5,7 +5,15 @@
     <ErrorState v-else-if="error" title="资讯加载失败" :message="error" @retry="fetchNews" />
     <EmptyState v-else-if="!items.length" title="暂无热门资讯" />
     <div v-else class="news-list">
-      <button v-for="(item, index) in items" :key="String(item.url || index)" type="button" class="news-item" :title="item.title" @click="openNews(item)">
+      <button
+        v-for="(item, index) in items"
+        :key="String(item.url || index)"
+        type="button"
+        class="news-item"
+        :data-transition-anchor="newsTransitionAnchor(item) || undefined"
+        :title="item.title"
+        @click="openNews(item, $event)"
+      >
         <AppImage v-if="getEntityImage(item)" :src="getEntityImage(item)" fit="cover" class="news-icon" />
         <span class="news-title">{{ item.title }}</span>
       </button>
@@ -19,6 +27,7 @@ import { useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useSettingsStore } from '../../stores/settings';
 import { getEntityImage, resolveDiscoveryRoute } from '../../utils/discovery';
+import { captureRouteTransitionAnchor, getDetailTransitionTargetKey } from '../../utils/containerTransform';
 import type { DiscoveryEntity } from '../../types/discovery';
 import AppImage from '../common/AppImage.vue';
 import LoadingState from '../common/LoadingState.vue';
@@ -47,11 +56,23 @@ async function fetchNews() {
   } finally { if (request === sequence) loading.value = false; }
 }
 
-function openNews(item: DiscoveryEntity) {
+function newsTransitionAnchor(item: DiscoveryEntity): string {
+  const route = resolveDiscoveryRoute(item);
+  return route?.kind === 'native' ? getDetailTransitionTargetKey(route.target) : '';
+}
+
+function openNews(item: DiscoveryEntity, event?: MouseEvent) {
   const route = resolveDiscoveryRoute(item);
   if (!route) return;
   if (route.kind === 'web') void CoolapkTauriAPI.openUrl(route.target, settings.settings.externalLinkMode);
-  else if (route.kind === 'native') void router.push(route.target);
+  else if (route.kind === 'native') {
+    const anchorKey = getDetailTransitionTargetKey(route.target);
+    const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    if (anchorKey && sourceEl) {
+      captureRouteTransitionAnchor(sourceEl, anchorKey, router.currentRoute?.value?.path || '');
+    }
+    void router.push(route.target);
+  }
   else void router.push({ path: '/page', query: { url: route.target, title: String(item.title || '热门资讯'), renderer: 'discovery' } });
 }
 

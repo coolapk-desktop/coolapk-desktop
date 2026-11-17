@@ -3,7 +3,14 @@
     <Transition name="fade">
       <div v-if="appStore.isSearchOpen" class="search-backdrop" @click="appStore.closeSearch"></div>
     </Transition>
-    <Transition name="scale-dialog">
+    <Transition
+      :name="useFluidSearchMorph ? '' : 'scale-dialog'"
+      :css="!useFluidSearchMorph"
+      :on-enter="useFluidSearchMorph ? onSearchEnter : undefined"
+      :on-leave="useFluidSearchMorph ? onSearchLeave : undefined"
+      :on-enter-cancelled="cancelOverlayMorph"
+      :on-leave-cancelled="cancelOverlayMorph"
+    >
       <div v-if="appStore.isSearchOpen" class="search-modal-wrapper">
         <div class="search-modal" @click.stop>
           <div class="search-input-header">
@@ -134,7 +141,9 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '../../stores/app';
+import { useSettingsStore } from '../../stores/settings';
 import { useShortcutHints } from '../../composables/useShortcutHints';
+import { cancelOverlayMorph, runOverlayEnterMorph, runOverlayLeaveMorph } from '../../utils/overlayTransform';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import LoadingState from '../common/LoadingState.vue';
@@ -158,8 +167,22 @@ import { fetchSearchSuggestions } from '../../utils/searchSuggestions';
 import { describeApiError } from '../../utils/apiErrorMessage';
 
 const appStore = useAppStore();
+const settingsStore = useSettingsStore();
 const showShortcutHints = useShortcutHints();
 const router = useRouter();
+const useFluidSearchMorph = computed(
+  () => !settingsStore.settings.reduceMotion && settingsStore.settings.pageTransitionStyle !== 'native',
+);
+
+function onSearchEnter(el: Element, done: () => void) {
+  if (!(el instanceof HTMLElement)) { done(); return; }
+  runOverlayEnterMorph(el, '.search-modal', 'search', done);
+}
+
+function onSearchLeave(el: Element, done: () => void) {
+  if (!(el instanceof HTMLElement)) { done(); return; }
+  runOverlayLeaveMorph(el, '.search-modal', 'search', done);
+}
 
 const query = ref('');
 const loading = ref(false);

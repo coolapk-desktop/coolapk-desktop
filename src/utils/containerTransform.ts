@@ -1,6 +1,7 @@
 import { nextTick, ref } from 'vue';
 import { prefersReducedMotion } from './compositorMotion';
 import { trackImageViewerPointerCandidate } from './imageViewerTransform';
+import { trackOverlayTriggerPointerCandidate } from './overlayTransform';
 
 export const FLUID_MOTION_EASING = 'cubic-bezier(0.2, 0.9, 0.25, 1)';
 export const CONTAINER_EXPAND_DURATION_DESKTOP_MS = 270;
@@ -54,18 +55,35 @@ const DETAIL_ROUTE_PATTERNS: Array<{ prefix: string; regex: RegExp }> = [
   { prefix: 'app', regex: /^\/app\/([^/?#]+)/ },
   { prefix: 'dyh', regex: /^\/dyh\/([^/?#]+)/ },
   { prefix: 'album', regex: /^\/album\/([^/?#]+)/ },
+  { prefix: 'feed', regex: /^\/goods\/(?:lists|ranking)\/([^/?#]+)/ },
 ];
 
 const ANCHOR_CARD_SELECTOR = [
   '[data-feed-id]',
   '[data-answer-id]',
   '[data-question-id]',
+  '[data-product-id]',
+  '[data-app-id]',
   '[data-transition-anchor]',
   '.feed-card',
   '.question-feed-card',
   '.question-answer-card',
   '.product-card',
+  '.digital-product-card',
   '.app-card',
+  '.discovery-secondhand-feed',
+  '.discovery-user-row',
+  '.discovery-special-card',
+  '.discovery-text-card',
+  '.discovery-image-card',
+  '.discovery-generic-card',
+  '.discovery-ranking-card',
+  '.ranking-featured',
+  '.discovery-goods-item',
+  '.goods-ranking-card',
+  '.trending-item',
+  '.news-item',
+  '.rating-card',
 ].join(', ');
 
 function safeDecode(value: string): string {
@@ -114,6 +132,10 @@ function resolveAnchorTargetKey(element: HTMLElement): string {
   if (feedId) return `feed:${feedId.trim()}`;
   const questionId = element.getAttribute('data-question-id');
   if (questionId) return `question:${questionId.trim()}`;
+  const productId = element.getAttribute('data-product-id');
+  if (productId) return `product:${productId.trim()}`;
+  const appId = element.getAttribute('data-app-id');
+  if (appId) return `app:${appId.trim()}`;
   return '';
 }
 
@@ -183,6 +205,34 @@ let pendingForwardAnchor: AnchorSnapshot | null = null;
 let lastPointerAnchor: { element: HTMLElement; key: string; at: number } | null = null;
 const historyAnchorMap = new Map<string, AnchorSnapshot>();
 
+interface InteractiveHandoffState {
+  box: RectBox;
+  bgScale: number;
+  scrimOpacity: number;
+  capturedAt: number;
+}
+let pendingInteractiveHandoff: InteractiveHandoffState | null = null;
+
+/** 记录移动端边缘滑动返回松手时的实时窗口浮层几何盒，便于 `container-collapse` 从半空态无缝顺延收口。 */
+export function setInteractiveBackHandoffBox(
+  box: RectBox,
+  options: { bgScale?: number; scrimOpacity?: number } = {},
+): void {
+  pendingInteractiveHandoff = {
+    box,
+    bgScale: options.bgScale ?? 0.985,
+    scrimOpacity: options.scrimOpacity ?? 0.65,
+    capturedAt: Date.now(),
+  };
+}
+
+export function consumeInteractiveBackHandoffBox(): InteractiveHandoffState | null {
+  const entry = pendingInteractiveHandoff;
+  pendingInteractiveHandoff = null;
+  if (!entry || Date.now() - entry.capturedAt > 800) return null;
+  return entry;
+}
+
 function pruneHistoryAnchors(now: number) {
   for (const [key, item] of historyAnchorMap) {
     if (now - item.capturedAt > HISTORY_ANCHOR_TTL_MS) {
@@ -217,11 +267,12 @@ export function captureRouteTransitionAnchor(
   }
 }
 
-/** 安装轻量全局指针锚点监听，为未显式传参的卡片跳转提供平滑起点。 */
+/** 安装轻量全局指针锚点监听，为未显式传参的卡片跳转与浮层触发提供平滑起点。 */
 export function installGlobalTransitionAnchorTracker(): () => void {
   if (typeof document === 'undefined') return () => {};
   const onPointerDown = (event: PointerEvent) => {
     trackImageViewerPointerCandidate(event.target);
+    trackOverlayTriggerPointerCandidate(event.target);
     const target = event.target;
     if (!(target instanceof Element)) return;
     const card = target.closest<HTMLElement>(ANCHOR_CARD_SELECTOR);
@@ -293,6 +344,8 @@ export function findVisibleAnchorElement(root: HTMLElement | null, targetKey: st
   const selectors = [`[data-transition-anchor="${escapedKey}"]`];
   if (prefix === 'feed') selectors.push(`[data-feed-id="${escapedId}"]`, `[data-answer-id="${escapedId}"]`);
   else if (prefix === 'question') selectors.push(`[data-question-id="${escapedId}"]`, `[data-feed-id="${escapedId}"]`);
+  else if (prefix === 'product') selectors.push(`[data-product-id="${escapedId}"]`);
+  else if (prefix === 'app') selectors.push(`[data-app-id="${escapedId}"]`);
 
   const candidates = Array.from(root.querySelectorAll<HTMLElement>(selectors.join(', ')));
   for (const candidate of candidates) {
@@ -548,7 +601,11 @@ export function createRouteMorphCoordinator() {
 
       const fallbackUsed = !cardBox;
       const targetCardBox = cardBox || createFallbackBox(stageWidth, stageHeight);
-      const fromBox = isExpand ? targetCardBox : localStageBox;
+      const handoff = !isExpand ? consumeInteractiveBackHandoffBox() : null;
+      const handoffBox = handoff ? computeLocalStageRect(handoff.box, stageEl) : null;
+      const fromBox = isExpand
+        ? targetCardBox
+        : (handoffBox ? { left: handoffBox.left, top: handoffBox.top, width: handoffBox.width, height: handoffBox.height, borderRadius: handoffBox.borderRadius } : localStageBox);
       const toBox = isExpand ? localStageBox : targetCardBox;
 
       if (hideSourceEl && !fallbackUsed) {
@@ -569,7 +626,7 @@ export function createRouteMorphCoordinator() {
         bgPageEl.style.transformOrigin = 'center center';
         bgPageEl.style.willChange = 'transform';
 
-        const bgScale = options.mobile ? 0.968 : 0.992;
+        const bgScale = handoff ? handoff.bgScale : (options.mobile ? 0.968 : 0.992);
         if (!fallbackUsed) {
           animations.push(bgPageEl.animate(
             isExpand
@@ -587,7 +644,7 @@ export function createRouteMorphCoordinator() {
       stageEl.appendChild(scrimEl);
       createdNodes.push(scrimEl);
       animations.push(scrimEl.animate(
-        isExpand ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }],
+        isExpand ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: handoff ? handoff.scrimOpacity : 1 }, { opacity: 0 }],
         { duration, easing: FLUID_MOTION_EASING, fill: 'both' },
       ));
 

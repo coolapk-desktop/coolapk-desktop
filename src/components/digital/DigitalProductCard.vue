@@ -1,5 +1,9 @@
 <template>
-  <article :class="['digital-product-card', `is-${layout}`]">
+  <article
+    :class="['digital-product-card', `is-${layout}`]"
+    :data-product-id="productId || undefined"
+    :data-transition-anchor="productId ? `product:${productId}` : undefined"
+  >
     <!-- 网格卡片视图 (Grid) -->
     <template v-if="layout === 'grid'">
       <button type="button" class="grid-card-btn" @click="$emit('open', product)">
@@ -108,6 +112,7 @@ const props = withDefaults(
 defineEmits<{ (event: 'open', product: DiscoveryEntity): void }>();
 
 const layout = computed(() => props.layout);
+const productId = computed(() => String(props.product.id ?? props.product.entityId ?? props.product.productId ?? props.product.product_id ?? '').trim());
 const title = computed(() => getDigitalProductTitle(props.product));
 const image = computed(() => getDigitalProductImage(props.product));
 const subtitle = computed(() => getDigitalProductSubtitle(props.product));

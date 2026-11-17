@@ -569,7 +569,8 @@ onUnmounted(() => {
     max-width: 460px;
     height: max-content;
     max-height: calc(100% - var(--mobile-navigation-top) - var(--mobile-bottom-overlay-space) - 12px);
-    transform: translate(-50%, -8px);
+    transform: translate3d(-50%, -8px, 0);
+    will-change: transform, opacity;
     visibility: hidden;
     pointer-events: none;
     box-shadow: var(--shadow-lg);
@@ -585,13 +586,13 @@ onUnmounted(() => {
   }
 
   .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open) {
-    transform: translate(-50%, 0);
+    transform: translate3d(-50%, 0, 0);
     visibility: visible;
     pointer-events: auto;
     opacity: 1;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .mobile-navigation-header) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .mobile-navigation-header) {
     display: flex;
     flex: 0 0 auto;
     align-items: center;
@@ -601,17 +602,17 @@ onUnmounted(() => {
     color: var(--text-primary);
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .mobile-navigation-header strong) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .mobile-navigation-header strong) {
     font-size: 16px;
     font-weight: 700;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .mobile-navigation-header span) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .mobile-navigation-header span) {
     color: var(--text-tertiary);
     font-size: 12px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .sidebar-nav) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .sidebar-nav) {
     display: grid !important;
     flex: 0 1 auto;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -623,11 +624,15 @@ onUnmounted(() => {
     overflow-y: auto;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-group) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .sidebar-settings) {
+    margin-top: 0;
+  }
+
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-group) {
     display: contents;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-item) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-item) {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -642,7 +647,7 @@ onUnmounted(() => {
     font-size: 12px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-label) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-label) {
     display: inline !important;
     max-width: 100%;
     overflow: hidden;
@@ -650,17 +655,17 @@ onUnmounted(() => {
     white-space: nowrap;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-item.is-active::before) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-item.is-active::before) {
     display: none;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-icon) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-icon) {
     width: auto;
     margin: 0 !important;
     font-size: 18px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-divider) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-divider) {
     display: block;
     grid-column: 1 / -1;
     width: auto;
@@ -668,31 +673,31 @@ onUnmounted(() => {
     margin: 2px 0;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .sidebar-footer) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .sidebar-footer) {
     display: flex !important;
     flex: 0 0 auto;
     padding: 12px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .app-info-card) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .app-info-card) {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 10px;
     width: 100%;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .app-info-top) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .app-info-top) {
     grid-column: 1 / -1;
     justify-content: flex-start;
     gap: 8px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .app-info-actions) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .app-info-actions) {
     min-width: 0;
     gap: 8px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .footer-action-btn) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .footer-action-btn) {
     min-width: 0;
     min-height: 44px;
     padding: 8px;
@@ -700,12 +705,12 @@ onUnmounted(() => {
     font-size: 12px;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .beta-toggle-btn) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .beta-toggle-btn) {
     gap: 6px;
     flex-wrap: wrap;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar.is-mobile-open .nav-badge) {
+  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-badge) {
     position: absolute;
     top: 3px;
     right: 6px;

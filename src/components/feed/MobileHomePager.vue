@@ -3,7 +3,7 @@
     <div class="home-main-column">
     <Teleport :to="homeToolbarTarget || undefined" :disabled="!joinedToolbar">
     <div class="home-toolbar" :class="{ 'is-mobile-toolbar': mobile, 'is-detached-mobile-toolbar': keepHomeHeaderSpace && !joinedToolbar }">
-    <FeedTabs ref="tabBar" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="activeIndex" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
+    <FeedTabs ref="tabBar" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="mobile ? activeIndex : undefined" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
     <FeedLayoutToggle v-if="!mobile" v-model="settings.settings.feedLayout" />
     </div>
     </Teleport>
@@ -60,7 +60,7 @@ let position = 0, width = 1, moveFrame = 0, pendingPosition = 0;
 function setPosition(value: number) {
   position = value;
   if (track.value) track.value.style.transform = `translate3d(${-value * width}px,0,0)`;
-  tabBar.value?.setSwipeProgress?.(value);
+  if (props.mobile) tabBar.value?.setSwipeProgress?.(value);
 }
 function flushMove() {
   if (moveFrame) { cancelAnimationFrame(moveFrame); moveFrame = 0; setPosition(pendingPosition); }

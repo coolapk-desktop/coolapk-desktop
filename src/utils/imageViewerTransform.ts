@@ -109,7 +109,9 @@ export function consumePendingImageViewerAnchor(): ImageMorphRect | null {
 
 export function trackImageViewerPointerCandidate(target: EventTarget | null): void {
   if (!(target instanceof Element)) return;
-  const candidate = target.closest<HTMLElement>('[data-context-image-url], .grid-item, .notify-image, .message-image');
+  const candidate = target.closest<HTMLElement>(
+    '[data-context-image-url], .grid-item, .pic-thumb, .media-item, .screenshot-item, .msg-pic-only-card, .msg-pic-container, .notify-image, .message-image',
+  );
   if (candidate) {
     lastClickedThumbEl = { element: candidate, at: Date.now() };
   }
@@ -181,6 +183,7 @@ function createMorphClipProxy(
     `height:${box.height}px`,
     `border-radius:${box.borderRadius}px`,
     'overflow:hidden',
+    'contain:layout style',
     'pointer-events:none',
     'z-index:3005',
   ].join(';');
@@ -251,7 +254,7 @@ export function runImageViewerEnterMorph(
   const bottombar = backdropEl.querySelector<HTMLElement>('.viewer-bottombar');
   const chromeAnims: Animation[] = [];
   if (topbar) chromeAnims.push(topbar.animate([{ opacity: 0, transform: 'translate3d(0,-10px,0)' }, { opacity: 1, transform: 'translate3d(0,0,0)' }], { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING }));
-  if (bottombar) chromeAnims.push(bottombar.animate([{ opacity: 0, transform: 'translate(-50%, 10px)' }, { opacity: 1, transform: 'translate(-50%, 0)' }], { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING }));
+  if (bottombar) chromeAnims.push(bottombar.animate([{ opacity: 0, transform: 'translate3d(-50%, 10px, 0)' }, { opacity: 1, transform: 'translate3d(-50%, 0, 0)' }], { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING }));
 
   const boxAnim = wrap.animate(
     [

@@ -9,6 +9,7 @@ import {
   getDetailTransitionTargetKey,
   isLocalRectVisibleInStage,
   isRouteContainerMorphing,
+  setInteractiveBackHandoffBox,
 } from '../containerTransform';
 
 function mockRect(el: HTMLElement, rect: { left: number; top: number; width: number; height: number }) {
@@ -26,9 +27,10 @@ function mockRect(el: HTMLElement, rect: { left: number; top: number; width: num
 }
 
 function mockAnimate(target: HTMLElement) {
-  const animations: Array<{ finish: () => void; cancel: ReturnType<typeof vi.fn> }> = [];
-  target.animate = vi.fn(() => {
+  const animations: Array<{ keyframes: Keyframe[]; finish: () => void; cancel: ReturnType<typeof vi.fn> }> = [];
+  target.animate = vi.fn((keyframes: Keyframe[] | PropertyIndexedKeyframes | null) => {
     const anim: any = {
+      keyframes: Array.isArray(keyframes) ? keyframes : [],
       onfinish: null as null | (() => void),
       oncancel: null as null | (() => void),
       cancel: vi.fn(),
@@ -247,6 +249,67 @@ describe('containerTransform', () => {
 
     const ghost = Array.from(created).find((el) => el.classList.contains('route-container-ghost'));
     expect(ghost?.querySelector('img')?.getAttribute('src')).toBe('data:image/png;base64,iVBOR');
+    coordinator.cancel();
+  });
+
+  it('提取商品、直播与好物榜路由标识，并将交互左滑交接盒无缝承接到 container-collapse 起点', async () => {
+    expect(getDetailTransitionTargetKey('/product/88')).toBe('product:88');
+    expect(getDetailTransitionTargetKey('/live/9')).toBe('live:9');
+    expect(getDetailTransitionTargetKey('/goods/lists/12')).toBe('feed:12');
+    expect(getDetailTransitionTargetKey('/goods/ranking/5')).toBe('feed:5');
+
+    const root = document.createElement('div');
+    const productEl = document.createElement('article');
+    productEl.setAttribute('data-transition-anchor', 'product:88');
+    mockRect(productEl, { left: 16, top: 140, width: 170, height: 220 });
+    root.appendChild(productEl);
+    expect(findVisibleAnchorElement(root, 'product:88')).toBe(productEl);
+
+    const stage = document.createElement('div');
+    mockRect(stage, { left: 0, top: 0, width: 400, height: 800 });
+    const listPage = document.createElement('div');
+    listPage.appendChild(productEl);
+    stage.appendChild(listPage);
+    const detailPage = document.createElement('div');
+    stage.appendChild(detailPage);
+    document.body.appendChild(stage);
+
+    const created = new Set<HTMLElement>();
+    const animMap = new Map<HTMLElement, ReturnType<typeof mockAnimate>>();
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: any) => {
+      const el = origCreate(tag, options);
+      animMap.set(el, mockAnimate(el));
+      created.add(el);
+      return el;
+    });
+    mockAnimate(listPage);
+    mockAnimate(detailPage);
+
+    setInteractiveBackHandoffBox(
+      { left: 96, top: 24, width: 340, height: 680, borderRadius: 18 },
+      { bgScale: 0.982, scrimOpacity: 0.35 },
+    );
+
+    const coordinator = createRouteMorphCoordinator();
+    coordinator.prepare({
+      mode: 'container-collapse',
+      targetKey: 'product:88',
+      mobile: true,
+      fromPath: '/product/88',
+      toPath: '/digital',
+    });
+    const leaveDone = vi.fn();
+    const enterDone = vi.fn();
+    coordinator.onLeave(detailPage, leaveDone);
+    coordinator.onEnter(listPage, enterDone);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const ghost = Array.from(created).find((el) => el.classList.contains('route-container-ghost'));
+    expect(ghost).toBeDefined();
+    const ghostFrames = animMap.get(ghost!)?.[0]?.keyframes;
+    expect(String(ghostFrames?.[0]?.transform)).toContain('translate3d(96.00px, 24.00px, 0)');
     coordinator.cancel();
   });
 });

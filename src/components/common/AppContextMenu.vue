@@ -1,32 +1,34 @@
 <template>
   <Teleport to="body">
-    <div
-      v-if="menu"
-      v-show="!selectionAdjusting"
-      class="app-context-menu"
-      :class="{ 'is-mobile-selection': menu.mobileSelection }"
-      :style="menuStyle"
-      role="menu"
-      @contextmenu.prevent
-      @mousedown.stop
-    >
-      <template v-for="(item, index) in menu.items" :key="item.id">
-        <div v-if="item.separator" class="context-menu-separator"></div>
-        <button
-          v-else
-          type="button"
-          class="context-menu-item"
-          :class="{ 'is-danger': item.danger, 'is-disabled': item.disabled }"
-          :disabled="item.disabled"
-          role="menuitem"
-          @click.stop="run(item)"
-        >
-          <i :class="item.icon"></i>
-          <span>{{ item.label }}</span>
-          <kbd v-if="showShortcutHints && item.shortcut">{{ item.shortcut }}</kbd>
-        </button>
-      </template>
-    </div>
+    <Transition name="context-menu-pop">
+      <div
+        v-if="menu"
+        v-show="!selectionAdjusting"
+        class="app-context-menu"
+        :class="{ 'is-mobile-selection': menu.mobileSelection }"
+        :style="menuStyle"
+        role="menu"
+        @contextmenu.prevent
+        @mousedown.stop
+      >
+        <template v-for="(item, index) in menu.items" :key="item.id">
+          <div v-if="item.separator" class="context-menu-separator"></div>
+          <button
+            v-else
+            type="button"
+            class="context-menu-item"
+            :class="{ 'is-danger': item.danger, 'is-disabled': item.disabled }"
+            :disabled="item.disabled"
+            role="menuitem"
+            @click.stop="run(item)"
+          >
+            <i :class="item.icon"></i>
+            <span>{{ item.label }}</span>
+            <kbd v-if="showShortcutHints && item.shortcut">{{ item.shortcut }}</kbd>
+          </button>
+        </template>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -39,6 +41,7 @@ import { usePageTabsStore } from '../../stores/pageTabs';
 import { useSettingsStore } from '../../stores/settings';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { openFeedDetail } from '../../utils/feedNavigation';
+import { captureImageViewerAnchor } from '../../utils/imageViewerTransform';
 import { showToast } from '../../utils/toast';
 import { getOriginalImageUrl } from '../../utils/image';
 import { usePlatformShortcuts } from '../../utils/shortcuts';
@@ -59,6 +62,7 @@ type ContextState = {
   linkUrl: string;
   linkText: string;
   imageUrl: string;
+  imageElement?: HTMLElement;
   imageDataUrl?: string;
   livePhoto?: FeedImageItem;
   contentId?: string;
@@ -90,7 +94,7 @@ type MenuItem = {
   action?: () => void | Promise<unknown>;
 };
 
-type MenuData = ContextState & { items: MenuItem[]; mobileSelection: boolean; width: number };
+type MenuData = ContextState & { items: MenuItem[]; mobileSelection: boolean; width: number; origin: string };
 
 const router = useRouter();
 const route = useRoute();
@@ -108,6 +112,7 @@ const menuStyle = computed(() => ({
   left: `${menu.value?.x || 0}px`,
   top: `${menu.value?.y || 0}px`,
   width: `${menu.value?.width || 136}px`,
+  transformOrigin: menu.value?.origin || 'top left',
 }));
 
 function selectedText(): string {
@@ -203,6 +208,7 @@ function buildContext(event: ContextPoint): ContextState | null {
 
   const imageUrl = getImageUrl(element);
   if (imageUrl && (element.closest('img') || element.closest('[data-context-image-url]'))) {
+    const sourceEl = element.closest<HTMLElement>('[data-context-image-url], .grid-item, .pic-thumb, .media-item, .screenshot-item, .notify-image, img') || element;
     return {
       x: event.clientX,
       y: event.clientY,
@@ -211,6 +217,7 @@ function buildContext(event: ContextPoint): ContextState | null {
       linkUrl: '',
       linkText: '',
       imageUrl,
+      imageElement: sourceEl,
       ...getLivePhotoContext(element, imageUrl),
       // 大图可能超过内存缓存上限；直接复用当前元素持有的完整原图数据。
       imageDataUrl: getLoadedOriginalImage(element, imageUrl),
@@ -476,7 +483,10 @@ function createItems(state: ContextState): MenuItem[] {
 }
 
 function openContextImage(state: ContextState) {
-  appStore.openImageViewer([state.livePhoto || state.imageUrl], 0, { fromDetail: state.fromDetail, contentId: state.contentId, contentType: state.contentType });
+  const url = state.livePhoto || state.imageUrl;
+  const targetUrl = typeof url === 'string' ? url : url.sourceUrl;
+  captureImageViewerAnchor(state.imageElement, targetUrl || state.imageUrl);
+  appStore.openImageViewer([url], 0, { fromDetail: state.fromDetail, contentId: state.contentId, contentType: state.contentType });
 }
 
 /** 延迟解析并复用实况缓存，下载沿用图片所使用的下载目录与通用文件保存流程。 */
@@ -743,13 +753,18 @@ function applyMenu(state: ContextState) {
     ? Math.min(460, window.visualViewport?.width || window.innerWidth) - 16
     : estimateMenuWidth(items);
   const estimatedHeight = Math.min(520, items.length * 38 + 16);
+  const clampedX = Math.max(8, Math.min(state.x, window.innerWidth - width - 8));
+  const clampedY = Math.max(8, Math.min(state.y, window.innerHeight - estimatedHeight - 8));
+  const flippedX = state.x > window.innerWidth - width - 8;
+  const flippedY = state.y > window.innerHeight - estimatedHeight - 8;
   menu.value = {
     ...state,
     items,
     mobileSelection,
     width,
-    x: Math.max(8, Math.min(state.x, window.innerWidth - width - 8)),
-    y: Math.max(8, Math.min(state.y, window.innerHeight - estimatedHeight - 8)),
+    origin: `${flippedY ? 'bottom' : 'top'} ${flippedX ? 'right' : 'left'}`,
+    x: clampedX,
+    y: clampedY,
   };
   if (mobileSelection) positionSelectionMenu();
 }

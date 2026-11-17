@@ -171,4 +171,36 @@ describe('MobileBottomNav 首页手势', () => {
     // 「我的」统一指向 /me，不会误命中 /user/ 路径。
     expect(profileButton?.classes()).not.toContain('active');
   });
+
+  it('渲染并随当前路由平移滑块胶囊，且发布按钮标记浮层容器触发锚点', async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(64);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(48);
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockReturnValue(4);
+    vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.textContent?.includes('发现') ? 184 : 4;
+    });
+
+    routerMock.currentRoute.value.path = '/';
+    const wrapper = mountNav();
+    await wrapper.vm.$nextTick();
+    await wrapper.vm.$nextTick();
+
+    const pill = wrapper.find('.mobile-nav-pill');
+    expect(pill.exists()).toBe(true);
+    expect(pill.attributes('style')).toContain('translate3d(4px, 0, 0)');
+    wrapper.unmount();
+
+    routerMock.currentRoute.value.path = '/discover';
+    const wrapperDiscover = mountNav();
+    await wrapperDiscover.vm.$nextTick();
+    await wrapperDiscover.vm.$nextTick();
+    expect(wrapperDiscover.find('.mobile-nav-pill').attributes('style')).toContain('translate3d(184px, 0, 0)');
+
+    const publishBtn = wrapperDiscover.find('.mobile-publish');
+    expect(publishBtn.attributes('data-overlay-trigger')).toBe('publish');
+    await publishBtn.trigger('click');
+    const appStore = (await import('../../../stores/app')).useAppStore();
+    expect(appStore.isPublishOpen).toBe(true);
+    wrapperDiscover.unmount();
+  });
 });

@@ -1,9 +1,17 @@
 <template>
   <Teleport to="body">
-    <Transition name="fade">
+    <Transition name="fade" appear>
       <div v-if="isOpen" class="dialog-backdrop" :style="{ zIndex: layer }" @click="handleBackdropClick"></div>
     </Transition>
-    <Transition name="scale-dialog">
+    <Transition
+      appear
+      :name="useFluidOverlayMorph ? '' : 'scale-dialog'"
+      :css="!useFluidOverlayMorph"
+      :on-enter="useFluidOverlayMorph ? onDialogEnter : undefined"
+      :on-leave="useFluidOverlayMorph ? onDialogLeave : undefined"
+      :on-enter-cancelled="cancelOverlayMorph"
+      :on-leave-cancelled="cancelOverlayMorph"
+    >
       <!-- keepContent 时用 v-show 隐藏而非卸载，保留插槽内的 DOM 与组件实例；其他弹窗仍是 v-if 销毁。 -->
       <div v-if="isOpen || keepContent" v-show="!keepContent || isOpen" class="dialog-wrapper" :style="{ zIndex: layer + 1 }">
         <div class="dialog-container" :class="dialogClass" :style="{ width: `${width}px` }">
@@ -34,8 +42,10 @@ let nextDialogLayer = 2000;
 </script>
 
 <script setup lang="ts">
-import { onActivated, onDeactivated, onUnmounted, ref, watch } from 'vue';
+import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from 'vue';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
+import { useSettingsStore } from '../../stores/settings';
+import { cancelOverlayMorph, runOverlayEnterMorph, runOverlayLeaveMorph } from '../../utils/overlayTransform';
 
 const props = withDefaults(
   defineProps<{
@@ -46,14 +56,32 @@ const props = withDefaults(
     closeOnBackdrop?: boolean;
     /** 关闭时保留插槽内容（仅隐藏），默认为 false 以维持原有的销毁行为。 */
     keepContent?: boolean;
+    /** 关联触发按钮锚点键（如 publish），存在时从源触发控件原位容器展开/收起。 */
+    triggerKey?: string;
   }>(),
   {
     title: '',
     width: 600,
     closeOnBackdrop: true,
-    keepContent: false
+    keepContent: false,
+    triggerKey: '',
   }
 );
+
+const settingsStore = useSettingsStore();
+const useFluidOverlayMorph = computed(
+  () => Boolean(props.triggerKey) && !settingsStore.settings.reduceMotion && settingsStore.settings.pageTransitionStyle !== 'native',
+);
+
+function onDialogEnter(el: Element, done: () => void) {
+  if (!(el instanceof HTMLElement)) { done(); return; }
+  runOverlayEnterMorph(el, '.dialog-container', props.triggerKey, done);
+}
+
+function onDialogLeave(el: Element, done: () => void) {
+  if (!(el instanceof HTMLElement)) { done(); return; }
+  runOverlayLeaveMorph(el, '.dialog-container', props.triggerKey, done);
+}
 
 const emit = defineEmits<{
   (e: 'close'): void;

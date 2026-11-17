@@ -21,7 +21,8 @@
           v-for="(item, index) in items.slice(0, 5)"
           :key="item.id || index"
           class="trending-item"
-          @click="openFeed(item)"
+          :data-feed-id="item.id || undefined"
+          @click="openFeed(item, $event)"
         >
           <span :class="['rank-num', `rank-${index + 1}`]">{{ index + 1 }}</span>
           <div class="item-info">
@@ -82,9 +83,10 @@ async function fetchHot() {
   }
 }
 
-function openFeed(item: any) {
+function openFeed(item: any, event?: MouseEvent) {
   if (item && item.id) {
-    openFeedDetail(router, item.id, item);
+    const anchorEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    openFeedDetail(router, item.id, item, undefined, anchorEl);
   }
 }
 

@@ -172,7 +172,8 @@
               v-for="(img, idx) in screenshots"
               :key="idx"
               class="screenshot-item"
-              @click="openViewer(idx)"
+              :data-context-image-url="img"
+              @click="openViewer(idx, $event)"
             >
               <AppImage :src="img" image-class="screenshot-img" />
             </div>
@@ -525,6 +526,7 @@ import { renderCoolapkRichText } from '../utils/richText';
 import { handleAnchorClick } from '../utils/anchorClick';
 import { getErrorMessage } from '../utils/errors';
 import { showToast } from '../utils/toast';
+import { captureImageViewerAnchor } from '../utils/imageViewerTransform';
 import type { RelatedApp, RelatedAlbum } from '../types/appDetail';
 import { usePageTabTitle } from '../composables/usePageTabTitle';
 
@@ -1056,8 +1058,10 @@ function handlePageScroll(e: Event) {
   }
 }
 
-function openViewer(idx: number) {
+function openViewer(idx: number, event?: MouseEvent) {
   if (screenshots.value.length > 0) {
+    const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    captureImageViewerAnchor(sourceEl, screenshots.value[idx] || '');
     appStore.openImageViewer(screenshots.value, idx);
   }
 }

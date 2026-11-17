@@ -1,5 +1,6 @@
 <template>
-  <nav class="mobile-bottom-nav" aria-label="移动端主导航">
+  <nav ref="navRef" :class="['mobile-bottom-nav', { 'has-nav-pill': Boolean(pillStyle) }]" aria-label="移动端主导航">
+    <span v-if="pillStyle" class="mobile-nav-pill" :style="pillStyle" aria-hidden="true"></span>
     <button
       v-for="item in leftItems"
       :key="item.path"
@@ -12,7 +13,7 @@
       <span>{{ item.label }}</span>
     </button>
 
-    <button v-if="!isWebDemo" type="button" class="mobile-publish" aria-label="发布动态" @click="appStore.openPublish">
+    <button v-if="!isWebDemo" type="button" class="mobile-publish" data-overlay-trigger="publish" aria-label="发布动态" @click="handleOpenPublish($event)">
       <!-- 官方 APK 的 ic_v15_plus。 -->
       <svg class="mobile-publish-icon" viewBox="0 0 15 15" aria-hidden="true">
         <path d="M7.5,0L7.5,0A1.5,1.5 0,0 1,9 1.5L9,13.5A1.5,1.5 0,0 1,7.5 15L7.5,15A1.5,1.5 0,0 1,6 13.5L6,1.5A1.5,1.5 0,0 1,7.5 0z" />
@@ -35,18 +36,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from '../../stores/app';
 import { isWebDemo } from '../../api/runtime';
 import { useSettingsStore } from '../../stores/settings';
 import OfficialNavIcon from './OfficialNavIcon.vue';
 import { activateRootTab } from '../../utils/homeTab';
+import { captureOverlayTriggerAnchor } from '../../utils/overlayTransform';
+import { observeResizeOnFrame } from '../../utils/observeResizeOnFrame';
 
 const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
 const settingsStore = useSettingsStore();
+const navRef = ref<HTMLElement | null>(null);
+const pillStyle = ref<{ top: string; width: string; height: string; transform: string } | null>(null);
+let stopResizeObserver: (() => void) | undefined;
+let disposed = false;
 
 const leftItems = computed(() => [
   { path: '/', label: '首页' },
@@ -63,6 +70,47 @@ const rightItems = computed(() => [
 function isActive(path: string): boolean {
   if (path === '/') return route.path === '/';
   return route.path === path || route.path.startsWith(`${path}/`);
+}
+
+async function updatePill() {
+  await nextTick();
+  if (disposed) return;
+  const nav = navRef.value;
+  const activeEl = nav?.querySelector<HTMLElement>('.mobile-nav-item.active');
+  if (!nav || !activeEl || !activeEl.offsetWidth || !activeEl.offsetHeight) {
+    pillStyle.value = null;
+    return;
+  }
+  pillStyle.value = {
+    top: `${activeEl.offsetTop}px`,
+    width: `${activeEl.offsetWidth}px`,
+    height: `${activeEl.offsetHeight}px`,
+    transform: `translate3d(${activeEl.offsetLeft}px, 0, 0)`,
+  };
+}
+
+watch([() => route.path, leftItems, rightItems], () => {
+  void updatePill();
+}, { immediate: true });
+
+onMounted(() => {
+  void updatePill();
+  if (navRef.value) {
+    stopResizeObserver = observeResizeOnFrame(navRef.value, () => {
+      void updatePill();
+    });
+  }
+  void document.fonts?.ready.then(() => updatePill());
+});
+
+onUnmounted(() => {
+  disposed = true;
+  stopResizeObserver?.();
+});
+
+function handleOpenPublish(event: MouseEvent) {
+  captureOverlayTriggerAnchor('publish', event.currentTarget instanceof HTMLElement ? event.currentTarget : null);
+  appStore.openPublish();
 }
 
 /**
@@ -131,8 +179,22 @@ function activate(path: string) {
     --nav-glass-selection: rgba(255, 255, 255, .09);
   }
 
+  .mobile-nav-pill {
+    position: absolute;
+    left: 0;
+    border-radius: 28px;
+    pointer-events: none;
+    z-index: 0;
+    background: linear-gradient(145deg, var(--nav-glass-selection), transparent), color-mix(in srgb, var(--surface) 28%, transparent);
+    box-shadow: inset 0 1px 0 var(--nav-glass-edge), 0 1px 6px #00000008;
+    will-change: transform, width;
+    transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
   .mobile-nav-item,
   .mobile-publish {
+    position: relative;
+    z-index: 1;
     border: 0;
     background: transparent;
     color: var(--text-secondary);
@@ -167,6 +229,21 @@ function activate(path: string) {
     color: var(--brand-primary);
     background: linear-gradient(145deg, var(--nav-glass-selection), transparent), color-mix(in srgb, var(--surface) 28%, transparent);
     box-shadow: inset 0 1px 0 var(--nav-glass-edge), 0 1px 6px #00000008;
+  }
+
+  .mobile-bottom-nav.has-nav-pill .mobile-nav-item.active {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .mobile-nav-item.active .mobile-nav-icon {
+    animation: navIconBounce 340ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes navIconBounce {
+    0% { transform: scale(0.92); }
+    45% { transform: scale(1.14) translateY(-1px); }
+    100% { transform: scale(1) translateY(0); }
   }
 
   .mobile-publish {
@@ -204,12 +281,14 @@ function activate(path: string) {
 
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
     .mobile-bottom-nav { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
-    .mobile-nav-item.active { background: var(--surface-hover); }
+    .mobile-nav-item.active,
+    .mobile-nav-pill { background: var(--surface-hover); box-shadow: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .mobile-nav-item, .mobile-publish { transition: none; }
+    .mobile-nav-item, .mobile-publish, .mobile-nav-pill { transition: none; }
     .mobile-nav-item:active, .mobile-publish:active { transform: none; }
+    .mobile-nav-item.active .mobile-nav-icon { animation: none; }
   }
 }
 </style>

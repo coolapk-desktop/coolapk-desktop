@@ -144,7 +144,7 @@
               />
               <div class="message-content">
                 <!-- 纯图片消息 -->
-                <div v-if="getPicUrl(msg) && !getMessageText(msg)" class="msg-pic-only-card" @click.stop="openMessageImage(msg)">
+                <div v-if="getPicUrl(msg) && !getMessageText(msg)" class="msg-pic-only-card" :data-context-image-url="getPicUrl(msg)" @click.stop="openMessageImage(msg, $event)">
                   <AppImage :src="getPicUrl(msg)" fit="contain" image-class="msg-pure-img" />
                 </div>
                 <!-- 包含文本或文本+图片混合消息 -->
@@ -156,7 +156,7 @@
                   :data-context-message-id="String(msg.id || '')"
                 >
                   <div class="bubble">
-                    <div v-if="getPicUrl(msg)" class="msg-pic-container" @click.stop="openMessageImage(msg)">
+                    <div v-if="getPicUrl(msg)" class="msg-pic-container" :data-context-image-url="getPicUrl(msg)" @click.stop="openMessageImage(msg, $event)">
                       <AppImage :src="getPicUrl(msg)" fit="contain" image-class="msg-img" />
                     </div>
                     <div v-if="getMessageText(msg)" class="msg-text" v-html="renderMessageContent(msg)" @click="handleAnchorClick"></div>
@@ -310,6 +310,7 @@ defineOptions({
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
+import { captureImageViewerAnchor } from '../utils/imageViewerTransform';
 import { useNotificationStore } from '../stores/notifications';
 import { useSettingsStore } from '../stores/settings';
 import { useUserRelationsStore } from '../stores/userRelations';
@@ -2174,9 +2175,11 @@ const sendImageFile = async (file?: File, existingUrl?: string, pendingItem?: Pe
 
 const appStore = useAppStore();
 
-const openMessageImage = (msg: any) => {
+const openMessageImage = (msg: any, event?: MouseEvent) => {
   const url = getPicUrl(msg);
   if (!url) return;
+  const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  captureImageViewerAnchor(sourceEl, url);
   appStore.openImageViewer([url], 0);
 };
 

@@ -24,6 +24,7 @@
     v-else
     :class="['live-card-item', statusClass, { 'is-compact': compact }]"
     :data-live-id="liveId || undefined"
+    :data-transition-anchor="liveId ? `live:${liveId}` : undefined"
     :data-live-status="status"
     role="button"
     tabindex="0"

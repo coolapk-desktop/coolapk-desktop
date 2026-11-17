@@ -66,7 +66,7 @@ export function getFeedDetailTransition(from: string, to: string, backward: bool
 }
 
 export function isDetailRoutePath(path: string): boolean {
-  return /^\/(?:feed|question|live|product|app|dyh|album)\//.test(path);
+  return /^\/(?:feed|question|live|product|app|dyh|album)\/|^\/goods\/(?:lists|ranking)\//.test(path);
 }
 
 /** 统一决策桌面端与移动端页面切换与详情展开/收起过场类型。 */

@@ -32,6 +32,8 @@ describe('routeTransition', () => {
     expect(isDetailRoutePath('/app/com.coolapk.market')).toBe(true);
     expect(isDetailRoutePath('/dyh/3')).toBe(true);
     expect(isDetailRoutePath('/album/7')).toBe(true);
+    expect(isDetailRoutePath('/goods/lists/42')).toBe(true);
+    expect(isDetailRoutePath('/goods/ranking/hot')).toBe(true);
     expect(isDetailRoutePath('/apps')).toBe(false);
     expect(isDetailRoutePath('/albums')).toBe(false);
     expect(isDetailRoutePath('/')).toBe(false);

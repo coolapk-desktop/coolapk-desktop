@@ -84,7 +84,7 @@
             alt="Viewer Image"
             class="viewer-img"
             :style="mediaTransformStyle"
-            :class="{ 'is-touch-dragging': touchDragging || mediaTransition === 'none', 'is-sliding': mediaTransition === 'smooth' }"
+            :class="{ 'is-touch-dragging': isDragging || touchDragging || mediaTransition === 'none', 'is-sliding': mediaTransition === 'smooth' }"
             @dragstart.prevent
             @load="measureImage"
             @error="handleImageError"
@@ -1849,7 +1849,7 @@ onUnmounted(() => {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .island-btn {
@@ -1865,7 +1865,7 @@ onUnmounted(() => {
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 0.18s cubic-bezier(0.4, 0, 0.2, 1), color 0.18s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
 }
 

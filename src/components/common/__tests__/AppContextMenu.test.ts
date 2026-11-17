@@ -388,4 +388,56 @@ describe('AppContextMenu', () => {
       wrapper.unmount();
     }
   });
+
+  it('按象限计算菜单缩放原点，并在点击「查看大图」前捕获源图位置锚点', async () => {
+    const { consumePendingImageViewerAnchor } = await import('../../../utils/imageViewerTransform');
+    const wrapper = mount(AppContextMenu, { attachTo: document.body });
+    const carrier = document.createElement('div');
+    const imageUrl = 'https://image.coolapk.com/ctx-preview@800x600.jpg';
+    carrier.dataset.contextImageUrl = imageUrl;
+    Object.defineProperty(carrier, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 60, top: 90, width: 140, height: 140, right: 200, bottom: 230, x: 60, y: 90, toJSON: () => ({}) }),
+    });
+    const image = document.createElement('img');
+    image.src = imageUrl;
+    Object.defineProperty(image, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 60, top: 90, width: 140, height: 140, right: 200, bottom: 230, x: 60, y: 90, toJSON: () => ({}) }),
+    });
+    carrier.appendChild(image);
+    document.body.appendChild(carrier);
+
+    const origW = window.innerWidth;
+    const origH = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+
+    try {
+      image.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 60 }));
+      await wrapper.vm.$nextTick();
+      expect(document.querySelector<HTMLElement>('.app-context-menu')?.style.transformOrigin).toBe('top left');
+
+      image.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 1180, clientY: 780 }));
+      await wrapper.vm.$nextTick();
+      expect(document.querySelector<HTMLElement>('.app-context-menu')?.style.transformOrigin).toBe('bottom right');
+
+      const viewItem = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item')).find(
+        el => el.textContent?.trim() === '查看大图',
+      );
+      expect(viewItem).toBeDefined();
+      viewItem!.click();
+      await wrapper.vm.$nextTick();
+
+      const anchor = consumePendingImageViewerAnchor();
+      expect(anchor?.left).toBe(60);
+      expect(anchor?.top).toBe(90);
+      expect(anchor?.src).toBe(imageUrl);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: origW });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: origH });
+      carrier.remove();
+      wrapper.unmount();
+    }
+  });
 });

@@ -6,6 +6,7 @@ import {
   findMatchingImageThumb,
   runImageViewerEnterMorph,
   runImageViewerLeaveMorph,
+  trackImageViewerPointerCandidate,
 } from '../imageViewerTransform';
 
 function mockRect(el: HTMLElement, rect: { left: number; top: number; width: number; height: number }) {
@@ -181,5 +182,29 @@ describe('imageViewerTransform', () => {
     expect(proxyBoxAnims.length).toBe(2);
     backdropAnims[backdropAnims.length - 1]!.finish();
     expect(swipeLeaveDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('从酷图墙、数码截图、私信与通知缩略图指针按下时自动捕获看图锚点', () => {
+    const selectors = [
+      { cls: 'pic-thumb', url: 'https://img.example/wall@600x800.jpg' },
+      { cls: 'screenshot-item', url: 'https://img.example/shot@1080x1920.png' },
+      { cls: 'msg-pic-only-card', url: 'https://img.example/chat.jpg' },
+      { cls: 'notify-image', url: 'https://img.example/notify.jpg' },
+    ];
+    for (const [idx, entry] of selectors.entries()) {
+      const wrap = document.createElement('div');
+      wrap.className = entry.cls;
+      wrap.setAttribute('data-context-image-url', entry.url);
+      const img = document.createElement('img');
+      img.src = entry.url;
+      mockRect(wrap, { left: 20 + idx * 90, top: 100, width: 80, height: 80 });
+      wrap.appendChild(img);
+      document.body.appendChild(wrap);
+
+      trackImageViewerPointerCandidate(img);
+      const consumed = consumePendingImageViewerAnchor();
+      expect(consumed?.left).toBe(20 + idx * 90);
+      expect(consumed?.src).toBe(entry.url);
+    }
   });
 });

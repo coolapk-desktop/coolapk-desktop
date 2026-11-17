@@ -43,6 +43,7 @@
 
 <script setup lang="ts">
 import { observeResizeOnFrame } from '../../utils/observeResizeOnFrame';
+import { prefersReducedMotion } from '../../utils/compositorMotion';
 import { nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { ConfigPageTab } from '../../types/settings';
 import type { HomeSubChannelSelection } from '../../utils/homeTabs';
@@ -75,13 +76,21 @@ const tabsContainer = ref<HTMLElement | null>(null);
 const indicator = ref<HTMLElement | null>(null);
 let tabCenters: number[] = [];
 let pagerProgress: number | undefined;
+let lastIndicatorX: number | null = null;
+let lastAnimatedTabKey = '';
+let activeIndicatorAnim: Animation | null = null;
 function setSwipeProgress(progress: number) {
   pagerProgress = progress;
   if (!indicator.value || !tabCenters.length) return;
   const value = Math.max(0, Math.min(tabCenters.length - 1, progress));
   const from = tabCenters[Math.floor(value)], to = tabCenters[Math.ceil(value)];
+  const x = from + (to - from) * (value % 1);
+  lastIndicatorX = x;
+  lastAnimatedTabKey = props.activeKey;
+  activeIndicatorAnim?.cancel();
+  activeIndicatorAnim = null;
   if (!indicator.value.classList.contains('follows-pager')) indicator.value.classList.add('follows-pager');
-  indicator.value.style.transform = `translate3d(${from + (to - from) * (value % 1)}px, 0, 0)`;
+  indicator.value.style.transform = `translate3d(${x}px, 0, 0)`;
   indicator.value.style.opacity = '1';
 }
 defineExpose({ setSwipeProgress });
@@ -100,8 +109,48 @@ async function alignActiveTab() {
   const progress = props.swipeProgress ?? pagerProgress ?? buttons.indexOf(activeTab);
   if (props.swipeProgress !== undefined || pagerProgress !== undefined) setSwipeProgress(progress);
   else if (indicator.value) {
-    indicator.value.style.transform = `translate3d(${tabCenters[buttons.indexOf(activeTab)]}px, 0, 0)`;
+    const targetX = tabCenters[buttons.indexOf(activeTab)] ?? 0;
+    const prevX = lastIndicatorX;
+    const keyChanged = lastAnimatedTabKey !== '' && lastAnimatedTabKey !== props.activeKey;
+    lastIndicatorX = targetX;
+    lastAnimatedTabKey = props.activeKey;
+    if (indicator.value.classList.contains('follows-pager')) {
+      indicator.value.classList.remove('follows-pager');
+    }
     indicator.value.style.opacity = '1';
+    if (
+      keyChanged
+      && prevX !== null
+      && Math.abs(targetX - prevX) > 2
+      && !prefersReducedMotion()
+      && typeof indicator.value.animate === 'function'
+    ) {
+      const stretchX = Math.min(2.15, 1 + Math.abs(targetX - prevX) / 96);
+      const midX = prevX + (targetX - prevX) * 0.48;
+      activeIndicatorAnim?.cancel();
+      const indicatorEl = indicator.value;
+      indicatorEl.style.transitionProperty = 'opacity';
+      indicatorEl.style.transform = `translate3d(${targetX}px, 0, 0)`;
+      const anim = indicatorEl.animate(
+        [
+          { transform: `translate3d(${prevX}px, 0, 0) scaleX(1)` },
+          { transform: `translate3d(${midX}px, 0, 0) scaleX(${stretchX.toFixed(2)})`, offset: 0.42 },
+          { transform: `translate3d(${targetX}px, 0, 0) scaleX(1)` },
+        ],
+        { duration: 280, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+      );
+      activeIndicatorAnim = anim;
+      const clearAnim = () => {
+        if (activeIndicatorAnim === anim) activeIndicatorAnim = null;
+        if (indicatorEl.style.transitionProperty === 'opacity') {
+          indicatorEl.style.transitionProperty = '';
+        }
+      };
+      anim.onfinish = clearAnim;
+      anim.oncancel = clearAnim;
+    } else {
+      indicator.value.style.transform = `translate3d(${targetX}px, 0, 0)`;
+    }
   }
   if (props.wrap) return;
   const start = activeTab.offsetLeft - 12;
@@ -116,13 +165,21 @@ async function alignActiveTab() {
 }
 
 watch(() => [props.activeKey, props.tabs, props.wrap], () => { void alignActiveTab(); }, { immediate: true, deep: true });
-watch(() => props.swipeProgress, value => { if (value !== undefined) setSwipeProgress(value); });
+watch(() => props.swipeProgress, value => {
+  if (value !== undefined) setSwipeProgress(value);
+  else pagerProgress = undefined;
+});
 onMounted(() => {
   if (tabsContainer.value) stopObservingResize = observeResizeOnFrame(tabsContainer.value, () => { void alignActiveTab(); });
   void document.fonts?.ready.then(() => alignActiveTab());
 });
 onActivated(() => { void alignActiveTab(); });
-onUnmounted(() => { disposed = true; stopObservingResize?.(); });
+onUnmounted(() => {
+  disposed = true;
+  stopObservingResize?.();
+  activeIndicatorAnim?.cancel();
+  activeIndicatorAnim = null;
+});
 
 function getTabKey(tab: ConfigPageTab): string {
   return tab.page_name || tab.url || String(tab.id || tab.title);
@@ -224,6 +281,7 @@ function handleWheel(e: WheelEvent) {
 .sliding-indicator {
   left: 0;
   bottom: 6px;
+  transform-origin: center center;
   will-change: transform, opacity;
   transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), opacity 120ms ease;
 }

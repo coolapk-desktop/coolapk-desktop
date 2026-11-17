@@ -2330,6 +2330,28 @@ async function handleSend() {
   outline-offset: -2px;
   border-radius: 8px;
   scroll-margin-block: 80px;
+  animation: notificationCommentPulse 1.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes notificationCommentPulse {
+  0% {
+    background: var(--primary-light, rgba(0, 190, 100, 0.24));
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary-color, #00b968) 20%, transparent);
+  }
+  50% {
+    background: var(--primary-light, rgba(0, 190, 100, 0.16));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color, #00b968) 10%, transparent);
+  }
+  100% {
+    background: var(--primary-light, rgba(0, 190, 100, 0.1));
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-comment-target {
+    animation: none;
+  }
 }
 .official-detail-comments { margin: 0 !important; padding: 0 16px 16px !important; border: 0 !important; border-radius: 0 !important; background: var(--surface) !important; }
 .official-detail-comments .comment-toolbar { position: sticky; top: 60px; z-index: 5; background: var(--surface); padding: 8px 0 12px; border: 0; scroll-margin-top: 70px; }

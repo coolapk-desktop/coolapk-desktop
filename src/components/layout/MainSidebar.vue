@@ -8,14 +8,14 @@
   ></button>
 
   <aside :class="['main-sidebar', { 'is-collapsed': isCollapsed, 'is-mobile-open': mobileOpen, 'has-window-controls': mobileWindowControls }]">
-    <div v-if="mobileOpen" class="mobile-navigation-header">
+    <div class="mobile-navigation-header">
       <strong>快捷入口</strong>
       <span>频道与常用功能</span>
     </div>
 
     <!-- 截图同款：吸附在侧边栏右侧分割线边缘的小圆形折叠手柄。 -->
     <button
-      v-if="!mobileOpen"
+      v-if="!mobileLayout && !mobileOpen"
       class="sidebar-floating-toggle-btn"
       :title="isCollapsed ? '展开侧边栏' : '收起侧边栏'"
       @click="settingsStore.toggleSidebar"
@@ -38,10 +38,10 @@
           @click="handleRootNavClick($event, item.path)"
         >
           <OfficialNavIcon class="nav-icon" :route="item.path" :active="isNavIconActive(item.path)" />
-          <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
+          <span v-if="!isCollapsed || mobileLayout || mobileOpen" class="nav-label">{{ item.label }}</span>
         </router-link>
 
-        <button v-if="webDesktopNavigation" type="button" class="nav-item action-item" title="搜索" aria-label="搜索" @click="appStore.openSearch">
+        <button v-if="webDesktopNavigation" type="button" class="nav-item action-item" data-overlay-trigger="search" title="搜索" aria-label="搜索" @click="appStore.openSearch">
           <i class="fas fa-magnifying-glass nav-icon" aria-hidden="true"></i>
           <span v-if="!isCollapsed" class="nav-label">搜索</span>
         </button>
@@ -55,7 +55,7 @@
           @click="handleNavSelection"
         >
           <OfficialNavIcon class="nav-icon" route="/more" :active="isMoreActive" />
-          <span v-if="!isCollapsed || mobileOpen" class="nav-label">更多</span>
+          <span v-if="!isCollapsed || mobileLayout || mobileOpen" class="nav-label">更多</span>
         </router-link>
 
       </div>
@@ -63,7 +63,7 @@
       <div class="nav-divider"></div>
 
       <div class="nav-group">
-        <button v-if="webDesktopNavigation && !authStore.isWebDemo" type="button" class="nav-item action-item" title="写动态" aria-label="写动态" @click="appStore.openPublish">
+        <button v-if="webDesktopNavigation && !authStore.isWebDemo" type="button" class="nav-item action-item" data-overlay-trigger="publish" title="写动态" aria-label="写动态" @click="appStore.openPublish">
           <i class="fas fa-pen nav-icon" aria-hidden="true"></i>
           <span v-if="!isCollapsed" class="nav-label">写动态</span>
         </button>
@@ -82,7 +82,7 @@
           @keydown.esc="closeSidebarPreview(item.key, $event)"
         >
           <OfficialNavIcon class="nav-icon" :route="item.path" :active="isNavIconActive(item.path)" />
-          <span v-if="!isCollapsed || mobileOpen" class="nav-label">{{ item.label }}</span>
+          <span v-if="!isCollapsed || mobileLayout || mobileOpen" class="nav-label">{{ item.label }}</span>
           <span
             v-if="getNavBadge(item.key) > 0"
             :class="['nav-badge', { 'is-wide': getNavBadge(item.key) > 9 }]"
@@ -102,7 +102,7 @@
         @click="handleRootNavClick($event, '/my')"
       >
         <OfficialNavIcon class="nav-icon" route="/my" :active="isMyActive" />
-        <span v-if="!isCollapsed || mobileOpen" class="nav-label">我的</span>
+        <span v-if="!isCollapsed || mobileLayout || mobileOpen" class="nav-label">我的</span>
       </router-link>
 
       <button v-if="webDesktopNavigation" type="button" class="nav-item action-item sidebar-account" :title="accountLabel" :aria-label="accountLabel" @click="openAccount($event)" @mouseenter="openSidebarPreview('account', $event)" @mouseleave="closeSidebarPreview('account')" @keydown.esc="closeSidebarPreview('account', $event)">
@@ -122,13 +122,13 @@
           </button>
           <router-link to="/settings" class="nav-item" active-class="is-active" title="设置" @click="handleNavSelection">
             <OfficialNavIcon class="nav-icon" route="/settings" :active="isNavIconActive('/settings')" />
-            <span v-if="!isCollapsed || mobileOpen" class="nav-label">设置</span>
+            <span v-if="!isCollapsed || mobileLayout || mobileOpen" class="nav-label">设置</span>
           </router-link>
         </div>
       </div>
     </nav>
 
-    <div v-if="!isCollapsed || mobileOpen" class="sidebar-footer">
+    <div v-if="!isCollapsed || mobileLayout || mobileOpen" class="sidebar-footer">
       <div class="app-info-card">
         <div class="app-info-top">
           <span class="app-name">{{ appDisplayName }}</span>
@@ -178,6 +178,9 @@ import { isWebBuild } from '../../api/runtime';
 import { triggerSidebarTransition } from '../../utils/routeTransition';
 import { activateRootTab } from '../../utils/homeTab';
 import { createFeedbackIssueUrl } from '../../utils/feedback';
+import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
+
+const mobileLayout = useMobileLayout();
 
 const route = useRoute();
 const router = useRouter();
@@ -383,6 +386,10 @@ function handleLogout() {
 </script>
 
 <style scoped>
+.mobile-navigation-header {
+  display: none;
+}
+
 .main-sidebar {
   position: relative;
   width: var(--sidebar-width);

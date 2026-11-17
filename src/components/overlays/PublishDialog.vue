@@ -2,6 +2,7 @@
   <AppDialog
     :is-open="appStore.isPublishOpen && !shuzilmGuideState.visible"
     :keep-content="true"
+    trigger-key="publish"
     :title="isEditMode ? (publishMode === 'article' ? '重新编辑图文' : '重新编辑动态') : publishMode === 'article' ? '发布图文' : '发布新动态'"
     :width="760"
     dialog-class="publish-dialog"

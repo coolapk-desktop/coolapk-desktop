@@ -1,5 +1,11 @@
 <template>
-  <button type="button" class="discovery-secondhand-feed" @click="$emit('open', entity)">
+  <button
+    type="button"
+    class="discovery-secondhand-feed"
+    :data-feed-id="feedAnchorId || undefined"
+    :data-transition-anchor="feedAnchorId ? `feed:${feedAnchorId}` : undefined"
+    @click="$emit('open', entity)"
+  >
     <AppImage v-if="cover" :src="cover" fit="cover" image-class="secondhand-cover" :style="coverAspectStyle" />
     <div v-else class="secondhand-cover secondhand-placeholder" :style="coverAspectStyle"><i class="fas fa-image"></i></div>
     <div class="secondhand-copy">
@@ -23,6 +29,7 @@ import { parseUrlImageRatio } from '../../utils/image';
 import xianyuIcon from '../../assets/xianyu-icon.png';
 const props = defineProps<{ entity: DiscoveryEntity }>();
 defineEmits<{ open: [entity: DiscoveryEntity] }>();
+const feedAnchorId = computed(() => String(props.entity.id ?? props.entity.entityId ?? '').trim());
 const info = computed<Record<string, any>>(() => {
   const raw = props.entity.ershou_info || props.entity.ershouInfo || props.entity.second_hand_info || props.entity.secondHandInfo;
   if (raw && typeof raw === 'object') return raw;

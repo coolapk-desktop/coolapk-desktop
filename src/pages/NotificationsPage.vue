@@ -107,7 +107,7 @@
                 <div v-if="getTarget(item)" class="notify-target" v-html="renderNotificationText(getTarget(item))"></div>
                 <div v-if="getMessage(item)" class="notify-message" v-html="renderNotificationText(getMessage(item))"></div>
               </div>
-              <button v-if="getNotificationImage(item)" type="button" class="notify-image" aria-label="查看通知图片" @click.stop="appStore.openImageViewer([getNotificationImage(item)], 0)">
+              <button v-if="getNotificationImage(item)" type="button" class="notify-image" :data-context-image-url="getNotificationImage(item)" aria-label="查看通知图片" @click.stop="openNotificationImage(item, $event)">
                 <AppImage :src="getNotificationImage(item)" alt="" />
               </button>
               <div v-else-if="getAdditionInfo(item)" class="notify-message notify-right-text" v-html="renderNotificationText(getAdditionInfo(item))"></div>
@@ -168,6 +168,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { CoolapkTauriAPI } from '../api/coolapk';
 import { useAuthStore } from '../stores/auth';
 import { useAppStore } from '../stores/app';
+import { captureImageViewerAnchor } from '../utils/imageViewerTransform';
 import { useNotificationStore } from '../stores/notifications';
 import {
   LIKE_MUTE_OPTIONS,
@@ -203,6 +204,14 @@ const route = useRoute();
 const authStore = useAuthStore();
 const appStore = useAppStore();
 const notificationStore = useNotificationStore();
+
+function openNotificationImage(item: any, event?: MouseEvent) {
+  const url = getNotificationImage(item);
+  if (!url) return;
+  const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  captureImageViewerAnchor(sourceEl, url);
+  appStore.openImageViewer([url], 0);
+}
 
 // 保留旧分类路由，通知中心使用官方的三个快捷入口。
 const tabs: Array<{ label: string; value: string; countKey: NotificationCategory }> = [

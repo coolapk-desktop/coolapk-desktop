@@ -71,7 +71,8 @@
         v-for="item in items"
         :key="listKey(item)"
         class="goods-list-card"
-        @click="openDetail(item)"
+        :data-feed-id="String(item?.id ?? item?.entityId ?? '') || undefined"
+        @click="openDetail(item, $event)"
       >
         <div class="list-cover">
           <AppImage
@@ -130,6 +131,7 @@ import EmptyState from '../common/EmptyState.vue';
 import CreateGoodsListDialog from './CreateGoodsListDialog.vue';
 import { useAuthStore } from '../../stores/auth';
 import { applyGoodsRows, getGoodsRowState, type GoodsRowState } from '../../stores/goodsRows';
+import { captureRouteTransitionAnchor } from '../../utils/containerTransform';
 import { showToast } from '../../utils/toast';
 
 const props = withDefaults(
@@ -282,13 +284,15 @@ function selectType(_type: string) {
   activeType.value = _type;
 }
 
-function openDetail(item: any) {
+function openDetail(item: any, event?: MouseEvent) {
   const id = String(item?.id ?? item?.entityId ?? '');
   if (!id) {
     // 卡片可点击却毫无反应，用户无法判断是加载失败还是缺数据。
     showToast('该条目缺少标识，暂时无法打开', 'info');
     return;
   }
+  const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  captureRouteTransitionAnchor(sourceEl, `feed:${id}`, router.currentRoute?.value?.path || '');
   router.push(`${detailBase.value}/${id}`);
 }
 

@@ -11,7 +11,7 @@
       >
         <OfficialDetailIcon v-if="officialDetail" name="like" :active="isLiked" class="action-icon" />
         <i v-else :class="[officialDetail ? (isLiked ? 'fas fa-thumbs-up' : 'far fa-thumbs-up') : (isLiked ? 'fas fa-heart' : 'far fa-heart'), 'action-icon']"></i>
-        <span>{{ formatCount(likeCount, officialDetail ? (isLiked ? '已赞' : '点赞') : '') }}</span>
+        <span ref="likeCountEl">{{ formatCount(likeCount, officialDetail ? (isLiked ? '已赞' : '点赞') : '') }}</span>
       </button>
     </div>
 
@@ -43,7 +43,7 @@
     >
       <OfficialDetailIcon v-if="officialDetail" name="favorite" :active="isFav" class="action-icon" />
       <i v-else :class="[officialDetail ? (isFav ? 'fas fa-star' : 'far fa-star') : (isFav ? 'fas fa-bookmark' : 'far fa-bookmark'), 'action-icon']"></i>
-      <span>{{ formatCount(favnum, officialDetail ? (isFav ? '已收藏' : '收藏') : '') }}</span>
+      <span ref="favCountEl">{{ formatCount(favnum, officialDetail ? (isFav ? '已收藏' : '收藏') : '') }}</span>
     </button>
   </div>
 </template>
@@ -53,6 +53,7 @@ import { computed, inject, ref, watch } from 'vue';
 import { mobileDetailActionsHiddenKey } from '../../composables/useMobileReadingNavigation';
 import OfficialDetailIcon from './OfficialDetailIcon.vue';
 import { CoolapkTauriAPI } from '../../api/coolapk';
+import { prefersReducedMotion } from '../../utils/compositorMotion';
 import { useAuthStore } from '../../stores/auth';
 import { showToast } from '../../utils/toast';
 import { getErrorMessage } from '../../utils/errors';
@@ -134,6 +135,31 @@ watch(
     }
   }
 );
+
+const likeCountEl = ref<HTMLElement | null>(null);
+const favCountEl = ref<HTMLElement | null>(null);
+
+function animateCountBump(el: HTMLElement | null, direction: 1 | -1) {
+  if (!el || typeof el.animate !== 'function' || prefersReducedMotion()) return;
+  el.animate(
+    [
+      { transform: `translate3d(0, ${direction * 4}px, 0) scale(0.92)`, opacity: 0.65 },
+      { transform: 'translate3d(0, 0, 0) scale(1.1)', offset: 0.45, opacity: 1 },
+      { transform: 'translate3d(0, 0, 0) scale(1)', opacity: 1 },
+    ],
+    { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+  );
+}
+
+watch(likeCount, (next, prev) => {
+  if (next !== prev) animateCountBump(likeCountEl.value, next > prev ? 1 : -1);
+});
+
+watch(() => props.favnum, (next, prev) => {
+  const n = Number(next || 0);
+  const p = Number(prev || 0);
+  if (prev !== undefined && n !== p) animateCountBump(favCountEl.value, n > p ? 1 : -1);
+});
 
 async function toggleLike() {
   if (!authStore.isLoggedIn) {
@@ -252,6 +278,10 @@ defineExpose({ notifyShareSuccess });
   transform: scale(1.15);
 }
 
+.action-btn:active:not(:disabled) .action-icon {
+  transform: scale(0.84);
+}
+
 .like-btn:hover {
   color: #ef4444;
   background-color: rgba(239, 68, 68, 0.08);
@@ -315,6 +345,10 @@ defineExpose({ notifyShareSuccess });
   font-weight: 600;
 }
 
+.fav-btn.is-fav .action-icon {
+  animation: starPop 0.38s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
 .fav-btn.is-disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -327,9 +361,22 @@ defineExpose({ notifyShareSuccess });
   100% { transform: scale(1); }
 }
 
+@keyframes starPop {
+  0% { transform: scale(1) rotate(0deg); }
+  38% { transform: scale(1.36) rotate(-10deg); }
+  75% { transform: scale(0.92) rotate(5deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
 .action-icon {
   font-size: 15px;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-icon { transition: none; }
+  .like-btn.is-liked .action-icon,
+  .fav-btn.is-fav .action-icon { animation: none; }
 }
 
 /* 两个独立玻璃表面，外层不遮挡滚动到下方的评论。 */

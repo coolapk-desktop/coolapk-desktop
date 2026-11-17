@@ -3,9 +3,17 @@
     <router-view v-slot="{ Component, route }">
       <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面按「页面实例身份」入栈（见 getPageComponentKey） -->
       <div
+        ref="stageRef"
         class="route-transition-stage"
-        :class="{ 'is-tab-sliding': routeTransitionMode === 'root-tab-next' || routeTransitionMode === 'root-tab-prev' }"
+        :class="{
+          'is-tab-sliding': routeTransitionMode === 'root-tab-next' || routeTransitionMode === 'root-tab-prev',
+          'is-edge-swiping': edgeSwipe.isEdgeSwiping.value,
+        }"
         :style="{ '--feed-detail-native-easing': feedDetailEasing }"
+        @touchstart.passive="edgeSwipe.onTouchStart"
+        @touchmove="edgeSwipe.onTouchMove"
+        @touchend.passive="edgeSwipe.onTouchEnd"
+        @touchcancel.passive="edgeSwipe.onTouchCancel"
       >
       <Transition
         :name="isContainerJsTransition ? '' : routeTransitionMode"
@@ -216,6 +224,7 @@ import { clearResourceCache } from './utils/resourceCache';
 import { officialFeedDetailEasing, resolveRouteTransition, useSidebarTransition, type RouteTransitionMode } from './utils/routeTransition';
 import { createRouteMorphCoordinator, getDetailTransitionTargetKey, installGlobalTransitionAnchorTracker } from './utils/containerTransform';
 import { useMobileLayout } from './composables/useOfficialMobileFeedDetail';
+import { useMobileEdgeSwipeBack } from './composables/useMobileEdgeSwipeBack';
 import { registerGlobalSelectionClear } from './utils/selection';
 import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
@@ -247,11 +256,13 @@ type DownloadNotice = { version: string; releaseNotes?: string };
 type DownloadProgress = { downloaded: number; total: number; percent: number };
 
 const router = useRouter();
-const PublishDialog = defineAsyncComponent(() => import('./components/overlays/PublishDialog.vue'));
+const loadPublishDialog = () => import('./components/overlays/PublishDialog.vue');
+const PublishDialog = defineAsyncComponent(loadPublishDialog);
 const LoginModal = defineAsyncComponent(() => import('./components/overlays/LoginModal.vue'));
 const ShuzilmDeviceGuideModal = defineAsyncComponent(() => import('./components/overlays/ShuzilmDeviceGuideModal.vue'));
 const authStore = useAuthStore();
 const appStore = useAppStore();
+let preloadPublishTimer: ReturnType<typeof setTimeout> | null = null;
 // 首次打开后保留弹窗实例，关闭时仍能完成草稿保存和登录状态清理。
 const publishDialogRequested = ref(false);
 const loginModalRequested = ref(false);
@@ -263,6 +274,12 @@ const route = useRoute();
 // 路由与吸顶状态共同决定安卓状态栏后方的页面背景。
 watch(() => [route.path, settingsStore.profileToolbarCompact] as const, ([path, compact]) => { if (/android/i.test(navigator.userAgent)) settingsStore.setAndroidProfileBackground(path === '/me' && !compact); }, { immediate: true });
 const mobileLayout = useMobileLayout();
+const stageRef = ref<HTMLElement | null>(null);
+const edgeSwipe = useMobileEdgeSwipeBack({
+  stageRef,
+  router,
+  enabled: () => mobileLayout.value,
+});
 const pageTabsStore = usePageTabsStore();
 const routeTransitionMode = ref<RouteTransitionMode>('');
 const isContainerJsTransition = computed(() => routeTransitionMode.value === 'container-expand' || routeTransitionMode.value === 'container-collapse');
@@ -886,9 +903,17 @@ onMounted(() => {
       }
     })();
   }
+  preloadPublishTimer = window.setTimeout(() => {
+    preloadPublishTimer = null;
+    void loadPublishDialog();
+  }, 450);
 });
 
 onUnmounted(() => {
+  if (preloadPublishTimer !== null) {
+    window.clearTimeout(preloadPublishTimer);
+    preloadPublishTimer = null;
+  }
   unregisterAndroidBackground?.();
   unregisterAndroidCounts?.();
   unregisterAndroidError?.();
@@ -901,6 +926,7 @@ onUnmounted(() => {
   unregisterSelectionClear?.();
   unregisterAnchorTracker?.();
   morphCoordinator.cancel();
+  edgeSwipe.cleanup();
   unregisterViewport?.();
   unregisterKeyboardAssist?.();
 });

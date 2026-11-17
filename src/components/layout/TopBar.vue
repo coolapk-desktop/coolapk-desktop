@@ -24,7 +24,7 @@
 
     <div class="top-bar-center" data-tauri-drag-region="false">
       <PageNavigation />
-      <div class="search-input-wrapper" @click="appStore.openSearch">
+      <div class="search-input-wrapper" data-overlay-trigger="search" @click="openSearchFromTrigger">
         <i class="fas fa-search search-icon"></i>
         <span class="placeholder-text">搜索应用、动态、用户、话题</span>
         <kbd v-if="showShortcutHints" class="shortcut-kbd">{{ formatShortcut('Ctrl+K') }}</kbd>
@@ -43,10 +43,11 @@
       <AppIconButton
         v-if="!authStore.isWebDemo"
         class="publish-action"
+        data-overlay-trigger="publish"
         icon="fas fa-pen"
         title="发布动态"
         aria-label="发布动态"
-        @click="appStore.openPublish"
+        @click="openPublishFromTrigger"
       />
 
       <div
@@ -353,6 +354,7 @@ import { getNotificationExternalUrl, getNotificationFeedId, resolveNotificationT
 import { syncWindowsNotificationIcons } from '../../utils/taskbarNotificationDot';
 import { showToast } from '../../utils/toast';
 import { didNavigate } from '../../utils/navigation';
+import { captureOverlayTriggerAnchor } from '../../utils/overlayTransform';
 import AppButton from '../common/AppButton.vue';
 import AppIconButton from '../common/AppIconButton.vue';
 import AppAvatar from '../common/AppAvatar.vue';
@@ -385,6 +387,16 @@ const isDark = computed(() => settingsStore.resolvedTheme === 'dark');
 function toggleTheme() {
   const nextTheme = settingsStore.settings.theme === 'dark' ? 'light' : 'dark';
   settingsStore.setTheme(nextTheme);
+}
+
+function openSearchFromTrigger(event?: MouseEvent) {
+  captureOverlayTriggerAnchor('search', event?.currentTarget instanceof HTMLElement ? event.currentTarget : null);
+  appStore.openSearch();
+}
+
+function openPublishFromTrigger(event?: MouseEvent) {
+  captureOverlayTriggerAnchor('publish', event?.currentTarget instanceof HTMLElement ? event.currentTarget : null);
+  appStore.openPublish();
 }
 
 const NOTIFICATION_POLL_MIN_INTERVAL_MS = 60 * 1000;
@@ -1838,16 +1850,23 @@ function handleUserClick() {
   width: 100%;
 }
 
-/* 浮层淡入微位移动画 */
-.popover-fade-enter-active,
+/* 浮层流体弹簧入场动画 */
+.popover-fade-enter-active {
+  transform-origin: top center;
+  transition: opacity 200ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
 .popover-fade-leave-active {
-  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top center;
+  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.32, 0, 0.24, 1);
+  will-change: transform, opacity;
 }
 
 .popover-fade-enter-from,
 .popover-fade-leave-to {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translate3d(0, -6px, 0) scale3d(0.96, 0.96, 1);
 }
 
 .sidebar-preview {

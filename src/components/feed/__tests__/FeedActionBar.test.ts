@@ -196,4 +196,26 @@ describe('点赞状态与接口调用', () => {
       expect(mocks.unlikeReply).toHaveBeenCalledWith('222');
     } finally { wrapper.unmount(); }
   });
+
+  it('点赞计数变化时为数字触发轻量合成层弹跳且同步文本立即可读', async () => {
+    mocks.likeFeed.mockResolvedValue({ code: 200 });
+    const animSpy = vi.fn(() => ({ onfinish: null, oncancel: null, cancel: vi.fn() } as any));
+    const origAnimate = HTMLElement.prototype.animate;
+    HTMLElement.prototype.animate = animSpy;
+    const wrapper = mount(FeedActionBar, { props: { feedId: '42', likenum: 12 } });
+    try {
+      await wrapper.get('.like-btn').trigger('click');
+      expect(wrapper.get('.like-btn span').text()).toBe('13');
+      expect(animSpy).toHaveBeenCalledTimes(1);
+
+      document.documentElement.setAttribute('data-reduce-motion', 'true');
+      await wrapper.setProps({ likenum: 15 });
+      expect(wrapper.get('.like-btn span').text()).toBe('15');
+      expect(animSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      document.documentElement.removeAttribute('data-reduce-motion');
+      HTMLElement.prototype.animate = origAnimate;
+      wrapper.unmount();
+    }
+  });
 });

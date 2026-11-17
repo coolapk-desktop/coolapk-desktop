@@ -298,11 +298,11 @@ async function refreshMobilePage() { page.value = 1; noMore.value = false; await
 <style scoped>
 .page-container {
   width: 100%;
-  max-width: var(--feed-max-width, 860px);
   height: 100%;
   overflow-y: auto;
-  padding: 14px 16px;
-  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 14px max(16px, calc((100% - var(--feed-max-width, 860px)) / 2));
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;

@@ -270,7 +270,8 @@
           v-for="(item, index) in mediaList"
           :key="String(item.id ?? item.entityId ?? index)"
           class="media-item"
-          @click="openMedia(index)"
+          :data-context-image-url="!isVideo(item) ? imageUrlOf(item) : undefined"
+          @click="openMedia(index, $event)"
         >
           <AppImage :src="mediaThumb(item)" image-class="media-img" :alt="mediaTypeText(item)" loading="lazy" />
           <span v-if="isVideo(item)" class="media-play-badge"><i class="fas fa-play"></i></span>
@@ -437,6 +438,7 @@ import { useAuthStore } from '../stores/auth';
 import { showToast } from '../utils/toast';
 import { getErrorMessage } from '../utils/errors';
 import { getHdImageUrl } from '../utils/image';
+import { captureImageViewerAnchor } from '../utils/imageViewerTransform';
 import type { ProductConfig, ProductMedia, RatingChartPeriods } from '../types/product';
 import { usePageTabTitle } from '../composables/usePageTabTitle';
 import {
@@ -1018,11 +1020,14 @@ async function fetchMedia(isLoadMore = false) {
   }
 }
 
-function openMedia(index: number) {
+function openMedia(index: number, event?: MouseEvent) {
   const imageItems = mediaList.value.filter((item) => !isVideo(item));
   const targetIndex = imageItems.indexOf(mediaList.value[index]);
   if (targetIndex >= 0) {
-    appStore.openImageViewer(imageItems.map((item) => imageUrlOf(item)).filter(Boolean), targetIndex);
+    const urls = imageItems.map((item) => imageUrlOf(item)).filter(Boolean);
+    const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    captureImageViewerAnchor(sourceEl, urls[targetIndex] || '');
+    appStore.openImageViewer(urls, targetIndex);
   } else {
     const url = imageUrlOf(mediaList.value[index]);
     if (url) void CoolapkTauriAPI.openUrl(url, 'system');
@@ -1270,11 +1275,11 @@ async function refreshMobilePage() { await fetchProductHeader(true); if (selecte
 <style scoped>
 .page-container {
   width: 100%;
-  max-width: var(--feed-max-width, 860px);
   height: 100%;
   overflow-y: auto;
-  padding: 14px 16px;
-  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 14px max(16px, calc((100% - var(--feed-max-width, 860px)) / 2));
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;

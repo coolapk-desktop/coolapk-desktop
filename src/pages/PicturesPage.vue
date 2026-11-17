@@ -41,7 +41,8 @@
                 v-for="(pic, picIdx) in displayedPicsOf(item)"
                 :key="picIdx"
                 class="pic-thumb"
-                @click.stop="openViewer(item, picIdx)"
+                :data-context-image-url="pic"
+                @click.stop="openViewer(item, picIdx, $event)"
               >
                 <AppImage
                   :src="pic"
@@ -81,6 +82,7 @@ import { vPullRefresh } from '../directives/pullRefresh';
 import { computed, ref, onMounted } from 'vue';
 import { useAppStore } from '../stores/app';
 import { CoolapkTauriAPI } from '../api/coolapk';
+import { captureImageViewerAnchor } from '../utils/imageViewerTransform';
 import AppImage from '../components/common/AppImage.vue';
 import AppAvatar from '../components/common/AppAvatar.vue';
 import LoadingState from '../components/common/LoadingState.vue';
@@ -137,9 +139,11 @@ function displayedPicsOf(item: any): string[] {
   return picListOf(item).slice(0, MAX_DISPLAY_PICS);
 }
 
-function openViewer(item: any, initialIndex: number) {
+function openViewer(item: any, initialIndex: number, event?: MouseEvent) {
   const urls = picListOf(item);
   if (urls.length > 0) {
+    const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    captureImageViewerAnchor(sourceEl, urls[initialIndex] || '');
     appStore.openImageViewer(urls, initialIndex);
   }
 }
