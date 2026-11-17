@@ -592,6 +592,15 @@ describe('AppShell', () => {
       expect(wrapper.classes()).toContain('reading-navigation-hidden');
       expect(wrapper.classes()).toContain('has-discovery-navigation');
       expect(wrapper.classes()).not.toContain('is-reading-topbar-animating');
+
+      const { isRouteTransitionActive } = await import('../../../utils/compositorMotion');
+      expect(wrapper.classes()).not.toContain('is-route-transitioning');
+      isRouteTransitionActive.value = true;
+      await nextTick();
+      expect(wrapper.classes()).toContain('is-route-transitioning');
+      isRouteTransitionActive.value = false;
+      await nextTick();
+      expect(wrapper.classes()).not.toContain('is-route-transitioning');
     } finally {
       wrapper.unmount();
       Object.defineProperty(window, 'innerWidth', { value: previousWidth, configurable: true, writable: true });

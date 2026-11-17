@@ -72,6 +72,7 @@ describe('useMobileEdgeSwipeBack', () => {
     consumeInteractiveBackHandoffBox();
     document.body.replaceChildren();
     document.documentElement.removeAttribute('data-reduce-motion');
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -184,5 +185,28 @@ describe('useMobileEdgeSwipeBack', () => {
     gesture.onTouchStart(makeTouchEvent([{ identifier: 2, clientX: 10, clientY: 200 }], page));
     gesture.onTouchMove(makeTouchEvent([{ identifier: 2, clientX: 180, clientY: 200 }], page));
     expect(gesture.isEdgeSwiping.value).toBe(false);
+  });
+
+  it('Android WebView 下拖拽仅更新纯 transform，跳过 borderRadius 重算和大面积模糊阴影', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36' });
+    const stageRef = ref<HTMLElement | null>(stage);
+    const gesture = useMobileEdgeSwipeBack({
+      stageRef,
+      router,
+      enabled: () => true,
+    });
+    cleanupHandle = gesture.cleanup;
+
+    gesture.onTouchStart(makeTouchEvent([{ identifier: 1, clientX: 12, clientY: 320 }], page));
+    gesture.onTouchMove(makeTouchEvent([{ identifier: 1, clientX: 150, clientY: 326 }], page));
+
+    expect(gesture.isEdgeSwiping.value).toBe(true);
+    expect(page.style.transform).toContain('translate3d(');
+    expect(page.style.borderRadius).toBe('');
+    expect(page.style.boxShadow).not.toContain('44px');
+
+    gesture.onTouchEnd();
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(page.style.getPropertyValue('--swipe-back-radius')).toBe('0px');
   });
 });

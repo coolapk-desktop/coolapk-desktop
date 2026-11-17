@@ -118,13 +118,13 @@ describe('imageViewerTransform', () => {
       return a;
     });
 
-    const proxyBoxAnims: Array<{ anim: any; keyframes: any[] }> = [];
+    const proxyBoxAnims: Array<{ el: HTMLElement; anim: any; keyframes: any[] }> = [];
     const origCreate = document.createElement.bind(document);
     vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: any) => {
       const el = origCreate(tag, options);
       (el as HTMLElement).animate = vi.fn((keyframes: any) => {
         const a = makeAnim();
-        proxyBoxAnims.push({ anim: a, keyframes });
+        proxyBoxAnims.push({ el: el as HTMLElement, anim: a, keyframes });
         return a;
       });
       return el;
@@ -143,15 +143,20 @@ describe('imageViewerTransform', () => {
     }, enterDone, { preferredSrc: 'https://img.example/1_hd.jpg' });
 
     expect(thumbWrap.style.visibility).toBe('hidden');
-    expect(proxyBoxAnims.length).toBe(1);
-    const enterFrames = proxyBoxAnims[0]!.keyframes;
-    // 验证通过容器宽高 + border-radius 裁切，而不是不等比 transform scale 挤压。
-    expect(enterFrames[0]).toMatchObject({ width: '120px', height: '120px', borderRadius: '12px' });
-    expect(enterFrames[1]!.transform).toBeUndefined();
+    const enterWrapAnim = proxyBoxAnims.find((entry) => entry.el.classList.contains('viewer-morph-proxy'));
+    const enterImgAnim = proxyBoxAnims.find((entry) => entry.el.classList.contains('viewer-morph-proxy-img'));
+    expect(enterWrapAnim).toBeDefined();
+    expect(enterImgAnim).toBeDefined();
+    const enterFrames = enterWrapAnim!.keyframes;
+    // 验证通过纯合成层 transform + 反向等比补偿完成裁切缩放，不触发布局 width/height/borderRadius 重绘
+    expect(String(enterFrames[0]!.transform)).toContain('translate3d(40.00px, 180.00px, 0) scale(');
+    expect(enterFrames[0]!.width).toBeUndefined();
+    expect(enterFrames[0]!.borderRadius).toBeUndefined();
+    expect(String(enterImgAnim!.keyframes[0]!.transform)).toContain('scale(');
     const proxyImg = document.querySelector<HTMLImageElement>('.viewer-morph-proxy-img');
     expect(proxyImg?.src).toBe('https://img.example/1_hd.jpg');
 
-    proxyBoxAnims[0]!.anim.finish();
+    enterWrapAnim!.anim.finish();
     expect(enterDone).toHaveBeenCalledTimes(1);
     expect(thumbWrap.style.visibility).toBe('');
     expect(viewerImg.style.opacity).toBe('');
@@ -159,6 +164,7 @@ describe('imageViewerTransform', () => {
 
     // 普通关闭（非下滑）缩回 1:1 源缩略图方框且动画结束后恢复可见。
     const normalLeaveDone = vi.fn();
+    const animCountBeforeLeave = proxyBoxAnims.length;
     runImageViewerLeaveMorph(backdrop, {
       displayRect: { left: 200, top: 80, width: 520, height: 693 } as DOMRect,
       src: 'https://img.example/1_hd.jpg',
@@ -166,14 +172,18 @@ describe('imageViewerTransform', () => {
       closedBySwipe: false,
     }, normalLeaveDone);
     expect(thumbWrap.style.visibility).toBe('hidden');
-    expect(proxyBoxAnims.length).toBe(2);
-    expect(proxyBoxAnims[1]!.keyframes[1]).toMatchObject({ width: '120px', height: '120px', borderRadius: '12px' });
-    proxyBoxAnims[1]!.anim.finish();
+    const leaveWrapAnim = proxyBoxAnims.slice(animCountBeforeLeave).find((entry) => entry.el.classList.contains('viewer-morph-proxy'));
+    expect(leaveWrapAnim).toBeDefined();
+    const leaveFrames = leaveWrapAnim!.keyframes;
+    expect(String(leaveFrames[leaveFrames.length - 1]!.transform)).toContain('translate3d(40.00px, 180.00px, 0) scale(');
+    expect(leaveFrames[leaveFrames.length - 1]!.width).toBeUndefined();
+    leaveWrapAnim!.anim.finish();
     expect(normalLeaveDone).toHaveBeenCalledTimes(1);
     expect(thumbWrap.style.visibility).toBe('');
     expect(document.querySelector('.viewer-morph-proxy')).toBeNull();
 
     const swipeLeaveDone = vi.fn();
+    const animCountBeforeSwipe = proxyBoxAnims.length;
     runImageViewerLeaveMorph(backdrop, {
       displayRect: { left: 100, top: 100, width: 500, height: 500 } as DOMRect,
       src: 'https://img.example/1.jpg',
@@ -181,7 +191,7 @@ describe('imageViewerTransform', () => {
       closedBySwipe: true,
     }, swipeLeaveDone);
     // 下滑关闭只淡出背景，不再创建回缩代理图
-    expect(proxyBoxAnims.length).toBe(2);
+    expect(proxyBoxAnims.length).toBe(animCountBeforeSwipe);
     backdropAnims[backdropAnims.length - 1]!.finish();
     expect(swipeLeaveDone).toHaveBeenCalledTimes(1);
   });
@@ -269,7 +279,7 @@ describe('imageViewerTransform', () => {
       const el = origCreate(tag, opts);
       (el as HTMLElement).animate = vi.fn(() => {
         const a = makeAnim();
-        proxyAnims.push(a);
+        if ((el as HTMLElement).classList.contains('viewer-morph-proxy')) proxyAnims.push(a);
         return a;
       });
       return el;

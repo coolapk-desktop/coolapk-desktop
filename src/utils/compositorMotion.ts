@@ -1,7 +1,17 @@
+import { ref } from 'vue';
+
 export const READING_MOTION_DURATION_MS = 220;
 export const READING_MOTION_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 const activeSlides = new WeakMap<HTMLElement, Animation>();
+
+/** 标识全局路由过渡（含标签页滑动、边缘手势、容器形变）是否正在进行。 */
+export const isRouteTransitionActive = ref(false);
+
+/** 检测是否运行在 Android WebView 环境（用于启用纯合成层轻量动效路径）。 */
+export function isAndroidWebView(): boolean {
+  return typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+}
 
 export function prefersReducedMotion(): boolean {
   if (typeof document !== 'undefined' && document.documentElement.getAttribute('data-reduce-motion') === 'true') {

@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue';
 import type { Router } from 'vue-router';
 import { setInteractiveBackHandoffBox, FLUID_MOTION_EASING } from '../utils/containerTransform';
-import { prefersReducedMotion } from '../utils/compositorMotion';
+import { isAndroidWebView, prefersReducedMotion } from '../utils/compositorMotion';
 import { ROOT_TAB_PATHS } from '../utils/routeTransition';
 
 const EDGE_SWIPE_ZONE_PX = 28;
@@ -147,10 +147,11 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
         scrimEl.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,1);pointer-events:none;z-index:0;';
         stage.insertBefore(scrimEl, stage.firstChild);
       }
+      const androidFast = isAndroidWebView();
       activePageEl.style.transformOrigin = 'center center';
       activePageEl.style.overflow = 'hidden';
-      activePageEl.style.willChange = 'transform, border-radius';
-      activePageEl.style.boxShadow = '0 14px 44px rgba(0, 0, 0, 0.2)';
+      activePageEl.style.willChange = androidFast ? 'transform' : 'transform, border-radius';
+      activePageEl.style.boxShadow = androidFast ? '-1px 0 0 rgba(0, 0, 0, 0.08)' : '0 14px 44px rgba(0, 0, 0, 0.2)';
     }
 
     if (event.cancelable) event.preventDefault();
@@ -158,7 +159,7 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
     lastDy = dy;
     const m = computeVisualMetrics(lastDx, lastDy);
     activePageEl.style.transform = `translate3d(${m.translateX.toFixed(1)}px, ${m.translateY.toFixed(1)}px, 0) scale(${m.scale.toFixed(4)})`;
-    activePageEl.style.borderRadius = `${m.radius.toFixed(1)}px`;
+    if (!isAndroidWebView()) activePageEl.style.borderRadius = `${m.radius.toFixed(1)}px`;
     if (scrimEl) scrimEl.style.opacity = m.scrimOpacity.toFixed(4);
   }
 
@@ -172,6 +173,7 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
     }
 
     const pageEl = activePageEl;
+    const androidFast = isAndroidWebView();
     const m = computeVisualMetrics(lastDx, lastDy);
     const elapsed = Math.max(16, performance.now() - startTime);
     const velocity = lastDx / elapsed;
@@ -188,7 +190,7 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
           top: currentRect.top,
           width: currentRect.width || stageWidth,
           height: currentRect.height || stageHeight,
-          borderRadius: m.radius,
+          borderRadius: androidFast ? 0 : m.radius,
         },
         {
           bgScale: Math.min(0.996, 0.968 + 0.025 * m.progress),
@@ -198,7 +200,7 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
       pageEl.style.setProperty('--swipe-back-x', `${m.translateX.toFixed(1)}px`);
       pageEl.style.setProperty('--swipe-back-y', `${m.translateY.toFixed(1)}px`);
       pageEl.style.setProperty('--swipe-back-scale', m.scale.toFixed(4));
-      pageEl.style.setProperty('--swipe-back-radius', `${m.radius.toFixed(1)}px`);
+      pageEl.style.setProperty('--swipe-back-radius', androidFast ? '0px' : `${m.radius.toFixed(1)}px`);
       window.setTimeout(() => clearCssHandoffVars(pageEl), 400);
       void options.router.back();
       return;
@@ -207,13 +209,18 @@ export function useMobileEdgeSwipeBack(options: MobileEdgeSwipeBackOptions) {
     // 未达到提交阈值：弹性吸回原位
     const anim = typeof pageEl.animate === 'function'
       ? pageEl.animate(
-        [
-          {
-            transform: pageEl.style.transform || 'translate3d(0,0,0) scale(1)',
-            borderRadius: pageEl.style.borderRadius || '0px',
-          },
-          { transform: 'translate3d(0,0,0) scale(1)', borderRadius: '0px' },
-        ],
+        androidFast
+          ? [
+              { transform: pageEl.style.transform || 'translate3d(0,0,0) scale(1)' },
+              { transform: 'translate3d(0,0,0) scale(1)' },
+            ]
+          : [
+              {
+                transform: pageEl.style.transform || 'translate3d(0,0,0) scale(1)',
+                borderRadius: pageEl.style.borderRadius || '0px',
+              },
+              { transform: 'translate3d(0,0,0) scale(1)', borderRadius: '0px' },
+            ],
         { duration: RESET_DURATION_MS, easing: FLUID_MOTION_EASING },
       )
       : null;

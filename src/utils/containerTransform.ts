@@ -1,13 +1,15 @@
 import { nextTick, ref } from 'vue';
-import { prefersReducedMotion } from './compositorMotion';
+import { isAndroidWebView, prefersReducedMotion } from './compositorMotion';
 import { trackImageViewerPointerCandidate } from './imageViewerTransform';
 import { trackOverlayTriggerPointerCandidate } from './overlayTransform';
 
 export const FLUID_MOTION_EASING = 'cubic-bezier(0.2, 0.9, 0.25, 1)';
 export const CONTAINER_EXPAND_DURATION_DESKTOP_MS = 270;
 export const CONTAINER_EXPAND_DURATION_MOBILE_MS = 310;
+export const CONTAINER_EXPAND_DURATION_ANDROID_MS = 210;
 export const CONTAINER_COLLAPSE_DURATION_DESKTOP_MS = 230;
 export const CONTAINER_COLLAPSE_DURATION_MOBILE_MS = 270;
+export const CONTAINER_COLLAPSE_DURATION_ANDROID_MS = 180;
 const ANCHOR_TTL_MS = 1800;
 const HISTORY_ANCHOR_TTL_MS = 15 * 60 * 1000;
 const MAX_HISTORY_ANCHORS = 40;
@@ -174,6 +176,78 @@ function createCardPreviewClone(
   return clone;
 }
 
+/**
+ * 构建纯合成层缩放关键帧（仅使用 translate3d + scale3d，避免动态 clip-path 触发重绘渲染通道）。
+ */
+export function buildCompositorScaleKeyframes(
+  from: RectBox,
+  to: RectBox,
+  baseWidth: number,
+  baseHeight: number,
+  opacityRange?: [number, number],
+): Keyframe[] {
+  const safeW = Math.max(1, baseWidth);
+  const safeH = Math.max(1, baseHeight);
+  const fromSx = Math.max(0.05, from.width / safeW);
+  const fromSy = Math.max(0.05, from.height / safeH);
+  const toSx = Math.max(0.05, to.width / safeW);
+  const toSy = Math.max(0.05, to.height / safeH);
+  const fromFrame: Keyframe = {
+    transform: `translate3d(${from.left.toFixed(2)}px, ${from.top.toFixed(2)}px, 0) scale3d(${fromSx.toFixed(5)}, ${fromSy.toFixed(5)}, 1)`,
+  };
+  const toFrame: Keyframe = {
+    transform: `translate3d(${to.left.toFixed(2)}px, ${to.top.toFixed(2)}px, 0) scale3d(${toSx.toFixed(5)}, ${toSy.toFixed(5)}, 1)`,
+  };
+  if (opacityRange) {
+    fromFrame.opacity = opacityRange[0];
+    toFrame.opacity = opacityRange[1];
+  }
+  return [fromFrame, toFrame];
+}
+
+/**
+ * 构建围绕中心等比缩放与中心偏移的轻量容器形变关键帧（用于 Android WebView 详情页与浮层无裁剪合成动画）。
+ */
+export function buildCompositorCenterMorphKeyframes(
+  anchorRect: Pick<RectBox, 'left' | 'top' | 'width' | 'height'>,
+  surfaceRect: Pick<RectBox, 'left' | 'top' | 'width' | 'height'>,
+  direction: 'enter' | 'leave',
+  handoffRect?: Pick<RectBox, 'left' | 'top' | 'width' | 'height'> | null,
+): Keyframe[] {
+  const surfaceW = Math.max(1, surfaceRect.width);
+  const surfaceH = Math.max(1, surfaceRect.height);
+  const anchorCx = anchorRect.left + anchorRect.width / 2;
+  const anchorCy = anchorRect.top + anchorRect.height / 2;
+  const surfaceCx = surfaceRect.left + surfaceW / 2;
+  const surfaceCy = surfaceRect.top + surfaceH / 2;
+  const dx = Math.max(-surfaceW * 0.45, Math.min(surfaceW * 0.45, (anchorCx - surfaceCx) * 0.36));
+  const dy = Math.max(-surfaceH * 0.45, Math.min(surfaceH * 0.45, (anchorCy - surfaceCy) * 0.36));
+  const ratio = Math.min(anchorRect.width / surfaceW, anchorRect.height / surfaceH);
+  const edgeScale = Math.max(0.84, Math.min(0.94, Number.isFinite(ratio) ? 0.8 + ratio * 0.14 : 0.88));
+
+  if (direction === 'enter') {
+    return [
+      { transform: `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale3d(${edgeScale.toFixed(4)}, ${edgeScale.toFixed(4)}, 1)`, opacity: 0.08, offset: 0 },
+      { transform: `translate3d(${(dx * 0.18).toFixed(2)}px, ${(dy * 0.18).toFixed(2)}px, 0) scale3d(0.9700, 0.9700, 1)`, opacity: 1, offset: 0.45 },
+      { transform: 'translate3d(0px, 0px, 0) scale3d(1, 1, 1)', opacity: 1, offset: 1 },
+    ];
+  }
+
+  let startDx = 0;
+  let startDy = 0;
+  let startScale = 1;
+  if (handoffRect) {
+    startDx = handoffRect.left + handoffRect.width / 2 - surfaceCx;
+    startDy = handoffRect.top + handoffRect.height / 2 - surfaceCy;
+    startScale = Math.max(0.75, Math.min(1, handoffRect.width / surfaceW));
+  }
+  return [
+    { transform: `translate3d(${startDx.toFixed(2)}px, ${startDy.toFixed(2)}px, 0) scale3d(${startScale.toFixed(4)}, ${startScale.toFixed(4)}, 1)`, opacity: 1, offset: 0 },
+    { transform: `translate3d(${(startDx * 0.35 + dx * 0.65).toFixed(2)}px, ${(startDy * 0.35 + dy * 0.65).toFixed(2)}px, 0) scale3d(${(startScale * 0.94).toFixed(4)}, ${(startScale * 0.94).toFixed(4)}, 1)`, opacity: 0.72, offset: 0.45 },
+    { transform: `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0) scale3d(${edgeScale.toFixed(4)}, ${edgeScale.toFixed(4)}, 1)`, opacity: 0, offset: 1 },
+  ];
+}
+
 function buildSnapshot(element: HTMLElement, key = '', originPath = ''): AnchorSnapshot | null {
   if (!element.isConnected || typeof element.getBoundingClientRect !== 'function') return null;
   const rect = element.getBoundingClientRect();
@@ -194,7 +268,7 @@ function buildSnapshot(element: HTMLElement, key = '', originPath = ''): AnchorS
       borderRadius: radius,
     },
     backgroundColor,
-    previewNode: createCardPreviewClone(element, layoutWidth, layoutHeight, backgroundColor),
+    previewNode: isAndroidWebView() ? null : createCardPreviewClone(element, layoutWidth, layoutHeight, backgroundColor),
     sourceElement: element,
     originPath,
     capturedAt: Date.now(),
@@ -532,11 +606,13 @@ export function createRouteMorphCoordinator() {
       return;
     }
 
-    const duration = options.mode === 'container-expand'
-      ? (options.mobile ? CONTAINER_EXPAND_DURATION_MOBILE_MS : CONTAINER_EXPAND_DURATION_DESKTOP_MS)
-      : (options.mobile ? CONTAINER_COLLAPSE_DURATION_MOBILE_MS : CONTAINER_COLLAPSE_DURATION_DESKTOP_MS);
-
+    const androidFast = isAndroidWebView();
     const isExpand = options.mode === 'container-expand';
+    const duration = androidFast
+      ? (isExpand ? CONTAINER_EXPAND_DURATION_ANDROID_MS : CONTAINER_COLLAPSE_DURATION_ANDROID_MS)
+      : (isExpand
+        ? (options.mobile ? CONTAINER_EXPAND_DURATION_MOBILE_MS : CONTAINER_EXPAND_DURATION_DESKTOP_MS)
+        : (options.mobile ? CONTAINER_COLLAPSE_DURATION_MOBILE_MS : CONTAINER_COLLAPSE_DURATION_DESKTOP_MS));
     let cancelled = false;
     const animations: Animation[] = [];
     const createdNodes: HTMLElement[] = [];
@@ -627,7 +703,7 @@ export function createRouteMorphCoordinator() {
         bgPageEl.style.willChange = 'transform';
 
         const bgScale = handoff ? handoff.bgScale : (options.mobile ? 0.968 : 0.992);
-        if (!fallbackUsed) {
+        if (!fallbackUsed && !androidFast) {
           animations.push(bgPageEl.animate(
             isExpand
               ? [{ transform: 'scale(1)' }, { transform: `scale(${bgScale})` }]
@@ -648,7 +724,7 @@ export function createRouteMorphCoordinator() {
         { duration, easing: FLUID_MOTION_EASING, fill: 'both' },
       ));
 
-      // 2. 实体不透明圆角载体背板（阻止半透明交叉溶解期间透出暗色 scrim）
+      // 2. 实体不透明圆角载体背板（阻止半透明交叉溶解期间透出暗色 scrim；Android 走纯合成层缩放避免 clip-path）
       const surfaceBgEl = document.createElement('div');
       surfaceBgEl.className = 'route-container-surface-bg';
       surfaceBgEl.style.width = `${stageWidth}px`;
@@ -656,17 +732,31 @@ export function createRouteMorphCoordinator() {
       surfaceBgEl.style.backgroundColor = anchor?.backgroundColor || 'var(--surface, #ffffff)';
       stageEl.appendChild(surfaceBgEl);
       createdNodes.push(surfaceBgEl);
-      animations.push(surfaceBgEl.animate(
-        buildContainerMorphKeyframes(fromBox, toBox, stageWidth, stageHeight, {
-          opacityRange: fallbackUsed
-            ? (isExpand ? [0.25, 1, 0, 0.45] : [1, 0, 0.35, 1])
-            : undefined,
-        }),
-        { duration, easing: FLUID_MOTION_EASING, fill: 'both' },
-      ));
+      if (androidFast) {
+        surfaceBgEl.style.willChange = 'transform, opacity';
+        animations.push(surfaceBgEl.animate(
+          buildCompositorScaleKeyframes(
+            fromBox,
+            toBox,
+            stageWidth,
+            stageHeight,
+            fallbackUsed ? (isExpand ? [0.25, 1] : [1, 0]) : undefined,
+          ),
+          { duration, easing: FLUID_MOTION_EASING, fill: 'both' },
+        ));
+      } else {
+        animations.push(surfaceBgEl.animate(
+          buildContainerMorphKeyframes(fromBox, toBox, stageWidth, stageHeight, {
+            opacityRange: fallbackUsed
+              ? (isExpand ? [0.25, 1, 0, 0.45] : [1, 0, 0.35, 1])
+              : undefined,
+          }),
+          { duration, easing: FLUID_MOTION_EASING, fill: 'both' },
+        ));
+      }
 
-      // 3. 源卡片轻量镜像（在原卡片尺度段交叉淡出/淡入）
-      if (anchor?.previewNode && !fallbackUsed) {
+      // 3. 源卡片轻量镜像（桌面/非 Android 端在原卡片尺度段交叉淡出/淡入；Android 跳过深层 DOM 克隆和额外裁剪通道）
+      if (!androidFast && anchor?.previewNode && !fallbackUsed) {
         const ghostWrap = document.createElement('div');
         ghostWrap.className = 'route-container-ghost';
         const ghostW = parseFloat(anchor.previewNode.style.width) || targetCardBox.width;
@@ -687,7 +777,7 @@ export function createRouteMorphCoordinator() {
       }
 
       // 4. 详情页主体（Expand 为 enterEl，Collapse 为 leaveEl）
-      // 不改动 detailEl 的 overflow，依赖 clip-path 裁切边框，避免详情页滚动容器 scrollTop 归零跳闪。
+      // 不改动 detailEl 的 overflow，避免详情页滚动容器 scrollTop 归零跳闪。
       const savedDetailScrollTop = !isExpand ? detailEl.scrollTop : 0;
       saveStyle(detailEl, ['position', 'inset', 'top', 'left', 'width', 'height', 'zIndex', 'pointerEvents', 'transformOrigin', 'willChange', 'backgroundColor']);
       detailEl.style.position = 'absolute';
@@ -697,21 +787,30 @@ export function createRouteMorphCoordinator() {
       detailEl.style.height = `${stageHeight}px`;
       detailEl.style.zIndex = '4';
       detailEl.style.pointerEvents = 'none';
-      detailEl.style.transformOrigin = '0 0';
-      detailEl.style.willChange = 'transform, clip-path, opacity';
+      detailEl.style.transformOrigin = androidFast ? 'center center' : '0 0';
+      detailEl.style.willChange = androidFast ? 'transform, opacity' : 'transform, clip-path, opacity';
       if (savedDetailScrollTop > 0) detailEl.scrollTop = savedDetailScrollTop;
       if (detailBackground === 'var(--surface, #ffffff)') {
         detailEl.style.backgroundColor = anchor?.backgroundColor || 'var(--surface, #ffffff)';
       }
 
+      const detailKeyframes = androidFast
+        ? buildCompositorCenterMorphKeyframes(
+            targetCardBox,
+            localStageBox,
+            isExpand ? 'enter' : 'leave',
+            !isExpand ? handoffBox : null,
+          )
+        : buildContainerMorphKeyframes(fromBox, toBox, stageWidth, stageHeight, {
+            opacityRange: fallbackUsed
+              ? (isExpand ? [0, 1, 0, 0.6] : [1, 0, 0.2, 0.95])
+              : isExpand
+                ? [0, 1, 0.08, 0.58]
+                : [1, 0, 0.05, 0.68],
+          });
+
       const detailAnim = detailEl.animate(
-        buildContainerMorphKeyframes(fromBox, toBox, stageWidth, stageHeight, {
-          opacityRange: fallbackUsed
-            ? (isExpand ? [0, 1, 0, 0.6] : [1, 0, 0.2, 0.95])
-            : isExpand
-              ? [0, 1, 0.08, 0.58]
-              : [1, 0, 0.05, 0.68],
-        }),
+        detailKeyframes,
         { duration, easing: FLUID_MOTION_EASING, fill: 'both' },
       );
       animations.push(detailAnim);

@@ -898,7 +898,8 @@ describe('加载失败兜底与操作反馈', () => {
       expect(thumbs[0]!.style.visibility).toBe('');
       expect(thumbs[2]!.style.visibility).toBe('hidden');
       const closeProxyAnim = anims.find(a => a.target.classList.contains('viewer-morph-proxy'));
-      expect(closeProxyAnim?.keyframes[1]).toMatchObject({ left: '220px', top: '100px', width: '90px', height: '90px' });
+      const closeLastFrame = closeProxyAnim?.keyframes[closeProxyAnim.keyframes.length - 1];
+      expect(String(closeLastFrame?.transform)).toContain('translate3d(220.00px, 100.00px, 0) scale(');
       anims.forEach(a => a.finish());
       expect(thumbs[2]!.style.visibility).toBe('');
       anims.length = 0;
@@ -919,7 +920,8 @@ describe('加载失败兜底与操作反馈', () => {
       expect(thumbs[0]!.style.visibility).toBe('');
       expect(thumbs[1]!.style.visibility).toBe('hidden');
       const extCloseProxyAnim = anims.find(a => a.target.classList.contains('viewer-morph-proxy'));
-      expect(extCloseProxyAnim?.keyframes[1]).toMatchObject({ left: '120px', top: '100px', width: '90px', height: '90px' });
+      const extLastFrame = extCloseProxyAnim?.keyframes[extCloseProxyAnim.keyframes.length - 1];
+      expect(String(extLastFrame?.transform)).toContain('translate3d(120.00px, 100.00px, 0) scale(');
       anims.forEach(a => a.finish());
 
       wrapper.unmount();

@@ -20,8 +20,8 @@
         :css="Boolean(routeTransitionMode) && !isContainerJsTransition"
         :on-before-enter="isContainerJsTransition ? morphCoordinator.onBeforeEnter : undefined"
         :on-enter="isContainerJsTransition ? morphCoordinator.onEnter : undefined"
-        :on-after-enter="isContainerJsTransition ? morphCoordinator.onFinishHook : undefined"
-        :on-enter-cancelled="isContainerJsTransition ? morphCoordinator.onFinishHook : undefined"
+        :on-after-enter="isContainerJsTransition ? morphCoordinator.onFinishHook : handleRouteCssTransitionEnd"
+        :on-enter-cancelled="isContainerJsTransition ? morphCoordinator.onFinishHook : handleRouteCssTransitionEnd"
         :on-before-leave="handleRouteBeforeLeave"
         :on-leave="isContainerJsTransition ? morphCoordinator.onLeave : undefined"
         :on-after-leave="handleRouteAfterLeave"
@@ -222,7 +222,8 @@ import { registerGlobalHotkeys } from './utils/hotkeys';
 import { CoolapkTauriAPI } from './api/coolapk';
 import { clearResourceCache } from './utils/resourceCache';
 import { officialFeedDetailEasing, resolveRouteTransition, useSidebarTransition, type RouteTransitionMode } from './utils/routeTransition';
-import { createRouteMorphCoordinator, getDetailTransitionTargetKey, installGlobalTransitionAnchorTracker } from './utils/containerTransform';
+import { createRouteMorphCoordinator, getDetailTransitionTargetKey, installGlobalTransitionAnchorTracker, isRouteContainerMorphing } from './utils/containerTransform';
+import { isRouteTransitionActive } from './utils/compositorMotion';
 import { useMobileLayout } from './composables/useOfficialMobileFeedDetail';
 import { useMobileEdgeSwipeBack } from './composables/useMobileEdgeSwipeBack';
 import { registerGlobalSelectionClear } from './utils/selection';
@@ -287,6 +288,27 @@ const isContainerJsTransition = computed(() => routeTransitionMode.value === 'co
 const morphCoordinator = createRouteMorphCoordinator();
 const feedDetailEasing = window.CSS?.supports('transition-timing-function', officialFeedDetailEasing) ? officialFeedDetailEasing : 'cubic-bezier(0.05, 0, 0.25, 1)';
 let routeHistoryPosition = Number(window.history.state?.position || 0);
+let cssTransitionActive = false;
+let cssTransitionSafetyTimer: number | null = null;
+
+function syncGlobalRouteTransitionState() {
+  isRouteTransitionActive.value = cssTransitionActive || isRouteContainerMorphing.value || edgeSwipe.isEdgeSwiping.value;
+}
+
+function clearCssTransitionSafetyTimer() {
+  if (cssTransitionSafetyTimer !== null) {
+    window.clearTimeout(cssTransitionSafetyTimer);
+    cssTransitionSafetyTimer = null;
+  }
+}
+
+function handleRouteCssTransitionEnd() {
+  clearCssTransitionSafetyTimer();
+  cssTransitionActive = false;
+  syncGlobalRouteTransitionState();
+}
+
+watch([isRouteContainerMorphing, () => edgeSwipe.isEdgeSwiping.value], syncGlobalRouteTransitionState);
 
 function findPageTabIndexByPath(path: string): number {
   const tabs = pageTabsStore.tabs;
@@ -311,7 +333,9 @@ watch(() => route.fullPath, (_next, _previous) => {
     toTabIndex: findPageTabIndexByPath(route.path),
   });
   routeTransitionMode.value = mode;
+  clearCssTransitionSafetyTimer();
   if (mode === 'container-expand' || mode === 'container-collapse') {
+    cssTransitionActive = false;
     const targetPath = mode === 'container-expand' ? route.path : fromPath;
     morphCoordinator.prepare({
       mode,
@@ -322,7 +346,12 @@ watch(() => route.fullPath, (_next, _previous) => {
     });
   } else {
     morphCoordinator.cancel();
+    cssTransitionActive = Boolean(mode);
+    if (cssTransitionActive) {
+      cssTransitionSafetyTimer = window.setTimeout(handleRouteCssTransitionEnd, 460);
+    }
   }
+  syncGlobalRouteTransitionState();
   routeHistoryPosition = nextPosition;
 }, { flush: 'sync' });
 
@@ -334,6 +363,7 @@ function handleRouteBeforeLeave(el: Element) {
 function handleRouteAfterLeave(el: Element) {
   if (el instanceof HTMLElement) el.classList.remove('route-leaving-active');
   if (isContainerJsTransition.value) morphCoordinator.onFinishHook();
+  else handleRouteCssTransitionEnd();
 }
 
 // 至少保留 15 个缓存页，并随已开页签数增长（页签数 + 5），页面重建导致的列表分页丢失随之消除。
@@ -929,6 +959,9 @@ onUnmounted(() => {
   unregisterAnchorTracker?.();
   morphCoordinator.cancel();
   edgeSwipe.cleanup();
+  clearCssTransitionSafetyTimer();
+  cssTransitionActive = false;
+  isRouteTransitionActive.value = false;
   unregisterViewport?.();
   unregisterKeyboardAssist?.();
 });

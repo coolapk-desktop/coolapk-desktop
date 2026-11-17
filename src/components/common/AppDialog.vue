@@ -145,6 +145,13 @@ onUnmounted(unbindGlobalListeners);
   backdrop-filter: blur(4px);
 }
 
+@media (max-width: 720px) {
+  .dialog-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
 .dialog-wrapper {
   position: fixed;
   inset: 0;

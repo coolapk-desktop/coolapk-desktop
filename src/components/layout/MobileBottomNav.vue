@@ -52,6 +52,7 @@ const appStore = useAppStore();
 const settingsStore = useSettingsStore();
 const navRef = ref<HTMLElement | null>(null);
 const pillStyle = ref<{ top: string; width: string; height: string; transform: string } | null>(null);
+let pillBaseWidth = 0;
 let stopResizeObserver: (() => void) | undefined;
 let disposed = false;
 
@@ -72,35 +73,45 @@ function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(`${path}/`);
 }
 
-async function updatePill() {
+async function updatePill(resetBaseWidth = false) {
   await nextTick();
   if (disposed) return;
   const nav = navRef.value;
   const activeEl = nav?.querySelector<HTMLElement>('.mobile-nav-item.active');
   if (!nav || !activeEl || !activeEl.offsetWidth || !activeEl.offsetHeight) {
     pillStyle.value = null;
+    pillBaseWidth = 0;
     return;
   }
+  if (resetBaseWidth || pillBaseWidth <= 0) {
+    pillBaseWidth = activeEl.offsetWidth;
+  }
+  const scaleX = activeEl.offsetWidth / pillBaseWidth;
+  const scaleSuffix = Math.abs(scaleX - 1) > 0.002 ? ` scaleX(${scaleX.toFixed(4)})` : '';
   pillStyle.value = {
     top: `${activeEl.offsetTop}px`,
-    width: `${activeEl.offsetWidth}px`,
+    width: `${pillBaseWidth}px`,
     height: `${activeEl.offsetHeight}px`,
-    transform: `translate3d(${activeEl.offsetLeft}px, 0, 0)`,
+    transform: `translate3d(${activeEl.offsetLeft}px, 0, 0)${scaleSuffix}`,
   };
 }
 
-watch([() => route.path, leftItems, rightItems], () => {
-  void updatePill();
+watch(() => route.path, () => {
+  void updatePill(false);
 }, { immediate: true });
 
+watch([leftItems, rightItems], () => {
+  void updatePill(true);
+});
+
 onMounted(() => {
-  void updatePill();
+  void updatePill(true);
   if (navRef.value) {
     stopResizeObserver = observeResizeOnFrame(navRef.value, () => {
-      void updatePill();
+      void updatePill(true);
     });
   }
-  void document.fonts?.ready.then(() => updatePill());
+  void document.fonts?.ready.then(() => updatePill(true));
 });
 
 onUnmounted(() => {
@@ -187,8 +198,9 @@ function activate(path: string) {
     z-index: 0;
     background: linear-gradient(145deg, var(--nav-glass-selection), transparent), color-mix(in srgb, var(--surface) 28%, transparent);
     box-shadow: inset 0 1px 0 var(--nav-glass-edge), 0 1px 6px #00000008;
-    will-change: transform, width;
-    transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform-origin: 0 50%;
+    will-change: transform;
+    transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .mobile-nav-item,

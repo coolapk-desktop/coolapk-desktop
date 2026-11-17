@@ -17,6 +17,7 @@
       'topic-glass-joined': topicGlassJoined,
       'is-reading-topbar-animating': isReadingTopbarAnimating,
       'is-route-container-morphing': isRouteContainerMorphing,
+      'is-route-transitioning': isRouteTransitionActive,
     }"
     @scroll.capture="handleShellScroll"
     @wheel.capture="reading.onWheel"
@@ -94,7 +95,7 @@ import { navigateBack } from '../../utils/navigation';
 import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey, useMobileReadingNavigation } from '../../composables/useMobileReadingNavigation';
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { logDiagnostic } from '../../utils/diagnosticLogger';
-import { animateTransformSlide, cancelTransformSlide, readTranslateOffset } from '../../utils/compositorMotion';
+import { animateTransformSlide, cancelTransformSlide, isRouteTransitionActive, readTranslateOffset } from '../../utils/compositorMotion';
 import { isRouteContainerMorphing } from '../../utils/containerTransform';
 
 const route = useRoute();
@@ -732,16 +733,10 @@ onUnmounted(() => {
     overscroll-behavior: none;
   }
 
-  /* 详情收起回源卡片时，让移动顶栏和底栏平滑协同显露，避免首帧突兀遮挡正在缩回的详情页。 */
-  @keyframes routeMorphChromeReveal {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
+  /* 容器转场期间仅禁用导航栏误触，避免对其施加 opacity 动画触发 backdrop-filter 重算模糊掉帧。 */
   .app-shell:not(.prevent-mobile-layout).is-route-container-morphing :deep(.mobile-bottom-nav),
   .app-shell:not(.prevent-mobile-layout).is-route-container-morphing .mobile-reading-topbar-stack,
   .app-shell:not(.prevent-mobile-layout).is-route-container-morphing :deep(.mobile-top-bar) {
-    animation: routeMorphChromeReveal 210ms cubic-bezier(0.2, 0.9, 0.25, 1) 45ms both;
     pointer-events: none;
   }
 }

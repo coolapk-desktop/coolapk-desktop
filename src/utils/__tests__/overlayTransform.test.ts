@@ -51,6 +51,7 @@ describe('overlayTransform', () => {
   afterEach(() => {
     document.body.replaceChildren();
     document.documentElement.removeAttribute('data-reduce-motion');
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -140,5 +141,36 @@ describe('overlayTransform', () => {
     runOverlayEnterMorph(wrapper, '.dialog-container', 'publish', doneReduced);
     expect(doneReduced).toHaveBeenCalledTimes(1);
     expect(anims).toHaveLength(1);
+  });
+
+  it('Android WebView 下从按钮打开与关闭浮层使用零 clip-path 的中心缩放合成动画', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36' });
+    const trigger = document.createElement('button');
+    mockRect(trigger, { left: 162, top: 720, width: 48, height: 44 });
+    document.body.appendChild(trigger);
+
+    const wrapper = document.createElement('div');
+    const dialog = document.createElement('div');
+    dialog.className = 'dialog-container';
+    mockRect(dialog, { left: 16, top: 140, width: 340, height: 480 });
+    const anims = mockAnimate(dialog);
+    wrapper.appendChild(dialog);
+    document.body.appendChild(wrapper);
+
+    captureOverlayTriggerAnchor('publish', trigger);
+    const enterDone = vi.fn();
+    runOverlayEnterMorph(wrapper, '.dialog-container', 'publish', enterDone);
+    expect(anims).toHaveLength(1);
+    expect(dialog.style.transformOrigin).toBe('center center');
+    expect(anims[0]!.keyframes.every((frame) => frame.clipPath === undefined)).toBe(true);
+    anims[0]!.finish();
+    expect(enterDone).toHaveBeenCalledTimes(1);
+
+    const leaveDone = vi.fn();
+    runOverlayLeaveMorph(wrapper, '.dialog-container', 'publish', leaveDone);
+    expect(anims).toHaveLength(2);
+    expect(anims[1]!.keyframes.every((frame) => frame.clipPath === undefined)).toBe(true);
+    anims[1]!.finish();
+    expect(leaveDone).toHaveBeenCalledTimes(1);
   });
 });

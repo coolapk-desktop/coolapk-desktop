@@ -50,6 +50,7 @@ describe('containerTransform', () => {
   afterEach(() => {
     document.body.replaceChildren();
     document.documentElement.removeAttribute('data-reduce-motion');
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -311,5 +312,65 @@ describe('containerTransform', () => {
     const ghostFrames = animMap.get(ghost!)?.[0]?.keyframes;
     expect(String(ghostFrames?.[0]?.transform)).toContain('translate3d(96.00px, 24.00px, 0)');
     coordinator.cancel();
+  });
+
+  it('Android WebView 下自动启用纯合成层快速路径：跳过卡片克隆与背景缩放且零 clip-path 裁剪', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android 15; SM-S9280) AppleWebKit/537.36' });
+
+    const stage = document.createElement('div');
+    mockRect(stage, { left: 0, top: 0, width: 373, height: 812 });
+
+    const listPage = document.createElement('div');
+    const sourceCard = document.createElement('article');
+    sourceCard.setAttribute('data-feed-id', '99');
+    mockRect(sourceCard, { left: 12, top: 200, width: 349, height: 180 });
+    listPage.appendChild(sourceCard);
+
+    const detailPage = document.createElement('div');
+    stage.appendChild(listPage);
+    stage.appendChild(detailPage);
+    document.body.appendChild(stage);
+
+    const animMap = new Map<HTMLElement, ReturnType<typeof mockAnimate>>();
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: any) => {
+      const el = origCreate(tag, options);
+      animMap.set(el, mockAnimate(el));
+      return el;
+    });
+    const listAnims = mockAnimate(listPage);
+    const detailAnims = mockAnimate(detailPage);
+
+    captureRouteTransitionAnchor(sourceCard, 'feed:99', '/');
+    const coordinator = createRouteMorphCoordinator();
+    coordinator.prepare({
+      mode: 'container-expand',
+      targetKey: 'feed:99',
+      mobile: true,
+      fromPath: '/',
+      toPath: '/feed/99',
+    });
+
+    const leaveDone = vi.fn();
+    const enterDone = vi.fn();
+    coordinator.onBeforeLeave(listPage);
+    coordinator.onBeforeEnter(detailPage);
+    coordinator.onLeave(listPage, leaveDone);
+    coordinator.onEnter(detailPage, enterDone);
+
+    expect(listAnims).toHaveLength(0);
+    expect(stage.querySelector('.route-container-ghost')).toBeNull();
+    const surfaceBg = stage.querySelector<HTMLElement>('.route-container-surface-bg');
+    expect(surfaceBg).not.toBeNull();
+    const surfaceFrames = animMap.get(surfaceBg!)?.[0]?.keyframes || [];
+    expect(surfaceFrames.length).toBe(2);
+    expect(surfaceFrames.every((frame) => frame.clipPath === undefined)).toBe(true);
+    expect(detailAnims).toHaveLength(1);
+    expect(detailAnims[0]!.keyframes.every((frame) => frame.clipPath === undefined)).toBe(true);
+    expect(detailPage.style.transformOrigin).toBe('center center');
+
+    detailAnims[0]!.finish();
+    expect(leaveDone).toHaveBeenCalledTimes(1);
+    expect(enterDone).toHaveBeenCalledTimes(1);
   });
 });

@@ -243,21 +243,39 @@ export function cancelActiveImageViewerMorph(): void {
   }
 }
 
+interface ProxyBoxRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 function createMorphClipProxy(
-  box: { left: number; top: number; width: number; height: number; borderRadius: number },
+  baseWidth: number,
+  baseHeight: number,
+  borderRadius: number,
+  initialRect: ProxyBoxRect,
   src: string,
   isLong = false,
 ): { wrap: HTMLElement; img: HTMLImageElement } {
+  const safeBaseW = Math.max(1, baseWidth);
+  const safeBaseH = Math.max(1, baseHeight);
+  const initSx = Math.max(0.01, initialRect.width / safeBaseW);
+  const initSy = Math.max(0.01, initialRect.height / safeBaseH);
+  const initU = Math.max(initSx, initSy);
   const wrap = document.createElement('div');
   wrap.className = 'viewer-morph-proxy';
   wrap.setAttribute('aria-hidden', 'true');
   wrap.style.cssText = [
     'position:fixed',
-    `left:${box.left}px`,
-    `top:${box.top}px`,
-    `width:${box.width}px`,
-    `height:${box.height}px`,
-    `border-radius:${box.borderRadius}px`,
+    'left:0px',
+    'top:0px',
+    `width:${safeBaseW}px`,
+    `height:${safeBaseH}px`,
+    `border-radius:${borderRadius}px`,
+    'transform-origin:0 0',
+    `transform:translate3d(${initialRect.left.toFixed(2)}px, ${initialRect.top.toFixed(2)}px, 0) scale(${initSx.toFixed(5)}, ${initSy.toFixed(5)})`,
+    'will-change:transform',
     'overflow:hidden',
     'contain:layout style',
     'pointer-events:none',
@@ -274,12 +292,69 @@ function createMorphClipProxy(
     'display:block',
     'object-fit:cover',
     `object-position:${isLong ? 'top center' : 'center center'}`,
+    `transform-origin:${isLong ? 'center top' : 'center center'}`,
+    `transform:scale(${(initU / initSx).toFixed(5)}, ${(initU / initSy).toFixed(5)})`,
+    'will-change:transform',
     'user-select:none',
     'pointer-events:none',
   ].join(';');
   wrap.appendChild(img);
   document.body.appendChild(wrap);
   return { wrap, img };
+}
+
+function formatProxyTransform(rect: ProxyBoxRect, baseW: number, baseH: number): {
+  wrapTransform: string;
+  imgTransform: string;
+  needsImgComp: boolean;
+} {
+  const sx = Math.max(0.01, rect.width / Math.max(1, baseW));
+  const sy = Math.max(0.01, rect.height / Math.max(1, baseH));
+  const u = Math.max(sx, sy);
+  const ix = u / sx;
+  const iy = u / sy;
+  return {
+    wrapTransform: `translate3d(${rect.left.toFixed(2)}px, ${rect.top.toFixed(2)}px, 0) scale(${sx.toFixed(5)}, ${sy.toFixed(5)})`,
+    imgTransform: `scale(${ix.toFixed(5)}, ${iy.toFixed(5)})`,
+    needsImgComp: Math.abs(ix - 1) > 0.002 || Math.abs(iy - 1) > 0.002,
+  };
+}
+
+function animateProxyMorph(
+  wrap: HTMLElement,
+  img: HTMLImageElement,
+  from: ProxyBoxRect,
+  to: ProxyBoxRect,
+  baseW: number,
+  baseH: number,
+  duration: number,
+): { boxAnim: Animation; imgAnim: Animation | null } {
+  const steps = 8;
+  const wrapFrames: Keyframe[] = [];
+  const imgFrames: Keyframe[] = [];
+  let needsImgComp = false;
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const sample: ProxyBoxRect = {
+      left: from.left + (to.left - from.left) * t,
+      top: from.top + (to.top - from.top) * t,
+      width: Math.max(1, from.width + (to.width - from.width) * t),
+      height: Math.max(1, from.height + (to.height - from.height) * t),
+    };
+    const formatted = formatProxyTransform(sample, baseW, baseH);
+    wrapFrames.push({ transform: formatted.wrapTransform });
+    imgFrames.push({ transform: formatted.imgTransform });
+    if (formatted.needsImgComp) needsImgComp = true;
+  }
+
+  const timing: KeyframeAnimationOptions = { duration, easing: FLUID_MOTION_EASING, fill: 'both' };
+  const boxAnim = wrap.animate(wrapFrames, timing);
+  const imgAnim = needsImgComp && typeof img.animate === 'function'
+    ? img.animate(imgFrames, timing)
+    : null;
+  if (!needsImgComp) img.style.transform = 'scale(1, 1)';
+  return { boxAnim, imgAnim };
 }
 
 function clampRectToStage(
@@ -341,7 +416,10 @@ export function runImageViewerEnterMorph(
   if (thumbEl) thumbEl.style.visibility = 'hidden';
 
   const { wrap, img } = createMorphClipProxy(
-    { left: anchor.left, top: anchor.top, width: anchor.width, height: anchor.height, borderRadius: anchor.borderRadius },
+    targetBox.width,
+    targetBox.height,
+    4,
+    anchor,
     initialSrc,
     Boolean(anchor.isLong || targetBox.readMode),
   );
@@ -356,24 +434,14 @@ export function runImageViewerEnterMorph(
   if (topbar) chromeAnims.push(topbar.animate([{ opacity: 0, transform: 'translate3d(0,-10px,0)' }, { opacity: 1, transform: 'translate3d(0,0,0)' }], { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING }));
   if (bottombar) chromeAnims.push(bottombar.animate([{ opacity: 0, transform: 'translate3d(-50%, 10px, 0)' }, { opacity: 1, transform: 'translate3d(-50%, 0, 0)' }], { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING }));
 
-  const boxAnim = wrap.animate(
-    [
-      {
-        left: `${anchor.left}px`,
-        top: `${anchor.top}px`,
-        width: `${anchor.width}px`,
-        height: `${anchor.height}px`,
-        borderRadius: `${anchor.borderRadius}px`,
-      },
-      {
-        left: `${targetBox.left}px`,
-        top: `${targetBox.top}px`,
-        width: `${targetBox.width}px`,
-        height: `${targetBox.height}px`,
-        borderRadius: '4px',
-      },
-    ],
-    { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
+  const { boxAnim, imgAnim } = animateProxyMorph(
+    wrap,
+    img,
+    anchor,
+    targetBox,
+    targetBox.width,
+    targetBox.height,
+    VIEWER_OPEN_MS,
   );
 
   let morphEnded = false;
@@ -381,6 +449,7 @@ export function runImageViewerEnterMorph(
   let cleaned = false;
   let doneCalled = false;
   let reconcileAnim: Animation | null = null;
+  let reconcileImgAnim: Animation | null = null;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let readyWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let latestReadyRect: { left: number; top: number; width: number; height: number } | null = null;
@@ -405,8 +474,11 @@ export function runImageViewerEnterMorph(
       reconcileTimer = null;
     }
     clearAnimHandlers(reconcileAnim);
+    clearAnimHandlers(reconcileImgAnim);
     safeCancel(reconcileAnim);
+    safeCancel(reconcileImgAnim);
     reconcileAnim = null;
+    reconcileImgAnim = null;
     wrap.remove();
     const currentViewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
     if (currentViewerImg) currentViewerImg.style.opacity = '';
@@ -426,8 +498,10 @@ export function runImageViewerEnterMorph(
     if (settlePendingEnterProxy === handleReady) settlePendingEnterProxy = null;
     clearAnimHandlers(bgAnim);
     clearAnimHandlers(boxAnim);
+    clearAnimHandlers(imgAnim);
     safeCancel(bgAnim);
     safeCancel(boxAnim);
+    safeCancel(imgAnim);
     chromeAnims.forEach((anim) => {
       clearAnimHandlers(anim);
       safeCancel(anim);
@@ -453,24 +527,20 @@ export function runImageViewerEnterMorph(
       return;
     }
     clearAnimHandlers(reconcileAnim);
+    clearAnimHandlers(reconcileImgAnim);
     safeCancel(reconcileAnim);
-    reconcileAnim = wrap.animate(
-      [
-        {
-          left: `${targetBox.left}px`,
-          top: `${targetBox.top}px`,
-          width: `${targetBox.width}px`,
-          height: `${targetBox.height}px`,
-        },
-        {
-          left: `${finalRect.left}px`,
-          top: `${finalRect.top}px`,
-          width: `${finalRect.width}px`,
-          height: `${finalRect.height}px`,
-        },
-      ],
-      { duration: 130, easing: FLUID_MOTION_EASING, fill: 'both' },
+    safeCancel(reconcileImgAnim);
+    const reconciled = animateProxyMorph(
+      wrap,
+      img,
+      targetBox,
+      finalRect,
+      targetBox.width,
+      targetBox.height,
+      130,
     );
+    reconcileAnim = reconciled.boxAnim;
+    reconcileImgAnim = reconciled.imgAnim;
     reconcileTimer = setTimeout(removeProxy, 190);
     reconcileAnim.onfinish = removeProxy;
     reconcileAnim.oncancel = removeProxy;
@@ -493,6 +563,7 @@ export function runImageViewerEnterMorph(
     }
     if (payload.readMode) {
       img.style.objectPosition = 'top center';
+      img.style.transformOrigin = 'center top';
     }
     if (payload.liveRect && payload.liveRect.width >= 12 && payload.liveRect.height >= 12) {
       latestReadyRect = clampRectToStage(payload.liveRect, stageRect);
@@ -508,16 +579,15 @@ export function runImageViewerEnterMorph(
   const onMorphFinish = () => {
     if (morphEnded || cleaned) return;
     morphEnded = true;
-    wrap.style.left = `${targetBox.left}px`;
-    wrap.style.top = `${targetBox.top}px`;
-    wrap.style.width = `${targetBox.width}px`;
-    wrap.style.height = `${targetBox.height}px`;
-    wrap.style.borderRadius = '4px';
+    wrap.style.transform = `translate3d(${targetBox.left.toFixed(2)}px, ${targetBox.top.toFixed(2)}px, 0) scale(1, 1)`;
+    img.style.transform = 'scale(1, 1)';
     // Detach WAAPI handlers before cancelling finished animations so Chromium does not queue spurious cancel cleanups.
     clearAnimHandlers(bgAnim);
     clearAnimHandlers(boxAnim);
+    clearAnimHandlers(imgAnim);
     safeCancel(bgAnim);
     safeCancel(boxAnim);
+    safeCancel(imgAnim);
     chromeAnims.forEach((anim) => {
       clearAnimHandlers(anim);
       safeCancel(anim);
@@ -598,8 +668,11 @@ export function runImageViewerLeaveMorph(
   const prevThumbVisibility = thumbEl ? thumbEl.style.visibility : '';
   if (thumbEl) thumbEl.style.visibility = 'hidden';
 
-  const { wrap } = createMorphClipProxy(
-    { left: from.left, top: from.top, width: from.width, height: from.height, borderRadius: 4 },
+  const { wrap, img } = createMorphClipProxy(
+    from.width,
+    from.height,
+    4,
+    from,
     snapshot.src,
     Boolean(to.isLong),
   );
@@ -615,24 +688,14 @@ export function runImageViewerLeaveMorph(
     [{ backgroundColor: 'rgba(0, 0, 0, 0.92)' }, { backgroundColor: 'rgba(0, 0, 0, 0)' }],
     { duration: VIEWER_CLOSE_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
   );
-  const boxAnim = wrap.animate(
-    [
-      {
-        left: `${from.left}px`,
-        top: `${from.top}px`,
-        width: `${from.width}px`,
-        height: `${from.height}px`,
-        borderRadius: '4px',
-      },
-      {
-        left: `${to.left}px`,
-        top: `${to.top}px`,
-        width: `${to.width}px`,
-        height: `${to.height}px`,
-        borderRadius: `${to.borderRadius}px`,
-      },
-    ],
-    { duration: VIEWER_CLOSE_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
+  const { boxAnim, imgAnim } = animateProxyMorph(
+    wrap,
+    img,
+    from,
+    to,
+    from.width,
+    from.height,
+    VIEWER_CLOSE_MS,
   );
 
   let cleaned = false;
@@ -643,6 +706,7 @@ export function runImageViewerLeaveMorph(
     if (activeViewerCleanup === cleanup) activeViewerCleanup = null;
     safeCancel(bgAnim);
     safeCancel(boxAnim);
+    safeCancel(imgAnim);
     wrap.remove();
     if (thumbEl) thumbEl.style.visibility = prevThumbVisibility;
     done();

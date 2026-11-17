@@ -1,12 +1,15 @@
-import { prefersReducedMotion } from './compositorMotion';
+import { isAndroidWebView, prefersReducedMotion } from './compositorMotion';
 import {
+  buildCompositorCenterMorphKeyframes,
   buildContainerMorphKeyframes,
   FLUID_MOTION_EASING,
   type RectBox,
 } from './containerTransform';
 
 const OVERLAY_ENTER_MS = 260;
+const OVERLAY_ENTER_ANDROID_MS = 190;
 const OVERLAY_LEAVE_MS = 210;
+const OVERLAY_LEAVE_ANDROID_MS = 150;
 const OVERLAY_ANCHOR_TTL_MS = 1600;
 
 interface OverlayAnchorEntry {
@@ -135,31 +138,42 @@ export function runOverlayEnterMorph(
   const animations: Animation[] = [];
   const prevOrigin = surfaceEl.style.transformOrigin;
   const prevWillChange = surfaceEl.style.willChange;
+  const androidFast = isAndroidWebView();
+  const enterDuration = androidFast ? OVERLAY_ENTER_ANDROID_MS : OVERLAY_ENTER_MS;
 
   if (anchor && modalBox.width >= 32 && modalBox.height >= 32) {
-    surfaceEl.style.transformOrigin = '0 0';
-    surfaceEl.style.willChange = 'transform, clip-path, opacity';
-    const localFrom: RectBox = {
-      left: anchor.rect.left - modalBox.left,
-      top: anchor.rect.top - modalBox.top,
-      width: anchor.rect.width,
-      height: anchor.rect.height,
-      borderRadius: anchor.rect.borderRadius,
-    };
-    const localTo: RectBox = {
-      left: 0,
-      top: 0,
-      width: modalBox.width,
-      height: modalBox.height,
-      borderRadius: modalBox.borderRadius,
-    };
-    animations.push(surfaceEl.animate(
-      buildContainerMorphKeyframes(localFrom, localTo, modalBox.width, modalBox.height, {
-        steps: 12,
-        opacityRange: [0.35, 1, 0, 0.38],
-      }),
-      { duration: OVERLAY_ENTER_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
-    ));
+    if (androidFast) {
+      surfaceEl.style.transformOrigin = 'center center';
+      surfaceEl.style.willChange = 'transform, opacity';
+      animations.push(surfaceEl.animate(
+        buildCompositorCenterMorphKeyframes(anchor.rect, modalBox, 'enter'),
+        { duration: enterDuration, easing: FLUID_MOTION_EASING, fill: 'both' },
+      ));
+    } else {
+      surfaceEl.style.transformOrigin = '0 0';
+      surfaceEl.style.willChange = 'transform, clip-path, opacity';
+      const localFrom: RectBox = {
+        left: anchor.rect.left - modalBox.left,
+        top: anchor.rect.top - modalBox.top,
+        width: anchor.rect.width,
+        height: anchor.rect.height,
+        borderRadius: anchor.rect.borderRadius,
+      };
+      const localTo: RectBox = {
+        left: 0,
+        top: 0,
+        width: modalBox.width,
+        height: modalBox.height,
+        borderRadius: modalBox.borderRadius,
+      };
+      animations.push(surfaceEl.animate(
+        buildContainerMorphKeyframes(localFrom, localTo, modalBox.width, modalBox.height, {
+          steps: 12,
+          opacityRange: [0.35, 1, 0, 0.38],
+        }),
+        { duration: enterDuration, easing: FLUID_MOTION_EASING, fill: 'both' },
+      ));
+    }
   } else {
     surfaceEl.style.transformOrigin = 'center center';
     surfaceEl.style.willChange = 'transform, opacity';
@@ -168,7 +182,7 @@ export function runOverlayEnterMorph(
         { opacity: 0, transform: 'translate3d(0, 12px, 0) scale3d(0.94, 0.94, 1)' },
         { opacity: 1, transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)' },
       ],
-      { duration: 220, easing: FLUID_MOTION_EASING },
+      { duration: androidFast ? 170 : 220, easing: FLUID_MOTION_EASING },
     ));
   }
 
@@ -185,7 +199,7 @@ export function runOverlayEnterMorph(
     done();
   };
 
-  timer = setTimeout(cleanup, OVERLAY_ENTER_MS + 90);
+  timer = setTimeout(cleanup, enterDuration + 90);
   animations[0]!.onfinish = cleanup;
   animations[0]!.oncancel = cleanup;
   activeOverlayCleanups.set(wrapperEl, cleanup);
@@ -211,31 +225,42 @@ export function runOverlayLeaveMorph(
   const animations: Animation[] = [];
   const prevOrigin = surfaceEl.style.transformOrigin;
   const prevWillChange = surfaceEl.style.willChange;
+  const androidFast = isAndroidWebView();
+  const leaveDuration = androidFast ? OVERLAY_LEAVE_ANDROID_MS : OVERLAY_LEAVE_MS;
 
   if (anchor && modalBox.width >= 32 && modalBox.height >= 32) {
-    surfaceEl.style.transformOrigin = '0 0';
-    surfaceEl.style.willChange = 'transform, clip-path, opacity';
-    const localFrom: RectBox = {
-      left: 0,
-      top: 0,
-      width: modalBox.width,
-      height: modalBox.height,
-      borderRadius: modalBox.borderRadius,
-    };
-    const localTo: RectBox = {
-      left: anchor.rect.left - modalBox.left,
-      top: anchor.rect.top - modalBox.top,
-      width: anchor.rect.width,
-      height: anchor.rect.height,
-      borderRadius: anchor.rect.borderRadius,
-    };
-    animations.push(surfaceEl.animate(
-      buildContainerMorphKeyframes(localFrom, localTo, modalBox.width, modalBox.height, {
-        steps: 12,
-        opacityRange: [1, 0, 0.55, 1],
-      }),
-      { duration: OVERLAY_LEAVE_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
-    ));
+    if (androidFast) {
+      surfaceEl.style.transformOrigin = 'center center';
+      surfaceEl.style.willChange = 'transform, opacity';
+      animations.push(surfaceEl.animate(
+        buildCompositorCenterMorphKeyframes(anchor.rect, modalBox, 'leave'),
+        { duration: leaveDuration, easing: FLUID_MOTION_EASING, fill: 'both' },
+      ));
+    } else {
+      surfaceEl.style.transformOrigin = '0 0';
+      surfaceEl.style.willChange = 'transform, clip-path, opacity';
+      const localFrom: RectBox = {
+        left: 0,
+        top: 0,
+        width: modalBox.width,
+        height: modalBox.height,
+        borderRadius: modalBox.borderRadius,
+      };
+      const localTo: RectBox = {
+        left: anchor.rect.left - modalBox.left,
+        top: anchor.rect.top - modalBox.top,
+        width: anchor.rect.width,
+        height: anchor.rect.height,
+        borderRadius: anchor.rect.borderRadius,
+      };
+      animations.push(surfaceEl.animate(
+        buildContainerMorphKeyframes(localFrom, localTo, modalBox.width, modalBox.height, {
+          steps: 12,
+          opacityRange: [1, 0, 0.55, 1],
+        }),
+        { duration: leaveDuration, easing: FLUID_MOTION_EASING, fill: 'both' },
+      ));
+    }
   } else {
     surfaceEl.style.transformOrigin = 'center center';
     surfaceEl.style.willChange = 'transform, opacity';
@@ -244,7 +269,7 @@ export function runOverlayLeaveMorph(
         { opacity: 1, transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)' },
         { opacity: 0, transform: 'translate3d(0, 8px, 0) scale3d(0.95, 0.95, 1)' },
       ],
-      { duration: 160, easing: FLUID_MOTION_EASING, fill: 'both' },
+      { duration: androidFast ? 140 : 160, easing: FLUID_MOTION_EASING, fill: 'both' },
     ));
   }
 
@@ -261,7 +286,7 @@ export function runOverlayLeaveMorph(
     done();
   };
 
-  timer = setTimeout(cleanup, OVERLAY_LEAVE_MS + 90);
+  timer = setTimeout(cleanup, leaveDuration + 90);
   animations[0]!.onfinish = cleanup;
   animations[0]!.oncancel = cleanup;
   activeOverlayCleanups.set(wrapperEl, cleanup);

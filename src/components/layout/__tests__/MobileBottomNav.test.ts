@@ -10,6 +10,8 @@ const routerMock = vi.hoisted(() => ({
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>();
+  const { reactive } = await import('vue');
+  routerMock.currentRoute.value = reactive(routerMock.currentRoute.value);
   return {
     ...actual,
     useRoute: () => routerMock.currentRoute.value,
@@ -190,6 +192,27 @@ describe('MobileBottomNav 首页手势', () => {
     expect(pill.attributes('style')).toContain('translate3d(4px, 0, 0)');
     wrapper.unmount();
 
+    // 不同栏目宽度切换时保持 pill 基准宽度不变，通过 scaleX 纯合成变换伸缩，避免 width 布局动画
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.textContent?.includes('发现') ? 96 : 64;
+    });
+    routerMock.currentRoute.value.path = '/';
+    const scaleWrapper = mountNav();
+    await scaleWrapper.vm.$nextTick();
+    await scaleWrapper.vm.$nextTick();
+    const initialStyle = scaleWrapper.find('.mobile-nav-pill').attributes('style') || '';
+    expect(initialStyle).toContain('width: 64px');
+
+    routerMock.currentRoute.value.path = '/discover';
+    await scaleWrapper.vm.$nextTick();
+    await scaleWrapper.vm.$nextTick();
+    await scaleWrapper.vm.$nextTick();
+    const switchedStyle = scaleWrapper.find('.mobile-nav-pill').attributes('style') || '';
+    expect(switchedStyle).toContain('width: 64px');
+    expect(switchedStyle).toContain('translate3d(184px, 0, 0) scaleX(1.5000)');
+    scaleWrapper.unmount();
+
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(64);
     routerMock.currentRoute.value.path = '/discover';
     const wrapperDiscover = mountNav();
     await wrapperDiscover.vm.$nextTick();

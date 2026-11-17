@@ -96,11 +96,37 @@
   background-color: var(--background);
 }
 
+/* Android WebView 转场期间暂停高代价高斯模糊采样，并为浮动操作栏提供近实色衬底 */
+.app-shell.is-android.is-route-transitioning * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+.app-shell.is-android.is-route-transitioning .mobile-bottom-nav,
+.app-shell.is-android.is-route-transitioning .official-detail-actions::before,
+.app-shell.is-android.is-route-transitioning .official-detail-actions .official-write-comment {
+  background: color-mix(in srgb, var(--surface) 95%, transparent) !important;
+}
+
+.app-shell.is-android.is-route-container-morphing .route-container-surface-bg {
+  will-change: transform, opacity;
+}
+
 .root-tab-next-enter-active,
+.root-tab-prev-enter-active {
+  position: relative;
+  z-index: 2;
+  transition: transform 200ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 170ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  overflow: hidden;
+  overflow: clip;
+}
+
 .root-tab-next-leave-active,
-.root-tab-prev-enter-active,
 .root-tab-prev-leave-active {
-  transition: transform 240ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 220ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  z-index: 1;
+  transition: transform 140ms cubic-bezier(0.4, 0, 1, 1), opacity 130ms cubic-bezier(0.4, 0, 1, 1);
   will-change: transform, opacity;
   backface-visibility: hidden;
   overflow: hidden;
@@ -122,33 +148,24 @@
   contain: layout style;
 }
 
-.root-tab-next-enter-active,
-.root-tab-prev-enter-active {
-  position: relative;
-  z-index: 2;
-}
-
-.root-tab-next-leave-active,
-.root-tab-prev-leave-active {
-  z-index: 1;
-}
-
 .root-tab-next-enter-from {
-  transform: translate3d(calc(100% + 16px), 0, 0);
+  opacity: 0;
+  transform: translate3d(56px, 0, 0);
 }
 
 .root-tab-next-leave-to {
-  transform: translate3d(calc(-100% - 16px), 0, 0) scale(0.985);
-  opacity: 0.72;
+  opacity: 0;
+  transform: translate3d(-40px, 0, 0);
 }
 
 .root-tab-prev-enter-from {
-  transform: translate3d(calc(-100% - 16px), 0, 0);
+  opacity: 0;
+  transform: translate3d(-56px, 0, 0);
 }
 
 .root-tab-prev-leave-to {
-  transform: translate3d(calc(100% + 16px), 0, 0) scale(0.985);
-  opacity: 0.72;
+  opacity: 0;
+  transform: translate3d(40px, 0, 0);
 }
 
 /* 流畅模式：移动端非主栏子页面进退栈 */
@@ -156,7 +173,7 @@
 .fluid-push-leave-active,
 .fluid-pop-enter-active,
 .fluid-pop-leave-active {
-  transition: transform 260ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 240ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  transition: transform 220ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 190ms cubic-bezier(0.2, 0.9, 0.25, 1);
   will-change: transform, opacity;
   backface-visibility: hidden;
   overflow: hidden;
@@ -167,7 +184,7 @@
 .fluid-pop-leave-active {
   position: relative;
   z-index: 3;
-  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.14);
+  box-shadow: -1px 0 0 rgba(0, 0, 0, 0.08);
 }
 
 .fluid-push-leave-active,
@@ -181,6 +198,10 @@
   overflow: hidden;
 }
 
+.app-shell.is-android .fluid-pop-leave-from {
+  border-radius: 0px;
+}
+
 .fluid-push-enter-from,
 .fluid-pop-leave-to {
   transform: translate3d(100%, 0, 0);
@@ -188,8 +209,8 @@
 
 .fluid-push-leave-to,
 .fluid-pop-enter-from {
-  transform: translate3d(-24%, 0, 0) scale(0.975);
-  opacity: 0.76;
+  transform: translate3d(-18%, 0, 0);
+  opacity: 0.88;
 }
 
 /* 流畅模式：桌面端侧栏纵向微位移交叉淡入、顶部标签栏水平轻滑 */
