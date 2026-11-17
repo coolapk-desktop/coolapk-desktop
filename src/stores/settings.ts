@@ -163,6 +163,7 @@ const defaultSettings: AppSettings = {
   myRecentPinned: false,
   moreExpanded: false,
   reduceMotion: false,
+  pageTransitionStyle: 'fluid',
   accentColor: 'green',
   lightBackgroundColor: '',
   collapseLines: 12,
@@ -344,6 +345,7 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.myRecentPinned = readBoolean(source.myRecentPinned, readBoolean(source.sidebarMyCardsPinned, result.myRecentPinned));
   result.moreExpanded = readBoolean(source.moreExpanded, result.moreExpanded);
   result.reduceMotion = readBoolean(source.reduceMotion, result.reduceMotion);
+  if (isOneOf(source.pageTransitionStyle, ['fluid', 'native'])) result.pageTransitionStyle = source.pageTransitionStyle;
   result.collapseLines = [0, 8, 12, 18].includes(Number(source.collapseLines)) ? Number(source.collapseLines) : result.collapseLines;
   result.autoPlayGif = readBoolean(source.autoPlayGif, result.autoPlayGif);
   result.autoPlayLivePhotoSound = readBoolean(source.autoPlayLivePhotoSound, result.autoPlayLivePhotoSound);

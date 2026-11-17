@@ -46,6 +46,10 @@ const isExcluded = computed(() => {
   return route?.path?.startsWith('/messages');
 });
 
+let scrollRafId: number | null = null;
+let pendingScrollEvent: Event | undefined;
+let lastScrollFrameTime = 0;
+
 function checkScroll(e?: Event) {
   if (isExcluded.value) {
     showButton.value = false;
@@ -53,19 +57,19 @@ function checkScroll(e?: Event) {
   }
 
   let scrollTop = 0;
-  if (e && e.target && (e.target as HTMLElement).scrollTop !== undefined) {
-    const el = e.target as HTMLElement;
-    if (el.scrollTop === 0 && !showButton.value) {
+  const target = e?.target as HTMLElement | null;
+  if (target && target.scrollTop !== undefined) {
+    if (target.scrollTop === 0 && !showButton.value) {
       return;
     }
     // 排除聊天区域内的内部滚动
-    if (el.closest?.('.messages-page') || el.classList?.contains('chat-area') || el.classList?.contains('session-list')) {
+    if (target.classList?.contains('chat-area') || target.classList?.contains('session-list') || target.closest?.('.messages-page')) {
       showButton.value = false;
       return;
     }
-    scrollTop = el.scrollTop;
+    scrollTop = target.scrollTop;
     if (scrollTop > 300) {
-      activeScrollTarget = el;
+      activeScrollTarget = target;
     }
   } else {
     scrollTop = window.scrollY || document.documentElement.scrollTop || 0;
@@ -74,7 +78,27 @@ function checkScroll(e?: Event) {
     }
   }
 
-  showButton.value = scrollTop > 300;
+  const nextVisible = scrollTop > 300;
+  if (showButton.value !== nextVisible) {
+    showButton.value = nextVisible;
+  }
+}
+
+function scheduleCheckScroll(e?: Event) {
+  pendingScrollEvent = e;
+  const now = performance.now();
+  if (scrollRafId === null && now - lastScrollFrameTime >= 16) {
+    lastScrollFrameTime = now;
+    checkScroll(e);
+  }
+  if (scrollRafId !== null || typeof requestAnimationFrame === 'undefined') return;
+  scrollRafId = requestAnimationFrame((ts) => {
+    scrollRafId = null;
+    lastScrollFrameTime = ts;
+    const latest = pendingScrollEvent;
+    pendingScrollEvent = undefined;
+    checkScroll(latest);
+  });
 }
 
 function scrollToTop() {
@@ -98,7 +122,7 @@ function scrollToTop() {
     }
   }
 
-  const selectors = '.custom-scrollbar, .feed-scroll-container, .page-container, .user-page-wrapper, .discover-scroll-container, .feed-detail-page, .downloads-page, main.app-main-content';
+  const selectors = '[data-resource-scroll-root], .custom-scrollbar, .feed-scroll-container, .page-container, .user-page-wrapper, .discover-scroll-container, .feed-detail-page, .downloads-page, main.app-main-content';
   const scrollables = document.querySelectorAll<HTMLElement>(selectors);
   let scrolledFound = false;
 
@@ -128,11 +152,16 @@ function scrollToTop() {
 }
 
 onMounted(() => {
-  window.addEventListener('scroll', checkScroll, true);
+  window.addEventListener('scroll', scheduleCheckScroll, { capture: true, passive: true });
 });
 
 onUnmounted(() => {
-  window.removeEventListener('scroll', checkScroll, true);
+  window.removeEventListener('scroll', scheduleCheckScroll, true);
+  if (scrollRafId !== null) {
+    cancelAnimationFrame(scrollRafId);
+    scrollRafId = null;
+  }
+  pendingScrollEvent = undefined;
 });
 </script>
 
@@ -162,7 +191,7 @@ onUnmounted(() => {
 }
 
 .back-to-top-btn:hover {
-  transform: translateY(-3px) scale(1.08);
+  transform: translate3d(0, -3px, 0) scale(1.08);
   background: var(--brand-primary, #10b981);
   color: #ffffff;
   box-shadow: 0 10px 24px rgba(16, 185, 129, 0.35);

@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="relations-page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="relations-page-container custom-scrollbar" @scroll.passive="handleScroll">
     <!-- 官方移动端使用独立标题栏和四个酷友分类。 -->
     <header class="relations-header">
       <button class="back-btn" title="返回" @click="goBack"><i class="fas fa-arrow-left"></i></button>

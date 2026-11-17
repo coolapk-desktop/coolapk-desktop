@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div class="top-nav-bar">
       <div class="nav-title-box">
         <span class="nav-title">我的动态号</span>

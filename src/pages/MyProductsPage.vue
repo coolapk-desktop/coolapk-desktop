@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="my-products-page page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="my-products-page page-container custom-scrollbar" @scroll.passive="handleScroll">
     <header class="page-header">
       <div>
         <h2 class="page-title"><i class="fas fa-mobile-alt icon"></i>我的数码</h2>

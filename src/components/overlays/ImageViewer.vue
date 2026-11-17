@@ -1,6 +1,13 @@
 <template>
   <Teleport to="body">
-    <Transition name="fade">
+    <Transition
+      :name="useFluidImageMorph ? '' : 'fade'"
+      :css="!useFluidImageMorph"
+      :on-enter="useFluidImageMorph ? onViewerEnter : undefined"
+      :on-leave="useFluidImageMorph ? onViewerLeave : undefined"
+      :on-enter-cancelled="cancelActiveImageViewerMorph"
+      :on-leave-cancelled="cancelActiveImageViewerMorph"
+    >
       <div v-if="viewerData && !noImageMode" class="image-viewer-backdrop" :class="{ 'no-image-detail-enabled': detailImagesEnabled }" @click="handleBackdropClick">
         <!-- 顶部工具栏 -->
         <div class="viewer-topbar">
@@ -196,12 +203,22 @@ import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { isTouchMobilePlatform } from '../../utils/platform';
 import { normalizeFeedImageItems, resolveLivePhotoVideo, type FeedImageItem } from '../../utils/livePhoto';
 import { detectLiveVideoCodec, getLiveVideoCodecSupport, waitForDecodedVideoFrame, logLiveVideoState, type LiveVideoCodec } from '../../utils/liveVideoCodec';
+import {
+  cancelActiveImageViewerMorph,
+  consumePendingImageViewerAnchor,
+  findMatchingImageThumb,
+  notifyImageViewerImageReady,
+  runImageViewerEnterMorph,
+  runImageViewerLeaveMorph,
+  type ImageMorphRect,
+} from '../../utils/imageViewerTransform';
 
 const appStore = useAppStore();
 const showShortcutHints = useShortcutHints();
 const settingsStore = useSettingsStore();
 // 与页面共用移动布局判定，桌面浏览器窄窗口也必须进入长图阅读模式。
 const mobileLayout = useMobileLayout();
+const useFluidImageMorph = computed(() => !settingsStore.settings.reduceMotion && settingsStore.settings.pageTransitionStyle !== 'native');
 const viewerData = computed(() => appStore.activeImageViewer);
 const viewerDetailScope = computed(() => Boolean(viewerData.value?.fromDetail));
 const detailImagesEnabled = provideDetailImageScope(viewerDetailScope);
@@ -369,6 +386,7 @@ function measureImage() {
   if (image?.naturalWidth && image.naturalHeight) {
     imageSize.value = { width: image.naturalWidth, height: image.naturalHeight };
   }
+  notifyImageViewerImageReady(displaySrc.value || '');
 }
 
 function updateViewportSize() {
@@ -669,6 +687,7 @@ function handleImageError(event: Event) {
   failedSrc.value = displaySrc.value;
   loadFailed.value = true;
   imageSize.value = null;
+  notifyImageViewerImageReady();
   console.warn('看图器图片加载失败:', failedSrc.value);
 }
 
@@ -760,18 +779,76 @@ async function toggleLiveSound() {
   if (liveSoundEnabled.value && video.paused) await playLiveVideo();
 }
 
-watch(viewerData, (val) => {
+let initialEnterAnchor: ImageMorphRect | null = null;
+let initialEnterSourceUrl = '';
+let pendingCloseSnapshot: {
+  displayRect: DOMRect | null;
+  src: string;
+  targetThumb: ImageMorphRect | null;
+  closedBySwipe: boolean;
+} | null = null;
+let closingViaSwipe = false;
+
+function captureViewerCloseSnapshot(fallbackViewerData?: { urls?: unknown[] } | null) {
+  const activeProxy = document.querySelector<HTMLElement>('.viewer-morph-proxy');
+  const activeProxyImg = document.querySelector<HTMLImageElement>('.viewer-morph-proxy-img');
+  const activeSrc = displaySrc.value || activeProxyImg?.src || currentUrl.value;
+  const fallbackItems = !currentItem.value && fallbackViewerData?.urls
+    ? normalizeFeedImageItems(fallbackViewerData.urls)
+    : [];
+  const activeItem = currentItem.value || fallbackItems[currentIndex.value] || null;
+  const itemUrl = activeItem?.sourceUrl || activeItem?.coverUrl || currentUrl.value;
+  const preferredGrid = initialEnterAnchor?.element?.closest('.feed-image-grid');
+  const matchedThumb = findMatchingImageThumb(itemUrl, preferredGrid);
+  const isRotated = rotation.value % 360 !== 0;
+  const sameAsInitial = Boolean(itemUrl && initialEnterSourceUrl && itemUrl === initialEnterSourceUrl);
+  pendingCloseSnapshot = {
+    displayRect: activeProxy?.getBoundingClientRect() || imageRef.value?.getBoundingClientRect() || null,
+    src: activeSrc,
+    targetThumb: isRotated ? null : (matchedThumb || (sameAsInitial || !itemUrl ? initialEnterAnchor : null)),
+    closedBySwipe: closingViaSwipe,
+  };
+}
+
+function onViewerEnter(el: Element, done: () => void) {
+  if (!(el instanceof HTMLElement)) { done(); return; }
+  const cachedHighRes = displaySrc.value
+    || getMemoryCachedResourceSync(originalUrl.value)
+    || getMemoryCachedResourceSync(currentUrl.value)
+    || '';
+  runImageViewerEnterMorph(el, initialEnterAnchor, done, { preferredSrc: cachedHighRes });
+}
+
+function onViewerLeave(el: Element, done: () => void) {
+  if (!(el instanceof HTMLElement)) { done(); return; }
+  const snapshot = pendingCloseSnapshot || {
+    displayRect: null,
+    src: '',
+    targetThumb: null,
+    closedBySwipe: closingViaSwipe,
+  };
+  pendingCloseSnapshot = null;
+  closingViaSwipe = false;
+  runImageViewerLeaveMorph(el, snapshot, done);
+}
+
+watch(viewerData, (val, oldVal) => {
   clearSingleTapClose();
   lastTapAt = 0;
   settleTransitionNow();
   if (val) {
+    initialEnterAnchor = consumePendingImageViewerAnchor();
+    pendingCloseSnapshot = null;
+    closingViaSwipe = false;
     currentIndex.value = Math.min(Math.max(val.currentIndex, 0), Math.max(imageItems.value.length - 1, 0));
+    initialEnterSourceUrl = imageItems.value[currentIndex.value]?.sourceUrl || '';
     originalLoadedMap.value = {};
     originalLoadingMap.value = {};
     loadFailed.value = false;
     failedSrc.value = '';
     resetTransform();
   } else {
+    if (!pendingCloseSnapshot) captureViewerCloseSnapshot(oldVal);
     clearMediaForNoImageMode();
   }
 });
@@ -837,6 +914,7 @@ function prefetchAdjacentImages() {
 
 watch(currentItem, () => {
   // 失败态按图片索引重置：一张失败不能影响其它图片。
+  notifyImageViewerImageReady();
   loadFailed.value = false;
   failedSrc.value = '';
   resetTransform();
@@ -906,6 +984,7 @@ function rotateLeft() {
 function close() {
   clearSingleTapClose();
   lastTapAt = 0;
+  captureViewerCloseSnapshot(viewerData.value);
   appStore.closeImageViewer();
 }
 
@@ -1287,6 +1366,7 @@ function endTouchGesture(commitSwipe: boolean) {
   // 下滑关闭：画面留在手指松开的位置随遮罩一起淡出，不再弹回中心。
   if (commitSwipe && offsetY >= SWIPE_CLOSE_DISTANCE) {
     touchDragging.value = false;
+    closingViaSwipe = true;
     close();
     return;
   }
@@ -1388,6 +1468,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateViewportSize);
   clearTransitionTimer();
   clearLoadTimeout();
+  cancelActiveImageViewerMorph();
   clearMediaForNoImageMode();
 });
 </script>

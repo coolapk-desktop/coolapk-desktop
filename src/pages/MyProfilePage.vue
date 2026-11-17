@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: !auth.isLoggedIn || mobileProfileRefreshing }" class="my-profile-page custom-scrollbar" @scroll="compact = ($event.target as HTMLElement).scrollTop > 100">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: !auth.isLoggedIn || mobileProfileRefreshing }" class="my-profile-page custom-scrollbar" @scroll.passive="compact = ($event.target as HTMLElement).scrollTop > 100">
     <div class="profile-toolbar" :class="{ 'is-compact': compact }">
       <button v-if="compact" class="compact-avatar" type="button" aria-label="个人主页" @click="openProfile"><AppImage v-if="auth.user?.userAvatar" :src="auth.user.userAvatar" alt="头像" /></button>
       <button type="button" aria-label="扫一扫（暂未支持）" disabled><span class="official-icon" :style="iconStyle(scanIcon)"></span></button>

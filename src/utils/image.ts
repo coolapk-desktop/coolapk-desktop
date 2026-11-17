@@ -117,3 +117,18 @@ export function sanitizeImageUrl(url: string): boolean {
   if (trimmed.startsWith('/') || trimmed.startsWith('//')) return true;
   return /^(https?|data|blob):/i.test(trimmed);
 }
+
+/**
+ * 从酷安图片 CDN 地址的 `@宽x高` 文件名标记提前读取真实宽高比，
+ * 用于图片未解码前即预留占位高度，避免首屏加载后整卡下推跳动。
+ */
+export function parseUrlImageRatio(url: string): number {
+  if (!url || typeof url !== 'string') return 0;
+  const match = url.match(/@(\d+)x(\d+)(?:[.?#/_-]|$)/i);
+  if (!match) return 0;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!(width > 0 && height > 0)) return 0;
+  const ratio = width / height;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : 0;
+}

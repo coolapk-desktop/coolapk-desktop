@@ -16,6 +16,7 @@
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
       'is-reading-topbar-animating': isReadingTopbarAnimating,
+      'is-route-container-morphing': isRouteContainerMorphing,
     }"
     @scroll.capture="handleShellScroll"
     @wheel.capture="reading.onWheel"
@@ -94,6 +95,7 @@ import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey, useMobileReadin
 import { routeNavigationIsHistory } from '../../utils/routeScroll';
 import { logDiagnostic } from '../../utils/diagnosticLogger';
 import { animateTransformSlide, cancelTransformSlide, readTranslateOffset } from '../../utils/compositorMotion';
+import { isRouteContainerMorphing } from '../../utils/containerTransform';
 
 const route = useRoute();
 const router = useRouter();
@@ -356,12 +358,13 @@ onUnmounted(() => {
   height: 100%;
   overflow: hidden;
   background-color: var(--background);
+  --topic-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent);
+  --topic-glass-edge: rgba(255, 255, 255, .65);
 }
 
 .mobile-reading-topbar, .mobile-reading-topbar-content, .mobile-reading-topbar-stack { display: contents; }
 .app-shell.has-web-desktop-navigation { --app-titlebar-height: 0px; }
-.app-shell.has-topic-navigation { --topic-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --topic-glass-edge: rgba(255, 255, 255, .65); }
-:global([data-theme="dark"] .app-shell.has-topic-navigation) { --topic-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --topic-glass-edge: rgba(255, 255, 255, .18); }
+:global([data-theme="dark"] .app-shell) { --topic-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --topic-glass-edge: rgba(255, 255, 255, .18); }
 
 .app-body {
   --page-tabbar-height: 38px;
@@ -411,11 +414,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 720px) {
-  /* 首页搜索和主栏目共用玻璃与折叠容器。 */
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation { --home-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --home-glass-edge: rgba(255, 255, 255, .65); }
-  :global([data-theme="dark"] .app-shell:not(.prevent-mobile-layout).has-home-navigation) { --home-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --home-glass-edge: rgba(255, 255, 255, .18); }
+  /* 首页搜索和主栏目共用玻璃与折叠容器（变量局部挂载在顶栏容器，避免切页时在根容器改写 CSS 变量触发全树样式重算）。 */
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar { --home-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --home-glass-edge: rgba(255, 255, 255, .65); }
+  :global([data-theme="dark"] .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar) { --home-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --home-glass-edge: rgba(255, 255, 255, .18); }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-search-entry) { background: color-mix(in srgb, var(--surface) 28%, transparent); border: 1px solid color-mix(in srgb, var(--border) 45%, transparent); box-shadow: inset 0 1px 0 var(--home-glass-edge); }
+  .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-search-entry) { background: color-mix(in srgb, var(--surface) 28%, transparent); border: 1px solid color-mix(in srgb, var(--border) 45%, transparent); box-shadow: inset 0 1px 0 var(--home-glass-edge, rgba(255, 255, 255, .65)); }
   /* 话题标题栏和下方吸顶筛选共用底色与边缘，拼成连续的玻璃导航。 */
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar-content { background: var(--topic-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); box-shadow: inset 0 1px 0 var(--topic-glass-edge); }
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
@@ -475,7 +478,6 @@ onUnmounted(() => {
   .app-shell:not(.prevent-mobile-layout).has-home-navigation:not(.has-mobile-window-controls).reading-navigation-hidden .mobile-reading-topbar::before { opacity: 1; }
   .app-shell:not(.prevent-mobile-layout).has-discovery-navigation:not(.has-mobile-window-controls) .mobile-reading-topbar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: var(--app-safe-area-top, 0px); background: var(--surface); pointer-events: none; z-index: 1; }
   .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation, .has-discovery-navigation) .mobile-reading-topbar-content { background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation { --mobile-home-header-space: var(--mobile-home-header-fixed-space); }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar-stack { display: block; pointer-events: auto; background: var(--home-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); will-change: transform; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
   /* 数码与发现顶栏、正文区同步做纯合成层位移，避免收起/展开触发 flex 容器重排与布局偏移。 */
   .app-shell:not(.prevent-mobile-layout).has-discovery-navigation .mobile-reading-topbar-stack { display: block; pointer-events: auto; background: var(--surface); will-change: transform; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1); }
@@ -723,6 +725,19 @@ onUnmounted(() => {
   .app-main-content {
     width: 100%;
     overscroll-behavior: none;
+  }
+
+  /* 详情收起回源卡片时，让移动顶栏和底栏平滑协同显露，避免首帧突兀遮挡正在缩回的详情页。 */
+  @keyframes routeMorphChromeReveal {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .app-shell:not(.prevent-mobile-layout).is-route-container-morphing :deep(.mobile-bottom-nav),
+  .app-shell:not(.prevent-mobile-layout).is-route-container-morphing .mobile-reading-topbar-stack,
+  .app-shell:not(.prevent-mobile-layout).is-route-container-morphing :deep(.mobile-top-bar) {
+    animation: routeMorphChromeReveal 210ms cubic-bezier(0.2, 0.9, 0.25, 1) 45ms both;
+    pointer-events: none;
   }
 }
 </style>

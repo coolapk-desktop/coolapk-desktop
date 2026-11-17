@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="pictures-page custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="pictures-page custom-scrollbar" @scroll.passive="handleScroll">
     <!-- 首页同款纯粹顶栏 Tab -->
     <div class="pictures-tabs-bar">
       <div class="pictures-tabs">

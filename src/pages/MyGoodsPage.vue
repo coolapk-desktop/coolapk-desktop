@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" data-resource-scroll-root class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div class="page-header">
       <div class="header-main">
         <h2 class="page-title"><i class="fas fa-gift icon"></i> 我的好物</h2>
@@ -273,11 +273,12 @@ function openAlbum(item: any) {
 }
 
 function handleScroll(e: Event) {
-  const el = e.target as HTMLElement;
+  if (loading.value || noMore.value) return;
+  const el = e.currentTarget as HTMLElement | null;
   const scrollDiff = el && el.scrollHeight
     ? el.scrollHeight - el.scrollTop - el.clientHeight
     : 999;
-  if (scrollDiff < 260 && !loading.value && !noMore.value) {
+  if (scrollDiff < 260) {
     void load(false);
   }
 }
@@ -293,23 +294,11 @@ watch(
   },
 );
 
-function bindGlobalListeners() {
-  window.addEventListener('scroll', handleScroll, true);
-}
-
-function unbindGlobalListeners() {
-  window.removeEventListener('scroll', handleScroll, true);
-}
-
 onMounted(() => {
   if (authStore.isLoggedIn) {
     void load(true);
   }
 });
-
-onActivated(bindGlobalListeners);
-onDeactivated(unbindGlobalListeners);
-onUnmounted(unbindGlobalListeners);
 
 // 移动端下拉刷新复用当前页面的数据加载，保留筛选与页面实例。
 const mobileRefreshBusy = computed(() => loading.value);

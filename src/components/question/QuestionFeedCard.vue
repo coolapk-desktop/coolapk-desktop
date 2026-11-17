@@ -105,6 +105,7 @@ import { getQuestionAnswerCount, getQuestionAnswerImages, getQuestionFeedId, get
 import { getUserUid } from '../../utils/userRoute';
 import { preloadUserProfile } from '../../utils/userProfilePreloader';
 import { showToast } from '../../utils/toast';
+import { captureRouteTransitionAnchor } from '../../utils/containerTransform';
 
 const props = withDefaults(defineProps<{
   question: FeedItem;
@@ -119,6 +120,7 @@ const props = withDefaults(defineProps<{
 });
 
 const router = useRouter();
+const cardRef = ref<HTMLElement | null>(null);
 const appStore = useAppStore();
 const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
@@ -219,6 +221,7 @@ function openQuestionDetail(atAnswers = false) {
   const id = questionId.value;
   if (!id) return;
   appStore.setFeedDetailContext(id, props.question);
+  captureRouteTransitionAnchor(cardRef.value, `question:${id}`, router.currentRoute?.value?.path || '');
   void router.push(atAnswers ? { path: `/question/${encodeURIComponent(id)}`, query: { scrollTo: 'answers' } } : `/question/${encodeURIComponent(id)}`);
 }
 

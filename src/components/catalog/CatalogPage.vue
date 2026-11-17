@@ -1,5 +1,5 @@
 <template>
-  <div ref="scroller" v-pull-refresh="{ refresh: refreshPage, disabled: loading || categoriesLoading }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div ref="scroller" v-pull-refresh="{ refresh: refreshPage, disabled: loading || categoriesLoading }" class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <!-- 窄窗口中搜索控件在导航下方，宽屏上与导航并排。 -->
     <div v-if="!developer" class="catalog-toolbar">
       <div class="catalog-tabs">

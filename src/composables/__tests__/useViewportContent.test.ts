@@ -75,16 +75,19 @@ it('keeps ordinary rendering without IntersectionObserver', async () => {
   wrapper.unmount();
 });
 
-it('releases untouched hidden tab contents and restores them immediately when switching back', async () => {
+it('keeps currently visible tab contents intact across tab deactivation and reactivation', async () => {
   const visible = ref(true);
   const h = harness(ref(false), visible);
   await nextTick();
+  const input = h.wrapper.get('input').element;
   visible.value = false;
   await nextTick();
-  expect(h.wrapper.find('input').exists()).toBe(false);
+  expect(h.wrapper.find('input').exists()).toBe(true);
+  expect(h.wrapper.get('input').element).toBe(input);
   visible.value = true;
   await nextTick();
   expect(h.wrapper.find('input').exists()).toBe(true);
+  expect(h.wrapper.get('input').element).toBe(input);
   h.wrapper.unmount();
 });
 

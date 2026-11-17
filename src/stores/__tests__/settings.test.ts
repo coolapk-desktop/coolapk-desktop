@@ -244,6 +244,9 @@ describe('settings store', () => {
     expect(store.settings.favoriteCollectionSortDirection).toBe(defaults.favoriteCollectionSortDirection);
     expect(store.settings.desktopCommentsOnRight).toBe(defaults.desktopCommentsOnRight);
     expect(store.settings.desktopFeedDetailOnClick).toBe(defaults.desktopFeedDetailOnClick);
+    expect(store.settings.pageTransitionStyle).toBe('fluid');
+    expect(normalizeSettings({ pageTransitionStyle: 'native' }).pageTransitionStyle).toBe('native');
+    expect(normalizeSettings({ pageTransitionStyle: 'invalid' }).pageTransitionStyle).toBe('fluid');
     expect(store.settings.navVisibility?.albums).toBe(true);
     expect(store.settings.navVisibility?.pictures).toBe(true);
     expect(store.settings.navVisibility?.downloads).toBe(true);

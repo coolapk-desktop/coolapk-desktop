@@ -243,6 +243,7 @@ import {
 import { getUserUid } from '../../utils/userRoute';
 import { syncFavoriteToFeed } from '../../utils/feedFavorite';
 import { showToast } from '../../utils/toast';
+import { captureRouteTransitionAnchor } from '../../utils/containerTransform';
 
 const props = withDefaults(defineProps<{
   answer: FeedItem;
@@ -533,6 +534,7 @@ function openQuestionDetail() {
   // 回答正文不属于问题正文；只有完整的父问题实体才能作为问题详情预载内容。
   const question = (props.answer as any).question;
   if (question && String(question.id || question.entityId || '') === questionIdValue.value) appStore.setFeedDetailContext(questionIdValue.value, question);
+  captureRouteTransitionAnchor(cardRef.value, `question:${questionIdValue.value}`, router.currentRoute?.value?.path || '');
   void router.push(`/question/${encodeURIComponent(questionIdValue.value)}`);
 }
 
@@ -540,6 +542,7 @@ function openAnswerDetail(scrollTo?: 'top' | 'comments') {
   const answerId = String(props.answer.id || '').trim();
   if (!answerId) return;
   appStore.setFeedDetailContext(answerId, props.answer);
+  captureRouteTransitionAnchor(cardRef.value, `feed:${answerId}`, router.currentRoute?.value?.path || '');
   const path = `/feed/${encodeURIComponent(answerId)}`;
   void router.push(scrollTo ? { path, query: { scrollTo } } : path);
 }

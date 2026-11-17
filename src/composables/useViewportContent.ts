@@ -59,9 +59,9 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
   const active = ref(true);
   let viewportWidth = window.innerWidth;
   let stop = () => {};
-  // KeepAlive 缓存切走时保留当前视口内已渲染内容，仅暂停观察器，避免返回时整页卡片先塌陷再重建。
+  // KeepAlive 或首页页签切走时保留当前视口内及未测高内容，仅暂停观察器，避免返回时整页卡片先塌陷再重建。
   const renderViewportContent = computed(() => retained.value || protectedContent.value
-    || (pageVisible.value && (nearViewport.value || !height.value)));
+    || nearViewport.value || !height.value);
   const viewportPlaceholderStyle = computed(() => renderViewportContent.value || !height.value ? undefined
     : { height: `${height.value}px`, boxSizing: 'border-box' as const });
 

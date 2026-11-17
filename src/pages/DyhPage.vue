@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div v-if="headerLoading" class="dyh-header-card skeleton-header">
       <LoadingState text="正在加载看看号信息..." />
     </div>

@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" data-resource-scroll-root class="user-page-wrapper custom-scrollbar" @scroll="handleUserPageScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" data-resource-scroll-root class="user-page-wrapper custom-scrollbar" @scroll.passive="handleUserPageScroll">
     <!-- 全屏加载阻断 -->
     <div v-if="loadingProfile && !profile" class="loading-wrapper-full">
       <LoadingState text="正在获取酷友个人主页..." />

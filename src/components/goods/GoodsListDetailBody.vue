@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || commentsLoading || commentsLoadingMore }" class="page-container custom-scrollbar" :class="{ 'is-ranking': kind === 'ranking' }" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || commentsLoading || commentsLoadingMore }" class="page-container custom-scrollbar" :class="{ 'is-ranking': kind === 'ranking' }" @scroll.passive="handleScroll">
     <div v-if="loading && !feed" class="state-wrapper">
       <LoadingState text="正在加载好物详情..." />
     </div>

@@ -56,7 +56,7 @@
       </div>
       </div>
 
-      <div ref="searchScrollRef" data-resource-scroll-root class="search-scroll-container custom-scrollbar" :data-reading-scroll="queryStr ? '' : undefined" @scroll="handleScroll">
+      <div ref="searchScrollRef" data-resource-scroll-root class="search-scroll-container custom-scrollbar" :data-reading-scroll="queryStr ? '' : undefined" @scroll.passive="handleScroll">
         <template v-if="queryStr">
           <section class="search-results-section">
             <div v-if="activeState.loading && !activeState.items.length" class="loading-wrapper"><LoadingState text="正在搜索..." /></div>

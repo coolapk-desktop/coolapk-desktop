@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !storeMode }" class="plugins-page custom-scrollbar" @scroll="onScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !storeMode }" class="plugins-page custom-scrollbar" @scroll.passive="onScroll">
     <div class="plugins-content">
       <header class="plugins-toolbar">
         <button type="button" aria-label="返回" @click="navigateBack(router, '/me')"><i class="fas fa-arrow-left"></i></button>

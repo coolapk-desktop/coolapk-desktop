@@ -314,18 +314,19 @@ const pageRef = ref<HTMLElement | null>(null);
 function onScrollEvent(e: Event) {
   // window 捕获监听会收到所有滚动元素的事件：横向滚动条（分类 chips 等）的
   // scrollHeight - clientHeight ≈ 0，会被误判成「到底了」而白白消耗一页分页。
+  if (loading.value || noMore.value) return;
   if (pageRef.value && e.target !== pageRef.value) return;
   const el = e.target as HTMLElement;
   const scrollDiff = el && el.scrollHeight
     ? el.scrollHeight - el.scrollTop - el.clientHeight
     : 999;
-  if (scrollDiff < 260 && !loading.value && !noMore.value) {
+  if (scrollDiff < 260) {
     void load(false);
   }
 }
 
 function bindGlobalListeners() {
-  window.addEventListener('scroll', onScrollEvent, true);
+  window.addEventListener('scroll', onScrollEvent, { capture: true, passive: true });
 }
 
 function unbindGlobalListeners() {

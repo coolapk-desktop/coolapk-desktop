@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" :class="['page-container', { 'is-embedded': embedded }]" class="custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" :class="['page-container', { 'is-embedded': embedded }]" class="custom-scrollbar" @scroll.passive="handleScroll">
     <div v-if="!embedded" class="page-header">
       <div class="header-main">
         <div class="header-titles">

@@ -631,30 +631,60 @@ function updateFloatingCollapse() {
   if (isInViewport) {
     isCommentsFloatingVisible.value = true;
     const rightOffset = Math.max(28, windowWidth - rect.right + 24);
-    const isOverlappingFabZone = rightOffset < 96;
-    floatingCollapseStyle.value = {
-      bottom: isOverlappingFabZone ? '84px' : '32px',
-      right: `${rightOffset}px`,
-    };
+    const nextBottom = rightOffset < 96 ? '84px' : '32px';
+    const nextRight = `${rightOffset}px`;
+    if (floatingCollapseStyle.value.bottom !== nextBottom || floatingCollapseStyle.value.right !== nextRight) {
+      floatingCollapseStyle.value = { bottom: nextBottom, right: nextRight };
+    }
   } else {
     isCommentsFloatingVisible.value = false;
   }
 }
 
 let scrollListenerAttached = false;
+let floatingCollapseRafId: number | null = null;
+let floatingCollapseQueued = false;
+
+function scheduleFloatingCollapseUpdate() {
+  if (!scrollListenerAttached || !showComments.value) return;
+  if (floatingCollapseRafId === null) {
+    updateFloatingCollapse();
+    floatingCollapseQueued = false;
+    if (typeof requestAnimationFrame !== 'undefined') {
+      floatingCollapseRafId = requestAnimationFrame(() => {
+        floatingCollapseRafId = null;
+        if (floatingCollapseQueued) {
+          floatingCollapseQueued = false;
+          updateFloatingCollapse();
+        }
+      });
+    }
+    return;
+  }
+  floatingCollapseQueued = true;
+}
+
+function handleFloatingResize() {
+  scheduleFloatingCollapseUpdate();
+}
 
 function bindScrollListener() {
   if (scrollListenerAttached) return;
   scrollListenerAttached = true;
-  window.addEventListener('scroll', updateFloatingCollapse, true);
-  window.addEventListener('resize', updateFloatingCollapse);
+  window.addEventListener('scroll', scheduleFloatingCollapseUpdate, { capture: true, passive: true });
+  window.addEventListener('resize', handleFloatingResize, { passive: true });
 }
 
 function unbindScrollListener() {
+  if (floatingCollapseRafId !== null) {
+    cancelAnimationFrame(floatingCollapseRafId);
+    floatingCollapseRafId = null;
+  }
+  floatingCollapseQueued = false;
   if (!scrollListenerAttached) return;
   scrollListenerAttached = false;
-  window.removeEventListener('scroll', updateFloatingCollapse, true);
-  window.removeEventListener('resize', updateFloatingCollapse);
+  window.removeEventListener('scroll', scheduleFloatingCollapseUpdate, true);
+  window.removeEventListener('resize', handleFloatingResize);
 }
 
 function handleCollapseComments() {
@@ -1083,7 +1113,6 @@ defineExpose({ toggleComments, handleCollapseComments, showComments });
   position: fixed;
   z-index: 900;
   pointer-events: auto;
-  transition: bottom 0.2s cubic-bezier(0.4, 0, 0.2, 1), right 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .btn-floating-collapse {
@@ -1101,7 +1130,7 @@ defineExpose({ toggleComments, handleCollapseComments, showComments });
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.06);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s ease, box-shadow 0.2s ease, transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .btn-floating-collapse:hover {

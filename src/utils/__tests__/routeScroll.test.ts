@@ -45,7 +45,17 @@ describe('route scroll restoration', () => {
     expect([root.scrollTop, frame.scrollTop, stage.scrollTop]).toEqual([0, 0, 0]);
   });
 
-  it.each(['feed-detail-back', 'feed-detail-forward', 'feed-detail-desktop'])('转场 %s 时恢复位置会跳过退出中的页面', async transition => {
+  it.each([
+    'feed-detail-back',
+    'feed-detail-forward',
+    'feed-detail-desktop',
+    'root-tab-next',
+    'root-tab-prev',
+    'fluid-push',
+    'fluid-pop',
+    'desktop-fluid',
+    'desktop-tab-next',
+  ])('转场 %s 时恢复位置会跳过退出中的页面', async transition => {
     document.body.innerHTML = '<main class="app-main-content"><div class="route-transition-stage"><div id="home"><div class="custom-scrollbar"></div></div></div></main>';
     const home = document.querySelector<HTMLElement>('#home')!;
     const list = home.querySelector<HTMLElement>('.custom-scrollbar')!;

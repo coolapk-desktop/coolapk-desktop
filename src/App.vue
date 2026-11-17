@@ -2,14 +2,29 @@
   <AppShell>
     <router-view v-slot="{ Component, route }">
       <!-- 原生标准页面堆栈：/topics 聚合页保持单实例常驻，其他页面按「页面实例身份」入栈（见 getPageComponentKey） -->
-      <div class="route-transition-stage" :style="{ '--feed-detail-native-easing': feedDetailEasing }">
-      <Transition :name="feedDetailTransition" :css="Boolean(feedDetailTransition)">
+      <div
+        class="route-transition-stage"
+        :class="{ 'is-tab-sliding': routeTransitionMode === 'root-tab-next' || routeTransitionMode === 'root-tab-prev' }"
+        :style="{ '--feed-detail-native-easing': feedDetailEasing }"
+      >
+      <Transition
+        :name="isContainerJsTransition ? '' : routeTransitionMode"
+        :css="Boolean(routeTransitionMode) && !isContainerJsTransition"
+        :on-before-enter="isContainerJsTransition ? morphCoordinator.onBeforeEnter : undefined"
+        :on-enter="isContainerJsTransition ? morphCoordinator.onEnter : undefined"
+        :on-after-enter="isContainerJsTransition ? morphCoordinator.onFinishHook : undefined"
+        :on-enter-cancelled="isContainerJsTransition ? morphCoordinator.onFinishHook : undefined"
+        :on-before-leave="handleRouteBeforeLeave"
+        :on-leave="isContainerJsTransition ? morphCoordinator.onLeave : undefined"
+        :on-after-leave="handleRouteAfterLeave"
+        :on-leave-cancelled="handleRouteAfterLeave"
+      >
       <!-- 缓存槽位随已开页签增长：长浏览不会把仍在使用的列表挤出缓存，返回时位置与分页都还在 -->
       <keep-alive :max="keepAliveMax">
         <component
           :is="Component"
           :key="getRouteKey(route)"
-          :class="{ 'sidebar-page-enter': isSidebarTransitionActive && !feedDetailTransition }"
+          :class="{ 'sidebar-page-enter': settingsStore.settings.pageTransitionStyle === 'native' && isSidebarTransitionActive && !routeTransitionMode }"
         />
       </keep-alive>
       </Transition>
@@ -198,8 +213,9 @@ import { useNotificationStore } from './stores/notifications';
 import { registerGlobalHotkeys } from './utils/hotkeys';
 import { CoolapkTauriAPI } from './api/coolapk';
 import { clearResourceCache } from './utils/resourceCache';
-import { getFeedDetailTransition, officialFeedDetailEasing, useSidebarTransition } from './utils/routeTransition';
-import { useOfficialMobileFeedDetail } from './composables/useOfficialMobileFeedDetail';
+import { officialFeedDetailEasing, resolveRouteTransition, useSidebarTransition, type RouteTransitionMode } from './utils/routeTransition';
+import { createRouteMorphCoordinator, getDetailTransitionTargetKey, installGlobalTransitionAnchorTracker } from './utils/containerTransform';
+import { useMobileLayout } from './composables/useOfficialMobileFeedDetail';
 import { registerGlobalSelectionClear } from './utils/selection';
 import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
@@ -246,17 +262,61 @@ const downloadStore = useDownloadStore();
 const route = useRoute();
 // 路由与吸顶状态共同决定安卓状态栏后方的页面背景。
 watch(() => [route.path, settingsStore.profileToolbarCompact] as const, ([path, compact]) => { if (/android/i.test(navigator.userAgent)) settingsStore.setAndroidProfileBackground(path === '/me' && !compact); }, { immediate: true });
-const officialMobileDetail = useOfficialMobileFeedDetail();
-const feedDetailTransition = ref('');
+const mobileLayout = useMobileLayout();
+const pageTabsStore = usePageTabsStore();
+const routeTransitionMode = ref<RouteTransitionMode>('');
+const isContainerJsTransition = computed(() => routeTransitionMode.value === 'container-expand' || routeTransitionMode.value === 'container-collapse');
+const morphCoordinator = createRouteMorphCoordinator();
 const feedDetailEasing = window.CSS?.supports('transition-timing-function', officialFeedDetailEasing) ? officialFeedDetailEasing : 'cubic-bezier(0.05, 0, 0.25, 1)';
 let routeHistoryPosition = Number(window.history.state?.position || 0);
+
+function findPageTabIndexByPath(path: string): number {
+  const tabs = pageTabsStore.tabs;
+  if (!Array.isArray(tabs)) return -1;
+  return tabs.findIndex((tab) => String(tab.route || '').split('?')[0] === path);
+}
+
 watch(() => route.fullPath, (_next, _previous) => {
   const nextPosition = Number(window.history.state?.position || 0);
   const fromPath = String(_previous || '').split('?')[0]!;
-  feedDetailTransition.value = getFeedDetailTransition(fromPath, route.path, nextPosition < routeHistoryPosition, officialMobileDetail.value);
+  const backward = nextPosition < routeHistoryPosition;
+  const mode = resolveRouteTransition({
+    fromPath,
+    toPath: route.path,
+    backward,
+    mobile: mobileLayout.value,
+    style: settingsStore.settings.pageTransitionStyle || 'fluid',
+    reduceMotion: settingsStore.settings.reduceMotion,
+    sidebarTriggered: isSidebarTransitionActive.value,
+    fromTabIndex: findPageTabIndexByPath(fromPath),
+    toTabIndex: findPageTabIndexByPath(route.path),
+  });
+  routeTransitionMode.value = mode;
+  if (mode === 'container-expand' || mode === 'container-collapse') {
+    const targetPath = mode === 'container-expand' ? route.path : fromPath;
+    morphCoordinator.prepare({
+      mode,
+      targetKey: getDetailTransitionTargetKey(targetPath),
+      mobile: mobileLayout.value,
+      fromPath,
+      toPath: route.path,
+    });
+  } else {
+    morphCoordinator.cancel();
+  }
   routeHistoryPosition = nextPosition;
 }, { flush: 'sync' });
-const pageTabsStore = usePageTabsStore();
+
+function handleRouteBeforeLeave(el: Element) {
+  if (el instanceof HTMLElement) el.classList.add('route-leaving-active');
+  if (isContainerJsTransition.value) morphCoordinator.onBeforeLeave(el);
+}
+
+function handleRouteAfterLeave(el: Element) {
+  if (el instanceof HTMLElement) el.classList.remove('route-leaving-active');
+  if (isContainerJsTransition.value) morphCoordinator.onFinishHook();
+}
+
 // 至少保留 15 个缓存页，并随已开页签数增长（页签数 + 5），页面重建导致的列表分页丢失随之消除。
 const keepAliveMax = computed(() => getKeepAliveMax(pageTabsStore.tabs.length));
 const updateInfo = ref<UpdateInfo | null>(null);
@@ -279,6 +339,7 @@ let unregisterHotkeys: (() => void) | null = null;
 let unregisterSelectionClear: (() => void) | null = null;
 let unregisterViewport: (() => void) | null = null;
 let unregisterKeyboardAssist: (() => void) | null = null;
+let unregisterAnchorTracker: (() => void) | null = null;
 let updateDownloadInFlight = false;
 let updateChannelEpoch = 0;
 // 下载中心重试入口需要的最近一次更新信息；store 只存展示字段，重发下载必须回到这里。
@@ -781,6 +842,7 @@ onMounted(() => {
   window.addEventListener('resize', settingsStore.refreshAutoZoom);
   unregisterHotkeys = registerGlobalHotkeys();
   unregisterSelectionClear = registerGlobalSelectionClear();
+  unregisterAnchorTracker = installGlobalTransitionAnchorTracker();
 
   // 本地调试（vite dev）跳过自动更新检查，避免误弹更新提示或静默下载安装包；
   // 设置页的"立即检查更新"手动触发不受影响
@@ -837,6 +899,8 @@ onUnmounted(() => {
   window.removeEventListener('resize', settingsStore.refreshAutoZoom);
   unregisterHotkeys?.();
   unregisterSelectionClear?.();
+  unregisterAnchorTracker?.();
+  morphCoordinator.cancel();
   unregisterViewport?.();
   unregisterKeyboardAssist?.();
 });

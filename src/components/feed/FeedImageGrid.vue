@@ -6,17 +6,17 @@
     <div
       v-for="(item, index) in processedImages"
       :key="item.key"
-      :style="gridCount === 1 && !isLongImage && imageRatios[item.key] ? { aspectRatio: String(imageRatios[item.key]) } : undefined"
+      :style="gridCount === 1 && !isLongImage && effectiveImageRatios[item.key] ? { aspectRatio: String(effectiveImageRatios[item.key]) } : undefined"
       :class="[
         'grid-item',
         {
-          'has-natural-size': Boolean(imageRatios[item.key]),
+          'has-natural-size': Boolean(effectiveImageRatios[item.key]),
           'is-long-image': gridCount === 1 && isLongImage,
         },
       ]"
       data-context-kind="image"
       :data-context-image-url="item.sourceUrl"
-      @click.stop="openViewer(index)"
+      @click.stop="openViewer(index, $event)"
     >
       <LivePhotoPreview
         :item="item"
@@ -47,9 +47,10 @@ import { useSettingsStore } from '../../stores/settings';
 import { useNoImageMode, detailImageScopeKey } from '../../composables/useNoImageMode';
 import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
 import LivePhotoPreview from './LivePhotoPreview.vue';
-import { isAnimatedImageUrl, isPortraitLongImage } from '../../utils/image';
+import { isAnimatedImageUrl, isPortraitLongImage, parseUrlImageRatio } from '../../utils/image';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { getErrorMessage } from '../../utils/errors';
+import { captureImageViewerAnchor } from '../../utils/imageViewerTransform';
 import { showToast } from '../../utils/toast';
 import { isTouchMobilePlatform } from '../../utils/platform';
 import {
@@ -79,6 +80,18 @@ const LONG_IMAGE_RATIO = 1.8;
 const imageRatios = defineModel<Record<string, number>>('imageRatios', { default: () => ({}) });
 
 const processedImages = computed(() => normalizeFeedImageItems(props.images));
+const parsedUrlRatios = computed<Record<string, number>>(() => {
+  const next: Record<string, number> = {};
+  for (const item of processedImages.value) {
+    const ratio = parseUrlImageRatio(item.coverUrl || item.sourceUrl);
+    if (ratio > 0) next[item.key] = ratio;
+  }
+  return next;
+});
+const effectiveImageRatios = computed<Record<string, number>>(() => ({
+  ...parsedUrlRatios.value,
+  ...imageRatios.value,
+}));
 const isComment = computed(() => variant.value === 'comment' && contentType.value === 'reply');
 const isGif = (item: (typeof processedImages.value)[number]) => !item.isLivePhoto && isAnimatedImageUrl(item.sourceUrl);
 // 每组图片只自动播放第一张 GIF，跳过排在前面的静态图和实况图。
@@ -90,7 +103,7 @@ const gridCount = computed(() => {
 
 const singleImageRatio = computed(() => {
   const item = processedImages.value[0];
-  return item ? imageRatios.value[item.key] || 0 : 0;
+  return item ? effectiveImageRatios.value[item.key] || 0 : 0;
 });
 
 const isLongImage = computed(() => isPortraitLongImage(singleImageRatio.value, LONG_IMAGE_RATIO));
@@ -98,13 +111,16 @@ const isLongImage = computed(() => isPortraitLongImage(singleImageRatio.value, L
 function handleImageLoad(key: string, event: Event) {
   const image = event.target as HTMLImageElement;
   if (!image.naturalWidth || !image.naturalHeight) return;
+  const nextRatio = image.naturalWidth / image.naturalHeight;
+  const currentRatio = effectiveImageRatios.value[key] || 0;
+  if (currentRatio > 0 && Math.abs(currentRatio - nextRatio) < 0.005) return;
   imageRatios.value = {
     ...imageRatios.value,
-    [key]: image.naturalWidth / image.naturalHeight,
+    [key]: nextRatio,
   };
 }
 
-function openViewer(index: number) {
+function openViewer(index: number, event?: MouseEvent) {
   const images = processedImages.value;
   const item = images[index];
   if (!item) return;
@@ -116,6 +132,8 @@ function openViewer(index: number) {
       .catch((error) => showToast(getErrorMessage(error, '系统图片查看器打开失败'), 'error'));
     return;
   }
+  const sourceEl = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  captureImageViewerAnchor(sourceEl, item.sourceUrl);
   appStore.openImageViewer(images, index, {
     contentId: props.contentId,
     contentType: contentType.value,

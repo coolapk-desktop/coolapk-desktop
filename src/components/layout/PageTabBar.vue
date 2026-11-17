@@ -77,6 +77,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { usePageTabsStore } from '../../stores/pageTabs';
 import { activateHomeTab } from '../../utils/homeTab';
+import { resetSidebarTransition } from '../../utils/routeTransition';
 
 withDefaults(defineProps<{ showTabs?: boolean; showNavigation?: boolean }>(), { showTabs: true });
 
@@ -120,6 +121,7 @@ function replaceRoute(route: string | null) {
 
 function openTab(id: string) {
   if (suppressClick) return;
+  resetSidebarTransition();
   // 固定首页标签：已在首页时不再重复导航，改为回到顶部（双击再刷新当前栏目）。
   if (id === 'home') {
     activateHomeTab(router);
@@ -187,6 +189,7 @@ function openTabFromList(id: string) {
 }
 
 function openSavedPage(id: string) {
+  resetSidebarTransition();
   navigate(tabsStore.openSaved(id));
   closeMenus();
 }

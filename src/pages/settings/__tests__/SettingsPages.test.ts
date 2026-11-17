@@ -156,6 +156,13 @@ describe('设置页面交互', () => {
     await rightCommentsRow.find('.switch-input').setValue(true);
     expect(settings.settings.desktopCommentsOnRight).toBe(true);
     expect(appearanceRows.some(row => row.text().includes('默认显示右侧评论'))).toBe(false);
+    expect(settings.settings.pageTransitionStyle).toBe('fluid');
+    const transitionButtons = wrapper.findAll('.transition-style-btn');
+    expect(transitionButtons.length).toBe(2);
+    await transitionButtons[1].trigger('click');
+    expect(settings.settings.pageTransitionStyle).toBe('native');
+    await transitionButtons[0].trigger('click');
+    expect(settings.settings.pageTransitionStyle).toBe('fluid');
     expect(settings.settings.navVisibility?.home).toBe(false);
   });
 

@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div v-if="headerLoading" class="album-header-card skeleton-header">
       <LoadingState text="正在加载专辑信息..." />
     </div>

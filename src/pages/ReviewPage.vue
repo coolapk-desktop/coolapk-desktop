@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="page-container custom-scrollbar">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" data-resource-scroll-root class="page-container custom-scrollbar">
     <!-- 头部区域 -->
     <div class="page-header">
       <div class="header-main">
@@ -315,9 +315,11 @@ function clearSearch() {
 }
 
 function onScrollEvent(e: Event) {
+  if (loading.value || loadingMore.value || noMore.value) return;
   const el = e.target as HTMLElement;
   let scrollDiff = 999;
   if (el && el.scrollHeight) {
+    if (!el.classList?.contains('page-container')) return;
     scrollDiff = el.scrollHeight - el.scrollTop - el.clientHeight;
   } else {
     const docEl = document.documentElement;
@@ -325,14 +327,12 @@ function onScrollEvent(e: Event) {
   }
 
   if (scrollDiff < 260) {
-    if (!loading.value && !loadingMore.value && !noMore.value) {
-      loadFeeds(false);
-    }
+    loadFeeds(false);
   }
 }
 
 function bindGlobalListeners() {
-  window.addEventListener('scroll', onScrollEvent, true);
+  window.addEventListener('scroll', onScrollEvent, { capture: true, passive: true });
 }
 
 function unbindGlobalListeners() {

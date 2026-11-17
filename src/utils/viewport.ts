@@ -54,14 +54,24 @@ export function applyViewportMetrics(
 /** 持续同步 CSS 变量，返回取消订阅函数。 */
 export function setupViewportHeight(): () => void {
   if (typeof window === 'undefined') return () => undefined;
-  const sync = () => applyViewportMetrics(measureViewport(window));
+  let lastHeight = Number.NaN;
+  let lastTop = Number.NaN;
+  let lastKeyboardInset = Number.NaN;
+  const sync = () => {
+    const next = measureViewport(window);
+    if (next.height === lastHeight && next.top === lastTop && next.keyboardInset === lastKeyboardInset) return;
+    lastHeight = next.height;
+    lastTop = next.top;
+    lastKeyboardInset = next.keyboardInset;
+    applyViewportMetrics(next);
+  };
   sync();
 
   const viewport = window.visualViewport;
-  viewport?.addEventListener('resize', sync);
-  viewport?.addEventListener('scroll', sync);
-  window.addEventListener('resize', sync);
-  window.addEventListener('orientationchange', sync);
+  viewport?.addEventListener('resize', sync, { passive: true });
+  viewport?.addEventListener('scroll', sync, { passive: true });
+  window.addEventListener('resize', sync, { passive: true });
+  window.addEventListener('orientationchange', sync, { passive: true });
 
   return () => {
     viewport?.removeEventListener('resize', sync);

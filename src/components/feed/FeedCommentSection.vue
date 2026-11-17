@@ -779,6 +779,10 @@ function disconnectLoadMoreObserver() {
 }
 
 function findScrollableParent(element: HTMLElement): HTMLElement | null {
+  const markedRoot = element.closest<HTMLElement>('[data-resource-scroll-root]');
+  if (markedRoot && markedRoot !== element) {
+    return markedRoot;
+  }
   let parent = element.parentElement;
   while (parent) {
     const style = window.getComputedStyle(parent);

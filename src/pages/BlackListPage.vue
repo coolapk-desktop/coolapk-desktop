@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div class="page-header">
       <div class="header-main">
         <h2 class="page-title"><i class="fas fa-user-slash icon"></i> 黑名单</h2>

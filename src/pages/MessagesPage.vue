@@ -94,7 +94,7 @@
         class="chat-area" 
         :class="{ 'is-ready': isChatPositionReady }" 
         ref="chatAreaRef" 
-        @scroll="handleChatScroll"
+        @scroll.passive="handleChatScroll"
       >
         <div class="chat-status" v-if="loadingHistory">
           <LoadingState text="加载聊天记录..." />
@@ -3057,7 +3057,7 @@ async function refreshMobilePage() { await loadSessions(); }
   /* 输入区不参与聊天列表的压缩，列表通过自身滚动让出空间。 */
   flex-shrink: 0;
   min-height: 160px;
-  transition: height 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, padding 0.25s ease;
+  transition: box-shadow 0.25s ease, padding 0.25s ease;
 }
 
 /* 粘贴图片后为预览额外留出一行，移除后恢复用户原来的输入区高度。 */

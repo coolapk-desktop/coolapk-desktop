@@ -1,8 +1,8 @@
 <template>
-  <!-- 布局变化只更新展示参数，保留栏目页、分页游标和滚动容器。 -->
   <MobileHomePager :mobile="mobile" />
 </template>
 <script setup lang="ts">
+// 布局变化只更新展示参数，保留栏目页、分页游标和滚动容器；保持单根节点使 Transition 正常驱动离场动画。
 import { computed, ref, onMounted, onUnmounted } from 'vue';
 import MobileHomePager from '../components/feed/MobileHomePager.vue';
 import { useSettingsStore } from '../stores/settings';

@@ -1,6 +1,6 @@
 <template>
   <ProductCategoryBrowser v-if="isProductCategoryDirectory" :selected-id="productCategoryId" @open="openEntity" />
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || loadingMore }" v-else ref="scrollContainer" class="page-container custom-scrollbar" @scroll="handleScroll">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: loading || loadingMore }" v-else ref="scrollContainer" class="page-container custom-scrollbar" @scroll.passive="handleScroll">
     <div v-if="!isDynamicPage" class="page-header page-data-header">
       <div class="header-titles">
         <h2 class="page-title"><i class="fas fa-list-ul icon"></i>{{ pageTitle }}</h2>

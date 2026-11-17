@@ -877,7 +877,7 @@ onMounted(() => {
   window.addEventListener('click', handleWindowClick);
   window.addEventListener('keydown', handleKeydown, true);
   window.addEventListener('resize', closeMenu);
-  window.addEventListener('scroll', handleWindowScroll, true);
+  window.addEventListener('scroll', handleWindowScroll, { capture: true, passive: true });
   document.addEventListener('selectionchange', refreshSelectionMenu);
   window.addEventListener('touchstart', handleTouchStart, { capture: true, passive: true });
   window.addEventListener('touchmove', handleTouchMove, { capture: true, passive: true });

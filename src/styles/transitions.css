@@ -48,6 +48,193 @@
 .feed-detail-desktop-enter-from { opacity: 0; transform: translate3d(0, 8px, 0); }
 .feed-detail-desktop-leave-to { opacity: 0; }
 
+/* 流畅模式：共享边界容器变换内部遮罩与镜像图层 */
+.route-container-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.route-container-surface-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  transform-origin: 0 0;
+  pointer-events: none;
+  will-change: transform, clip-path, opacity;
+}
+
+.route-container-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  overflow: hidden;
+  will-change: transform, clip-path, opacity;
+}
+
+/* 流畅模式：移动端底部主栏目带间隙并行横滑 */
+.route-transition-stage.is-tab-sliding {
+  background: var(--background-secondary, var(--background));
+}
+
+:where(
+  .root-tab-next-enter-active,
+  .root-tab-next-leave-active,
+  .root-tab-prev-enter-active,
+  .root-tab-prev-leave-active,
+  .fluid-push-enter-active,
+  .fluid-push-leave-active,
+  .fluid-pop-enter-active,
+  .fluid-pop-leave-active
+) {
+  background-color: var(--background);
+}
+
+.root-tab-next-enter-active,
+.root-tab-next-leave-active,
+.root-tab-prev-enter-active,
+.root-tab-prev-leave-active {
+  transition: transform 240ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 220ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.root-tab-next-leave-active,
+.root-tab-prev-leave-active,
+.fluid-push-leave-active,
+.fluid-pop-leave-active,
+.desktop-fluid-leave-active,
+.desktop-tab-next-leave-active,
+.desktop-tab-prev-leave-active {
+  position: absolute !important;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  contain: layout style;
+}
+
+.root-tab-next-enter-active,
+.root-tab-prev-enter-active {
+  position: relative;
+  z-index: 2;
+}
+
+.root-tab-next-leave-active,
+.root-tab-prev-leave-active {
+  z-index: 1;
+}
+
+.root-tab-next-enter-from {
+  transform: translate3d(calc(100% + 16px), 0, 0);
+}
+
+.root-tab-next-leave-to {
+  transform: translate3d(calc(-100% - 16px), 0, 0) scale(0.985);
+  opacity: 0.72;
+}
+
+.root-tab-prev-enter-from {
+  transform: translate3d(calc(-100% - 16px), 0, 0);
+}
+
+.root-tab-prev-leave-to {
+  transform: translate3d(calc(100% + 16px), 0, 0) scale(0.985);
+  opacity: 0.72;
+}
+
+/* 流畅模式：移动端非主栏子页面进退栈 */
+.fluid-push-enter-active,
+.fluid-push-leave-active,
+.fluid-pop-enter-active,
+.fluid-pop-leave-active {
+  transition: transform 260ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 240ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.fluid-push-enter-active,
+.fluid-pop-leave-active {
+  position: relative;
+  z-index: 3;
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.14);
+}
+
+.fluid-push-leave-active,
+.fluid-pop-enter-active {
+  z-index: 1;
+}
+
+.fluid-push-enter-from,
+.fluid-pop-leave-to {
+  transform: translate3d(100%, 0, 0);
+}
+
+.fluid-push-leave-to,
+.fluid-pop-enter-from {
+  transform: translate3d(-24%, 0, 0) scale(0.975);
+  opacity: 0.76;
+}
+
+/* 流畅模式：桌面端侧栏纵向微位移交叉淡入、顶部标签栏水平轻滑 */
+.desktop-fluid-enter-active,
+.desktop-tab-next-enter-active,
+.desktop-tab-prev-enter-active {
+  position: relative;
+  z-index: 2;
+  transition: transform 210ms cubic-bezier(0.2, 0.9, 0.25, 1), opacity 190ms cubic-bezier(0.2, 0.9, 0.25, 1);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.desktop-fluid-leave-active,
+.desktop-tab-next-leave-active,
+.desktop-tab-prev-leave-active {
+  z-index: 1;
+  transition: transform 150ms cubic-bezier(0.4, 0, 1, 1), opacity 140ms cubic-bezier(0.4, 0, 1, 1);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.desktop-fluid-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0) scale3d(0.992, 0.992, 1);
+}
+
+.desktop-fluid-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0) scale3d(0.992, 0.992, 1);
+}
+
+.desktop-tab-next-enter-from {
+  opacity: 0;
+  transform: translate3d(26px, 0, 0) scale3d(0.994, 0.994, 1);
+}
+
+.desktop-tab-next-leave-to {
+  opacity: 0;
+  transform: translate3d(-20px, 0, 0) scale3d(0.994, 0.994, 1);
+}
+
+.desktop-tab-prev-enter-from {
+  opacity: 0;
+  transform: translate3d(-26px, 0, 0) scale3d(0.994, 0.994, 1);
+}
+
+.desktop-tab-prev-leave-to {
+  opacity: 0;
+  transform: translate3d(20px, 0, 0) scale3d(0.994, 0.994, 1);
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity var(--duration-normal) var(--ease-default);

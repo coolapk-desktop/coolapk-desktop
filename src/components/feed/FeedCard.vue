@@ -436,6 +436,7 @@ import { recordSelectionPointerStart, shouldSkipClickForSelection, type Selectio
 import { queueFavoriteContentIndexEntry, removeFavoriteContentIndexEntry } from '../../utils/favoriteContentIndex';
 import { syncFavoriteToFeed as writeFavoriteToFeed } from '../../utils/feedFavorite';
 import { getFeedFavoriteState, setFeedFavoriteState } from '../../stores/feedFavorites';
+import { captureRouteTransitionAnchor } from '../../utils/containerTransform';
 
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
@@ -523,6 +524,7 @@ async function toggleAuthorFollow() {
 }
 function navigateToOfficialDetail(scrollTo: 'top' | 'comments') {
   appStore.setFeedDetailContext(String(props.feed.id), props.feed);
+  captureRouteTransitionAnchor(cardRef.value, `feed:${props.feed.id}`, router.currentRoute?.value?.path || '');
   void router.push({ path: `/feed/${props.feed.id}`, query: { scrollTo } });
 }
 function openOfficialDetail() { navigateToOfficialDetail('top'); }
@@ -540,6 +542,7 @@ async function openReplyDetail() {
       feedId = getNotificationFeedId(response?.data);
     }
     if (!feedId) throw new Error('无法获取这条回复所属的动态，请稍后重试');
+    captureRouteTransitionAnchor(cardRef.value, `feed:${feedId}`, router.currentRoute?.value?.path || '');
     await router.push({ path: `/feed/${feedId}`, query: { replyId } });
   } catch (error) {
     showToast(getErrorMessage(error, '打开回复失败，请稍后重试'), 'error');
@@ -939,7 +942,7 @@ watch(moreMenuOpen, async (open) => {
   if (!moreMenuOpen.value || !moreMenuRef.value || !cardRef.value) return;
   positionMoreMenu();
   window.addEventListener('resize', positionMoreMenu);
-  window.addEventListener('scroll', closeMenuOnScroll, true);
+  window.addEventListener('scroll', closeMenuOnScroll, { capture: true, passive: true });
 });
 onUnmounted(() => {
   window.removeEventListener('resize', positionMoreMenu);
@@ -1856,6 +1859,7 @@ function handleCardClick(e: MouseEvent) {
   if (entityType === 'product') {
     const productId = props.feed.entityId || props.feed.id;
     if (productId) {
+      captureRouteTransitionAnchor(cardRef.value, `product:${productId}`, router.currentRoute?.value?.path || '');
       router.push(`/product/${productId}`);
       return;
     }
@@ -1863,6 +1867,7 @@ function handleCardClick(e: MouseEvent) {
   if (entityType === 'dyh') {
     const dyhId = props.feed.entityId || props.feed.id;
     if (dyhId) {
+      captureRouteTransitionAnchor(cardRef.value, `dyh:${dyhId}`, router.currentRoute?.value?.path || '');
       router.push(`/dyh/${dyhId}`);
       return;
     }
@@ -1870,6 +1875,7 @@ function handleCardClick(e: MouseEvent) {
   if (entityType === 'album') {
     const albumId = props.feed.entityId || props.feed.id;
     if (albumId) {
+      captureRouteTransitionAnchor(cardRef.value, `album:${albumId}`, router.currentRoute?.value?.path || '');
       router.push(`/album/${albumId}`);
       return;
     }
@@ -1884,6 +1890,7 @@ function openQuestionDetail(atAnswers = false): boolean {
   const questionId = getQuestionFeedId(props.feed);
   if (!questionId) return false;
   appStore.setFeedDetailContext(questionId, props.feed);
+  captureRouteTransitionAnchor(cardRef.value, `question:${questionId}`, router.currentRoute?.value?.path || '');
   void router.push(atAnswers ? { path: `/question/${encodeURIComponent(questionId)}`, query: { scrollTo: 'answers' } } : `/question/${encodeURIComponent(questionId)}`);
   return true;
 }
@@ -1896,6 +1903,7 @@ function openAnswerDetail(scrollTo?: 'top' | 'comments'): boolean {
     .find(Boolean) || '';
   if (!answerId) return false;
   appStore.setFeedDetailContext(answerId, props.feed);
+  captureRouteTransitionAnchor(cardRef.value, `feed:${answerId}`, router.currentRoute?.value?.path || '');
   const path = `/feed/${encodeURIComponent(answerId)}`;
   void router.push(scrollTo ? { path, query: { scrollTo } } : path);
   return true;
@@ -1985,6 +1993,16 @@ defineExpose({
   transition: background-color 0.2s ease, border-color 0.2s ease;
   cursor: pointer;
   overflow: hidden;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .feed-card:not(.is-detail-mode) {
+    transition: transform 150ms cubic-bezier(0.2, 0.9, 0.25, 1), background-color 0.2s ease, border-color 0.2s ease;
+  }
+
+  :global(:root:not([data-reduce-motion='true'])) .feed-card:not(.is-detail-mode):active {
+    transform: scale(0.985);
+  }
 }
 
 .feed-plugin-decoration { position: absolute; top: 0; right: 0; width: 50%; height: 48px; pointer-events: none; z-index: 0; background: transparent; content-visibility: auto; }

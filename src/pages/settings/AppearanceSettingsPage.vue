@@ -155,6 +155,26 @@
       <h4 class="group-title">微动画与视觉效果</h4>
       <div class="setting-row">
         <div class="row-info">
+          <span class="row-label">页面切换与展开动效</span>
+          <span class="row-sub">流体容器支持桌面与移动端的卡片原位展开收起及平滑切页；官方原生沿用客户端详情侧滑效果</span>
+        </div>
+        <div class="transition-style-options" role="radiogroup" aria-label="页面切换与展开动效">
+          <button
+            v-for="option in transitionStyleOptions"
+            :key="option.key"
+            type="button"
+            class="transition-style-btn"
+            :class="{ 'is-active': settingsStore.settings.pageTransitionStyle === option.key }"
+            :aria-pressed="settingsStore.settings.pageTransitionStyle === option.key"
+            :disabled="settingsStore.settings.reduceMotion"
+            @click="settingsStore.settings.pageTransitionStyle = option.key"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="row-info">
           <span class="row-label">减少动态过渡效果</span>
           <span class="row-sub">禁用界面显隐动画与微交互</span>
         </div>
@@ -305,7 +325,7 @@
 import { computed, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { useSettingsStore } from '../../stores/settings';
-import type { AccentColor, FeedDensity } from '../../types/settings';
+import type { AccentColor, FeedDensity, PageTransitionStyle } from '../../types/settings';
 import AppSwitch from '../../components/common/AppSwitch.vue';
 import AppButton from '../../components/common/AppButton.vue';
 import { moreNavs } from '../../config/navigation';
@@ -337,6 +357,11 @@ const densityOptions: { key: FeedDensity; label: string; icon: string }[] = [
   { key: 'comfortable', label: '舒适', icon: '▨' },
   { key: 'standard', label: '标准', icon: '▦' },
   { key: 'compact', label: '紧凑', icon: '▤' },
+];
+
+const transitionStyleOptions: { key: PageTransitionStyle; label: string }[] = [
+  { key: 'fluid', label: '流体容器' },
+  { key: 'native', label: '官方原生' },
 ];
 
 function adjustFontSize(delta: number) {
@@ -521,6 +546,40 @@ function toggleNav(key: string) {
   height: 64px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+}
+
+.transition-style-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-control, 8px);
+  background: var(--background-secondary);
+  border: 1px solid var(--border-light);
+}
+
+.transition-style-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-default), color var(--duration-fast) var(--ease-default);
+}
+
+.transition-style-btn.is-active {
+  background: var(--surface);
+  color: var(--brand-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.transition-style-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .light-preview { background-color: #ffffff; }

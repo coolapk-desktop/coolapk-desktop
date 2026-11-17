@@ -4,6 +4,7 @@ import { useAppStore } from '../../../stores/app';
 import { useSettingsStore } from '../../../stores/settings';
 import { getMemoryCachedResourceSync, loadImageResource } from '../../../utils/resourceCache';
 import { showToast } from '../../../utils/toast';
+import * as imageViewerTransform from '../../../utils/imageViewerTransform';
 import ImageViewer from '../ImageViewer.vue';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -828,6 +829,103 @@ describe('加载失败兜底与操作反馈', () => {
       wrapper.unmount();
     } finally {
       Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
+  it('多图切换后无论是点击关闭还是外部关闭，都按当前图片定位回缩目标缩略图', async () => {
+    const originalAnimate = HTMLElement.prototype.animate;
+    const anims: Array<{ target: HTMLElement; keyframes: any[]; finish: () => void; cancel: () => void }> = [];
+    HTMLElement.prototype.animate = vi.fn(function (this: HTMLElement, keyframes: any) {
+      const record: any = {
+        target: this,
+        keyframes: Array.isArray(keyframes) ? keyframes : [],
+        onfinish: null as null | (() => void),
+        oncancel: null as null | (() => void),
+        cancel: vi.fn(),
+        finish() { record.onfinish?.(); },
+      };
+      anims.push(record);
+      return record;
+    }) as any;
+
+    const grid = document.createElement('div');
+    grid.className = 'feed-image-grid';
+    const thumbs = [0, 1, 2].map((i) => {
+      const tile = document.createElement('div');
+      tile.className = 'grid-item';
+      tile.setAttribute('data-context-image-url', `https://img.example/${i}.jpg`);
+      Object.defineProperty(tile, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ left: 20 + i * 100, top: 100, width: 90, height: 90, right: 110 + i * 100, bottom: 190, x: 20 + i * 100, y: 100, toJSON: () => ({}) }),
+      });
+      grid.appendChild(tile);
+      return tile;
+    });
+    document.body.appendChild(grid);
+
+    const mockStageAndViewerRects = (wrapper: ReturnType<typeof mount>) => {
+      const stage = wrapper.find('.image-stage').element as HTMLElement;
+      const viewerImg = wrapper.find('.viewer-img').element as HTMLElement;
+      const box = { left: 100, top: 60, width: 400, height: 500, right: 500, bottom: 560, x: 100, y: 60, toJSON: () => ({}) };
+      Object.defineProperty(stage, 'getBoundingClientRect', { configurable: true, value: () => ({ left: 0, top: 40, width: 800, height: 600, right: 800, bottom: 640, x: 0, y: 40, toJSON: () => ({}) }) });
+      Object.defineProperty(viewerImg, 'getBoundingClientRect', { configurable: true, value: () => box });
+    };
+
+    try {
+      const settings = useSettingsStore();
+      settings.settings.reduceMotion = false;
+      settings.settings.pageTransitionStyle = 'fluid';
+      imageViewerTransform.captureImageViewerAnchor(thumbs[0]!, 'https://img.example/0.jpg');
+
+      const store = useAppStore();
+      const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true, transition: false } } });
+      store.openImageViewer(['https://img.example/0.jpg', 'https://img.example/1.jpg', 'https://img.example/2.jpg'], 0);
+      await flushPromises();
+      await loadImageDimensions(wrapper, 200, 100);
+      mockStageAndViewerRects(wrapper);
+      anims.forEach(a => a.finish());
+      anims.length = 0;
+
+      await wrapper.get('.nav-next').trigger('click');
+      await flushPromises();
+      await wrapper.get('.nav-next').trigger('click');
+      await flushPromises();
+      expect(counter(wrapper)).toBe('3 / 3');
+      mockStageAndViewerRects(wrapper);
+
+      await wrapper.get('[title^="关闭"]').trigger('click');
+      await flushPromises();
+      expect(thumbs[0]!.style.visibility).toBe('');
+      expect(thumbs[2]!.style.visibility).toBe('hidden');
+      const closeProxyAnim = anims.find(a => a.target.classList.contains('viewer-morph-proxy'));
+      expect(closeProxyAnim?.keyframes[1]).toMatchObject({ left: '220px', top: '100px', width: '90px', height: '90px' });
+      anims.forEach(a => a.finish());
+      expect(thumbs[2]!.style.visibility).toBe('');
+      anims.length = 0;
+
+      // 验证外部直接调用 store.closeImageViewer() 时也能读取到切换后的当前图片而非首张锚点。
+      imageViewerTransform.captureImageViewerAnchor(thumbs[0]!, 'https://img.example/0.jpg');
+      store.openImageViewer(['https://img.example/0.jpg', 'https://img.example/1.jpg', 'https://img.example/2.jpg'], 0);
+      await flushPromises();
+      await loadImageDimensions(wrapper, 200, 100);
+      anims.forEach(a => a.finish());
+      anims.length = 0;
+
+      await wrapper.get('.nav-next').trigger('click');
+      await flushPromises();
+      mockStageAndViewerRects(wrapper);
+      store.closeImageViewer();
+      await flushPromises();
+      expect(thumbs[0]!.style.visibility).toBe('');
+      expect(thumbs[1]!.style.visibility).toBe('hidden');
+      const extCloseProxyAnim = anims.find(a => a.target.classList.contains('viewer-morph-proxy'));
+      expect(extCloseProxyAnim?.keyframes[1]).toMatchObject({ left: '120px', top: '100px', width: '90px', height: '90px' });
+      anims.forEach(a => a.finish());
+
+      wrapper.unmount();
+    } finally {
+      grid.remove();
+      HTMLElement.prototype.animate = originalAnimate;
     }
   });
 });

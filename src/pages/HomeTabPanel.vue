@@ -40,7 +40,7 @@
         ref="feedScrollContainer"
         data-resource-scroll-root
         class="feed-scroll-container custom-scrollbar"
-        @scroll="handleScroll"
+        @scroll.passive="handleScroll"
         @load.capture="scheduleFeedEndCheck"
         @wheel="handleFeedHorizontalWheel"
         @pointerdown="handleFeedPointerDown"
@@ -1515,20 +1515,28 @@ async function loadFeeds(isRefresh: boolean = false) {
 
 function loadNearFeedEnd(el: HTMLElement) {
   if (!props.selected || pagerMoving.value || loading.value || loadingMore.value || noMore.value) return;
-  let remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+  let remaining = 0;
   let threshold = 250;
-  const columns = Array.from(el.querySelectorAll<HTMLElement>('.feed-waterfall-column'));
+  const columns = isDoubleColumn.value ? Array.from(el.querySelectorAll<HTMLElement>('.feed-waterfall-column')) : [];
   // 单列布局中的容器使用 display: contents，只有实际双列才按较短一列提前一个可视屏加载。
-  if (isDoubleColumn.value && columns.length === 2 && columns.every(column => getComputedStyle(column).display === 'flex')) {
-    const viewportBottom = el.getBoundingClientRect().top + el.clientTop + el.clientHeight;
+  if (columns.length === 2 && columns.every(column => getComputedStyle(column).display === 'flex')) {
+    const clientHeight = el.clientHeight;
+    const viewportBottom = el.getBoundingClientRect().top + el.clientTop + clientHeight;
     remaining = Math.min(...columns.map(column => column.getBoundingClientRect().bottom)) - viewportBottom;
-    threshold = Math.max(480, el.clientHeight);
+    threshold = Math.max(480, clientHeight);
+  } else {
+    remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
   }
   if (remaining < threshold) void loadFeeds(false);
 }
 
+let pendingFeedEndCheck = false;
+
 function scheduleFeedEndCheck() {
+  if (pendingFeedEndCheck || !props.selected || pagerMoving.value || loading.value || loadingMore.value || noMore.value || error.value) return;
+  pendingFeedEndCheck = true;
   void nextTick(() => {
+    pendingFeedEndCheck = false;
     const el = feedScrollContainer.value;
     if (!error.value && el && el.clientHeight > 0) loadNearFeedEnd(el);
   });

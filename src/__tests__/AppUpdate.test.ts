@@ -74,7 +74,11 @@ vi.mock('vue-router', () => ({
 }));
 vi.mock('../utils/toast', () => ({ showToast: mocks.showToast }));
 vi.mock('../utils/desktopNotify', () => ({ desktopNotify: mocks.desktopNotify }));
-vi.mock('../utils/routeTransition', () => ({ useSidebarTransition: () => ({ isSidebarTransitionActive: false, resetSidebarTransition: vi.fn() }) }));
+vi.mock('../utils/routeTransition', () => ({
+  officialFeedDetailEasing: 'linear(0 0%, 1 100%)',
+  resolveRouteTransition: () => '',
+  useSidebarTransition: () => ({ isSidebarTransitionActive: false, resetSidebarTransition: vi.fn() }),
+}));
 vi.mock('../utils/hotkeys', () => ({ registerGlobalHotkeys: () => vi.fn() }));
 vi.mock('../utils/selection', () => ({ registerGlobalSelectionClear: () => vi.fn() }));
 vi.mock('../utils/anchorClick', () => ({ handleAnchorClick: vi.fn() }));

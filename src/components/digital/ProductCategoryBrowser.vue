@@ -15,7 +15,7 @@
           </div>
         </div>
       </nav>
-      <section ref="contentRef" class="category-results custom-scrollbar" @scroll="handleScroll">
+      <section ref="contentRef" class="category-results custom-scrollbar" @scroll.passive="handleScroll">
         <header><h3>{{ selected?.title }}</h3><div role="group" aria-label="产品显示方式"><button type="button" :aria-pressed="layout === 'grid'" aria-label="网格视图" @click="layout = 'grid'"><i class="fas fa-th-large" /></button><button type="button" :aria-pressed="layout === 'vertical'" aria-label="列表视图" @click="layout = 'vertical'"><i class="fas fa-list" /></button></div></header>
         <LoadingState v-if="loading && !items.length" text="正在加载分类内容…" />
         <ErrorState v-else-if="error && !items.length" title="分类内容加载失败" :message="error" @retry="loadContent" />

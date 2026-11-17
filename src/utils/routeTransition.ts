@@ -1,6 +1,37 @@
 import { ref } from 'vue';
+import type { PageTransitionStyle } from '../types/settings';
 
 const isSidebarTransitionActive = ref(false);
+
+export const ROOT_TAB_PATHS = ['/', '/digital', '/discover', '/me'] as const;
+export const FLUID_ROUTE_EASING = 'cubic-bezier(0.2, 0.9, 0.25, 1)';
+
+export type RouteTransitionMode =
+  | ''
+  | 'feed-detail-forward'
+  | 'feed-detail-back'
+  | 'feed-detail-desktop'
+  | 'container-expand'
+  | 'container-collapse'
+  | 'root-tab-next'
+  | 'root-tab-prev'
+  | 'fluid-push'
+  | 'fluid-pop'
+  | 'desktop-tab-next'
+  | 'desktop-tab-prev'
+  | 'desktop-fluid';
+
+export interface ResolveRouteTransitionContext {
+  fromPath: string;
+  toPath: string;
+  backward: boolean;
+  mobile: boolean;
+  style: PageTransitionStyle;
+  reduceMotion?: boolean;
+  sidebarTriggered?: boolean;
+  fromTabIndex?: number;
+  toTabIndex?: number;
+}
 
 // 官方 FeedDetailActivityV8 继承 AppTheme 的 Android 窗口动画。
 // 来自在线设备 Android 14 framework-res.apk 的 activity_open/close_*：
@@ -32,6 +63,43 @@ export function getFeedDetailTransition(from: string, to: string, backward: bool
   if (!entersDetail && !returnsFromDetail) return '';
   if (!mobile) return 'feed-detail-desktop';
   return backward ? 'feed-detail-back' : 'feed-detail-forward';
+}
+
+export function isDetailRoutePath(path: string): boolean {
+  return /^\/(?:feed|question|live|product|app|dyh|album)\//.test(path);
+}
+
+/** 统一决策桌面端与移动端页面切换与详情展开/收起过场类型。 */
+export function resolveRouteTransition(context: ResolveRouteTransitionContext): RouteTransitionMode {
+  const { fromPath, toPath, backward, mobile, style, reduceMotion = false, sidebarTriggered = false, fromTabIndex = -1, toTabIndex = -1 } = context;
+  if (reduceMotion || !fromPath || fromPath === toPath) return '';
+  if (style === 'native') {
+    return getFeedDetailTransition(fromPath, toPath, backward, mobile) as RouteTransitionMode;
+  }
+
+  const fromRootIndex = ROOT_TAB_PATHS.indexOf(fromPath as (typeof ROOT_TAB_PATHS)[number]);
+  const toRootIndex = ROOT_TAB_PATHS.indexOf(toPath as (typeof ROOT_TAB_PATHS)[number]);
+  if (mobile && fromRootIndex >= 0 && toRootIndex >= 0) {
+    return toRootIndex > fromRootIndex ? 'root-tab-next' : 'root-tab-prev';
+  }
+
+  const fromDetail = isDetailRoutePath(fromPath);
+  const toDetail = isDetailRoutePath(toPath);
+  if (toDetail && !backward) return 'container-expand';
+  if (fromDetail && !toDetail && backward) return 'container-collapse';
+  if (fromDetail && toDetail) {
+    if (!backward) return 'container-expand';
+    return mobile ? 'fluid-pop' : 'desktop-fluid';
+  }
+
+  if (mobile) {
+    return backward ? 'fluid-pop' : 'fluid-push';
+  }
+
+  if (!sidebarTriggered && fromTabIndex >= 0 && toTabIndex >= 0 && fromTabIndex !== toTabIndex) {
+    return toTabIndex > fromTabIndex ? 'desktop-tab-next' : 'desktop-tab-prev';
+  }
+  return 'desktop-fluid';
 }
 let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 

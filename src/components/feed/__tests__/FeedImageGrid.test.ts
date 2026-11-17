@@ -121,6 +121,27 @@ describe('FeedImageGrid 点击打开方式', () => {
     expect(restored.find('.is-long-image').exists()).toBe(false);
     restored.unmount();
   });
+
+  it('从图片 URL 的 @WxH 标记提前预留单图宽高比与长图状态，加载后同比例不再重复触发更新', async () => {
+    const normal = mount(FeedImageGrid, {
+      props: { images: ['https://image.coolapk.com/feed/2026/sample@1200x800.jpg.m.jpg'] },
+      global: { stubs: { LivePhotoPreview: true } },
+    });
+    expect(normal.find('.grid-item').classes()).toContain('has-natural-size');
+    expect((normal.get('.grid-item').element as HTMLElement).style.aspectRatio).toBe('1.5 / 1');
+    normal.findComponent({ name: 'LivePhotoPreview' }).vm.$emit('load', { target: { naturalWidth: 1200, naturalHeight: 800 } });
+    await flushPromises();
+    expect(normal.emitted('update:imageRatios')).toBeUndefined();
+    normal.unmount();
+
+    const longImg = mount(FeedImageGrid, {
+      props: { images: ['https://image.coolapk.com/feed/2026/long@1000x3000.jpg.m.jpg'] },
+      global: { stubs: { LivePhotoPreview: true } },
+    });
+    expect(longImg.find('.grid-item').classes()).toContain('is-long-image');
+    expect(longImg.find('.long-image-badge').exists()).toBe(true);
+    longImg.unmount();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     setActivePinia(createPinia());

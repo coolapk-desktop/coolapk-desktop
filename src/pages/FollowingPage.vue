@@ -1,5 +1,5 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" class="page-container custom-scrollbar">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy || !authStore.isLoggedIn }" data-resource-scroll-root class="page-container custom-scrollbar">
     <!-- 未登录引导视图 -->
     <DemoLoginState v-if="authStore.isWebDemo && !authStore.isLoggedIn" />
     <div v-else-if="!authStore.isLoggedIn" class="empty-wrapper login-guide-wrapper">
@@ -106,7 +106,7 @@
             <EmptyState :title="keyword ? '未找到匹配酷友' : sidebarTab === 'fans' ? '暂无粉丝' : '暂无关注酷友'" />
           </div>
 
-          <div v-if="filteredUsers.length" class="sidebar-user-list custom-scrollbar" @scroll="onSidebarScroll">
+          <div v-if="filteredUsers.length" class="sidebar-user-list custom-scrollbar" @scroll.passive="onSidebarScroll">
             <!-- 全部动态 汇总 -->
             <div
               v-if="sidebarTab === 'users' && !keyword"
@@ -375,10 +375,11 @@ function navigateToUser(uid: string | number) {
 }
 
 function onScrollEvent(e: Event) {
-  if (selectedFollowCategory.value !== 'feeds') return;
+  if (selectedFollowCategory.value !== 'feeds' || loading.value || loadingMore.value || noMore.value) return;
   const el = e.target as HTMLElement;
   let scrollDiff = 999;
   if (el && el.scrollHeight) {
+    if (!el.classList?.contains('page-container')) return;
     scrollDiff = el.scrollHeight - el.scrollTop - el.clientHeight;
   } else {
     const docEl = document.documentElement;
@@ -386,9 +387,7 @@ function onScrollEvent(e: Event) {
   }
 
   if (scrollDiff < 260) {
-    if (!loading.value && !loadingMore.value && !noMore.value) {
-      loadFollowingFeeds(false);
-    }
+    loadFollowingFeeds(false);
   }
 }
 
@@ -404,7 +403,7 @@ function handleFeedDeleted(id: string | number) {
 }
 
 function bindGlobalListeners() {
-  window.addEventListener('scroll', onScrollEvent, true);
+  window.addEventListener('scroll', onScrollEvent, { capture: true, passive: true });
   window.addEventListener('refresh-feeds', onRefreshFeeds);
 }
 

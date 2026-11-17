@@ -288,7 +288,7 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
 @container home-layout (max-width: 960px) { :deep(.right-sidebar) { display: none !important; } }
 .pager-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: pan-y; }
 .pager-track { position: relative; height: 100%; width: 100%; will-change: transform; }
-.pager-page { position: absolute; top: 0; width: 100%; height: 100%; overflow: hidden; }
+.pager-page { position: absolute; top: 0; width: 100%; height: 100%; overflow: hidden; contain: layout style; }
 /* 旧 WebView 不支持 inert，隐藏栏目也不能接收点击。 */
 .pager-page[aria-hidden='true'] { pointer-events: none; }
 .pager-warning { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 12px; font-size: 12px; color: var(--text-secondary); }
@@ -302,6 +302,7 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
   .home-toolbar.is-detached-mobile-toolbar { position: absolute; top: var(--mobile-glass-topbar-space, 0px); left: 0; right: 0; visibility: hidden; pointer-events: none; }
   .home-toolbar.is-mobile-toolbar :deep(.feed-tabs-wrapper) { background: transparent; border-bottom: 0; }
   .home-toolbar.is-mobile-toolbar :deep(.tab-manage-btn) { background: transparent; border-radius: 0; }
+  .mobile-home-pager.has-joined-toolbar { --mobile-home-header-space: var(--mobile-home-header-fixed-space, 0px); }
   .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container) { padding-top: 0; scroll-padding-top: var(--mobile-home-header-space, 0px); }
   /* 以流内占位代替滚动容器 padding-top，避免 position:sticky（如热榜分类栏）被锁在顶部留白下方。 */
   .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container::before) { content: ''; display: flow-root; height: var(--mobile-home-header-fixed-space, 0px); pointer-events: none; }

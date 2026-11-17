@@ -16,6 +16,7 @@ export type TimeDisplayMode = 'relative' | 'absolute';
 export type MessageEnterBehavior = 'send' | 'newline';
 export type UpdateChannel = 'stable' | 'beta';
 export type LiveTileSource = 'index_v8' | 'hot' | 'news' | 'digest';
+export type PageTransitionStyle = 'fluid' | 'native';
 
 /** 官方 ConfigPage 实体模型（对齐 com.coolapk.market.model.ConfigPage） */
 export interface ConfigPageTab {
@@ -155,6 +156,8 @@ export interface AppSettings {
   myRecentPinned: boolean;
   moreExpanded: boolean;
   reduceMotion: boolean;
+  /** 页面切换与卡片展开收起动效风格：fluid 为流畅共享容器，native 为官方原生详情过渡。 */
+  pageTransitionStyle: PageTransitionStyle;
   accentColor: AccentColor;
   /** 浅色界面的自定义底色；空字符串沿用默认主题。 */
   lightBackgroundColor: string;

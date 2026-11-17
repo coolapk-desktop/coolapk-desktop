@@ -19,6 +19,7 @@ import AppAvatar from '../common/AppAvatar.vue';
 import type { DiscoveryEntity } from '../../types/discovery';
 import { extractFeedImageInputs, normalizeFeedImageItems } from '../../utils/livePhoto';
 import { formatCommentTime } from '../../utils/commentList';
+import { parseUrlImageRatio } from '../../utils/image';
 import xianyuIcon from '../../assets/xianyu-icon.png';
 const props = defineProps<{ entity: DiscoveryEntity }>();
 defineEmits<{ open: [entity: DiscoveryEntity] }>();
@@ -29,14 +30,10 @@ const info = computed<Record<string, any>>(() => {
 });
 const cover = computed(() => normalizeFeedImageItems(extractFeedImageInputs(props.entity))[0]?.sourceUrl || info.value.product_logo || '');
 const coverAspectStyle = computed(() => {
-  const match = cover.value.match(/@(\d+)x(\d+)(?:[.?#/_-]|$)/i);
-  if (match) {
-    const w = Number(match[1]);
-    const h = Number(match[2]);
-    if (w > 0 && h > 0) {
-      const ratio = Math.min(1.8, Math.max(0.72, w / h));
-      return { aspectRatio: `${ratio.toFixed(4)} / 1` };
-    }
+  const parsed = parseUrlImageRatio(cover.value);
+  if (parsed > 0) {
+    const ratio = Math.min(1.8, Math.max(0.72, parsed));
+    return { aspectRatio: `${ratio.toFixed(4)} / 1` };
   }
   return { aspectRatio: '4 / 3' };
 });
