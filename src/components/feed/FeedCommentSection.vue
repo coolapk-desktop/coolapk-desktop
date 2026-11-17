@@ -2354,7 +2354,7 @@ async function handleSend() {
   }
 }
 .official-detail-comments { margin: 0 !important; padding: 0 16px 16px !important; border: 0 !important; border-radius: 0 !important; background: var(--surface) !important; }
-.official-detail-comments .comment-toolbar { position: sticky; top: 60px; z-index: 5; background: var(--surface); padding: 8px 0 12px; border: 0; scroll-margin-top: 70px; }
+.official-detail-comments .comment-toolbar { position: sticky; top: 60px; z-index: 5; background: var(--surface); padding: 6px 0 8px; border: 0; scroll-margin-top: 70px; }
 .official-detail-comments .comment-title { font-size: 14px; font-weight: 400; white-space: nowrap; }
 .official-detail-comments .comment-sort { display: flex; background: var(--surface-hover); border-radius: 24px; padding: 2px; gap: 0; }
 .official-detail-comments .comment-sort-button { min-width: 0; font-size: 12px; padding: 5px 9px; border: 0; border-radius: 24px; background: transparent; box-shadow: none; }
