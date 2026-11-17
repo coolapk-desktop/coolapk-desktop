@@ -262,7 +262,8 @@ const LoginModal = defineAsyncComponent(() => import('./components/overlays/Logi
 const ShuzilmDeviceGuideModal = defineAsyncComponent(() => import('./components/overlays/ShuzilmDeviceGuideModal.vue'));
 const authStore = useAuthStore();
 const appStore = useAppStore();
-let preloadPublishTimer: ReturnType<typeof setTimeout> | null = null;
+// window.setTimeout 返回数字 ID，避免全局定时器类型受 Node.js 声明影响。
+let preloadPublishTimer: number | null = null;
 // 首次打开后保留弹窗实例，关闭时仍能完成草稿保存和登录状态清理。
 const publishDialogRequested = ref(false);
 const loginModalRequested = ref(false);
