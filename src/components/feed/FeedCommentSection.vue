@@ -1,6 +1,7 @@
 <template>
   <div ref="sectionRef" class="feed-comment-section" :class="{ 'official-detail-comments': officialDetail, 'aside-comments': asideLayout }">
     <div v-if="!standaloneTarget" class="comment-toolbar">
+      <div class="comment-toolbar-main">
         <strong class="comment-title"><template v-if="officialDetail">共 {{ commentCount }} 回复</template><template v-else>评论 <span>{{ commentCount }}</span></template></strong>
         <div v-if="!preserveApiOrder || showSortControls" class="comment-sort" aria-label="评论排序和筛选">
           <button
@@ -22,6 +23,7 @@
             楼主
           </button>
         </div>
+      </div>
       <div v-if="feedId || (!officialDetail && !hideCollapseButton)" class="comment-toolbar-actions">
         <button v-if="feedId" type="button" class="comment-toolbar-action comment-search-trigger" title="搜索评论" aria-label="搜索评论" :aria-expanded="commentSearchOpen" @click.stop="toggleCommentSearch">
           <i class="fas fa-search" aria-hidden="true"></i>
@@ -2388,21 +2390,34 @@ async function handleSend() {
 .comment-inline-search button:disabled { opacity: 0.55; cursor: wait; }
 .feed-comment-section :deep(mark.search-highlight) { padding-inline: 1px; border-radius: 3px; background: color-mix(in srgb, #eab308 34%, var(--surface)); color: var(--text-primary); }
 .comment-toolbar {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas: 'title sort actions';
-  align-items: center;
-  gap: 8px 12px;
+  --comment-toolbar-action-size: 30px;
+  --comment-toolbar-action-inset: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
+.comment-toolbar-main {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 8px 12px;
+}
+
+/* 排序换行时先留出操作按钮的高度，让按钮与标题保持对齐。 */
+.comment-toolbar-main:not(:last-child) .comment-title {
+  line-height: calc(var(--comment-toolbar-action-size) + var(--comment-toolbar-action-inset) + var(--comment-toolbar-action-inset));
+}
+
 .comment-toolbar-actions {
-  grid-area: actions;
-  justify-self: end;
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 2px;
-  padding: 3px;
+  padding: calc(var(--comment-toolbar-action-inset) - 1px);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-pill, 999px);
   background: var(--surface-muted, var(--surface));
@@ -2413,8 +2428,8 @@ async function handleSend() {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-width: 30px;
-  min-height: 30px;
+  min-width: var(--comment-toolbar-action-size);
+  min-height: var(--comment-toolbar-action-size);
   padding-inline: 8px;
   border: 0;
   border-radius: var(--radius-pill, 999px);
@@ -2433,7 +2448,6 @@ async function handleSend() {
 }
 
 .comment-title {
-  grid-area: title;
   color: var(--text-primary);
   font-size: 0.95rem;
   font-weight: 700;
@@ -2448,9 +2462,8 @@ async function handleSend() {
 }
 
 .comment-sort {
-  grid-area: sort;
-  justify-self: start;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 3px;
   padding: 3px;
@@ -2459,18 +2472,19 @@ async function handleSend() {
   border: 1px solid var(--border-light);
   overflow-x: auto;
   scrollbar-width: none;
+  /* 换行后可使用评论区的整行宽度。 */
   max-width: 100%;
+  max-width: 100cqi;
 }
 
-/* 窄窗口和侧栏按评论区实际宽度排版，操作始终和标题同一行。 */
+/* 窄窗口和侧栏收起操作文案，保留按钮的点击面积。 */
 @container comment-panel (max-width: 430px) {
-  .comment-toolbar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'title actions' 'sort sort'; }
+  .comment-toolbar { --comment-toolbar-action-size: 36px; }
   .comment-toolbar-collapse-btn span { display: none; }
-  .comment-toolbar-action { min-width: 36px; min-height: 36px; }
 }
 
 @media (pointer: coarse) {
-  .comment-toolbar-action { min-width: 40px; min-height: 40px; }
+  .comment-toolbar { --comment-toolbar-action-size: 40px; }
 }
 
 .comment-sort-button {
