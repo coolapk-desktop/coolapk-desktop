@@ -1,6 +1,6 @@
 import { prefersReducedMotion } from './compositorMotion';
 import { FLUID_MOTION_EASING } from './containerTransform';
-import { parseUrlImageRatio } from './image';
+import { parseUrlImageDimensions, parseUrlImageRatio } from './image';
 
 export interface ImageMorphRect {
   left: number;
@@ -9,19 +9,42 @@ export interface ImageMorphRect {
   height: number;
   borderRadius: number;
   aspectRatio: number;
+  naturalWidth?: number;
+  naturalHeight?: number;
   src: string;
   isLong?: boolean;
   element?: HTMLElement;
+}
+
+export interface ViewerFitOptions {
+  mobile?: boolean;
+  isLivePhoto?: boolean;
+  naturalWidth?: number;
+  naturalHeight?: number;
+}
+
+export interface FittedViewerBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  readMode?: boolean;
 }
 
 const VIEWER_OPEN_MS = 260;
 const VIEWER_CLOSE_MS = 220;
 const ANCHOR_FRESH_MS = 1200;
 
+interface PendingEnterReadyPayload {
+  upgradedSrc: string;
+  liveRect?: DOMRect | { left: number; top: number; width: number; height: number } | null;
+  readMode?: boolean;
+}
+
 let pendingImageAnchor: (ImageMorphRect & { element: HTMLElement; capturedAt: number }) | null = null;
 let lastClickedThumbEl: { element: HTMLElement; at: number } | null = null;
 let activeViewerCleanup: (() => void) | null = null;
-let settlePendingEnterProxy: (() => void) | null = null;
+let settlePendingEnterProxy: ((payload: PendingEnterReadyPayload) => void) | null = null;
 
 function readImageElementFromOrigin(origin: HTMLElement): HTMLImageElement | null {
   if (origin instanceof HTMLImageElement) return origin;
@@ -43,7 +66,9 @@ function measureThumbRect(
   // 必须读取缩略图容器（如 .grid-item）的裁剪可视边界，确保多图 1:1 裁切与圆角严格对齐。
   const rect = origin.getBoundingClientRect();
   if (rect.width < 12 || rect.height < 12) return null;
-  const urlRatio = parseUrlImageRatio(sourceUrl);
+  const effectiveUrl = sourceUrl || origin.getAttribute('data-context-image-url') || '';
+  const urlDims = parseUrlImageDimensions(effectiveUrl);
+  const urlRatio = urlDims ? urlDims.width / urlDims.height : parseUrlImageRatio(effectiveUrl);
   const natRatio = urlRatio > 0
     ? urlRatio
     : img && img.naturalWidth > 0 && img.naturalHeight > 0
@@ -57,6 +82,7 @@ function measureThumbRect(
     height: rect.height,
     borderRadius: readBorderRadiusPx(origin),
     aspectRatio: natRatio,
+    ...(urlDims ? { naturalWidth: urlDims.width, naturalHeight: urlDims.height } : {}),
     src: img?.currentSrc || img?.src || '',
     isLong: origin.classList.contains('is-long-image'),
   };
@@ -117,23 +143,73 @@ export function trackImageViewerPointerCandidate(target: EventTarget | null): vo
   }
 }
 
-export function computeFittedViewerImageBox(stageRect: DOMRect, aspectRatio: number): { left: number; top: number; width: number; height: number } {
+export function computeFittedViewerImageBox(
+  stageRect: DOMRect,
+  aspectRatio: number,
+  options: ViewerFitOptions = {},
+): FittedViewerBox {
   const vw = typeof window !== 'undefined' ? window.innerWidth : stageRect.width;
   const vh = typeof window !== 'undefined' ? window.innerHeight : stageRect.height;
-  const maxW = Math.min(stageRect.width || vw, vw * 0.9);
-  const maxH = Math.min(stageRect.height || vh, vh * 0.88);
-  const ratio = aspectRatio > 0 ? aspectRatio : 1;
+  const mobile = Boolean(options.mobile);
+  const stageW = stageRect.width || vw;
+  const stageH = stageRect.height || vh;
+  const hasKnownDims = Number(options.naturalWidth) > 0 && Number(options.naturalHeight) > 0;
+  const ratio = hasKnownDims
+    ? Number(options.naturalWidth) / Number(options.naturalHeight)
+    : aspectRatio > 0
+      ? aspectRatio
+      : 1;
+
+  if (mobile) {
+    const readMode = !options.isLivePhoto
+      && ratio < 0.4090909
+      && (stageW / Math.max(1, stageH) >= 0.75 || ratio < stageW / Math.max(1, stageH) / 1.2);
+    if (readMode) {
+      const width = stageW / Math.max(1, stageH) >= 0.75 ? stageH * 9 / 16 : stageW;
+      return {
+        left: stageRect.left + (stageW - width) / 2,
+        top: stageRect.top,
+        width: Math.max(1, width),
+        height: Math.max(1, stageH),
+        readMode: true,
+      };
+    }
+    let width = stageW;
+    let height = width / ratio;
+    if (height > stageH) {
+      height = stageH;
+      width = height * ratio;
+    }
+    return {
+      left: stageRect.left + (stageW - width) / 2,
+      top: stageRect.top + (stageH - height) / 2,
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+      readMode: false,
+    };
+  }
+
+  const maxW = Math.min(stageW, vw * 0.9);
+  const maxH = Math.min(stageH, vh * 0.88);
   let width = maxW;
   let height = width / ratio;
   if (height > maxH) {
     height = maxH;
     width = height * ratio;
   }
+  if (hasKnownDims) {
+    const natW = Number(options.naturalWidth);
+    const natH = Number(options.naturalHeight);
+    const scale = Math.min(1, maxW / natW, maxH / natH);
+    width = natW * scale;
+    height = natH * scale;
+  }
   return {
-    left: stageRect.left + ((stageRect.width || vw) - width) / 2,
-    top: stageRect.top + ((stageRect.height || vh) - height) / 2,
+    left: stageRect.left + (stageW - width) / 2,
+    top: stageRect.top + (stageH - height) / 2,
     width: Math.max(1, width),
     height: Math.max(1, height),
+    readMode: false,
   };
 }
 
@@ -143,22 +219,22 @@ function safeCancel(anim: Animation | null | undefined) {
 }
 
 /** 通知正在接管入场末帧的代理图片卸载（高清大图解码完成后或用户操作时调用）。 */
-export function notifyImageViewerImageReady(upgradedSrc = ''): void {
+export function notifyImageViewerImageReady(
+  upgradedSrc = '',
+  liveRect: DOMRect | { left: number; top: number; width: number; height: number } | null = null,
+  readMode = false,
+): void {
   if (!settlePendingEnterProxy) return;
-  if (upgradedSrc) {
-    const activeImg = document.querySelector<HTMLImageElement>('.viewer-morph-proxy-img');
-    if (activeImg && activeImg.src !== upgradedSrc) activeImg.src = upgradedSrc;
-  }
   const fn = settlePendingEnterProxy;
   settlePendingEnterProxy = null;
-  fn();
+  fn({ upgradedSrc, liveRect, readMode });
 }
 
 export function cancelActiveImageViewerMorph(): void {
   if (settlePendingEnterProxy) {
     const fn = settlePendingEnterProxy;
     settlePendingEnterProxy = null;
-    fn();
+    fn({ upgradedSrc: '' });
   }
   if (activeViewerCleanup) {
     const fn = activeViewerCleanup;
@@ -206,12 +282,31 @@ function createMorphClipProxy(
   return { wrap, img };
 }
 
+function clampRectToStage(
+  rect: { left: number; top: number; width: number; height: number },
+  stageRect: DOMRect,
+): { left: number; top: number; width: number; height: number } {
+  const left = Math.max(stageRect.left, rect.left);
+  const top = Math.max(stageRect.top, rect.top);
+  const right = Math.min(stageRect.left + stageRect.width, rect.left + rect.width);
+  const bottom = Math.min(stageRect.top + stageRect.height, rect.top + rect.height);
+  if (right - left < 12 || bottom - top < 12) {
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  }
+  return {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
 /** 运行大图打开时的缩略图容器展开动效；使用裁切容器盒 + cover 重采样，避免 scale 拉伸变形和低分辨率糊化。 */
 export function runImageViewerEnterMorph(
   backdropEl: HTMLElement,
   anchor: ImageMorphRect | null,
   done: () => void,
-  options: { preferredSrc?: string } = {},
+  options: { preferredSrc?: string; mobile?: boolean; isLivePhoto?: boolean } = {},
 ): () => void {
   cancelActiveImageViewerMorph();
   if (prefersReducedMotion() || typeof backdropEl.animate !== 'function') {
@@ -232,8 +327,13 @@ export function runImageViewerEnterMorph(
     return activeViewerCleanup;
   }
 
-  const targetBox = computeFittedViewerImageBox(stageRect, anchor.aspectRatio);
   const viewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
+  const targetBox = computeFittedViewerImageBox(stageRect, anchor.aspectRatio, {
+    mobile: options.mobile,
+    isLivePhoto: options.isLivePhoto,
+    naturalWidth: (viewerImg?.complete && viewerImg.naturalWidth > 0 ? viewerImg.naturalWidth : anchor.naturalWidth) || undefined,
+    naturalHeight: (viewerImg?.complete && viewerImg.naturalHeight > 0 ? viewerImg.naturalHeight : anchor.naturalHeight) || undefined,
+  });
   if (viewerImg) viewerImg.style.opacity = '0';
 
   const thumbEl = anchor.element && anchor.element.isConnected ? anchor.element : null;
@@ -243,7 +343,7 @@ export function runImageViewerEnterMorph(
   const { wrap, img } = createMorphClipProxy(
     { left: anchor.left, top: anchor.top, width: anchor.width, height: anchor.height, borderRadius: anchor.borderRadius },
     initialSrc,
-    Boolean(anchor.isLong),
+    Boolean(anchor.isLong || targetBox.readMode),
   );
 
   const bgAnim = backdropEl.animate(
@@ -279,16 +379,40 @@ export function runImageViewerEnterMorph(
   let morphEnded = false;
   let proxyRemoved = false;
   let cleaned = false;
+  let doneCalled = false;
+  let reconcileAnim: Animation | null = null;
+  let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+  let readyWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  let latestReadyRect: { left: number; top: number; width: number; height: number } | null = null;
+
+  const callDone = () => {
+    if (doneCalled) return;
+    doneCalled = true;
+    done();
+  };
+
+  const clearAnimHandlers = (anim: Animation | null | undefined) => {
+    if (!anim) return;
+    anim.onfinish = null;
+    anim.oncancel = null;
+  };
 
   const removeProxy = () => {
     if (proxyRemoved) return;
     proxyRemoved = true;
+    if (reconcileTimer !== null) {
+      clearTimeout(reconcileTimer);
+      reconcileTimer = null;
+    }
+    clearAnimHandlers(reconcileAnim);
+    safeCancel(reconcileAnim);
+    reconcileAnim = null;
     wrap.remove();
     const currentViewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
     if (currentViewerImg) currentViewerImg.style.opacity = '';
+    if (settlePendingEnterProxy === handleReady) settlePendingEnterProxy = null;
+    if (morphEnded && activeViewerCleanup === cleanup) activeViewerCleanup = null;
   };
-
-  let readyWaitTimer: ReturnType<typeof setTimeout> | null = null;
 
   const cleanup = () => {
     if (cleaned) return;
@@ -300,56 +424,129 @@ export function runImageViewerEnterMorph(
     }
     if (activeViewerCleanup === cleanup) activeViewerCleanup = null;
     if (settlePendingEnterProxy === handleReady) settlePendingEnterProxy = null;
+    clearAnimHandlers(bgAnim);
+    clearAnimHandlers(boxAnim);
     safeCancel(bgAnim);
     safeCancel(boxAnim);
-    chromeAnims.forEach(safeCancel);
+    chromeAnims.forEach((anim) => {
+      clearAnimHandlers(anim);
+      safeCancel(anim);
+    });
     if (thumbEl) thumbEl.style.visibility = prevThumbVisibility;
     removeProxy();
-    done();
+    callDone();
   };
 
-  const handleReady = () => {
+  const settleProxyIntoFinalBox = (finalRect: { left: number; top: number; width: number; height: number } | null) => {
+    if (!finalRect) {
+      removeProxy();
+      return;
+    }
+    const diff = Math.max(
+      Math.abs(finalRect.left - targetBox.left),
+      Math.abs(finalRect.top - targetBox.top),
+      Math.abs(finalRect.width - targetBox.width),
+      Math.abs(finalRect.height - targetBox.height),
+    );
+    if (diff <= 2 || typeof wrap.animate !== 'function') {
+      removeProxy();
+      return;
+    }
+    clearAnimHandlers(reconcileAnim);
+    safeCancel(reconcileAnim);
+    reconcileAnim = wrap.animate(
+      [
+        {
+          left: `${targetBox.left}px`,
+          top: `${targetBox.top}px`,
+          width: `${targetBox.width}px`,
+          height: `${targetBox.height}px`,
+        },
+        {
+          left: `${finalRect.left}px`,
+          top: `${finalRect.top}px`,
+          width: `${finalRect.width}px`,
+          height: `${finalRect.height}px`,
+        },
+      ],
+      { duration: 130, easing: FLUID_MOTION_EASING, fill: 'both' },
+    );
+    reconcileTimer = setTimeout(removeProxy, 190);
+    reconcileAnim.onfinish = removeProxy;
+    reconcileAnim.oncancel = removeProxy;
+  };
+
+  const handleReady = (payload: PendingEnterReadyPayload) => {
+    if (proxyRemoved || cleaned) return;
+    if (!payload.upgradedSrc && !payload.liveRect) {
+      if (readyWaitTimer !== null) {
+        clearTimeout(readyWaitTimer);
+        readyWaitTimer = null;
+      }
+      if (morphEnded) removeProxy();
+      return;
+    }
     const liveViewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
-    if (liveViewerImg && liveViewerImg.src && img.src !== liveViewerImg.src) {
-      img.src = liveViewerImg.src;
+    const nextSrc = payload.upgradedSrc || liveViewerImg?.src || '';
+    if (nextSrc && img.src !== nextSrc) {
+      img.src = nextSrc;
+    }
+    if (payload.readMode) {
+      img.style.objectPosition = 'top center';
+    }
+    if (payload.liveRect && payload.liveRect.width >= 12 && payload.liveRect.height >= 12) {
+      latestReadyRect = clampRectToStage(payload.liveRect, stageRect);
     }
     if (!morphEnded) return;
     if (readyWaitTimer !== null) {
       clearTimeout(readyWaitTimer);
       readyWaitTimer = null;
     }
-    removeProxy();
+    settleProxyIntoFinalBox(latestReadyRect);
   };
 
   const onMorphFinish = () => {
+    if (morphEnded || cleaned) return;
     morphEnded = true;
-    if (activeViewerCleanup === cleanup) activeViewerCleanup = null;
     wrap.style.left = `${targetBox.left}px`;
     wrap.style.top = `${targetBox.top}px`;
     wrap.style.width = `${targetBox.width}px`;
     wrap.style.height = `${targetBox.height}px`;
     wrap.style.borderRadius = '4px';
+    // Detach WAAPI handlers before cancelling finished animations so Chromium does not queue spurious cancel cleanups.
+    clearAnimHandlers(bgAnim);
+    clearAnimHandlers(boxAnim);
     safeCancel(bgAnim);
     safeCancel(boxAnim);
-    chromeAnims.forEach(safeCancel);
+    chromeAnims.forEach((anim) => {
+      clearAnimHandlers(anim);
+      safeCancel(anim);
+    });
     if (thumbEl) thumbEl.style.visibility = prevThumbVisibility;
 
-    const liveViewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
-    if (liveViewerImg && liveViewerImg.complete && liveViewerImg.naturalWidth > 0) {
+    const currentViewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
+    if (currentViewerImg && currentViewerImg.complete && currentViewerImg.naturalWidth > 0) {
       settlePendingEnterProxy = null;
-      removeProxy();
-    } else if (liveViewerImg || (backdropEl.isConnected && !backdropEl.querySelector('.viewer-load-error'))) {
+      if (currentViewerImg.src && img.src !== currentViewerImg.src) img.src = currentViewerImg.src;
+      let fallbackRect = latestReadyRect;
+      if (!fallbackRect) {
+        const rawRect = currentViewerImg.getBoundingClientRect();
+        if (rawRect.width >= 12 && rawRect.height >= 12) {
+          fallbackRect = clampRectToStage(rawRect, stageRect);
+        }
+      }
+      settleProxyIntoFinalBox(fallbackRect);
+    } else if (currentViewerImg || (backdropEl.isConnected && !backdropEl.querySelector('.viewer-load-error'))) {
       // 原图仍在异步解码/下载时先用定格在目标位置的封面平稳承接，避免闪烁黑屏；解码好即刻无缝切换。
       settlePendingEnterProxy = handleReady;
       readyWaitTimer = setTimeout(() => {
         readyWaitTimer = null;
-        if (settlePendingEnterProxy === handleReady) settlePendingEnterProxy = null;
         removeProxy();
       }, 1400);
     } else {
       removeProxy();
     }
-    done();
+    callDone();
   };
 
   const timer = setTimeout(onMorphFinish, VIEWER_OPEN_MS + 100);

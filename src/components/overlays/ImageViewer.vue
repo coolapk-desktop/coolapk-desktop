@@ -8,7 +8,12 @@
       :on-enter-cancelled="cancelActiveImageViewerMorph"
       :on-leave-cancelled="cancelActiveImageViewerMorph"
     >
-      <div v-if="viewerData && !noImageMode" class="image-viewer-backdrop" :class="{ 'no-image-detail-enabled': detailImagesEnabled }" @click="handleBackdropClick">
+      <div
+        v-if="viewerData && !noImageMode"
+        class="image-viewer-backdrop"
+        :class="{ 'no-image-detail-enabled': detailImagesEnabled, 'is-mobile-layout': mobileLayout }"
+        @click="handleBackdropClick"
+      >
         <!-- 顶部工具栏 -->
         <div class="viewer-topbar">
           <div class="topbar-left">
@@ -311,8 +316,14 @@ const rawUrl = computed(() => currentItem.value?.sourceUrl || '');
 /** 对照官方 shouldBeReadMode：长图从顶部阅读，横屏将阅读宽度限制为高度的 9/16。 */
 function imageLayout(size: ImageSize) {
   const mobile = mobileLayout.value;
-  const width = mobile ? stageRef.value?.clientWidth || viewportSize.value.width : viewportSize.value.width * 0.9;
-  const height = mobile ? stageRef.value?.clientHeight || viewportSize.value.height : viewportSize.value.height * 0.88;
+  const stageW = stageRef.value?.clientWidth || 0;
+  const stageH = stageRef.value?.clientHeight || 0;
+  const width = mobile
+    ? stageW || viewportSize.value.width
+    : (stageW > 0 ? Math.min(stageW, viewportSize.value.width * 0.9) : viewportSize.value.width * 0.9);
+  const height = mobile
+    ? stageH || viewportSize.value.height
+    : (stageH > 0 ? Math.min(stageH, viewportSize.value.height * 0.88) : viewportSize.value.height * 0.88);
   const ratio = size.width / size.height;
   const readMode = mobile && !currentItem.value?.isLivePhoto && ratio < 0.4090909 && (width / height >= 0.75 || ratio < width / height / 1.2);
   const fit = readMode ? (width / height >= 0.75 ? height * 9 / 16 : width) / size.width : Math.min(mobile ? Infinity : 1, width / size.width, height / size.height);
@@ -386,7 +397,16 @@ function measureImage() {
   if (image?.naturalWidth && image.naturalHeight) {
     imageSize.value = { width: image.naturalWidth, height: image.naturalHeight };
   }
-  notifyImageViewerImageReady(displaySrc.value || '');
+  const srcAtLoad = displaySrc.value || '';
+  void nextTick(() => {
+    const liveRect = imageRef.value?.getBoundingClientRect();
+    const readMode = Boolean(imageSize.value && imageLayout(imageSize.value).readMode);
+    notifyImageViewerImageReady(
+      srcAtLoad,
+      liveRect && liveRect.width >= 12 && liveRect.height >= 12 ? liveRect : null,
+      readMode,
+    );
+  });
 }
 
 function updateViewportSize() {
@@ -802,8 +822,20 @@ function captureViewerCloseSnapshot(fallbackViewerData?: { urls?: unknown[] } | 
   const matchedThumb = findMatchingImageThumb(itemUrl, preferredGrid);
   const isRotated = rotation.value % 360 !== 0;
   const sameAsInitial = Boolean(itemUrl && initialEnterSourceUrl && itemUrl === initialEnterSourceUrl);
+  const rawRect = activeProxy?.getBoundingClientRect() || imageRef.value?.getBoundingClientRect() || null;
+  const stageRect = stageRef.value?.getBoundingClientRect() || null;
+  let clampedRect = rawRect;
+  if (rawRect && stageRect && stageRect.width >= 12 && stageRect.height >= 12 && (rawRect.height > stageRect.height + 1 || rawRect.width > stageRect.width + 1)) {
+    const left = Math.max(stageRect.left, rawRect.left);
+    const top = Math.max(stageRect.top, rawRect.top);
+    const right = Math.min(stageRect.right, rawRect.right);
+    const bottom = Math.min(stageRect.bottom, rawRect.bottom);
+    if (right - left >= 12 && bottom - top >= 12) {
+      clampedRect = new DOMRect(left, top, right - left, bottom - top);
+    }
+  }
   pendingCloseSnapshot = {
-    displayRect: activeProxy?.getBoundingClientRect() || imageRef.value?.getBoundingClientRect() || null,
+    displayRect: clampedRect,
     src: activeSrc,
     targetThumb: isRotated ? null : (matchedThumb || (sameAsInitial || !itemUrl ? initialEnterAnchor : null)),
     closedBySwipe: closingViaSwipe,
@@ -816,7 +848,11 @@ function onViewerEnter(el: Element, done: () => void) {
     || getMemoryCachedResourceSync(originalUrl.value)
     || getMemoryCachedResourceSync(currentUrl.value)
     || '';
-  runImageViewerEnterMorph(el, initialEnterAnchor, done, { preferredSrc: cachedHighRes });
+  runImageViewerEnterMorph(el, initialEnterAnchor, done, {
+    preferredSrc: cachedHighRes,
+    mobile: mobileLayout.value,
+    isLivePhoto: Boolean(currentItem.value?.isLivePhoto),
+  });
 }
 
 function onViewerLeave(el: Element, done: () => void) {
@@ -1642,6 +1678,13 @@ onUnmounted(() => {
   will-change: transform;
   transition: transform 0.05s ease-out;
   pointer-events: auto;
+}
+
+.image-viewer-backdrop.is-mobile-layout .viewer-img,
+.image-viewer-backdrop.is-mobile-layout .viewer-ghost,
+.image-viewer-backdrop.is-mobile-layout .viewer-live-video {
+  max-width: 100%;
+  max-height: 100%;
 }
 
 /* 触摸拖动期间取消过渡，保证位移严格跟手。 */

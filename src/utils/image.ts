@@ -119,16 +119,25 @@ export function sanitizeImageUrl(url: string): boolean {
 }
 
 /**
+ * 从酷安图片 CDN 地址的 `@宽x高` 文件名标记提取原始像素宽高。
+ */
+export function parseUrlImageDimensions(url: string): { width: number; height: number } | null {
+  if (!url || typeof url !== 'string') return null;
+  const match = url.match(/@(\d+)x(\d+)(?:[.?#/_-]|$)/i);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!(width > 0 && height > 0) || !Number.isFinite(width) || !Number.isFinite(height)) return null;
+  return { width, height };
+}
+
+/**
  * 从酷安图片 CDN 地址的 `@宽x高` 文件名标记提前读取真实宽高比，
  * 用于图片未解码前即预留占位高度，避免首屏加载后整卡下推跳动。
  */
 export function parseUrlImageRatio(url: string): number {
-  if (!url || typeof url !== 'string') return 0;
-  const match = url.match(/@(\d+)x(\d+)(?:[.?#/_-]|$)/i);
-  if (!match) return 0;
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  if (!(width > 0 && height > 0)) return 0;
-  const ratio = width / height;
+  const dims = parseUrlImageDimensions(url);
+  if (!dims) return 0;
+  const ratio = dims.width / dims.height;
   return Number.isFinite(ratio) && ratio > 0 ? ratio : 0;
 }

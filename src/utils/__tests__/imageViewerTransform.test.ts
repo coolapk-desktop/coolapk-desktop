@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  cancelActiveImageViewerMorph,
   captureImageViewerAnchor,
   computeFittedViewerImageBox,
   consumePendingImageViewerAnchor,
   findMatchingImageThumb,
+  notifyImageViewerImageReady,
   runImageViewerEnterMorph,
   runImageViewerLeaveMorph,
   trackImageViewerPointerCandidate,
@@ -206,5 +208,106 @@ describe('imageViewerTransform', () => {
       expect(consumed?.left).toBe(20 + idx * 90);
       expect(consumed?.src).toBe(entry.url);
     }
+  });
+
+  it('窄屏移动布局与桌面端均与 ImageViewer 实际布局保持一致，长图自动顶对齐无尺寸跳变', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 556 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 993 });
+    const mobileStage = { left: 0, top: 44, width: 556, height: 949 } as DOMRect;
+
+    // 移动端常规竖屏截图 (9:16 = 0.5625) 应撑满舞台全高，而不是被限制到 88vh
+    const mobilePortrait = computeFittedViewerImageBox(mobileStage, 9 / 16, { mobile: true });
+    expect(mobilePortrait.height).toBeCloseTo(949, 1);
+    expect(mobilePortrait.top).toBeCloseTo(44, 1);
+    expect(mobilePortrait.readMode).toBe(false);
+
+    // 移动端超长图 (<0.409) 触发 readMode 顶对齐铺宽
+    const mobileLong = computeFittedViewerImageBox(mobileStage, 0.25, { mobile: true, isLivePhoto: false });
+    expect(mobileLong.top).toBe(44);
+    expect(mobileLong.width).toBe(556);
+    expect(mobileLong.height).toBe(949);
+    expect(mobileLong.readMode).toBe(true);
+
+    // 桌面端小尺寸图片 (400x500) 在大屏上不超过 1:1 原始像素尺寸
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    const desktopStage = { left: 0, top: 94, width: 1440, height: 806 } as DOMRect;
+    const smallDesktop = computeFittedViewerImageBox(desktopStage, 0.8, {
+      mobile: false,
+      naturalWidth: 400,
+      naturalHeight: 500,
+    });
+    expect(smallDesktop.width).toBeCloseTo(400, 1);
+    expect(smallDesktop.height).toBeCloseTo(500, 1);
+  });
+
+  it('若源缩略图缺少 @WxH 而在延迟载入后真实比例变化，等待态会平滑过渡后再移除代理层', () => {
+    const stage = document.createElement('div');
+    stage.className = 'image-stage';
+    mockRect(stage, { left: 0, top: 44, width: 556, height: 949 });
+    const backdrop = document.createElement('div');
+    const viewerImg = document.createElement('img');
+    viewerImg.className = 'viewer-img';
+    stage.appendChild(viewerImg);
+    backdrop.appendChild(stage);
+    document.body.appendChild(backdrop);
+
+    const makeAnim = () => {
+      // 模拟 Chromium：未解绑 oncancel 时调用 cancel() 会触发 cancel 回调
+      const anim: any = {
+        onfinish: null,
+        oncancel: null,
+        cancel: vi.fn(() => anim.oncancel?.()),
+        finish: () => anim.onfinish?.(),
+      };
+      return anim;
+    };
+    backdrop.animate = vi.fn(() => makeAnim());
+    const proxyAnims: any[] = [];
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, opts?: any) => {
+      const el = origCreate(tag, opts);
+      (el as HTMLElement).animate = vi.fn(() => {
+        const a = makeAnim();
+        proxyAnims.push(a);
+        return a;
+      });
+      return el;
+    });
+
+    const done = vi.fn();
+    runImageViewerEnterMorph(
+      backdrop,
+      { left: 20, top: 200, width: 100, height: 100, borderRadius: 8, aspectRatio: 1, src: 'https://img.example/s.jpg' },
+      done,
+      { mobile: true },
+    );
+    expect(proxyAnims).toHaveLength(1);
+    proxyAnims[0].finish();
+    expect(done).toHaveBeenCalledTimes(1);
+    // 即使 finish() 后清理了已完成动画，也仍应停留在代理态等待高清加载
+    expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
+
+    // 真实加载返回不同尺寸：先播放 130ms 平滑修正动画再销毁代理
+    notifyImageViewerImageReady('https://img.example/hd.jpg', { left: 100, top: 44, width: 356, height: 949 }, false);
+    expect(proxyAnims).toHaveLength(2);
+    expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
+    proxyAnims[1].finish();
+    expect(document.querySelector('.viewer-morph-proxy')).toBeNull();
+
+    // 等待高清加载期间若主动取消/关闭看图，代理应被清理且不重复调用 done()
+    const interruptedDone = vi.fn();
+    runImageViewerEnterMorph(
+      backdrop,
+      { left: 20, top: 200, width: 100, height: 100, borderRadius: 8, aspectRatio: 1, src: 'https://img.example/s.jpg' },
+      interruptedDone,
+      { mobile: true },
+    );
+    proxyAnims[2].finish();
+    expect(interruptedDone).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
+    cancelActiveImageViewerMorph();
+    expect(document.querySelector('.viewer-morph-proxy')).toBeNull();
+    expect(interruptedDone).toHaveBeenCalledTimes(1);
   });
 });
