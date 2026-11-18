@@ -257,6 +257,7 @@ function createMorphClipProxy(
   initialRect: ProxyBoxRect,
   src: string,
   isLong = false,
+  viewerLayer?: HTMLElement,
 ): { wrap: HTMLElement; img: HTMLImageElement } {
   const safeBaseW = Math.max(1, baseWidth);
   const safeBaseH = Math.max(1, baseHeight);
@@ -279,7 +280,7 @@ function createMorphClipProxy(
     'overflow:hidden',
     'contain:layout style',
     'pointer-events:none',
-    'z-index:3005',
+    `z-index:${viewerLayer ? 3001 : 3005}`,
   ].join(';');
 
   const img = document.createElement('img');
@@ -299,7 +300,7 @@ function createMorphClipProxy(
     'pointer-events:none',
   ].join(';');
   wrap.appendChild(img);
-  document.body.appendChild(wrap);
+  (viewerLayer || document.body).appendChild(wrap);
   return { wrap, img };
 }
 
@@ -391,7 +392,7 @@ export function runImageViewerEnterMorph(
   const stage = backdropEl.querySelector<HTMLElement>('.image-stage');
   const stageRect = stage?.getBoundingClientRect();
   const initialSrc = options.preferredSrc || anchor?.src || '';
-  if (!stageRect || stageRect.width < 32 || stageRect.height < 32 || !anchor || !initialSrc) {
+  if (!stage || !stageRect || stageRect.width < 32 || stageRect.height < 32 || !anchor || !initialSrc) {
     const anim = backdropEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: FLUID_MOTION_EASING });
     let finished = false;
     const finish = () => { if (!finished) { finished = true; activeViewerCleanup = null; done(); } };
@@ -409,12 +410,13 @@ export function runImageViewerEnterMorph(
     naturalWidth: (viewerImg?.complete && viewerImg.naturalWidth > 0 ? viewerImg.naturalWidth : anchor.naturalWidth) || undefined,
     naturalHeight: (viewerImg?.complete && viewerImg.naturalHeight > 0 ? viewerImg.naturalHeight : anchor.naturalHeight) || undefined,
   });
-  if (viewerImg) viewerImg.style.opacity = '0';
+  backdropEl.setAttribute('data-image-morph-cover', '');
 
   const thumbEl = anchor.element && anchor.element.isConnected ? anchor.element : null;
   const prevThumbVisibility = thumbEl ? thumbEl.style.visibility : '';
   if (thumbEl) thumbEl.style.visibility = 'hidden';
 
+  // 入场代理在看图工具栏下方，避免「查看原图」被盖住后突然出现。
   const { wrap, img } = createMorphClipProxy(
     targetBox.width,
     targetBox.height,
@@ -422,6 +424,7 @@ export function runImageViewerEnterMorph(
     anchor,
     initialSrc,
     Boolean(anchor.isLong || targetBox.readMode),
+    backdropEl,
   );
 
   const bgAnim = backdropEl.animate(
@@ -450,6 +453,7 @@ export function runImageViewerEnterMorph(
   let doneCalled = false;
   let reconcileAnim: Animation | null = null;
   let reconcileImgAnim: Animation | null = null;
+  let handoffAnim: Animation | null = null;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let readyWaitTimer: ReturnType<typeof setTimeout> | null = null;
   let latestReadyRect: { left: number; top: number; width: number; height: number } | null = null;
@@ -475,15 +479,27 @@ export function runImageViewerEnterMorph(
     }
     clearAnimHandlers(reconcileAnim);
     clearAnimHandlers(reconcileImgAnim);
+    clearAnimHandlers(handoffAnim);
     safeCancel(reconcileAnim);
     safeCancel(reconcileImgAnim);
+    safeCancel(handoffAnim);
     reconcileAnim = null;
     reconcileImgAnim = null;
     wrap.remove();
-    const currentViewerImg = backdropEl.querySelector<HTMLImageElement>('.viewer-img');
-    if (currentViewerImg) currentViewerImg.style.opacity = '';
+    backdropEl.removeAttribute('data-image-morph-cover');
     if (settlePendingEnterProxy === handleReady) settlePendingEnterProxy = null;
     if (morphEnded && activeViewerCleanup === cleanup) activeViewerCleanup = null;
+  };
+
+  const handoffToViewer = () => {
+    if (proxyRemoved || handoffAnim) return;
+    if (reconcileTimer !== null) clearTimeout(reconcileTimer);
+    // 即使外框误差不到 2px，缩略图和大图的裁切或采样也可能不同。短暂淡出代理，避免交接时硬切。
+    backdropEl.removeAttribute('data-image-morph-cover');
+    handoffAnim = wrap.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 90, fill: 'forwards' });
+    handoffAnim.onfinish = removeProxy;
+    handoffAnim.oncancel = removeProxy;
+    reconcileTimer = setTimeout(removeProxy, 150);
   };
 
   const cleanup = () => {
@@ -522,10 +538,11 @@ export function runImageViewerEnterMorph(
       Math.abs(finalRect.width - targetBox.width),
       Math.abs(finalRect.height - targetBox.height),
     );
-    if (diff <= 2 || typeof wrap.animate !== 'function') {
-      removeProxy();
+    if (diff <= 2) {
+      handoffToViewer();
       return;
     }
+    if (reconcileTimer !== null) clearTimeout(reconcileTimer);
     clearAnimHandlers(reconcileAnim);
     clearAnimHandlers(reconcileImgAnim);
     safeCancel(reconcileAnim);
@@ -541,13 +558,13 @@ export function runImageViewerEnterMorph(
     );
     reconcileAnim = reconciled.boxAnim;
     reconcileImgAnim = reconciled.imgAnim;
-    reconcileTimer = setTimeout(removeProxy, 190);
-    reconcileAnim.onfinish = removeProxy;
+    reconcileTimer = setTimeout(handoffToViewer, 190);
+    reconcileAnim.onfinish = handoffToViewer;
     reconcileAnim.oncancel = removeProxy;
   };
 
   const handleReady = (payload: PendingEnterReadyPayload) => {
-    if (proxyRemoved || cleaned) return;
+    if (proxyRemoved || cleaned || handoffAnim) return;
     if (!payload.upgradedSrc && !payload.liveRect) {
       if (readyWaitTimer !== null) {
         clearTimeout(readyWaitTimer);
@@ -566,7 +583,7 @@ export function runImageViewerEnterMorph(
       img.style.transformOrigin = 'center top';
     }
     if (payload.liveRect && payload.liveRect.width >= 12 && payload.liveRect.height >= 12) {
-      latestReadyRect = clampRectToStage(payload.liveRect, stageRect);
+      latestReadyRect = clampRectToStage(payload.liveRect, stage.getBoundingClientRect());
     }
     if (!morphEnded) return;
     if (readyWaitTimer !== null) {
@@ -598,14 +615,10 @@ export function runImageViewerEnterMorph(
     if (currentViewerImg && currentViewerImg.complete && currentViewerImg.naturalWidth > 0) {
       settlePendingEnterProxy = null;
       if (currentViewerImg.src && img.src !== currentViewerImg.src) img.src = currentViewerImg.src;
-      let fallbackRect = latestReadyRect;
-      if (!fallbackRect) {
-        const rawRect = currentViewerImg.getBoundingClientRect();
-        if (rawRect.width >= 12 && rawRect.height >= 12) {
-          fallbackRect = clampRectToStage(rawRect, stageRect);
-        }
-      }
-      settleProxyIntoFinalBox(fallbackRect);
+      // 解码回调后安全区仍可能变动，交接时以实时舞台和图片边界为准。
+      const rawRect = currentViewerImg.getBoundingClientRect();
+      const finalRect = rawRect.width >= 12 && rawRect.height >= 12 ? clampRectToStage(rawRect, stage.getBoundingClientRect()) : latestReadyRect;
+      settleProxyIntoFinalBox(finalRect);
     } else if (currentViewerImg || (backdropEl.isConnected && !backdropEl.querySelector('.viewer-load-error'))) {
       // 原图仍在异步解码/下载时先用定格在目标位置的封面平稳承接，避免闪烁黑屏；解码好即刻无缝切换。
       settlePendingEnterProxy = handleReady;

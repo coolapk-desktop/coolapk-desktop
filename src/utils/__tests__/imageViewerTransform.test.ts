@@ -143,9 +143,11 @@ describe('imageViewerTransform', () => {
     }, enterDone, { preferredSrc: 'https://img.example/1_hd.jpg' });
 
     expect(thumbWrap.style.visibility).toBe('hidden');
+    expect(backdrop.hasAttribute('data-image-morph-cover')).toBe(true);
     const enterWrapAnim = proxyBoxAnims.find((entry) => entry.el.classList.contains('viewer-morph-proxy'));
     const enterImgAnim = proxyBoxAnims.find((entry) => entry.el.classList.contains('viewer-morph-proxy-img'));
     expect(enterWrapAnim).toBeDefined();
+    expect(enterWrapAnim!.el.parentElement).toBe(backdrop);
     expect(enterImgAnim).toBeDefined();
     const enterFrames = enterWrapAnim!.keyframes;
     // 验证通过纯合成层 transform + 反向等比补偿完成裁切缩放，不触发布局 width/height/borderRadius 重绘
@@ -298,11 +300,15 @@ describe('imageViewerTransform', () => {
     // 即使 finish() 后清理了已完成动画，也仍应停留在代理态等待高清加载
     expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
 
-    // 真实加载返回不同尺寸：先播放 130ms 平滑修正动画再销毁代理
+    // 真实图片晚到且尺寸不同，先平滑修正，再淡出代理。
     notifyImageViewerImageReady('https://img.example/hd.jpg', { left: 100, top: 44, width: 356, height: 949 }, false);
     expect(proxyAnims).toHaveLength(2);
     expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
     proxyAnims[1].finish();
+    expect(proxyAnims).toHaveLength(3);
+    expect(backdrop.hasAttribute('data-image-morph-cover')).toBe(false);
+    expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
+    proxyAnims[2].finish();
     expect(document.querySelector('.viewer-morph-proxy')).toBeNull();
 
     // 等待高清加载期间若主动取消/关闭看图，代理应被清理且不重复调用 done()
@@ -313,11 +319,12 @@ describe('imageViewerTransform', () => {
       interruptedDone,
       { mobile: true },
     );
-    proxyAnims[2].finish();
+    proxyAnims[3].finish();
     expect(interruptedDone).toHaveBeenCalledTimes(1);
     expect(document.querySelector('.viewer-morph-proxy')).not.toBeNull();
     cancelActiveImageViewerMorph();
     expect(document.querySelector('.viewer-morph-proxy')).toBeNull();
+    expect(backdrop.hasAttribute('data-image-morph-cover')).toBe(false);
     expect(interruptedDone).toHaveBeenCalledTimes(1);
   });
 });

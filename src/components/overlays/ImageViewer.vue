@@ -820,8 +820,8 @@ let pendingCloseSnapshot: {
 let closingViaSwipe = false;
 
 function captureViewerCloseSnapshot(fallbackViewerData?: { urls?: unknown[] } | null) {
-  const activeProxy = document.querySelector<HTMLElement>('.viewer-morph-proxy');
-  const activeProxyImg = document.querySelector<HTMLImageElement>('.viewer-morph-proxy-img');
+  const activeProxy = stageRef.value?.closest('[data-image-morph-cover]')?.querySelector<HTMLElement>('.viewer-morph-proxy');
+  const activeProxyImg = activeProxy?.querySelector<HTMLImageElement>('.viewer-morph-proxy-img');
   const activeSrc = displaySrc.value || activeProxyImg?.src || currentUrl.value;
   const fallbackItems = !currentItem.value && fallbackViewerData?.urls
     ? normalizeFeedImageItems(fallbackViewerData.urls)
@@ -1690,6 +1690,9 @@ onUnmounted(() => {
   transition: transform 0.05s ease-out;
   pointer-events: auto;
 }
+
+/* 解码慢时主图可能在动画中途才挂载，也要等代理层交接后再显示。 */
+.image-viewer-backdrop[data-image-morph-cover] .viewer-img { opacity: 0; }
 
 .image-viewer-backdrop.is-mobile-layout .viewer-img,
 .image-viewer-backdrop.is-mobile-layout .viewer-ghost,
