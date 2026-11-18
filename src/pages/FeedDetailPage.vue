@@ -326,7 +326,9 @@ async function refreshMobilePage() { await fetchDetail(); await refreshFeedCard.
     padding-left: max(16px, env(safe-area-inset-left, 0px));
   }
 }
-.feed-detail-page.is-official-mobile { background: var(--surface); }
+/* 保留触摸滚动与下拉刷新，避免滚动条和系统回弹出现在详情页边缘。 */
+.feed-detail-page.is-official-mobile { background: var(--surface); scrollbar-width: none; overscroll-behavior-y: none; }
+.feed-detail-page.is-official-mobile::-webkit-scrollbar { display: none; }
 /* 详情卡片不能创建内部裁切滚动容器，否则作者栏与评论栏的 sticky 会失效。 */
 .is-official-mobile :deep(.feed-card.is-official-mobile-detail) { overflow: visible; }
 .is-official-mobile :deep(.official-detail-comments .comment-toolbar) { top: var(--feed-detail-header-height, 60px); scroll-margin-top: var(--feed-detail-header-height, 60px); }

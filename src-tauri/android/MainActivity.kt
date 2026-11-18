@@ -18,6 +18,7 @@ import android.provider.MediaStore
 import android.provider.Settings
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import android.view.RoundedCorner
 import android.view.View
 import android.view.WindowManager
 import android.view.ViewTreeObserver
@@ -26,6 +27,7 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.Keep
+import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
@@ -36,6 +38,8 @@ import androidx.core.view.WindowInsetsCompat
 import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
+import kotlin.math.ceil
+import kotlin.math.sqrt
 
 class MainActivity : TauriActivity() {
     @Volatile private var topSafeAreaPx = 0
@@ -207,19 +211,25 @@ class MainActivity : TauriActivity() {
         }.toString()
     }
 
-    private fun applySystemBarTheme(dark: Boolean, profile: Boolean = false, dimmed: Boolean = false) {
+    private fun applySystemBarTheme(dark: Boolean, profile: Boolean = false, dimmed: Boolean = false, imageViewer: Boolean = false) {
         // 个人页背景与网页一致；吸顶或离开个人页后恢复普通顶栏颜色。
         val surface = if (profile) { if (dark) Color.rgb(0x0e, 0x10, 0x12) else Color.rgb(0xf2, 0xf2, 0xf6) } else { if (dark) Color.rgb(0x18, 0x1b, 0x1e) else Color.WHITE }
         // 状态栏保持透明，网页直接绘制后方内容；原生底部安全区仍同步主题和弹层遮罩。
-        val background = if (dimmed) ColorUtils.blendARGB(surface, Color.BLACK, 0.4f) else surface
+        val background = when {
+            imageViewer -> Color.BLACK
+            dimmed -> ColorUtils.blendARGB(surface, Color.BLACK, 0.4f)
+            else -> surface
+        }
         window.decorView.setBackgroundColor(background)
         findViewById<View>(android.R.id.content).setBackgroundColor(background)
-        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !dark
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !dark && !imageViewer
+        controller.isAppearanceLightNavigationBars = !dark && !imageViewer
     }
 
     @Keep
     fun setSystemBarTheme(theme: String): String {
-        runOnUiThread { applySystemBarTheme(theme.startsWith("dark"), theme.contains("-profile"), theme.endsWith("-dimmed")) }
+        runOnUiThread { applySystemBarTheme(theme.startsWith("dark"), theme.contains("-profile"), theme.endsWith("-dimmed"), theme == "image-viewer") }
         return "ok"
     }
 
@@ -409,6 +419,21 @@ class MainActivity : TauriActivity() {
         return "started"
     }
 
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun roundedCornerClearance(view: View, insets: WindowInsetsCompat, bars: Insets): Pair<Int, Int> {
+        val windowInsets = insets.toWindowInsets() ?: return 0 to 0
+        // 顶栏控件距网页边缘至少 8dp。计算这个位置到圆弧的距离，避免整条边按半径留空。
+        val controlMargin = 8 * view.resources.displayMetrics.density.toDouble()
+        fun clearance(position: Int, sideInset: Int): Int {
+            val radius = windowInsets.getRoundedCorner(position)?.radius?.toDouble() ?: return 0
+            val distance = (radius - sideInset - controlMargin).coerceAtLeast(0.0)
+            return ceil(radius - sqrt(radius * radius - distance * distance)).toInt()
+        }
+        val top = maxOf(clearance(RoundedCorner.POSITION_TOP_LEFT, bars.left), clearance(RoundedCorner.POSITION_TOP_RIGHT, bars.right))
+        val bottom = maxOf(clearance(RoundedCorner.POSITION_BOTTOM_LEFT, bars.left), clearance(RoundedCorner.POSITION_BOTTOM_RIGHT, bars.right))
+        return top to bottom
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -424,9 +449,10 @@ class MainActivity : TauriActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val bars = insets.getInsets(safeAreaTypes)
             val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val (cornerTop, cornerBottom) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) roundedCornerClearance(view, insets, bars) else 0 to 0
             // 键盘高度已包含底部系统区域，取较大值而非相加，避免输入框被重复顶起。
-            view.setPadding(bars.left, 0, bars.right, maxOf(bars.bottom, keyboard.bottom))
-            syncWebSafeArea(bars.top)
+            view.setPadding(bars.left, 0, bars.right, maxOf(bars.bottom, cornerBottom, keyboard.bottom))
+            syncWebSafeArea(maxOf(bars.top, cornerTop))
             // 网页使用显式传入的顶部安全区，清除重复派发，避免再次缩小内容区。
             WindowInsetsCompat.Builder(insets)
                 .setInsets(handledTypes, Insets.NONE)

@@ -35,6 +35,27 @@ const loadResourceMock = vi.mocked(loadImageResource);
 const memoryCacheMock = vi.mocked(getMemoryCachedResourceSync);
 const toastMock = vi.mocked(showToast);
 
+it('移动端看图层关闭后恢复系统栏配色', async () => {
+  const userAgent = vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Android');
+  const settings = useSettingsStore();
+  settings.settings.reduceMotion = true;
+  const sync = vi.spyOn(settings, 'setAndroidImageViewerBackground');
+  const store = useAppStore();
+  const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true, transition: false } } });
+  try {
+    store.openImageViewer(['https://img.example/mobile.jpg'], 0);
+    await flushPromises();
+    expect(wrapper.find('.image-viewer-backdrop.is-mobile-layout').exists()).toBe(true);
+    expect(sync).toHaveBeenLastCalledWith(true);
+    store.closeImageViewer();
+    await vi.waitFor(() => expect(sync).toHaveBeenLastCalledWith(false));
+  } finally {
+    wrapper.unmount();
+    sync.mockRestore();
+    userAgent.mockRestore();
+  }
+});
+
 describe('原图加载成功后隐藏入口', () => {
   it('无图模式允许详情来源的大图，关闭详情开关后隐藏查看器', async () => {
     const settings = useSettingsStore();

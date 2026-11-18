@@ -7,6 +7,7 @@
       :on-leave="useFluidImageMorph ? onViewerLeave : undefined"
       :on-enter-cancelled="cancelActiveImageViewerMorph"
       :on-leave-cancelled="cancelActiveImageViewerMorph"
+      @after-leave="restoreViewerSystemBars"
     >
       <div
         v-if="viewerData && !noImageMode"
@@ -228,6 +229,15 @@ const viewerData = computed(() => appStore.activeImageViewer);
 const viewerDetailScope = computed(() => Boolean(viewerData.value?.fromDetail));
 const detailImagesEnabled = provideDetailImageScope(viewerDetailScope);
 const noImageMode = useNoImageMode(viewerDetailScope);
+// 看图关闭动效结束后再恢复 Android 系统栏，避免底边提前露出页面底色。
+watch([viewerData, noImageMode, mobileLayout], ([viewer, hidden, mobile]) => {
+  if (viewer && !hidden) settingsStore.setAndroidImageViewerBackground(mobile);
+}, { immediate: true });
+
+function restoreViewerSystemBars() {
+  if (!viewerData.value || noImageMode.value) settingsStore.setAndroidImageViewerBackground(false);
+}
+
 const currentIndex = ref(0);
 const scale = ref(1);
 const rotation = ref(0);
@@ -1499,6 +1509,7 @@ onMounted(() => {
   window.addEventListener('resize', updateViewportSize);
 });
 onUnmounted(() => {
+  settingsStore.setAndroidImageViewerBackground(false);
   clearSingleTapClose();
   window.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('resize', updateViewportSize);
@@ -1514,7 +1525,7 @@ onUnmounted(() => {
   position: fixed;
   /* 桌面端避开应用标题栏，避免预览工具栏覆盖窗口控制按钮。 */
   inset: var(--topbar-height) 0 0;
-  background-color: rgba(0, 0, 0, 0.92);
+  background-color: var(--image-viewer-background, rgba(0, 0, 0, 0.92));
   z-index: 3000;
   display: flex;
   flex-direction: column;
@@ -1978,19 +1989,37 @@ onUnmounted(() => {
   }
 }
 
+.image-viewer-backdrop.is-mobile-layout {
+  --image-viewer-background: #000;
+  inset: 0;
+}
+
+/* 横屏手机和平板同样避开状态栏和屏幕开孔。 */
+.is-mobile-layout .viewer-topbar {
+  height: auto;
+  min-height: 44px;
+  padding: var(--app-safe-area-top, 0px) 10px 0;
+  padding-right: max(10px, env(safe-area-inset-right, 0px));
+  padding-left: max(10px, env(safe-area-inset-left, 0px));
+}
+
+.is-mobile-layout .viewer-bottombar {
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
 @media (max-width: 720px) {
   .image-viewer-backdrop {
     inset: 0;
   }
 
-  /* 顶栏落在刘海/灵动岛区域，必须自行让出安全区（与 MobileTopBar 一致）。 */
   .viewer-topbar {
     height: auto;
     min-height: 44px;
-    align-items: center;
     flex-wrap: wrap;
     gap: 4px 8px;
-    padding: var(--app-safe-area-top, 0px) max(10px, env(safe-area-inset-left)) 0 max(10px, env(safe-area-inset-right));
+    padding: var(--app-safe-area-top, 0px) 10px 0;
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
   }
 
   /* 桌面版整排按钮宽度（约 428px）超过手机可用宽度，这里压缩到能完整放下关闭按钮。 */
@@ -2028,7 +2057,7 @@ onUnmounted(() => {
   .nav-next { right: 8px; }
 
   .viewer-bottombar {
-    bottom: calc(16px + env(safe-area-inset-bottom));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   }
 }
 </style>

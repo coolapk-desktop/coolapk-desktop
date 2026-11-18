@@ -468,6 +468,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const linuxSystemTheme = ref<SystemTheme>(null);
   const androidProfileBackground = ref(false);
   const androidSystemBarDimOwners = new Set<symbol>();
+  let androidImageViewerBackground = false;
   const profileToolbarCompact = ref(false);
   // 代理是否真实同步到后端（set_network_proxy 成功与否）。保存的地址与“是否
   // 生效”是两个语义：失败时不回滚用户已保存的地址，只把失败暴露给页面显示告警，
@@ -685,6 +686,12 @@ export const useSettingsStore = defineStore('settings', () => {
   // 我的页面使用独立背景，滚动后的顶栏恢复普通表面色。
   function setAndroidProfileBackground(enabled: boolean) { androidProfileBackground.value = enabled; syncAndroidSystemBarTheme(); }
 
+  function setAndroidImageViewerBackground(enabled: boolean) {
+    if (androidImageViewerBackground === enabled) return;
+    androidImageViewerBackground = enabled;
+    syncAndroidSystemBarTheme();
+  }
+
   function setAndroidSystemBarDimmed(owner: symbol, dimmed: boolean) {
     const wasDimmed = androidSystemBarDimOwners.size > 0;
     if (dimmed) androidSystemBarDimOwners.add(owner);
@@ -696,7 +703,7 @@ export const useSettingsStore = defineStore('settings', () => {
     if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return;
     if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)) {
       // Android 状态栏后方由网页绘制；原生同步状态栏文字明暗及底部安全区的主题与遮罩。
-      void invoke('set_android_system_bar_theme', { dark: document.documentElement.getAttribute('data-theme') === 'dark', profile: androidProfileBackground.value, dimmed: androidSystemBarDimOwners.size > 0 }).catch((err) => console.warn('同步 Android 状态栏主题失败:', err));
+      void invoke('set_android_system_bar_theme', { dark: document.documentElement.getAttribute('data-theme') === 'dark', profile: androidProfileBackground.value, dimmed: androidSystemBarDimOwners.size > 0, imageViewer: androidImageViewerBackground }).catch((err) => console.warn('同步 Android 状态栏主题失败:', err));
     }
   }
 
@@ -1062,6 +1069,7 @@ export const useSettingsStore = defineStore('settings', () => {
     profileToolbarCompact,
     setAndroidProfileBackground,
     setAndroidSystemBarDimmed,
+    setAndroidImageViewerBackground,
     initializeSettings,
     flushSettings,
     syncDeviceProfile,

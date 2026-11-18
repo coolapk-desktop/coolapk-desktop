@@ -425,7 +425,7 @@ export function runImageViewerEnterMorph(
   );
 
   const bgAnim = backdropEl.animate(
-    [{ backgroundColor: 'rgba(0, 0, 0, 0)' }, { backgroundColor: 'rgba(0, 0, 0, 0.92)' }],
+    [{ backgroundColor: 'transparent' }, { backgroundColor: 'var(--image-viewer-background, rgba(0, 0, 0, 0.92))' }],
     { duration: VIEWER_OPEN_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
   );
   const topbar = backdropEl.querySelector<HTMLElement>('.viewer-topbar');
@@ -685,7 +685,7 @@ export function runImageViewerLeaveMorph(
   if (bottombar) bottombar.style.opacity = '0';
 
   const bgAnim = backdropEl.animate(
-    [{ backgroundColor: 'rgba(0, 0, 0, 0.92)' }, { backgroundColor: 'rgba(0, 0, 0, 0)' }],
+    [{ backgroundColor: 'var(--image-viewer-background, rgba(0, 0, 0, 0.92))' }, { backgroundColor: 'transparent' }],
     { duration: VIEWER_CLOSE_MS, easing: FLUID_MOTION_EASING, fill: 'both' },
   );
   const { boxAnim, imgAnim } = animateProxyMorph(
