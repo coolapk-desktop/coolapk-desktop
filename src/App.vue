@@ -229,7 +229,7 @@ import { useMobileEdgeSwipeBack } from './composables/useMobileEdgeSwipeBack';
 import { registerGlobalSelectionClear } from './utils/selection';
 import { getPlatformInfo } from './utils/platform';
 import { usePageTabsStore } from './stores/pageTabs';
-import { getKeepAliveMax, getPageComponentKey } from './utils/pageTabs';
+import { getKeepAliveMax, getPageComponentKey, isSettingsPagePath } from './utils/pageTabs';
 import { logDiagnostic } from './utils/diagnosticLogger';
 import { setupKeyboardScrollAssist, setupViewportHeight } from './utils/viewport';
 import { registerAgentBridgeConfirm } from './utils/agentBridgeConfirm';
@@ -320,7 +320,11 @@ watch(() => route.fullPath, (_next, _previous) => {
   const nextPosition = Number(window.history.state?.position || 0);
   const fromPath = String(_previous || '').split('?')[0]!;
   const backward = nextPosition < routeHistoryPosition;
-  const mode = resolveRouteTransition({
+  // 设置分类各自缓存滚动位置，内部切换时跳过整页动画，并清除进入设置时可能残留的侧栏动效。
+  const switchingSettingsCategory = fromPath !== route.path && isSettingsPagePath(fromPath) && isSettingsPagePath(route.path);
+  if (switchingSettingsCategory) resetSidebarTransition();
+  const pageTabTriggered = Boolean(consumePageTabTransition?.());
+  const mode = switchingSettingsCategory ? '' : resolveRouteTransition({
     fromPath,
     toPath: route.path,
     backward,
@@ -328,7 +332,7 @@ watch(() => route.fullPath, (_next, _previous) => {
     style: settingsStore.settings.pageTransitionStyle || 'fluid',
     reduceMotion: settingsStore.settings.reduceMotion,
     sidebarTriggered: isSidebarTransitionActive.value,
-    pageTabTriggered: Boolean(consumePageTabTransition?.()),
+    pageTabTriggered,
     fromTabIndex: findPageTabIndexByPath(fromPath),
     toTabIndex: findPageTabIndexByPath(route.path),
   });
