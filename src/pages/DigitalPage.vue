@@ -1,6 +1,6 @@
 <template>
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: configLoading || tabLoading || sideLoading || productLoading || dynamicCategoryLoading || (props.channelOnly && !props.channelActive) }" class="digital-page page-container" :class="{ 'is-mobile-presentation': mobilePresentation }">
-    <FeedTabs v-if="digitalTabs.length && !channelOnly" :active-key="selectedTabKey" :tabs="digitalTabNavItems" :swipe-progress="mobilePresentation ? swipeProgress : undefined" :show-manage="false" @update:active-key="selectDigitalTabByKey" />
+    <FeedTabs v-if="digitalTabs.length && !channelOnly" class="mobile-section-tabs" :active-key="selectedTabKey" :tabs="digitalTabNavItems" :swipe-progress="mobilePresentation ? swipeProgress : undefined" :show-manage="false" @update:active-key="selectDigitalTabByKey" />
 
     <!-- 复用发现页的滑动容器；各栏目独立保留筛选、分页与滚动位置。 -->
     <DiscoveryPager v-if="mobilePresentation && !channelOnly && digitalTabs.length" :tabs="pagerTabs" :active-key="selectedTabKey" @select="selectDigitalTabByKey" @progress="swipeProgress = $event">

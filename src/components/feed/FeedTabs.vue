@@ -209,6 +209,10 @@ function handleWheel(e: WheelEvent) {
   min-height: 48px;
 }
 
+@media (max-width: 720px) {
+  .feed-tabs-wrapper.mobile-section-tabs { height: var(--mobile-section-tabs-height); border-bottom: 0; }
+}
+
 .feed-tabs {
   position: relative;
   display: flex;

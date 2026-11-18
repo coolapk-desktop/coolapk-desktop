@@ -3,7 +3,7 @@
     <div class="home-main-column">
     <Teleport :to="homeToolbarTarget || undefined" :disabled="!joinedToolbar">
     <div class="home-toolbar" :class="{ 'is-mobile-toolbar': mobile, 'is-detached-mobile-toolbar': keepHomeHeaderSpace && !joinedToolbar }">
-    <FeedTabs ref="tabBar" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="mobile ? activeIndex : undefined" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
+    <FeedTabs ref="tabBar" :class="{ 'mobile-section-tabs': mobile }" :active-key="activeKey" :tabs="tabs" :manager-tabs="serverTabs" :swipe-progress="mobile ? activeIndex : undefined" :active-sub-tab-key="activePanel?.activeFollowSubChannelKey || ''" @update:active-key="select" @select-sub-tab="selectSubTab" />
     <FeedLayoutToggle v-if="!mobile" v-model="settings.settings.feedLayout" />
     </div>
     </Teleport>
@@ -297,10 +297,10 @@ onUnmounted(() => { unbind(); stopObservingResize?.(); });
 .pager-state button { min-height: 44px; }
 /* 移动首页栏目浮在动态上方，滚动内容进入玻璃背后；顶部留白保证首屏内容可见。 */
 @media (max-width: 720px) {
-  .home-toolbar.is-mobile-toolbar { height: 48px; }
+  .home-toolbar.is-mobile-toolbar { height: var(--mobile-section-tabs-height); }
   /* 离开首页触发路由退场过渡时保留原头部位置而不回落撑开列表。 */
   .home-toolbar.is-detached-mobile-toolbar { position: absolute; top: var(--mobile-glass-topbar-space, 0px); left: 0; right: 0; visibility: hidden; pointer-events: none; }
-  .home-toolbar.is-mobile-toolbar :deep(.feed-tabs-wrapper) { background: transparent; border-bottom: 0; }
+  .home-toolbar.is-mobile-toolbar :deep(.feed-tabs-wrapper) { background: transparent; }
   .home-toolbar.is-mobile-toolbar :deep(.tab-manage-btn) { background: transparent; border-radius: 0; }
   .mobile-home-pager.has-joined-toolbar { --mobile-home-header-space: var(--mobile-home-header-fixed-space, 0px); }
   .mobile-home-pager.has-joined-toolbar :deep(.feed-scroll-container) { padding-top: 0; scroll-padding-top: var(--mobile-home-header-space, 0px); }

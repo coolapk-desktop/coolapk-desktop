@@ -1956,7 +1956,22 @@ defineExpose({
   }
   .official-back { flex-basis: 44px; min-height: 44px; }
 }
-.official-follow-author { border: 1px solid var(--text-tertiary); color: var(--text-secondary); background: transparent; border-radius: 20px; padding: 4px 10px; font: inherit; font-size: 12px; white-space: nowrap; }
+.official-follow-author {
+  border: 1px solid var(--detail-control-border, var(--border-light));
+  color: var(--text-primary);
+  background-color: var(--detail-control-fill, var(--surface-hover));
+  background-image: var(--detail-control-gradient, none);
+  box-shadow: var(--detail-control-shadow, none);
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+.official-follow-author:active { background-color: var(--surface-active); }
 .official-detail-author :deep(.user-level), .official-detail-author :deep(.verify-badge), .official-detail-author :deep(.ip-badge), .official-detail-author :deep(.read-count), .official-detail-author :deep(.edited-badge), .official-detail-author :deep(.recommend-source-badge), .official-detail-author :deep(.header-feed-plugin) { display: none; }
 .official-detail-author :deep(.username) { font-weight: 400; font-size: 16px; }
 .official-detail-author :deep(.device-badge) { background: transparent; border: 0; padding: 0; }

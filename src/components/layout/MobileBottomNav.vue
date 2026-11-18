@@ -146,7 +146,7 @@ function activate(path: string) {
     --nav-glass-highlight: rgba(255, 255, 255, .42);
     --nav-glass-selection: rgba(255, 255, 255, .4);
     position: absolute;
-    bottom: var(--mobile-bottom-nav-offset, 20px);
+    bottom: var(--mobile-bottom-nav-offset, 8px);
     /* 左右留白限制可用宽度，导航栏按可见入口数量居中。 */
     left: 20px;
     right: 20px;
@@ -157,7 +157,7 @@ function activate(path: string) {
     border: 1px solid var(--nav-glass-edge);
     border-radius: 40px;
     box-shadow: 0 10px 32px #00000016, 0 2px 8px #00000008, inset 0 1px 0 var(--nav-glass-edge), inset 0 -1px 0 #ffffff30;
-    padding: 4px;
+    padding: 3px 4px;
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 64px);

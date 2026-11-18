@@ -7,6 +7,7 @@
       'is-touch-mobile': isTouchMobilePlatform(),
       'prevent-mobile-layout': isMobileLayoutDisabled,
       'has-mobile-bottom-nav': showMobileBottomNav,
+      'has-immersive-feed-detail': immersiveFeedDetail,
       'reading-navigation-hidden': reading.hidden.value,
       'has-topic-navigation': route.path.startsWith('/topic/'),
       'has-home-navigation': route.path === '/',
@@ -71,7 +72,7 @@
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue';
 import DesktopFeedCommentPanel from '../feed/DesktopFeedCommentPanel.vue';
 import { desktopFeedCommentsOpenKey, openDesktopFeedCommentsKey } from '../../utils/desktopFeedComments';
-import { useMobileLayout, useWideSplitLayout } from '../../composables/useOfficialMobileFeedDetail';
+import { useMobileLayout, useOfficialMobileFeedDetail, useWideSplitLayout } from '../../composables/useOfficialMobileFeedDetail';
 import type { FeedItem } from '../../types/feed';
 import { isTauri } from '@tauri-apps/api/core';
 import { isWebBuild } from '../../api/runtime';
@@ -115,6 +116,8 @@ const isReadingTopbarAnimating = ref(false);
 provide(mobileHomeToolbarTargetKey, homeToolbarTarget);
 const desktopCommentFeed = shallowRef<FeedItem | null>(null);
 const mobileLayout = useMobileLayout();
+const officialMobileFeedDetail = useOfficialMobileFeedDetail();
+const immersiveFeedDetail = computed(() => route.name === 'FeedDetail' && officialMobileFeedDetail.value);
 const isTopicHubDetail = computed(() => route.path === '/topics' && typeof route.query?.tag === 'string' && Boolean(route.query.tag.trim()));
 const hasPageToolbar = computed(() => isTopicHubDetail.value || ['/notifications', '/search'].includes(route.path));
 const wideSplitLayout = useWideSplitLayout();
@@ -366,6 +369,19 @@ onUnmounted(() => {
 /* 原生视口覆盖整块屏幕；普通页面仍在安全区内排列。 */
 .app-shell.is-android { padding: 0 var(--app-safe-area-right) var(--app-safe-area-bottom) var(--app-safe-area-left); }
 
+/* 正文滚动区铺到底，系统手势区只覆盖一层不拦截触摸的渐变。 */
+.app-shell.has-immersive-feed-detail { position: relative; background: var(--surface); }
+.app-shell.is-android.has-immersive-feed-detail { padding-bottom: 0; }
+.app-shell.has-immersive-feed-detail::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: calc(var(--app-safe-area-bottom) + var(--mobile-reading-edge-fade));
+  background: linear-gradient(to bottom, transparent, var(--surface) var(--mobile-reading-edge-fade));
+  pointer-events: none;
+  z-index: 25;
+}
+
 .mobile-reading-topbar, .mobile-reading-topbar-content, .mobile-reading-topbar-stack { display: contents; }
 .app-shell.has-web-desktop-navigation { --app-titlebar-height: 0px; }
 :global([data-theme="dark"] .app-shell) { --topic-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --topic-glass-edge: rgba(255, 255, 255, .18); }
@@ -424,10 +440,11 @@ onUnmounted(() => {
   .app-shell.is-android.has-home-navigation :deep(.feed-scroll-container) { scrollbar-width: none; }
   .app-shell.is-android.has-home-navigation :deep(.feed-scroll-container::-webkit-scrollbar) { display: none; }
   /* 首页搜索和主栏目共用玻璃与折叠容器（变量局部挂载在顶栏容器，避免切页时在根容器改写 CSS 变量触发全树样式重算）。 */
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar { --home-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --home-glass-edge: rgba(255, 255, 255, .65); }
-  :global([data-theme="dark"] .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar) { --home-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --home-glass-edge: rgba(255, 255, 255, .18); }
+  .app-shell:is(.has-home-navigation, .has-discovery-navigation) { --mobile-topbar-height: 44px; }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-discovery-navigation) .mobile-reading-topbar { --home-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --home-glass-edge: rgba(255, 255, 255, .65); }
+  :global([data-theme="dark"] .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-discovery-navigation) .mobile-reading-topbar) { --home-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --home-glass-edge: rgba(255, 255, 255, .18); }
   .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
-  .app-shell:not(.prevent-mobile-layout).has-home-navigation :deep(.mobile-search-entry) { background: color-mix(in srgb, var(--surface) 28%, transparent); border: 1px solid color-mix(in srgb, var(--border) 45%, transparent); box-shadow: inset 0 1px 0 var(--home-glass-edge, rgba(255, 255, 255, .65)); }
+  .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-discovery-navigation) :deep(.mobile-search-entry) { background: color-mix(in srgb, var(--surface) 28%, transparent); border: 1px solid color-mix(in srgb, var(--border) 45%, transparent); box-shadow: inset 0 1px 0 var(--home-glass-edge, rgba(255, 255, 255, .65)); }
   /* 话题标题栏和下方吸顶筛选共用底色与边缘，拼成连续的玻璃导航。 */
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar-content { background: var(--topic-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); box-shadow: inset 0 1px 0 var(--topic-glass-edge); }
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation :deep(.mobile-top-bar) { background: transparent; border-bottom: 0; }
@@ -453,7 +470,7 @@ onUnmounted(() => {
   .app-shell:not(.prevent-mobile-layout).is-reading-topbar-animating :deep(.mobile-top-bar) { min-height: var(--mobile-topbar-height); padding-top: 0; }
   .app-shell:not(.prevent-mobile-layout).has-mobile-window-controls :deep(.top-bar.has-window-controls) { position: relative; z-index: 35; }
   .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { will-change: transform, opacity; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
-  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translate3d(0, calc(100% + var(--mobile-bottom-nav-offset, 20px) + 16px), 0); opacity: 0; pointer-events: none; }
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translate3d(0, calc(100% + var(--mobile-bottom-nav-offset, 8px) + 16px), 0); opacity: 0; pointer-events: none; }
   /* 仅更新阅读容器本身的内边距与定位属性，不改祖先节点的 CSS 变量，避免全树 3000+ 节点样式重算。 */
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.feed-scroll-container) { padding-bottom: calc(var(--keyboard-inset, 0px) + var(--app-safe-area-bottom)); }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.mobile-sidebar-backdrop) { bottom: var(--app-safe-area-bottom); }
@@ -472,13 +489,13 @@ onUnmounted(() => {
   }
 
   .app-shell:not(.prevent-mobile-layout).has-mobile-bottom-nav {
-    --mobile-bottom-overlay-space: calc(var(--mobile-bottom-nav-height) + var(--mobile-bottom-nav-offset, 20px) + 8px);
+    --mobile-bottom-overlay-space: calc(var(--mobile-bottom-nav-height) + var(--mobile-bottom-nav-offset, 8px) + 8px);
   }
 
   /* 首页与话题的滚动区域延伸至屏幕顶部，玻璃顶栏覆盖其上；首屏按钮和正文分别预留安全区。 */
   .app-shell:not(.prevent-mobile-layout) {
     --mobile-glass-topbar-space: calc(var(--mobile-topbar-height) + var(--app-safe-area-top, 0px));
-    --mobile-home-header-fixed-space: calc(var(--mobile-glass-topbar-space) + 48px);
+    --mobile-home-header-fixed-space: calc(var(--mobile-glass-topbar-space) + var(--mobile-section-tabs-height));
   }
   .app-shell:not(.prevent-mobile-layout):is(.has-home-navigation, .has-topic-navigation, .has-discovery-navigation) .mobile-reading-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 30; grid-template-rows: 1fr; padding-top: 0; }
   .app-shell:not(.prevent-mobile-layout).has-topic-navigation .mobile-reading-topbar { background: var(--topic-glass-tint); -webkit-backdrop-filter: blur(24px) saturate(165%); backdrop-filter: blur(24px) saturate(165%); }

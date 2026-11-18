@@ -1,5 +1,8 @@
 <template>
-  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="feed-detail-page custom-scrollbar" :data-resource-scroll-root="!showSplit || undefined" :class="{ 'is-official-mobile': officialMobileDetail, 'is-split': showSplit, 'no-image-detail-enabled': detailImagesEnabled, 'reading-actions-hidden': detailReading.hidden.value }" @scroll.capture="detailReading.onScroll" @wheel.capture.passive="detailReading.onWheel" @touchstart.capture.passive="detailReading.onTouchStart" @touchmove.capture.passive="detailReading.onTouchMove">
+  <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: mobileRefreshBusy }" class="feed-detail-page custom-scrollbar" :data-resource-scroll-root="!showSplit || undefined" :class="{ 'is-official-mobile': officialMobileDetail, 'is-split': showSplit, 'no-image-detail-enabled': detailImagesEnabled, 'reading-actions-hidden': detailReading.hidden.value, 'has-joined-comment-header': commentHeaderJoined }" @scroll.capture="onDetailScroll" @wheel.capture.passive="detailReading.onWheel" @touchstart.capture.passive="detailReading.onTouchStart" @touchmove.capture.passive="detailReading.onTouchMove">
+    <div v-if="officialMobileDetail" v-show="commentHeaderJoined" ref="headerBackdropRef" class="feed-detail-header-backdrop" aria-hidden="true">
+      <div class="feed-detail-edge-blur"><span></span><span></span><span></span><span></span></div>
+    </div>
     <button v-if="officialMobileDetail && (!feedDetail || isAnswerDetail)" type="button" aria-label="返回" class="detail-fallback-back" @click="navigateBack(router)"><i class="fas fa-arrow-left"></i> 返回</button>
     <div ref="detailShellRef" class="feed-detail-shell" :class="{ 'enter-at-comments': entryPosition === 'comments' }">
       <LoadingState v-if="loading && !feedDetail" text="正在加载原动态..." />
@@ -86,6 +89,8 @@ const officialMobileDetail = useOfficialMobileFeedDetail();
 // 详情底栏沿用阅读导航设置；缓存页面和搜索、发布、大图浮层期间恢复状态。
 const detailActive = ref(true);
 const detailShellRef = ref<HTMLElement | null>(null);
+const headerBackdropRef = ref<HTMLElement | null>(null);
+const commentHeaderJoined = ref(false);
 const refreshFeedCard = ref<InstanceType<typeof FeedCard> | null>(null);
 const refreshAnswerCard = ref<InstanceType<typeof QuestionAnswerCard> | null>(null);
 let entryPositionApplied = false;
@@ -93,6 +98,7 @@ let entryPositionApplied = false;
 let activatedOnce = false;
 let stopEntryAnchor: (() => void) | undefined;
 let stopHeaderResize: (() => void) | undefined;
+let headerBackdropFrame: number | null = null;
 
 /** 顶栏高度包含状态栏安全区及字体适配，评论吸顶与入口定位共用实际测量值。 */
 function commentStickyHeader() {
@@ -103,24 +109,72 @@ function commentStickyHeader() {
 function updateCommentHeaderHeight() {
   const shell = detailShellRef.value;
   const header = commentStickyHeader();
-  const height = header?.getBoundingClientRect().height || 0;
+  // 窗口界面缩放后，sticky 的 top 仍需用布局像素，不能直接使用屏幕上的高度。
+  const height = header?.offsetHeight || header?.getBoundingClientRect().height || 0;
   if (height > 0) shell?.style.setProperty('--feed-detail-header-height', `${height}px`);
   else shell?.style.removeProperty('--feed-detail-header-height');
   return height;
 }
 
+function updateHeaderBackdrop() {
+  const backdrop = headerBackdropRef.value;
+  const header = commentStickyHeader();
+  const page = detailShellRef.value?.parentElement;
+  if (!page?.scrollTop || !backdrop || !header) {
+    commentHeaderJoined.value = false;
+    return;
+  }
+
+  const headerRect = header.getBoundingClientRect();
+  const toolbar = detailShellRef.value?.querySelector<HTMLElement>('.official-detail-comments .comment-toolbar');
+  const toolbarRect = toolbar?.getBoundingClientRect();
+  // 只在排序栏贴到作者栏时启用共用渐变，避免动态正文的首行落在模糊区。
+  if (!headerRect.height || !toolbar || !toolbarRect?.height) {
+    commentHeaderJoined.value = false;
+    return;
+  }
+  const headerHeight = header.offsetHeight || headerRect.height;
+  const layoutScale = headerHeight / headerRect.height;
+  const gap = (toolbarRect.top - headerRect.top - headerRect.height) * layoutScale;
+  commentHeaderJoined.value = Math.abs(gap) <= 1;
+  if (!commentHeaderJoined.value) return;
+  const toolbarHeight = toolbar.offsetHeight || toolbarRect.height * layoutScale;
+  const height = `${Math.round(headerHeight + toolbarHeight)}px`;
+  if (backdrop.style.getPropertyValue('--feed-detail-backdrop-content-height') !== height) backdrop.style.setProperty('--feed-detail-backdrop-content-height', height);
+}
+
+function onDetailScroll(event: Event) {
+  detailReading.onScroll(event);
+  if (!detailActive.value || !headerBackdropRef.value || event.target !== event.currentTarget || headerBackdropFrame !== null) return;
+  headerBackdropFrame = requestAnimationFrame(() => {
+    headerBackdropFrame = null;
+    updateHeaderBackdrop();
+  });
+}
+
+function stopHeaderObservation() {
+  stopHeaderResize?.();
+  stopHeaderResize = undefined;
+  if (headerBackdropFrame !== null) cancelAnimationFrame(headerBackdropFrame);
+  headerBackdropFrame = null;
+}
+
 async function observeCommentHeader() {
   await nextTick();
   // 多个数据变化可能在同一帧触发，挂载新观察器前先释放上一份订阅。
-  stopHeaderResize?.();
-  stopHeaderResize = undefined;
+  stopHeaderObservation();
   if (!detailActive.value) return;
   updateCommentHeaderHeight();
+  updateHeaderBackdrop();
   const header = commentStickyHeader();
-  if (header) stopHeaderResize = observeResizeOnFrame(header, updateCommentHeaderHeight);
+  if (!header) return;
+  const stopAuthorResize = observeResizeOnFrame(header, () => { updateCommentHeaderHeight(); updateHeaderBackdrop(); });
+  const toolbar = detailShellRef.value?.querySelector('.official-detail-comments .comment-toolbar');
+  const stopToolbarResize = toolbar ? observeResizeOnFrame(toolbar, updateHeaderBackdrop) : undefined;
+  stopHeaderResize = () => { stopAuthorResize(); stopToolbarResize?.(); };
 }
 watch([detailShellRef, officialMobileDetail, detailActive], () => { void observeCommentHeader(); }, { flush: 'post' });
-onUnmounted(() => { stopHeaderResize?.(); stopEntryAnchor?.(); });
+onUnmounted(() => { stopHeaderObservation(); stopEntryAnchor?.(); });
 
 const detailVisible = inject(feedPageVisibleKey, ref(true));
 // Teleport 内容不随缓存页面一起隐藏，必须同时校验该详情实例归属的「路由路径 + 动态 id」。
@@ -143,7 +197,7 @@ onActivated(() => {
   activatedOnce = true;
   void applyEntryPosition();
 });
-onDeactivated(() => { detailActive.value = false; stopHeaderResize?.(); stopEntryAnchor?.(); stopEntryAnchor = undefined; });
+onDeactivated(() => { detailActive.value = false; stopHeaderObservation(); stopEntryAnchor?.(); stopEntryAnchor = undefined; });
 // 注意：判据用 `mobileLayout`（纯布局）而不是 `officialMobileDetail`。
 // 后者是「布局 × officialMobileFeedDetail 开关」的合取 —— 用户关掉那个开关后，
 // 触摸设备上它也是 false，于是平板会误入分栏。与点击侧（FeedCard 的
@@ -261,10 +315,13 @@ async function applyEntryPosition(followLayout = false) {
     if (!comments) return;
     // 留出仍在吸顶的作者栏，避免评论标题滚入状态栏或被顶栏覆盖。
     const headerHeight = updateCommentHeaderHeight();
-    page.scrollTop += comments.getBoundingClientRect().top - page.getBoundingClientRect().top - headerHeight;
+    const pageRect = page.getBoundingClientRect();
+    const scale = page.offsetHeight && pageRect.height ? pageRect.height / page.offsetHeight : 1;
+    page.scrollTop += (comments.getBoundingClientRect().top - pageRect.top) / scale - headerHeight;
   } else {
     page.scrollTop = 0;
   }
+  updateHeaderBackdrop();
   entryPositionApplied = true;
   detailReading.reset();
 }
@@ -327,13 +384,96 @@ async function refreshMobilePage() { await fetchDetail(); await refreshFeedCard.
   }
 }
 /* 保留触摸滚动与下拉刷新，避免滚动条和系统回弹出现在详情页边缘。 */
-.feed-detail-page.is-official-mobile { background: var(--surface); scrollbar-width: none; overscroll-behavior-y: none; }
+.feed-detail-page.is-official-mobile {
+  --detail-control-fill: var(--surface-hover);
+  --detail-control-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0));
+  --detail-control-border: var(--border-light);
+  --detail-control-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  --detail-control-active-fill: var(--surface);
+  --detail-control-active-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.16));
+  --detail-control-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  background: var(--surface);
+  scrollbar-width: none;
+  overscroll-behavior-y: none;
+}
 .feed-detail-page.is-official-mobile::-webkit-scrollbar { display: none; }
 /* 详情卡片不能创建内部裁切滚动容器，否则作者栏与评论栏的 sticky 会失效。 */
 .is-official-mobile :deep(.feed-card.is-official-mobile-detail) { overflow: visible; }
-.is-official-mobile :deep(.official-detail-comments .comment-toolbar) { top: var(--feed-detail-header-height, 60px); scroll-margin-top: var(--feed-detail-header-height, 60px); }
-.is-official-mobile .feed-detail-shell { padding-bottom: calc(100px + env(safe-area-inset-bottom)); }
-.is-official-mobile.reading-actions-hidden .feed-detail-shell { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+.is-official-mobile :deep(.official-detail-comments .comment-toolbar) { top: var(--feed-detail-header-height, 60px); scroll-margin-top: var(--feed-detail-header-height, 60px); padding: 2px 0 4px; }
+@supports (color: color-mix(in srgb, #fff, transparent)) {
+  .feed-detail-page.is-official-mobile {
+    --detail-control-fill: color-mix(in srgb, var(--surface-hover) 68%, transparent);
+    --detail-control-gradient: linear-gradient(180deg, color-mix(in srgb, var(--surface) 56%, transparent), color-mix(in srgb, var(--surface-hover) 24%, transparent));
+    --detail-control-border: color-mix(in srgb, var(--border-light) 64%, transparent);
+    --detail-control-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 72%, transparent);
+    --detail-control-active-fill: color-mix(in srgb, var(--surface) 88%, transparent);
+    --detail-control-active-gradient: linear-gradient(180deg, color-mix(in srgb, var(--surface) 96%, transparent), color-mix(in srgb, var(--surface) 68%, transparent));
+    --detail-control-active-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), inset 0 1px 0 color-mix(in srgb, var(--surface) 85%, transparent);
+  }
+  .feed-detail-page.has-joined-comment-header {
+    --detail-control-fill: color-mix(in srgb, var(--surface-hover) 44%, transparent);
+    --detail-control-gradient: linear-gradient(180deg, color-mix(in srgb, var(--surface) 64%, transparent), color-mix(in srgb, var(--surface-hover) 26%, transparent));
+    --detail-control-border: color-mix(in srgb, var(--border-light) 42%, transparent);
+    --detail-control-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 66%, transparent);
+    --detail-control-active-fill: color-mix(in srgb, var(--surface) 62%, transparent);
+    --detail-control-active-gradient: linear-gradient(180deg, color-mix(in srgb, var(--surface) 84%, transparent), color-mix(in srgb, var(--surface) 44%, transparent));
+    --detail-control-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), inset 0 1px 0 color-mix(in srgb, var(--surface) 76%, transparent);
+  }
+}
+.has-joined-comment-header :deep(.official-detail-author),
+.has-joined-comment-header .detail-fallback-back,
+.has-joined-comment-header :deep(.official-detail-comments .comment-toolbar) { background: transparent; border-bottom-color: transparent; }
+/* 作者和排序栏共用一层背景。不要在容器上设 mask 或 opacity，否则内层无法采样正文。 */
+.feed-detail-header-backdrop { position: sticky; top: 0; z-index: 4; height: 0; pointer-events: none; }
+.feed-detail-edge-blur {
+  /* 渐变在排序栏内淡出，栏下方的第一行评论保持清晰。 */
+  --edge-blur-fade: 18px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--feed-detail-backdrop-content-height, 60px);
+}
+.feed-detail-edge-blur::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(to bottom, var(--surface) calc(100% - var(--edge-blur-fade)), transparent);
+}
+
+/* 改编自 Motion Patterns · Edge Blur，MIT 许可随 index.html 一起打包。 */
+.feed-detail-edge-blur > span { display: none; }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and ((mask-image: linear-gradient(#000, transparent)) or (-webkit-mask-image: linear-gradient(#000, transparent))) {
+  .feed-detail-edge-blur::after {
+    background: linear-gradient(to bottom, color-mix(in srgb, var(--surface) 95%, transparent), color-mix(in srgb, var(--surface) 82%, transparent) calc(100% - var(--edge-blur-fade)), transparent);
+  }
+  .feed-detail-edge-blur > span {
+    display: block;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    -webkit-backdrop-filter: blur(var(--blur-radius));
+    backdrop-filter: blur(var(--blur-radius));
+    -webkit-mask-image: linear-gradient(#000 var(--blur-start), transparent var(--blur-end));
+    mask-image: linear-gradient(#000 var(--blur-start), transparent var(--blur-end));
+  }
+  .feed-detail-edge-blur > :nth-child(1) { --blur-radius: 1px; --blur-start: calc(100% - 16px); --blur-end: 100%; }
+  .feed-detail-edge-blur > :nth-child(2) { --blur-radius: 2px; --blur-start: calc(100% - 28px); --blur-end: calc(100% - 8px); }
+  .feed-detail-edge-blur > :nth-child(3) { --blur-radius: 4px; --blur-start: calc(100% - 44px); --blur-end: calc(100% - 16px); }
+  .feed-detail-edge-blur > :nth-child(4) { --blur-radius: 8px; --blur-start: calc(100% - 64px); --blur-end: calc(100% - 24px); }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .feed-detail-edge-blur > span { display: none; }
+  .feed-detail-edge-blur::after { background: linear-gradient(to bottom, var(--surface) calc(100% - var(--edge-blur-fade)), transparent); }
+}
+.is-official-mobile .feed-detail-shell { padding-bottom: calc(100px + var(--app-safe-area-bottom)); }
+.is-official-mobile.reading-actions-hidden .feed-detail-shell { padding-bottom: calc(8px + var(--mobile-reading-edge-fade) + var(--app-safe-area-bottom)); }
 .feed-detail-page {
   width: 100%;
   height: 100%;

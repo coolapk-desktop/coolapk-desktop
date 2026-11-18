@@ -103,6 +103,46 @@ describe('官方详情评论加载', () => {
     } finally { wrapper.unmount(); rect.mockRestore(); }
   });
 
+  it('评论排序吸顶时才启用渐变，滚回动态正文后关闭', async () => {
+    mocks.context.mockReturnValue({ id: '42', uid: '1', username: '作者', message: '正文' });
+    mocks.detail.mockResolvedValue({ data: { id: '42', uid: '1', username: '作者', message: '正文' } });
+    let toolbarTop = 240;
+    let scale = 1;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('official-detail-author')) return { top: 0, height: 60 * scale } as DOMRect;
+      if (this.classList.contains('comment-toolbar')) return { top: toolbarTop * scale, height: 44 * scale } as DOMRect;
+      return { top: 0, height: 0 } as DOMRect;
+    });
+    const wrapper = mount(FeedDetailPage, { props: { feedId: '42' }, global: { stubs: { FeedCard: { template: '<article><header class="official-detail-author">作者</header><section class="official-detail-comments"><div class="comment-toolbar">排序</div></section></article>' } } } });
+    try {
+      await flushPromises();
+      const backdrop = wrapper.get<HTMLElement>('.feed-detail-header-backdrop').element;
+      const height = () => backdrop.style.getPropertyValue('--feed-detail-backdrop-content-height');
+      const joined = () => wrapper.classes().includes('has-joined-comment-header');
+      expect(joined()).toBe(false);
+      expect(backdrop.style.display).toBe('none');
+      (wrapper.element as HTMLElement).scrollTop = 120;
+      toolbarTop = 74;
+      await wrapper.trigger('scroll');
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      expect(joined()).toBe(false);
+      toolbarTop = 60;
+      await wrapper.trigger('scroll');
+      await vi.waitFor(() => expect(joined()).toBe(true));
+      expect(height()).toBe('104px');
+      Object.defineProperty(wrapper.get('.official-detail-author').element, 'offsetHeight', { value: 60 });
+      scale = 0.8;
+      await wrapper.trigger('scroll');
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      expect(joined()).toBe(true);
+      expect(height()).toBe('104px');
+      toolbarTop = 240;
+      await wrapper.trigger('scroll');
+      await vi.waitFor(() => expect(joined()).toBe(false));
+      expect(backdrop.style.display).toBe('none');
+    } finally { wrapper.unmount(); rect.mockRestore(); }
+  });
+
   it.each(['top', 'comments'])('根据入口定位到 %s，详情刷新后不打断继续阅读', async scrollTo => {
     mocks.query = { scrollTo };
     mocks.context.mockReturnValue({ id: '42', uid: '1', username: '作者', message: '正文' });

@@ -2,7 +2,7 @@
   <div v-pull-refresh="{ refresh: refreshMobilePage, disabled: Boolean(selectedTab && states[selectedTab.key]?.loading) }" :class="['discover-page', { 'is-cool-picture': isCoolPicturePage }]" @pointerdown="discoveryRipple" @keydown="discoveryRipple">
     <div class="discover-main-column">
       <div class="discover-toolbar-row">
-        <FeedTabs ref="feedTabsView" v-if="tabs.length" :active-key="selectedKey" :tabs="feedTabs" :show-manage="false" @update:active-key="selectTab" />
+        <FeedTabs ref="feedTabsView" v-if="tabs.length" class="mobile-section-tabs" :active-key="selectedKey" :tabs="feedTabs" :show-manage="false" @update:active-key="selectTab" />
       </div>
 
       <div v-if="configError && !tabs.length" class="config-error">
