@@ -147,7 +147,7 @@ button { font: inherit; color: inherit; background: transparent; border: 0; curs
 .card-empty { padding: 16px 12px 24px; color: var(--text-tertiary); font-size: 14px; }
 .card-state { padding: 16px; color: var(--text-tertiary); text-align: center; }
 .card-image-placeholder { display: grid; place-items: center; background: var(--background); color: var(--text-tertiary); }
-.card-manager-page { position: fixed; top: var(--app-viewport-top, 0px); left: 0; width: 100%; height: var(--app-viewport-height, 100dvh); background: var(--surface); z-index: 2200; padding: var(--app-safe-area-top, 0px) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); display: flex; flex-direction: column; }
+.card-manager-page { position: fixed; top: var(--app-viewport-top, 0px); left: 0; width: 100%; height: var(--app-viewport-height, 100dvh); background: var(--surface); z-index: 2200; padding: var(--app-safe-area-top, 0px) var(--app-safe-area-right) var(--app-safe-area-bottom) var(--app-safe-area-left); display: flex; flex-direction: column; }
 .card-manager-page header { display: flex; align-items: center; gap: 12px; padding: 0 8px; min-height: 56px; border-bottom: 1px solid var(--border-light); }
 .card-manager-page h2 { font-size: 20px; flex: 1; }
 .card-manager-page header button { min-width: 44px; min-height: 44px; }

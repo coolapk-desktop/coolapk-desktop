@@ -8,6 +8,7 @@ import android.content.Intent
 import android.app.AlertDialog
 import android.app.Activity
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -35,6 +36,7 @@ import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
@@ -42,7 +44,8 @@ import kotlin.math.ceil
 import kotlin.math.sqrt
 
 class MainActivity : TauriActivity() {
-    @Volatile private var topSafeAreaPx = 0
+    @Volatile private var webSafeArea = Insets.NONE
+    private var imageViewerImmersive = false
     private var mainWebView: WeakReference<WebView>? = null
     private var activityResumed = false
     private var foregroundDrawRequest = 0L
@@ -189,12 +192,22 @@ class MainActivity : TauriActivity() {
     }
 
     @Keep
-    fun getSafeAreaTop(@Suppress("UNUSED_PARAMETER") unused: String): String = topSafeAreaPx.toString()
+    fun getSafeArea(@Suppress("UNUSED_PARAMETER") unused: String): String = webSafeArea.let { "[${it.top},${it.right},${it.bottom},${it.left}]" }
 
-    private fun syncWebSafeArea(top: Int) {
-        topSafeAreaPx = top
-        // WebView 不可靠地提供 CSS safe-area，按实际像素比例传入顶部安全区；旋转时同步更新。
-        mainWebView?.get()?.evaluateJavascript("document.documentElement.style.setProperty('--android-safe-area-top', ($top / window.devicePixelRatio) + 'px')", null)
+    private fun syncWebSafeArea(area: Insets) {
+        webSafeArea = area
+        // 旧 WebView 不一定提供 CSS 安全区，按实际像素比例同步四边的控件避让距离。
+        mainWebView?.get()?.evaluateJavascript("""
+            (function () {
+                var root = document.documentElement;
+                if (!root) return;
+                var ratio = window.devicePixelRatio || 1;
+                root.style.setProperty('--android-safe-area-top', (${area.top} / ratio) + 'px');
+                root.style.setProperty('--android-safe-area-right', (${area.right} / ratio) + 'px');
+                root.style.setProperty('--android-safe-area-bottom', (${area.bottom} / ratio) + 'px');
+                root.style.setProperty('--android-safe-area-left', (${area.left} / ratio) + 'px');
+            })();
+        """.trimIndent(), null)
     }
 
     @Keep
@@ -220,11 +233,23 @@ class MainActivity : TauriActivity() {
             dimmed -> ColorUtils.blendARGB(surface, Color.BLACK, 0.4f)
             else -> surface
         }
-        window.decorView.setBackgroundColor(background)
+        window.setBackgroundDrawable(ColorDrawable(background))
         findViewById<View>(android.R.id.content).setBackgroundColor(background)
+        mainWebView?.get()?.setBackgroundColor(background)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.isAppearanceLightStatusBars = !dark && !imageViewer
         controller.isAppearanceLightNavigationBars = !dark && !imageViewer
+        if (imageViewerImmersive != imageViewer) {
+            imageViewerImmersive = imageViewer
+            val statusBars = WindowInsetsCompat.Type.statusBars()
+            if (imageViewer) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(statusBars)
+            } else {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+                controller.show(statusBars)
+            }
+        }
     }
 
     @Keep
@@ -442,7 +467,7 @@ class MainActivity : TauriActivity() {
         // 旧版 Android 仍依赖此模式派发 IME 区域，保留兼容行为。
         @Suppress("DEPRECATION")
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        // 顶部由网页安全区避让，让内容可以绘制在透明状态栏后；左右、底部和键盘仍由原生处理。
+        // WebView 绘制至系统栏后面，网页控件按安全区避让。软键盘弹出时缩小原生视口。
         val content = findViewById<View>(android.R.id.content)
         val safeAreaTypes = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
         val handledTypes = safeAreaTypes or WindowInsetsCompat.Type.ime()
@@ -450,10 +475,11 @@ class MainActivity : TauriActivity() {
             val bars = insets.getInsets(safeAreaTypes)
             val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
             val (cornerTop, cornerBottom) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) roundedCornerClearance(view, insets, bars) else 0 to 0
-            // 键盘高度已包含底部系统区域，取较大值而非相加，避免输入框被重复顶起。
-            view.setPadding(bars.left, 0, bars.right, maxOf(bars.bottom, cornerBottom, keyboard.bottom))
-            syncWebSafeArea(maxOf(bars.top, cornerTop))
-            // 网页使用显式传入的顶部安全区，清除重复派发，避免再次缩小内容区。
+            val statusTop = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.statusBars()).top
+            view.setPadding(0, 0, 0, keyboard.bottom)
+            val bottom = if (keyboard.bottom > 0) 0 else maxOf(bars.bottom, cornerBottom)
+            syncWebSafeArea(Insets.of(bars.left, maxOf(bars.top, statusTop, cornerTop), bars.right, bottom))
+            // 清除重复派发，避免网页再次避让同一系统栏或键盘。
             WindowInsetsCompat.Builder(insets)
                 .setInsets(handledTypes, Insets.NONE)
                 .setInsetsIgnoringVisibility(safeAreaTypes, Insets.NONE)

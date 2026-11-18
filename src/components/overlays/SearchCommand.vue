@@ -686,10 +686,10 @@ onUnmounted(() => window.removeEventListener('keydown', handleGlobalKeydown));
     border-radius: 0;
     box-shadow: none;
     padding-top: var(--app-safe-area-top, 0px);
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--app-safe-area-bottom);
   }
   .search-input-header {
-    padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    padding: 0 max(12px, var(--app-safe-area-right)) 0 max(12px, var(--app-safe-area-left));
     gap: 8px;
   }
   .search-input { font-size: 16px; height: 44px; }

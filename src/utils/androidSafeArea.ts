@@ -4,7 +4,11 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 export async function initializeAndroidSafeArea() {
   if (!isTauri() || !/android/i.test(navigator.userAgent)) return;
   try {
-    const top = await invoke<number>('get_android_safe_area_top');
-    if (Number.isFinite(top) && top >= 0) document.documentElement.style.setProperty('--android-safe-area-top', `${top / (window.devicePixelRatio || 1)}px`);
-  } catch (error) { console.warn('读取 Android 顶部安全区失败:', error); }
+    const area = await invoke<[number, number, number, number]>('get_android_safe_area');
+    const ratio = window.devicePixelRatio || 1;
+    ['top', 'right', 'bottom', 'left'].forEach((edge, index) => {
+      const pixels = area[index];
+      if (Number.isFinite(pixels) && pixels >= 0) document.documentElement.style.setProperty(`--android-safe-area-${edge}`, `${pixels / ratio}px`);
+    });
+  } catch (error) { console.warn('读取 Android 安全区失败:', error); }
 }

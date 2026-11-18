@@ -386,9 +386,9 @@ defineExpose({ notifyShareSuccess });
   --detail-glass-tint: color-mix(in srgb, var(--surface) 56%, transparent);
   --detail-glass-edge: #ffffffb8;
   position: fixed;
-  left: max(20px, env(safe-area-inset-left));
-  right: max(20px, env(safe-area-inset-right));
-  bottom: calc(20px + env(safe-area-inset-bottom));
+  left: max(20px, var(--app-safe-area-left));
+  right: max(20px, var(--app-safe-area-right));
+  bottom: calc(20px + var(--app-safe-area-bottom));
   z-index: 45;
   display: grid;
   grid-template-columns: 44% repeat(4, minmax(0, 1fr));
@@ -400,7 +400,7 @@ defineExpose({ notifyShareSuccess });
   background: transparent;
   isolation: isolate;
 }
-.feed-action-bar.official-detail-actions.reading-hidden { transform: translate3d(0, calc(100% + 20px + env(safe-area-inset-bottom, 0px)), 0); opacity: 0; pointer-events: none; }
+.feed-action-bar.official-detail-actions.reading-hidden { transform: translate3d(0, calc(100% + 20px + var(--app-safe-area-bottom)), 0); opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .feed-action-bar.official-detail-actions { transition: none; } }
 .official-detail-actions::before,
 .official-detail-actions .official-write-comment {

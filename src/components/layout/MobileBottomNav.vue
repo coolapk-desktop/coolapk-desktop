@@ -150,8 +150,8 @@ function activate(path: string) {
     /* 左右留白限制可用宽度，导航栏按可见入口数量居中。 */
     left: 20px;
     right: 20px;
-    left: max(20px, env(safe-area-inset-left));
-    right: max(20px, env(safe-area-inset-right));
+    left: max(20px, var(--app-safe-area-left));
+    right: max(20px, var(--app-safe-area-right));
     width: fit-content;
     margin-inline: auto;
     border: 1px solid var(--nav-glass-edge);

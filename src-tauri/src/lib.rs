@@ -624,15 +624,15 @@ async fn set_android_system_bar_theme(app: tauri::AppHandle, dark: bool, profile
 }
 
 #[tauri::command]
-async fn get_android_safe_area_top(app: tauri::AppHandle) -> Result<f64, String> {
+async fn get_android_safe_area(app: tauri::AppHandle) -> Result<[u32; 4], String> {
     #[cfg(target_os = "android")]
     {
         // 返回物理像素，由网页按 WebView 的像素比例换算，避免字号或显示缩放造成偏移。
-        let raw = coolapk::commands::call_android_update_method(&app, "getSafeAreaTop", String::new()).await?;
-        raw.parse::<f64>().map_err(|_| "Android 顶部安全区格式错误".to_string())
+        let raw = coolapk::commands::call_android_update_method(&app, "getSafeArea", String::new()).await?;
+        serde_json::from_str(&raw).map_err(|_| "Android 安全区格式错误".to_string())
     }
     #[cfg(not(target_os = "android"))]
-    { let _ = app; Ok(0.0) }
+    { let _ = app; Ok([0; 4]) }
 }
 
 #[tauri::command]
@@ -1570,7 +1570,7 @@ pub fn run() {
             set_window_theme,
             system_theme::get_linux_system_theme,
             set_android_system_bar_theme,
-            get_android_safe_area_top,
+            get_android_safe_area,
             log_android_runtime_info,
             pick_font_family,
             set_live_tile_enabled,

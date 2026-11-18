@@ -1998,14 +1998,14 @@ onUnmounted(() => {
 .is-mobile-layout .viewer-topbar {
   height: auto;
   min-height: 44px;
-  padding: var(--app-safe-area-top, 0px) 10px 0;
-  padding-right: max(10px, env(safe-area-inset-right, 0px));
-  padding-left: max(10px, env(safe-area-inset-left, 0px));
+  padding: var(--app-safe-area-top, 0px) calc(10px + var(--android-safe-area-right, 0px)) 0 calc(10px + var(--android-safe-area-left, 0px));
+  padding-right: max(10px, var(--app-safe-area-right));
+  padding-left: max(10px, var(--app-safe-area-left));
 }
 
-.is-mobile-layout .viewer-bottombar {
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-}
+.is-mobile-layout .viewer-bottombar { bottom: calc(16px + var(--app-safe-area-bottom)); }
+.is-mobile-layout .nav-prev { left: calc(8px + var(--app-safe-area-left)); }
+.is-mobile-layout .nav-next { right: calc(8px + var(--app-safe-area-right)); }
 
 @media (max-width: 720px) {
   .image-viewer-backdrop {
@@ -2017,9 +2017,9 @@ onUnmounted(() => {
     min-height: 44px;
     flex-wrap: wrap;
     gap: 4px 8px;
-    padding: var(--app-safe-area-top, 0px) 10px 0;
-    padding-right: max(10px, env(safe-area-inset-right, 0px));
-    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding: var(--app-safe-area-top, 0px) calc(10px + var(--android-safe-area-right, 0px)) 0 calc(10px + var(--android-safe-area-left, 0px));
+    padding-right: max(10px, var(--app-safe-area-right));
+    padding-left: max(10px, var(--app-safe-area-left));
   }
 
   /* 桌面版整排按钮宽度（约 428px）超过手机可用宽度，这里压缩到能完整放下关闭按钮。 */
@@ -2057,7 +2057,7 @@ onUnmounted(() => {
   .nav-next { right: 8px; }
 
   .viewer-bottombar {
-    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(16px + var(--app-safe-area-bottom));
   }
 }
 </style>

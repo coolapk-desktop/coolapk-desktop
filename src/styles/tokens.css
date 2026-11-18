@@ -1,7 +1,10 @@
 /* src/styles/tokens.css - 基础 Token 定义 */
 :root {
-  /* iOS 使用系统安全区，Android 使用原生传入的值；两端共享顶部布局。 */
+  /* iOS 使用系统安全区，Android 使用原生传入的值。 */
   --app-safe-area-top: var(--android-safe-area-top, env(safe-area-inset-top, 0px));
+  --app-safe-area-right: var(--android-safe-area-right, env(safe-area-inset-right, 0px));
+  --app-safe-area-bottom: var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px));
+  --app-safe-area-left: var(--android-safe-area-left, env(safe-area-inset-left, 0px));
   /* 基础字号规范 */
   --font-family-system: Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
   --font-family-base: var(--font-family-system);
@@ -59,7 +62,7 @@
   --mobile-window-controls-height: 32px;
   --mobile-bottom-nav-height: 56px;
   /* 旧 WebView 不支持 max()，导航定位、正文留白和收起距离共享有效回退值。 */
-  --mobile-bottom-nav-offset: 20px;
+  --mobile-bottom-nav-offset: calc(20px + var(--android-safe-area-bottom, 0px));
   --mobile-page-padding: 10px;
   --mobile-feed-gap: 8px;
 
@@ -72,5 +75,5 @@
 
 /* 支持 max 的内核同时考虑系统安全区；旧 WebView 使用上方原生安全区回退。 */
 @supports (padding-top: max(0px, 1px)) {
-  :root { --app-safe-area-top: max(env(safe-area-inset-top, 0px), var(--android-safe-area-top, 0px)); --mobile-bottom-nav-offset: max(20px, env(safe-area-inset-bottom, 0px)); }
+  :root { --app-safe-area-top: max(env(safe-area-inset-top, 0px), var(--android-safe-area-top, 0px)); --mobile-bottom-nav-offset: max(calc(20px + var(--android-safe-area-bottom, 0px)), env(safe-area-inset-bottom, 0px)); }
 }

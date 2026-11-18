@@ -2387,7 +2387,7 @@ async function handleSend() {
 .inline-composer-layer { display: contents; }
 /* 挂在 body 上，避免帖子容器的变换/裁切和桌面侧栏遮挡；使用键盘上方的可视视口。 */
 .official-composer-layer { position: fixed; left: 0; right: 0; top: var(--app-viewport-top, 0px); height: var(--app-viewport-height, 100dvh); z-index: 1100; display: flex; flex-direction: column; justify-content: flex-end; pointer-events: none; }
-.official-composer-layer .comment-composer-box { position: relative; z-index: 1; flex-shrink: 0; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; margin: 0; max-height: calc(100% - 16px); overflow-y: auto; border-radius: 18px 18px 0 0; padding: 30px max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--surface); box-shadow: 0 -4px 28px #0002; pointer-events: auto; }
+.official-composer-layer .comment-composer-box { position: relative; z-index: 1; flex-shrink: 0; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; margin: 0; max-height: calc(100% - 16px); overflow-y: auto; border-radius: 18px 18px 0 0; padding: 30px max(16px, var(--app-safe-area-right)) max(16px, var(--app-safe-area-bottom)) max(16px, var(--app-safe-area-left)); background: var(--surface); box-shadow: 0 -4px 28px #0002; pointer-events: auto; }
 .official-composer-layer .comment-composer-toolbar { flex-shrink: 0; }
 .official-composer-layer .comment-rich-editor { flex-shrink: 0; min-height: 52px; max-height: min(120px, calc(var(--app-viewport-height, 100dvh) * .2)); }
 .official-composer-layer .comment-media-preview { flex-shrink: 0; max-height: 76px; overflow-y: auto; }

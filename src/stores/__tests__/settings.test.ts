@@ -448,8 +448,10 @@ describe('settings store', () => {
       store.setAndroidSystemBarDimmed(Symbol('reply'), true);
       store.setAndroidImageViewerBackground(true);
       expect(invoke).toHaveBeenLastCalledWith('set_android_system_bar_theme', { dark: false, profile: true, dimmed: true, imageViewer: true });
+      expect(document.documentElement.hasAttribute('data-android-image-viewer')).toBe(true);
       store.setAndroidImageViewerBackground(false);
       expect(invoke).toHaveBeenLastCalledWith('set_android_system_bar_theme', { dark: false, profile: true, dimmed: true, imageViewer: false });
+      expect(document.documentElement.hasAttribute('data-android-image-viewer')).toBe(false);
     } finally { userAgent.mockRestore(); }
   });
 

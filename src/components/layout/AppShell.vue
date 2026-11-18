@@ -363,6 +363,9 @@ onUnmounted(() => {
   --topic-glass-edge: rgba(255, 255, 255, .65);
 }
 
+/* 原生视口覆盖整块屏幕；普通页面仍在安全区内排列。 */
+.app-shell.is-android { padding: 0 var(--app-safe-area-right) var(--app-safe-area-bottom) var(--app-safe-area-left); }
+
 .mobile-reading-topbar, .mobile-reading-topbar-content, .mobile-reading-topbar-stack { display: contents; }
 .app-shell.has-web-desktop-navigation { --app-titlebar-height: 0px; }
 :global([data-theme="dark"] .app-shell) { --topic-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --topic-glass-edge: rgba(255, 255, 255, .18); }
@@ -415,6 +418,11 @@ onUnmounted(() => {
 }
 
 @media (max-width: 720px) {
+  /* 主栏目正文可滚到透明导航栏背后，底栏和末尾内容各自预留安全区。 */
+  .app-shell.is-android.has-mobile-bottom-nav { padding-bottom: 0; }
+  .app-shell.is-android.has-home-navigation { background-color: var(--surface); }
+  .app-shell.is-android.has-home-navigation :deep(.feed-scroll-container) { scrollbar-width: none; }
+  .app-shell.is-android.has-home-navigation :deep(.feed-scroll-container::-webkit-scrollbar) { display: none; }
   /* 首页搜索和主栏目共用玻璃与折叠容器（变量局部挂载在顶栏容器，避免切页时在根容器改写 CSS 变量触发全树样式重算）。 */
   .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar { --home-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent); --home-glass-edge: rgba(255, 255, 255, .65); }
   :global([data-theme="dark"] .app-shell:not(.prevent-mobile-layout).has-home-navigation .mobile-reading-topbar) { --home-glass-tint: color-mix(in srgb, var(--surface) 65%, transparent); --home-glass-edge: rgba(255, 255, 255, .18); }
@@ -447,8 +455,8 @@ onUnmounted(() => {
   .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { will-change: transform, opacity; transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease; }
   .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden :deep(.mobile-bottom-nav) { transform: translate3d(0, calc(100% + var(--mobile-bottom-nav-offset, 20px) + 16px), 0); opacity: 0; pointer-events: none; }
   /* 仅更新阅读容器本身的内边距与定位属性，不改祖先节点的 CSS 变量，避免全树 3000+ 节点样式重算。 */
-  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.feed-scroll-container) { padding-bottom: calc(var(--keyboard-inset, 0px) + env(safe-area-inset-bottom, 0px)); }
-  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.mobile-sidebar-backdrop) { bottom: env(safe-area-inset-bottom, 0px); }
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.feed-scroll-container) { padding-bottom: calc(var(--keyboard-inset, 0px) + var(--app-safe-area-bottom)); }
+  .app-shell:not(.prevent-mobile-layout).reading-navigation-hidden.has-mobile-bottom-nav:not(.has-discovery-navigation) :deep(.mobile-sidebar-backdrop) { bottom: var(--app-safe-area-bottom); }
   @media (prefers-reduced-motion: reduce) {
     .app-shell:not(.prevent-mobile-layout) :deep(.mobile-bottom-nav) { transition: none; }
   }

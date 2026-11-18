@@ -702,7 +702,8 @@ export const useSettingsStore = defineStore('settings', () => {
   function syncAndroidSystemBarTheme() {
     if (typeof window === 'undefined' || !(window as any).__TAURI_INTERNALS__) return;
     if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)) {
-      // Android 状态栏后方由网页绘制；原生同步状态栏文字明暗及底部安全区的主题与遮罩。
+      document.documentElement.toggleAttribute('data-android-image-viewer', androidImageViewerBackground);
+      // 网页绘制系统栏后方，原生同步窗口底色、图标明暗和看图时的状态栏可见性。
       void invoke('set_android_system_bar_theme', { dark: document.documentElement.getAttribute('data-theme') === 'dark', profile: androidProfileBackground.value, dimmed: androidSystemBarDimOwners.size > 0, imageViewer: androidImageViewerBackground }).catch((err) => console.warn('同步 Android 状态栏主题失败:', err));
     }
   }
