@@ -12,7 +12,7 @@ function harness(protectedContent = ref(false), pageVisible = ref(true)) {
     notify = callback;
     return { observe, unobserve, disconnect };
   }));
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 280));
+  vi.spyOn(window, 'getComputedStyle').mockReturnValue({ height: '280px' } as CSSStyleDeclaration);
   const child = defineComponent({ setup: () => ({ state: ref('initial') }), template: '<input v-model="state" />' });
   const wrapper = mount(defineComponent({
     components: { child },
@@ -22,19 +22,22 @@ function harness(protectedContent = ref(false), pageVisible = ref(true)) {
     },
     template: '<article ref="element" :style="viewportPlaceholderStyle" @click.capture="retainViewportContent"><child v-if="renderViewportContent" /></article>',
   }));
-  const visibility = async (visible: boolean) => {
-    notify([{ target: wrapper.element, isIntersecting: visible, boundingClientRect: new DOMRect(0, 0, 400, 280) }] as IntersectionObserverEntry[], {} as IntersectionObserver);
+  const visibility = async (visible: boolean, observedHeight = 280) => {
+    notify([{ target: wrapper.element, isIntersecting: visible, boundingClientRect: new DOMRect(0, 0, 400, observedHeight) }] as IntersectionObserverEntry[], {} as IntersectionObserver);
     await nextTick();
   };
   return { wrapper, visibility, observe, unobserve, disconnect };
 }
 
-it('reclaims unseen children, preserves exact height, and restores them before entering the viewport', async () => {
+it('preserves the unscaled layout height when reclaiming offscreen children during a transition', async () => {
   const h = harness();
   await nextTick();
-  await h.visibility(false);
+  await h.visibility(false, 277.76);
   expect(h.wrapper.find('input').exists()).toBe(false);
   expect((h.wrapper.element as HTMLElement).style.height).toBe('280px');
+  vi.mocked(window.getComputedStyle).mockClear();
+  await h.visibility(false, 277.76);
+  expect(window.getComputedStyle).not.toHaveBeenCalledWith(h.wrapper.element);
   await h.visibility(true);
   expect(h.wrapper.find('input').exists()).toBe(true);
   expect((h.wrapper.element as HTMLElement).style.height).toBe('');
@@ -96,14 +99,14 @@ it('does not rebuild offscreen children when a tab becomes visible again', async
   const h = harness(ref(false), visible);
   await nextTick();
   await h.visibility(false);
-  const measure = vi.spyOn(h.wrapper.element, 'getBoundingClientRect');
+  const measure = vi.mocked(window.getComputedStyle).mockClear();
   visible.value = false;
   await nextTick();
   visible.value = true;
   await nextTick();
   expect(h.wrapper.find('input').exists()).toBe(false);
   expect((h.wrapper.element as HTMLElement).style.height).toBe('280px');
-  expect(measure).not.toHaveBeenCalled();
+  expect(measure).not.toHaveBeenCalledWith(h.wrapper.element);
   await h.visibility(true);
   expect(h.wrapper.find('input').exists()).toBe(true);
   h.wrapper.unmount();
@@ -111,6 +114,7 @@ it('does not rebuild offscreen children when a tab becomes visible again', async
 
 it('keeps offscreen placeholders when a KeepAlive page is restored', async () => {
   let notify!: IntersectionObserverCallback;
+  vi.spyOn(window, 'getComputedStyle').mockReturnValue({ height: '280px' } as CSSStyleDeclaration);
   vi.stubGlobal('IntersectionObserver', vi.fn(function(callback: IntersectionObserverCallback) {
     notify = callback;
     return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };

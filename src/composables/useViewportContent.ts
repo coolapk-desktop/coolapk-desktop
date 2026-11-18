@@ -1,7 +1,7 @@
 import { computed, nextTick, onActivated, onDeactivated, onUnmounted, ref, watch, type Ref } from 'vue';
 import { getResourceScrollRoot } from '../utils/resourceVisibility';
 
-type CardObserver = { visibility: (visible: boolean, height: number) => void; resize: () => void };
+type CardObserver = { visibility: (visible: boolean) => void; resize: () => void };
 const cards = new Map<Element, CardObserver & { reobserve: () => void }>();
 const observers = new Map<Element | null, { observer: IntersectionObserver; count: number }>();
 let resizeFrame = 0;
@@ -21,7 +21,7 @@ function observeCard(element: Element, callback: CardObserver) {
   let group = observers.get(root);
   if (!group) {
     const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) cards.get(entry.target)?.visibility(entry.isIntersecting, entry.boundingClientRect.height);
+      for (const entry of entries) cards.get(entry.target)?.visibility(entry.isIntersecting);
     }, { root, rootMargin: '2000px 0px' });
     group = { observer, count: 0 };
     observers.set(root, group);
@@ -77,14 +77,18 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
       nearViewport.value = true;
     }
     stop = observeCard(element.value, {
-      visibility(visible, measured) {
+      visibility(visible) {
         if (visible) nearViewport.value = true;
         else {
+          const card = element.value;
+          if (!card || !renderViewportContent.value) return;
           const selection = window.getSelection();
-          if (element.value && selection && !selection.isCollapsed && selection.containsNode(element.value, true)) {
+          if (selection && !selection.isCollapsed && selection.containsNode(card, true)) {
             retainViewportContent();
             return;
           }
+          // 卡片使用 border-box。读取未缩放的布局高度，避免把路由转场中的视觉尺寸写回占位。
+          const measured = Number.parseFloat(getComputedStyle(card).height);
           if (measured > 0) {
             height.value = measured;
             nearViewport.value = false;
