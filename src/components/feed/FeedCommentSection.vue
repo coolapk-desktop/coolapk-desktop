@@ -127,7 +127,7 @@
       />
 
       <!-- 工具栏与表情面板 -->
-      <div v-if="floatingComposer && showEmojiPicker" ref="officialEmojiPanelRef" class="official-composer-emoji" @click.stop>
+      <div v-if="floatingComposer && showEmojiPicker" ref="inlineEmojiPanelRef" class="official-composer-emoji" @click.stop>
         <EmojiPanel :key="String(feedId)" initial-tab="recent" :disabled="sending" :selected-urls="images.flatMap(image => image.url ? [image.url] : [])" @select="insertEmoji" @picture="selectFavoritePicture" />
       </div>
       <div class="comment-composer-toolbar">
@@ -140,6 +140,7 @@
               :class="{ 'is-active': showEmojiPicker }"
               title="插入表情"
               aria-label="插入表情"
+              :aria-expanded="showEmojiPicker"
               @click.stop="toggleEmojiPicker"
             >
               <i class="fa-regular fa-face-smile"></i>
@@ -148,7 +149,7 @@
 
             <!-- 官方分类表情浮层 -->
             <div
-              v-if="showEmojiPicker && !floatingComposer"
+              v-if="showEmojiPicker && !floatingComposer && !asideLayout"
               class="emoji-picker-popover custom-scrollbar"
               @click.stop
             >
@@ -185,6 +186,10 @@
             {{ replyTargetUser ? '回复' : '评论' }}
           </Button>
         </div>
+      </div>
+      <!-- 右栏在滚动容器内，表情面板随评论一起滚动，避免被栏顶裁切。 -->
+      <div v-if="showEmojiPicker && asideLayout && !floatingComposer" ref="inlineEmojiPanelRef" class="aside-composer-emoji" @click.stop>
+        <EmojiPanel :key="String(feedId)" initial-tab="recent" :disabled="sending" :selected-urls="images.flatMap(image => image.url ? [image.url] : [])" @select="insertEmoji" @picture="selectFavoritePicture" />
       </div>
     </div>
 
@@ -842,7 +847,7 @@ const uploadedCount = ref(0);
 const imageInputRef = ref<HTMLInputElement | null>(null);
 const showEmojiPicker = ref(false);
 const emojiContainerRef = ref<HTMLElement | null>(null);
-const officialEmojiPanelRef = ref<HTMLElement | null>(null);
+const inlineEmojiPanelRef = ref<HTMLElement | null>(null);
 const { addRecent } = useRecentEmojis();
 // 恢复草稿时程序写入的正文：只跳过这一次写回，不影响后续输入落盘。
 let draftJustRestored: string | null = null;
@@ -1510,6 +1515,9 @@ function toggleEmojiPicker() {
   showEmojiPicker.value = !showEmojiPicker.value;
   // 移动端用表情面板替代软键盘，插入表情时不主动唤起键盘。
   if (showEmojiPicker.value && (isTouchMobilePlatform() || isCoarsePointer())) inputRef.value?.blur();
+  if (showEmojiPicker.value && props.asideLayout && !floatingComposer.value) {
+    void nextTick(() => inlineEmojiPanelRef.value?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }));
+  }
 }
 
 function handleEditorPointerDown() {
@@ -1764,7 +1772,7 @@ async function updateRepliedFloor(feedId: string, replyId: string, returnedReply
 }
 
 function handleClickOutside(event: MouseEvent) {
-  if (showEmojiPicker.value && emojiContainerRef.value && !emojiContainerRef.value.contains(event.target as Node) && !officialEmojiPanelRef.value?.contains(event.target as Node)) {
+  if (showEmojiPicker.value && emojiContainerRef.value && !emojiContainerRef.value.contains(event.target as Node) && !inlineEmojiPanelRef.value?.contains(event.target as Node)) {
     showEmojiPicker.value = false;
   }
 }
@@ -2449,8 +2457,10 @@ async function handleSend() {
 .official-composer-layer .comment-composer-toolbar { flex-shrink: 0; }
 .official-composer-layer .comment-rich-editor { flex-shrink: 0; min-height: 52px; max-height: min(120px, calc(var(--app-viewport-height, 100dvh) * .2)); }
 .official-composer-layer .comment-media-preview { flex-shrink: 0; max-height: 76px; overflow-y: auto; }
-.official-composer-emoji { height: min(320px, calc(var(--app-viewport-height, 100dvh) * .4)); min-height: 0; flex-shrink: 1; margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-.official-composer-emoji :deep(.categorized-emoji-panel) { height: 100%; }
+.official-composer-emoji,
+.aside-composer-emoji { height: min(320px, calc(var(--app-viewport-height, 100dvh) * .4)); min-height: 0; flex-shrink: 1; margin-top: 8px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.official-composer-emoji :deep(.categorized-emoji-panel),
+.aside-composer-emoji :deep(.categorized-emoji-panel) { height: 100%; }
 .desktop-reply-composer .comment-composer-box { width: min(640px, 100%); align-self: center; }
 .official-composer-backdrop { position: absolute; inset: 0; background: #0006; pointer-events: auto; }
 .official-composer-close { position: absolute; right: 10px; top: 4px; width: 30px; height: 30px; border: 0; background: transparent; color: var(--text-secondary); font-size: 18px; }
