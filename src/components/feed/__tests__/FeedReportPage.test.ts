@@ -48,6 +48,15 @@ describe('官方举报表单', () => {
     expect((wrapper.get('input[value="小广告"]').element as HTMLInputElement).checked).toBe(true);
     await wrapper.get('form').trigger('submit'); await flushPromises(); expect(mocks.submit).toHaveBeenCalledTimes(2); wrapper.unmount();
   });
+  it('识别官方字符串状态码 200 成功并拒绝 403 等失败状态', async () => {
+    mocks.submit.mockResolvedValueOnce({ code: 200, data: { status: '403', message: '服务器错误，请求不合法！' } });
+    const wrapper = mountPage(); await flushPromises(); await wrapper.get('input[value="小广告"]').setValue(true);
+    await wrapper.get('form').trigger('submit'); await flushPromises();
+    expect(wrapper.get('[role=alert]').text()).toContain('服务器错误，请求不合法！'); expect(wrapper.find('[role=status]').exists()).toBe(false);
+    mocks.submit.mockResolvedValueOnce({ code: 200, data: { status: '200', message: '举报成功，感谢您的反馈' } });
+    await wrapper.get('form').trigger('submit'); await flushPromises();
+    expect(wrapper.get('[role=status]').text()).toBe('举报成功，感谢您的反馈'); expect(wrapper.get('.report-submit').attributes('disabled')).toBeDefined(); wrapper.unmount();
+  });
   it('未登录返回提示，不显示虚构原因或提交按钮', async () => {
     mocks.fetch.mockResolvedValue({ data: { html: '<div class="weui-msg__desc">请先登录</div>', status: 200 } });
     const wrapper = mountPage(); await flushPromises(); expect(wrapper.text()).toContain('请先登录'); expect(wrapper.find('form').exists()).toBe(false); wrapper.unmount();

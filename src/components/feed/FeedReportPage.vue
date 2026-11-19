@@ -82,7 +82,8 @@ async function submit() {
     }
     const response: any = await CoolapkTauriAPI.submitFeedReport(report.value.id, report.value.type, reason.value, customReason.value.trim(), report.value.requestHash, pictures.value.map(item => item.uploaded!));
     const result = response?.data ?? response;
-    if (result?.status === 0 || result?.status < 0 || (result?.code != null && ![0, 1, 200].includes(Number(result.code)))) throw new Error(result?.message || '举报提交失败');
+    const status = result?.status == null ? null : Number(result.status);
+    if ((status !== null && ![1, 200].includes(status)) || (result?.code != null && ![0, 1, 200].includes(Number(result.code)))) throw new Error(result?.message || '举报提交失败');
     if (!result || (result.status == null && result.code == null && !result.message)) throw new Error('举报服务返回异常');
     submitted.value = true; successMessage.value = result.message || '举报已提交';
   } catch (error) { submitError.value = errorMessage(error); }

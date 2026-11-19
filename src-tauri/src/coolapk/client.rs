@@ -1,9 +1,10 @@
 use super::http_session::{session, Policy as SessionPolicy};
 use crate::coolapk::auth::{APP_CODE, CoolapkAuth};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use reqwest::header::{COOKIE, HeaderMap, HeaderValue, LOCATION, USER_AGENT};
+use reqwest::header::{COOKIE, HeaderMap, HeaderValue, LOCATION, SET_COOKIE, USER_AGENT};
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -240,6 +241,16 @@ pub fn classify_path(path: &str) -> PathRequirements {
     }
 }
 
+const MAX_REPORT_FORM_SESSIONS: usize = 16;
+
+#[derive(Clone)]
+struct ReportFormSession {
+    request_hash: String,
+    sessid: Option<String>,
+    user_agent: String,
+    uid: Option<String>,
+}
+
 pub struct CoolapkClient {
     client: RwLock<Client>,
     /// Live Photo 解析只需要拿到重定向地址，不能跟随重定向把视频正文提前下载掉。
@@ -254,6 +265,8 @@ pub struct CoolapkClient {
     device_code: RwLock<String>,
     /// 服务端验证码凭证独立于登录态，仅在再次验证成功时替换。
     captcha_validation: RwLock<Option<String>>,
+    /// 举报表单 GET 时服务端绑定的 SESSID（仅保留在 Rust 内存，不传给前端）。
+    report_form_sessions: RwLock<VecDeque<ReportFormSession>>,
     generated_identity: RwLock<super::shuzilm::IdentityState>,
     identity_generation: tokio::sync::Mutex<()>,
 }
@@ -596,6 +609,150 @@ fn extract_html_title(html: &str) -> Option<String> {
     let end = lower[start..].find("</title>")? + start;
     let title = html[start..end].trim().to_string();
     if title.is_empty() { None } else { Some(title) }
+}
+
+fn is_feed_report_page_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.host_str() == Some("m.coolapk.com")
+        && url.path() == "/mp/do"
+        && url.query_pairs().any(|(key, value)| key == "m" && value == "report")
+}
+
+fn extract_set_cookie_sessid(headers: &HeaderMap) -> Option<String> {
+    let mut sessid = None;
+    for value in headers.get_all(SET_COOKIE) {
+        let Ok(raw) = value.to_str() else { continue; };
+        let Some(pair) = raw.split(';').next() else { continue; };
+        let Some((name, val)) = pair.trim().split_once('=') else { continue; };
+        if !name.trim().eq_ignore_ascii_case("SESSID") { continue; }
+        let val = val.trim();
+        if val.bytes().all(|b| b.is_ascii_graphic() && b != b';')
+            && CoolapkClient::has_valid_session_cookie(&format!("SESSID={val}"))
+        {
+            sessid = Some(val.to_string());
+        }
+    }
+    sessid
+}
+
+fn extract_html_attr(tag: &str, attr_name: &str) -> Option<String> {
+    let bytes = tag.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i] != b'<' { i += 1; }
+    if i < bytes.len() { i += 1; }
+    while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' && bytes[i] != b'/' { i += 1; }
+    while i < bytes.len() {
+        while i < bytes.len() && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') { i += 1; }
+        if i >= bytes.len() || bytes[i] == b'>' { break; }
+        let name_start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'=' && bytes[i] != b'>' && bytes[i] != b'/' { i += 1; }
+        let name = &tag[name_start..i];
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+        let value = if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let quote = bytes[i];
+                i += 1;
+                let val_start = i;
+                while i < bytes.len() && bytes[i] != quote { i += 1; }
+                let val = &tag[val_start..i];
+                if i < bytes.len() { i += 1; }
+                Some(val)
+            } else {
+                let val_start = i;
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' { i += 1; }
+                Some(&tag[val_start..i])
+            }
+        } else {
+            None
+        };
+        if name.eq_ignore_ascii_case(attr_name) {
+            return value.map(|v| v.trim().to_string());
+        }
+    }
+    None
+}
+
+fn is_valid_request_hash(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && value.bytes().all(|b| b.is_ascii_graphic())
+}
+
+fn extract_report_request_hash(html: &str) -> Option<String> {
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    let mut body_fallback = None;
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let name_start = start + 1;
+        let mut cursor = name_start;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_alphabetic() { cursor += 1; }
+        let tag_name = &html[name_start..cursor];
+        let is_target_tag = (tag_name.eq_ignore_ascii_case("input") || tag_name.eq_ignore_ascii_case("body"))
+            && cursor < bytes.len()
+            && bytes[cursor].is_ascii_whitespace();
+        if !is_target_tag {
+            i = start + 1;
+            continue;
+        }
+        let mut quote: Option<u8> = None;
+        while cursor < bytes.len() {
+            let b = bytes[cursor];
+            if let Some(q) = quote {
+                if b == q { quote = None; }
+            } else if b == b'"' || b == b'\'' {
+                quote = Some(b);
+            } else if b == b'>' {
+                cursor += 1;
+                break;
+            }
+            cursor += 1;
+        }
+        let tag = &html[start..cursor];
+        if tag_name.eq_ignore_ascii_case("input")
+            && extract_html_attr(tag, "name").as_deref() == Some("requestHash")
+        {
+            if let Some(val) = extract_html_attr(tag, "value").filter(|v| is_valid_request_hash(v)) {
+                return Some(val);
+            }
+        } else if tag_name.eq_ignore_ascii_case("body") && body_fallback.is_none() {
+            body_fallback = extract_html_attr(tag, "data-request-hash").filter(|v| is_valid_request_hash(v));
+        }
+        i = cursor;
+    }
+    body_fallback
+}
+
+fn json_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+}
+
+fn feed_report_response_succeeded(value: &Value) -> bool {
+    if value.get("SESSION").and_then(|s| s.get("isLogin")).and_then(Value::as_bool) == Some(false) {
+        return false;
+    }
+    if value.get("forwardUrl").and_then(Value::as_str).is_some_and(|url| url.contains("/auth/login")) {
+        return false;
+    }
+    if value.get("pageTitle").and_then(Value::as_str) == Some("出错了") {
+        return false;
+    }
+    if value.get("messageStatus").and_then(json_i64).is_some_and(|status| status <= 0) {
+        return false;
+    }
+    if value.get("messageCode").and_then(json_i64).is_some_and(|code| code <= 0 || code >= 400) {
+        return false;
+    }
+    if let Some(status) = value.get("status").and_then(json_i64) {
+        return matches!(status, 1 | 200);
+    }
+    value.get("code").and_then(json_i64).is_some_and(|code| matches!(code, 0 | 1 | 200))
 }
 
 /// 剔除网页外壳噪音标签（导航/页脚/脚本/样式等），保留正文骨架。
@@ -1138,6 +1295,7 @@ impl CoolapkClient {
             native_device_profile,
             device_code: RwLock::new(device_code),
             captcha_validation: RwLock::new(None),
+            report_form_sessions: RwLock::new(VecDeque::new()),
             generated_identity: RwLock::new(super::shuzilm::IdentityState::default()),
             identity_generation: tokio::sync::Mutex::new(()),
         }
@@ -1955,17 +2113,18 @@ impl CoolapkClient {
     pub fn set_user_cookie(&self, cookie: String) -> Result<(), String> {
         let previous_uid = self.current_uid();
         let safe_ascii = Self::sanitize_cookie(&cookie);
+        let next = if safe_ascii.is_empty() { None } else { Some(safe_ascii) };
 
         let mut stored = self
             .user_cookie
             .write()
             .map_err(|_| "failed to lock login state".to_string())?;
-        *stored = if safe_ascii.is_empty() {
-            None
-        } else {
-            Some(safe_ascii)
-        };
+        let changed = *stored != next;
+        *stored = next;
         drop(stored);
+        if changed {
+            self.clear_report_form_sessions();
+        }
         if previous_uid != self.current_uid() {
             if let Ok(mut state) = self.generated_identity.write() { state.session_changed(); }
             self.restore_account_device_identity();
@@ -4309,11 +4468,17 @@ impl CoolapkClient {
 
         let parsed_url = reqwest::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
         let is_coolapk_target = parsed_url.host_str().map(is_coolapk_host).unwrap_or(false);
+        let is_report_page = is_feed_report_page_url(&parsed_url);
+        let request_ua = if is_report_page {
+            self.report_webview_user_agent()
+        } else {
+            MOBILE_UA.to_string()
+        };
 
         let mut request = page_client
             .get(url)
             .timeout(std::time::Duration::from_secs(15))
-            .header("User-Agent", MOBILE_UA)
+            .header("User-Agent", &request_ua)
             .header("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8");
 
         // 酷安网页版动态页（www.coolapk.com/feed/xxx）带 X- 系列头时会直接返回 JSON 动态详情
@@ -4325,6 +4490,7 @@ impl CoolapkClient {
                 .header("X-App-Id", "com.coolapk.market");
         }
 
+        let request_uid = self.current_uid();
         let cookie = self
             .user_cookie
             .read()
@@ -4334,7 +4500,12 @@ impl CoolapkClient {
             // 仅当目标是酷安官方域时才附带登录 Cookie；
             // 抓取任意第三方网页时绝不携带凭据，防止恶意链接窃取登录态
             if is_coolapk_target {
-                let cookie = cookie_without_ddid(&cookie);
+                let cookie = if is_report_page {
+                    let did = self.effective_custom_device_id();
+                    user_plugin_cookie(&cookie, did.as_deref(), None)
+                } else {
+                    cookie_without_ddid(&cookie)
+                };
                 if let Ok(header_val) = reqwest::header::HeaderValue::from_str(&cookie) {
                     request = request.header(COOKIE, header_val);
                 }
@@ -4343,14 +4514,21 @@ impl CoolapkClient {
 
         let resp = request.send().await.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
+        let is_report_response = is_feed_report_page_url(resp.url());
+        let report_sessid = if is_report_response {
+            extract_set_cookie_sessid(resp.headers())
+        } else {
+            None
+        };
         let body = resp.text().await.map_err(|e| e.to_string())?;
+        if is_report_response && self.current_uid() == request_uid {
+            if let Some(request_hash) = extract_report_request_hash(&body) {
+                self.remember_report_form_session(&request_hash, report_sessid, &request_ua);
+            }
+        }
         let title = extract_html_title(&body).unwrap_or_else(|| "外部链接".to_string());
         // 只取正文：剥离导航/页脚/脚本等外壳噪音（酷安 /feed/ 分享页即为纯扫码落地页）
         // 动态接口在 XHR 模式下返回 JSON，必须保留原文，否则正文里的 HTML 可能被网页清洗器误删。
-        let is_report_page = parsed_url.scheme() == "https"
-            && parsed_url.host_str() == Some("m.coolapk.com")
-            && parsed_url.path() == "/mp/do"
-            && parsed_url.query_pairs().any(|(key, value)| key == "m" && value == "report");
         let content = if is_report_page || (is_coolapk_target
             && url.contains("coolapk.com/feed/")
             && serde_json::from_str::<Value>(&body).is_ok())
@@ -4366,8 +4544,99 @@ impl CoolapkClient {
         }))
     }
 
+    /// 官方 APK 内置 WebView（UserAgentHandler + C2481）使用的 UA：
+    /// 携带 `(#Build; ...)` 与 `+CoolMarket/<version>-<code>-<mode>`，
+    /// 否则酷安举报提交会拒绝并提示「举报操作需要升级酷安至最新版」。
+    fn report_webview_user_agent(&self) -> String {
+        let profile = self
+            .device_profile
+            .read()
+            .ok()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        let pick = |override_val: Option<&str>, native_val: Option<&str>, default_val: &str| -> String {
+            override_val
+                .or(native_val)
+                .map(str::trim)
+                .filter(|v| !v.is_empty() && v.bytes().all(|b| (0x20..=0x7E).contains(&b)))
+                .unwrap_or(default_val)
+                .to_string()
+        };
+        let brand = pick(profile.brand.as_deref(), self.native_device_profile.brand.as_deref(), "Redmi");
+        let model = pick(profile.model.as_deref(), self.native_device_profile.model.as_deref(), "23113RKC6C");
+        let build = pick(profile.build.as_deref(), self.native_device_profile.build.as_deref(), "AQ3A.250226.002");
+        let app_version = pick(profile.app_version.as_deref(), None, "16.6.5");
+        let default_code = APP_CODE.to_string();
+        let app_code = pick(profile.app_code.as_deref(), None, &default_code);
+        let app_mode = profile.app_mode();
+        format!(
+            "Mozilla/5.0 (Linux; Android 16; {model} Build/{build}; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.0.0 Mobile Safari/537.36 (#Build; {brand}; {model}; {build}; 16) +CoolMarket/{app_version}-{app_code}-{app_mode}"
+        )
+    }
+
+    fn remember_report_form_session(&self, request_hash: &str, sessid: Option<String>, user_agent: &str) {
+        let uid = self.current_uid();
+        if let Ok(mut sessions) = self.report_form_sessions.write() {
+            sessions.retain(|entry| entry.request_hash != request_hash);
+            while sessions.len() >= MAX_REPORT_FORM_SESSIONS {
+                sessions.pop_front();
+            }
+            sessions.push_back(ReportFormSession {
+                request_hash: request_hash.to_string(),
+                sessid,
+                user_agent: user_agent.to_string(),
+                uid,
+            });
+        }
+    }
+
+    fn report_form_session(&self, request_hash: &str) -> Option<ReportFormSession> {
+        let uid = self.current_uid();
+        self.report_form_sessions
+            .read()
+            .ok()?
+            .iter()
+            .rev()
+            .find(|entry| entry.request_hash == request_hash && entry.uid == uid)
+            .cloned()
+    }
+
+    fn remove_report_form_session(&self, request_hash: &str) {
+        if let Ok(mut sessions) = self.report_form_sessions.write() {
+            sessions.retain(|entry| entry.request_hash != request_hash);
+        }
+    }
+
+    fn clear_report_form_sessions(&self) {
+        if let Ok(mut sessions) = self.report_form_sessions.write() {
+            sessions.clear();
+        }
+    }
+
     /// 官方网页举报表单：固定目标地址，凭据不经过前端，禁止跨域重定向。
     pub async fn submit_feed_report(&self, id: &str, report_type: &str, reason: &str, custom_reason: &str, request_hash: &str, pictures: &[String]) -> Result<Value, String> {
+        self.submit_feed_report_to(
+            "https://m.coolapk.com/mp/do?c=feed&m=report",
+            id,
+            report_type,
+            reason,
+            custom_reason,
+            request_hash,
+            pictures,
+        )
+        .await
+    }
+
+    async fn submit_feed_report_to(
+        &self,
+        endpoint: &str,
+        id: &str,
+        report_type: &str,
+        reason: &str,
+        custom_reason: &str,
+        request_hash: &str,
+        pictures: &[String],
+    ) -> Result<Value, String> {
         if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) || !["feed", "reply"].contains(&report_type)
             || reason.trim().is_empty() || reason.len() > 1000 || request_hash.is_empty()
             || request_hash.len() > 128 || custom_reason.len() > 4000 || pictures.len() > 9 {
@@ -4382,22 +4651,39 @@ impl CoolapkClient {
         }
         let cookie = self.user_cookie.read().map_err(|_| "无法读取登录状态".to_string())?.clone()
             .ok_or_else(|| "请先登录后举报".to_string())?;
-        let client = session("https://m.coolapk.com", SessionPolicy::NoRedirect)?;
+        // 酷安网页端 requestHash 与 GET 表单时生效的 SESSID + UA 绑定，
+        // 且举报接口要求官方 CoolMarket WebView UA 与 DID，提交时严格复用 GET 时的会话信息。
+        let form_session = self.report_form_session(request_hash);
+        let did = self.effective_custom_device_id();
+        let base_cookie = user_plugin_cookie(&cookie, did.as_deref(), None);
+        let submit_cookie = match form_session.as_ref().and_then(|s| s.sessid.as_deref()) {
+            Some(sessid) => merge_cookie_value(&base_cookie, "SESSID", sessid),
+            None => base_cookie,
+        };
+        let submit_ua = form_session
+            .as_ref()
+            .map(|s| s.user_agent.clone())
+            .unwrap_or_else(|| self.report_webview_user_agent());
+        let endpoint_url = reqwest::Url::parse(endpoint).map_err(|_| "举报提交地址无效".to_string())?;
+        let origin = endpoint_url.origin().ascii_serialization();
+        let referer = format!("{endpoint}&type={report_type}&id={id}");
+        let client = session(endpoint, SessionPolicy::NoRedirect)?;
         let form = reqwest::multipart::Form::new()
             .text("requestHash", request_hash.to_string()).text("submit", "1")
             .text("id", id.to_string()).text("type", report_type.to_string())
             .text("report_reason", reason.to_string()).text("custom_report_reason", custom_reason.to_string())
             .text("pic", pictures.join(","));
-        let response = client.post("https://m.coolapk.com/mp/do?c=feed&m=report")
+        let response = client.post(endpoint)
             .timeout(std::time::Duration::from_secs(30))
-            .header("User-Agent", MOBILE_UA).header("X-Requested-With", "XMLHttpRequest")
-            .header("Origin", "https://m.coolapk.com").header("Referer", "https://m.coolapk.com/mp/do?c=feed&m=report")
-            .header(COOKIE, cookie_without_ddid(&cookie)).multipart(form).send().await.map_err(|e| e.to_string())?;
+            .header("User-Agent", submit_ua).header("X-Requested-With", "XMLHttpRequest")
+            .header("Origin", origin).header("Referer", referer)
+            .header(COOKIE, submit_cookie).multipart(form).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() { return Err(format!("举报提交失败：HTTP {}", response.status())); }
         let value: Value = response.json().await.map_err(|_| "举报服务返回异常，请重新加载表单".to_string())?;
-        let success = value.get("status").and_then(Value::as_i64).map(|status| status == 1)
-            .or_else(|| value.get("code").and_then(Value::as_i64).map(|code| [0, 1, 200].contains(&code))).unwrap_or(false);
-        if !success { return Err(value.get("message").and_then(Value::as_str).unwrap_or("举报服务返回异常，请重新加载表单").to_string()); }
+        if !feed_report_response_succeeded(&value) {
+            return Err(value.get("message").and_then(Value::as_str).unwrap_or("举报服务返回异常，请重新加载表单").to_string());
+        }
+        self.remove_report_form_session(request_hash);
         Ok(json!({ "code": 200, "data": value }))
     }
 
@@ -7803,6 +8089,7 @@ impl CoolapkClient {
             .map_err(|_| "failed to lock login state".to_string())?;
         *stored = None;
         drop(stored);
+        self.clear_report_form_sessions();
         if let Ok(mut state) = self.generated_identity.write() { state.session_changed(); }
         // 清空当前登录标记（保留账户记录，便于下次快速切换）
         let mut root = self.load_accounts_root();
@@ -10026,6 +10313,176 @@ mod download_file_tests {
             }
             tokio::fs::remove_file(path).await.unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod feed_report_tests {
+    use super::{
+        CoolapkClient, HeaderMap, HeaderValue, SET_COOKIE,
+        extract_report_request_hash, extract_set_cookie_sessid, feed_report_response_succeeded,
+    };
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn extracts_set_cookie_sessid_and_report_request_hash() {
+        let mut headers = HeaderMap::new();
+        headers.append(SET_COOKIE, HeaderValue::from_static("SESSID=deleted; Max-Age=0"));
+        headers.append(SET_COOKIE, HeaderValue::from_static("token=abc; HttpOnly"));
+        headers.append(
+            SET_COOKIE,
+            HeaderValue::from_static("SESSID=w1-fresh-mobile-session; path=/; domain=.coolapk.com"),
+        );
+        assert_eq!(extract_set_cookie_sessid(&headers).as_deref(), Some("w1-fresh-mobile-session"));
+
+        let html = r#"<script>if (status >= 200 && status < 300) { const s = "don't break"; }</script>
+            <body data-uid="123" data-request-hash="body-hash">
+            <form id="report" action="/mp/do?c=feed&m=report" method="post">
+                <input type="hidden" name="requestHash" value="form-hash-123"/>
+            </form></body>"#;
+        assert_eq!(extract_report_request_hash(html).as_deref(), Some("form-hash-123"));
+
+        let reversed = r#"<input value='rev-hash' name='requestHash' type='hidden'>"#;
+        assert_eq!(extract_report_request_hash(reversed).as_deref(), Some("rev-hash"));
+
+        let body_only = r#"<body data-request-hash="fallback-hash"></body>"#;
+        assert_eq!(extract_report_request_hash(body_only).as_deref(), Some("fallback-hash"));
+    }
+
+    #[test]
+    fn evaluates_feed_report_response_statuses() {
+        assert!(feed_report_response_succeeded(&json!({
+            "SESSION": { "isLogin": true },
+            "status": "200",
+            "messageCode": "200",
+            "message": "举报成功",
+            "pageTitle": "提示"
+        })));
+        assert!(feed_report_response_succeeded(&json!({ "status": 1, "message": "举报成功" })));
+        assert!(feed_report_response_succeeded(&json!({ "status": "1", "message": "举报成功" })));
+        assert!(feed_report_response_succeeded(&json!({ "code": 200, "message": "举报成功" })));
+
+        assert!(!feed_report_response_succeeded(&json!({
+            "SESSION": { "isLogin": false },
+            "status": "200",
+            "messageCode": "200",
+            "message": "你还没有登录，请先登录！",
+            "forwardUrl": "https://account.coolapk.com/auth/login?forward=..."
+        })));
+        assert!(!feed_report_response_succeeded(&json!({
+            "SESSION": { "isLogin": true },
+            "status": "403",
+            "messageCode": "403",
+            "message": "服务器错误，请求不合法！",
+            "pageTitle": "出错了"
+        })));
+        assert!(!feed_report_response_succeeded(&json!({
+            "SESSION": { "isLogin": true },
+            "status": "400",
+            "messageCode": "400",
+            "message": "你还没有选择举报原因",
+            "pageTitle": "出错了"
+        })));
+        assert!(!feed_report_response_succeeded(&json!({ "status": 0, "messageStatus": 0, "message": "失败" })));
+        assert!(!feed_report_response_succeeded(&json!({})));
+    }
+
+    #[tokio::test]
+    async fn submit_feed_report_reuses_form_sessid_and_preserves_retry_until_success() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut captured = Vec::new();
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let header_end = loop {
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    buf.extend_from_slice(&chunk[..read]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                let headers_str = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+                let content_length = headers_str
+                    .lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length").then(|| v.trim().parse::<usize>().ok()).flatten()
+                    })
+                    .unwrap_or(0);
+                while buf.len() < header_end + content_length {
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    if read == 0 { break; }
+                    buf.extend_from_slice(&chunk[..read]);
+                }
+                captured.push(String::from_utf8_lossy(&buf).into_owned());
+                let body = if attempt == 0 {
+                    r#"{"SESSION":{"isLogin":true},"status":"400","messageCode":"400","message":"临时校验失败","pageTitle":"出错了"}"#
+                } else {
+                    r#"{"SESSION":{"isLogin":true},"status":"200","messageCode":"200","message":"举报成功","pageTitle":"提示"}"#
+                };
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(resp.as_bytes()).await.unwrap();
+            }
+            captured
+        });
+
+        let client = CoolapkClient::new();
+        client
+            .set_user_cookie("SESSID=w1-desktop-login; uid=42; username=tester; token=secret-token; ddid=skip-me".into())
+            .unwrap();
+        let form_ua = client.report_webview_user_agent();
+        assert!(form_ua.contains("(#Build; "));
+        assert!(form_ua.contains("+CoolMarket/16.6.5-2610162-universal"));
+        client.remember_report_form_session(
+            "hash-mobile-1",
+            Some("w1-mobile-form-session".to_string()),
+            &form_ua,
+        );
+
+        let endpoint = format!("http://{address}/mp/do?c=feed&m=report");
+        let first_err = client
+            .submit_feed_report_to(&endpoint, "99", "feed", "小广告", "", "hash-mobile-1", &[])
+            .await
+            .unwrap_err();
+        assert_eq!(first_err, "临时校验失败");
+        assert_eq!(
+            client.report_form_session("hash-mobile-1").and_then(|s| s.sessid).as_deref(),
+            Some("w1-mobile-form-session")
+        );
+
+        let second_ok = client
+            .submit_feed_report_to(&endpoint, "99", "feed", "小广告", "", "hash-mobile-1", &[])
+            .await
+            .unwrap();
+        assert_eq!(second_ok["data"]["message"], "举报成功");
+        assert!(client.report_form_session("hash-mobile-1").is_none());
+
+        let requests = server.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        for req in &requests {
+            let lower = req.to_ascii_lowercase();
+            assert!(lower.contains(&format!("user-agent: {}", form_ua.to_ascii_lowercase())));
+            assert!(lower.contains(&format!("referer: {endpoint}&type=feed&id=99")));
+            assert!(req.contains("SESSID=w1-mobile-form-session"));
+            assert!(!req.contains("w1-desktop-login"));
+            assert!(!req.contains("ddid=skip-me"));
+            assert!(req.contains("uid=42"));
+            assert!(req.contains("token=secret-token"));
+        }
+
+        // 切换或清空账号后，旧账号的举报会话必须立即失效。
+        client.remember_report_form_session("hash-other", Some("w1-other-session".to_string()), &form_ua);
+        client.set_user_cookie("SESSID=w1-new-account; uid=43; token=other".into()).unwrap();
+        assert!(client.report_form_session("hash-other").is_none());
     }
 }
 
