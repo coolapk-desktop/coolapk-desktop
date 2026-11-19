@@ -15,7 +15,10 @@ export function renderNotificationRichText(text: string, getFeedSummary?: (feedI
   if (!text) return '';
   // 官方 LinkTextParser 先还原实体再解析标题链接；还原后仍须经过安全过滤。
   const decoded = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
-  const doc = new DOMParser().parseFromString(renderCoolapkRichText(decoded), 'text/html');
+  // 菜单路径等正文里的小于号可能被 HTML 解析器当成未闭合的标签，导致后续文字丢失。
+  const markup = decoded.replace(/<!--[\s\S]*?-->|<\/?[a-z][\w:-]*(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>|</gi,
+    match => match === '<' ? '&lt;' : match);
+  const doc = new DOMParser().parseFromString(renderCoolapkRichText(markup), 'text/html');
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   while (walker.nextNode()) {

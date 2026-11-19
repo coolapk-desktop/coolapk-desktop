@@ -300,6 +300,16 @@ describe('通知评论点击入口', () => {
     wrapper.unmount();
   });
 
+  it.each([
+    '在 分体<root管理器<ci测试版 里面',
+    '在 分体&lt;root管理器&lt;ci测试版 里面',
+  ])('通知回复正文保留菜单路径中的小于号', async note => {
+    const wrapper = await mountPage({ id: '99', note, targetTitle: '原评论' });
+    try {
+      expect(wrapper.get('.notify-action').text()).toBe('在 分体<root管理器<ci测试版 里面');
+    } finally { wrapper.unmount(); }
+  });
+
   it.each(['addition_info', 'additionInfo'])('优先展示官方 %s 富文本摘要，不使用 message 中的裸分享地址', async field => {
     const url = 'https://www.coolapk.com/feed/72357393?s=share';
     mocks.feedFullText.mockResolvedValue('动态正文');
