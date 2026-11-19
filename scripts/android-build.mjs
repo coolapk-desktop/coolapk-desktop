@@ -1,5 +1,6 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, parse, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
@@ -58,6 +59,11 @@ function configureWindowsEnvironment() {
   process.env.ANDROID_HOME = sdk;
   process.env.NDK_HOME = ndkHome;
   process.env.CARGO_TARGET_DIR ||= join(localAppData, 'coolapk-desktop', 'android-target');
+  const cargoHome = resolve(process.env.CARGO_HOME || join(homedir(), '.cargo'));
+  if (parse(cargoHome).root.toLowerCase() !== parse(root).root.toLowerCase()) {
+    // Kotlin 按 Gradle 根目录计算源码相对路径，Windows 跨盘时无法写入增量缓存。
+    process.env['ORG_GRADLE_PROJECT_kotlin.incremental'] = 'false';
+  }
   process.env.Path = [
     join(javaHome, 'bin'),
     join(sdk, 'platform-tools'),

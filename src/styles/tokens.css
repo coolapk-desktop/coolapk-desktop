@@ -64,7 +64,6 @@
   --mobile-bottom-nav-height: 56px;
   /* 旧 WebView 不支持 max()，导航定位、正文留白和收起距离共享有效回退值。 */
   --mobile-bottom-nav-offset: calc(8px + var(--android-safe-area-bottom, 0px));
-  --mobile-reading-edge-fade: 24px;
   --mobile-page-padding: 10px;
   --mobile-feed-gap: 8px;
 

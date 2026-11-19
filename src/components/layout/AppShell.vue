@@ -369,18 +369,9 @@ onUnmounted(() => {
 /* 原生视口覆盖整块屏幕；普通页面仍在安全区内排列。 */
 .app-shell.is-android { padding: 0 var(--app-safe-area-right) var(--app-safe-area-bottom) var(--app-safe-area-left); }
 
-/* 正文滚动区铺到底，系统手势区只覆盖一层不拦截触摸的渐变。 */
-.app-shell.has-immersive-feed-detail { position: relative; background: var(--surface); }
+/* 移动端动态详情的正文滚动区延伸到屏幕底部。 */
+.app-shell.has-immersive-feed-detail { background: var(--surface); }
 .app-shell.is-android.has-immersive-feed-detail { padding-bottom: 0; }
-.app-shell.has-immersive-feed-detail::after {
-  content: '';
-  position: absolute;
-  inset: auto 0 0;
-  height: calc(var(--app-safe-area-bottom) + var(--mobile-reading-edge-fade));
-  background: linear-gradient(to bottom, transparent, var(--surface) var(--mobile-reading-edge-fade));
-  pointer-events: none;
-  z-index: 25;
-}
 
 .mobile-reading-topbar, .mobile-reading-topbar-content, .mobile-reading-topbar-stack { display: contents; }
 .app-shell.has-web-desktop-navigation { --app-titlebar-height: 0px; }

@@ -101,13 +101,13 @@ const frames = cases.map(({ width, legacy, inset }) => {
         const author=document.querySelector('.official-detail-author');
         const backdrop=document.querySelector('.feed-detail-header-backdrop');
         document.querySelector('.feed-detail-shell').style.setProperty('--feed-detail-header-height',author.offsetHeight+'px');
-        const fade=getComputedStyle(shell,'::after');
+        const bottomOverlay=getComputedStyle(shell,'::after');
         checks.feedHeaderOpaque=getComputedStyle(author).backgroundColor===getComputedStyle(detail).backgroundColor&&getComputedStyle(backdrop).display==='none';
         detail.scrollTop=detail.scrollHeight;
         detail.classList.add('has-joined-comment-header');
         backdrop.style.removeProperty('display');
         checks.detailFillsViewport=detail.getBoundingClientRect().bottom===innerHeight;
-        checks.detailFade=fade.backgroundImage.startsWith('linear-gradient')&&fade.pointerEvents==='none';
+        checks.detailBottomUncovered=bottomOverlay.content==='none'&&bottomOverlay.backgroundImage==='none';
         const chromeHeight=author.offsetHeight+toolbar.offsetHeight;
         backdrop.style.setProperty('--feed-detail-backdrop-content-height',chromeHeight+'px');
         backdrop.style.setProperty('--feed-detail-backdrop-author-height',author.offsetHeight+'px');
@@ -124,7 +124,10 @@ const frames = cases.map(({ width, legacy, inset }) => {
         const search=getComputedStyle(document.querySelector('.comment-search-trigger'));
         const actionsWrap=getComputedStyle(document.querySelector('.comment-toolbar-actions'));
         checks.commentControlsShareFill=follow.backgroundColor===sort.backgroundColor&&sort.backgroundColor===search.backgroundColor&&follow.backgroundColor!=='rgba(0, 0, 0, 0)'&&follow.backgroundImage.startsWith('linear-gradient')&&follow.backgroundImage===sort.backgroundImage&&sort.backgroundImage===search.backgroundImage&&follow.borderTopColor===sort.borderTopColor&&sort.borderTopColor===search.borderTopColor&&actionsWrap.backgroundColor==='rgba(0, 0, 0, 0)'&&box('.comment-search-trigger').height===box('.comment-sort').height;
-        checks.lastCommentVisible=innerHeight-box('.content').bottom>=parseFloat(fade.height)+8;
+        const lastCommentGap=innerHeight-box('.content').bottom;
+        const contentPadding=['.is-official-mobile-detail','.official-detail-comments']
+          .reduce((sum,selector)=>sum+parseFloat(getComputedStyle(document.querySelector(selector)).paddingBottom),0);
+        checks.noExtraDetailBottomSpace=Math.abs(lastCommentGap-contentPadding)<=1;
       }
       parent.postMessage({checks,legacy:${legacy},inset,before,hidden,restored},'*');
     })();</script></body></html>`;

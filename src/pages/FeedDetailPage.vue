@@ -483,7 +483,7 @@ async function refreshMobilePage() { await fetchDetail(); await refreshFeedCard.
   .feed-detail-edge-blur::after { background: linear-gradient(to bottom, var(--surface) calc(100% - var(--edge-blur-fade)), transparent); }
 }
 .is-official-mobile .feed-detail-shell { padding-bottom: calc(100px + var(--app-safe-area-bottom)); }
-.is-official-mobile.reading-actions-hidden .feed-detail-shell { padding-bottom: calc(8px + var(--mobile-reading-edge-fade) + var(--app-safe-area-bottom)); }
+.is-official-mobile.reading-actions-hidden .feed-detail-shell { padding-bottom: 0; }
 .feed-detail-page {
   width: 100%;
   height: 100%;

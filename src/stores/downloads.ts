@@ -2,6 +2,7 @@ import { computed, ref, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { CoolapkTauriAPI } from '../api/coolapk';
+import { router } from '../router';
 import { showToast } from '../utils/toast';
 import { desktopNotify } from '../utils/desktopNotify';
 import { useSettingsStore } from './settings';
@@ -324,7 +325,7 @@ export const useDownloadStore = defineStore('downloads', () => {
     showToast(message, hasFailure ? 'error' : 'success', 4000, {
       label: '打开下载中心',
       // 懒加载路由，避免 store 在单元测试里拉起整个应用路由表。
-      onClick: () => { void import('../router').then(({ router }) => router.push('/downloads')); },
+      onClick: () => { void router.push('/downloads'); },
     });
   }
 

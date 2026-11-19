@@ -19,7 +19,7 @@ writeFileSync(fixture, `<!doctype html><html><head><style>${css}html,body{margin
     await settle();const before=sample();page.classList.add('reading-actions-hidden');bar.classList.add('reading-hidden');await settle();const hidden=sample();
     const pointerDisabled=getComputedStyle(bar).pointerEvents==='none';
     page.classList.remove('reading-actions-hidden');bar.classList.remove('reading-hidden');await settle();const restored=sample();
-    const checks={hiddenBelowViewport:hidden.top>=innerHeight,paddingReleased:hidden.padding<before.padding,pointerDisabled,restored:Math.abs(restored.top-before.top)<1&&restored.padding===before.padding};
+    const checks={hiddenBelowViewport:hidden.top>=innerHeight,paddingReleased:hidden.padding===0&&before.padding>0,pointerDisabled,restored:Math.abs(restored.top-before.top)<1&&restored.padding===before.padding};
     document.body.dataset.results=encodeURIComponent(JSON.stringify({checks,before,hidden,restored}));
   })();</script></body></html>`);
 const browser = process.env.LAYOUT_BROWSER || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';

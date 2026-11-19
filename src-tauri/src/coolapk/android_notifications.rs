@@ -71,7 +71,7 @@ fn increased_at(previous: [u64; 7], current: [u64; 7], config: &BackgroundConfig
             && (config.notify_replies || config.notify_at || config.notify_pm))
 }
 
-#[cfg(any(target_os = "android", test))]
+#[cfg(test)]
 fn increased(previous: [u64; 7], current: [u64; 7], config: &BackgroundConfig) -> bool {
     increased_at(previous, current, config, current_time_ms())
 }

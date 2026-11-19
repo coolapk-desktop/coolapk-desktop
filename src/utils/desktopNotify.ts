@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isWebBuild } from '../api/runtime';
+import { router } from '../router';
 
 export type DesktopNotifyOptions = {
   title: string;
@@ -63,7 +64,7 @@ export async function desktopNotify(options: DesktopNotifyOptions, sound = false
         window.focus();
         if (options.route?.startsWith('/')) {
           const route = options.route;
-          void import('../router').then(({ router }) => router.push(route));
+          void router.push(route);
         }
         notification.close();
       };

@@ -1301,7 +1301,7 @@ impl CoolapkClient {
         }
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) fn new_web() -> Self {
         let client = Self {
             web_accounts: Some(RwLock::new(json!({ "lastLoginUid": "", "accounts": [] }))),
@@ -1311,7 +1311,7 @@ impl CoolapkClient {
         client
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) fn restore_web_session(snapshot: &Value) -> Result<Self, String> {
         let client = Self::new_web();
         if let Some(accounts) = snapshot.get("accounts").filter(|value| value.is_object()) {
@@ -1327,7 +1327,7 @@ impl CoolapkClient {
         Ok(client)
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) fn web_session_snapshot(&self) -> Value {
         json!({
             "accounts": self.load_accounts_root(),
@@ -1336,7 +1336,7 @@ impl CoolapkClient {
         })
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) fn has_web_account_state(&self) -> bool {
         self.get_user_cookie().is_some() || self.web_accounts.as_ref().is_some_and(|accounts| {
             let accounts = accounts.read().expect("web account store lock");
@@ -2065,7 +2065,7 @@ impl CoolapkClient {
         self.save_account(uid, username, user_avatar, &cookie).await
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) async fn import_web_account(&self, cookie: &str) -> Result<Value, String> {
         if cookie.len() > 16 * 1024 || !Self::has_valid_session_cookie(cookie) {
             return Err("请输入包含有效 SESSID 的 Cookie".into());
@@ -4322,7 +4322,7 @@ impl CoolapkClient {
         self.image_data_url(source_url, SessionPolicy::Follow).await
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) fn web_image_needs_account(source_url: &str) -> bool {
         reqwest::Url::parse(source_url).is_ok_and(|url| {
             matches!(url.host_str(), Some("api.coolapk.com" | "api2.coolapk.com"))
@@ -4330,7 +4330,7 @@ impl CoolapkClient {
         })
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) async fn get_web_image_data_url(&self, source_url: &str) -> Result<String, String> {
         let url = reqwest::Url::parse(source_url).map_err(|_| "图片地址无效")?;
         let host = url.host_str().unwrap_or_default();
@@ -4445,7 +4445,7 @@ impl CoolapkClient {
         self.fetch_external_page_with_policy(url, SessionPolicy::Follow).await
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) async fn fetch_web_page(&self, raw: &str) -> Result<Value, String> {
         let url = reqwest::Url::parse(raw).map_err(|_| "网页地址无效")?;
         let feed = url.host_str() == Some("www.coolapk.com")
@@ -5044,7 +5044,7 @@ impl CoolapkClient {
         self.live_photo_video_header(video_url, SessionPolicy::Follow).await
     }
 
-    #[cfg(feature = "web")]
+    #[cfg(all(feature = "web", any(desktop, not(feature = "native"))))]
     pub(crate) async fn get_web_live_photo_video_header(&self, video_url: &str) -> Result<String, String> {
         let url = reqwest::Url::parse(video_url).map_err(|_| "Live Photo 视频地址无效")?;
         if url.port().is_some() || !url.username().is_empty() || url.password().is_some() {
