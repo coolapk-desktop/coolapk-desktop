@@ -130,12 +130,14 @@ describe('官方详情评论加载', () => {
       await wrapper.trigger('scroll');
       await vi.waitFor(() => expect(joined()).toBe(true));
       expect(height()).toBe('104px');
+      expect(backdrop.style.getPropertyValue('--feed-detail-backdrop-author-height')).toBe('60px');
       Object.defineProperty(wrapper.get('.official-detail-author').element, 'offsetHeight', { value: 60 });
       scale = 0.8;
       await wrapper.trigger('scroll');
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
       expect(joined()).toBe(true);
       expect(height()).toBe('104px');
+      expect(backdrop.style.getPropertyValue('--feed-detail-backdrop-author-height')).toBe('60px');
       toolbarTop = 240;
       await wrapper.trigger('scroll');
       await vi.waitFor(() => expect(joined()).toBe(false));

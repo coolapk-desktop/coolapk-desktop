@@ -110,6 +110,7 @@ const frames = cases.map(({ width, legacy, inset }) => {
         checks.detailFade=fade.backgroundImage.startsWith('linear-gradient')&&fade.pointerEvents==='none';
         const chromeHeight=author.offsetHeight+toolbar.offsetHeight;
         backdrop.style.setProperty('--feed-detail-backdrop-content-height',chromeHeight+'px');
+        backdrop.style.setProperty('--feed-detail-backdrop-author-height',author.offsetHeight+'px');
         const edge=document.querySelector('.feed-detail-edge-blur');
         const edgeTint=getComputedStyle(edge,'::after');
         const blurLayers=Array.from(edge.children,child=>getComputedStyle(child));

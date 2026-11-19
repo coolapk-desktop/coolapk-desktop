@@ -141,6 +141,8 @@ function updateHeaderBackdrop() {
   const toolbarHeight = toolbar.offsetHeight || toolbarRect.height * layoutScale;
   const height = `${Math.round(headerHeight + toolbarHeight)}px`;
   if (backdrop.style.getPropertyValue('--feed-detail-backdrop-content-height') !== height) backdrop.style.setProperty('--feed-detail-backdrop-content-height', height);
+  const authorHeight = `${Math.round(headerHeight)}px`;
+  if (backdrop.style.getPropertyValue('--feed-detail-backdrop-author-height') !== authorHeight) backdrop.style.setProperty('--feed-detail-backdrop-author-height', authorHeight);
 }
 
 function onDetailScroll(event: Event) {
@@ -448,7 +450,15 @@ async function refreshMobilePage() { await fetchDetail(); await refreshFeedCard.
 .feed-detail-edge-blur > span { display: none; }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and ((mask-image: linear-gradient(#000, transparent)) or (-webkit-mask-image: linear-gradient(#000, transparent))) {
   .feed-detail-edge-blur::after {
-    background: linear-gradient(to bottom, color-mix(in srgb, var(--surface) 95%, transparent), color-mix(in srgb, var(--surface) 82%, transparent) calc(100% - var(--edge-blur-fade)), transparent);
+    --author-height: var(--feed-detail-backdrop-author-height, 60px);
+    /* 作者栏上半部保持实色，从作者栏底部到排序栏中段逐步露出正文。 */
+    background: linear-gradient(
+      to bottom,
+      var(--surface) calc(var(--author-height) * .5),
+      color-mix(in srgb, var(--surface) 84%, transparent) var(--author-height),
+      color-mix(in srgb, var(--surface) 48%, transparent) calc(50% + var(--author-height) * .5),
+      transparent 100%
+    );
   }
   .feed-detail-edge-blur > span {
     display: block;
