@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onDeactivated, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onDeactivated, ref, watch } from 'vue';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { useRoute, useRouter } from 'vue-router';
 import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
@@ -88,9 +88,22 @@ function selectCategory(path: string) {
 }
 useAndroidBackButton(() => categoriesOpen.value, closeCategories);
 watch(() => route.fullPath, () => { categoriesOpen.value = false; });
-watch(() => route.path, async () => { await nextTick(); revealActiveItem(); });
-watch(mobileLayout, async () => { categoriesOpen.value = false; await nextTick(); revealActiveItem(); });
-onMounted(revealActiveItem);
+watch(() => route.path, revealActiveItem, { flush: 'post' });
+watch(mobileLayout, () => { categoriesOpen.value = false; });
+watch(menuEl, (menu, _, onCleanup) => {
+  if (!menu) return;
+  revealActiveItem();
+  if (typeof ResizeObserver === 'undefined') return;
+
+  let previousHeight = menu.clientHeight;
+  const observer = new ResizeObserver(() => {
+    const height = menu.clientHeight;
+    if (height > 0 && height < previousHeight) revealActiveItem();
+    previousHeight = height;
+  });
+  observer.observe(menu);
+  onCleanup(() => observer.disconnect());
+}, { flush: 'post' });
 onDeactivated(() => { categoriesOpen.value = false; });
 </script>
 

@@ -561,6 +561,13 @@ describe('设置页面交互', () => {
   });
 
   it('PC 设置侧栏在短窗口内可滚动，并自动露出当前栏目', async () => {
+    const resizeCallbacks: Array<() => void> = [];
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resizeCallbacks.push(callback); }
+      observe() {}
+      disconnect = disconnect;
+    });
     vi.stubGlobal('innerWidth', 1024);
     window.dispatchEvent(new Event('resize'));
     await flushPromises();
@@ -577,20 +584,33 @@ describe('设置页面交互', () => {
     let clientHeight = 400;
     Object.defineProperty(menu.element, 'scrollHeight', { configurable: true, get: () => scrollHeight });
     Object.defineProperty(menu.element, 'clientHeight', { configurable: true, get: () => clientHeight });
+    const diagnostics = wrapper.get<HTMLAnchorElement>('[href="/settings/diagnostics"]');
     const reveal = vi.fn();
-    for (const item of wrapper.findAll('.settings-menu-item')) item.element.scrollIntoView = reveal;
+    diagnostics.element.scrollIntoView = reveal;
 
     await router.push('/settings/diagnostics');
     await flushPromises();
     expect(reveal).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
 
+    // 保持路由和宽度不变，从完整显示缩到菜单溢出。
+    reveal.mockClear();
+    clientHeight = 700;
+    for (const callback of resizeCallbacks) callback();
+    expect(reveal).not.toHaveBeenCalled();
+    clientHeight = 400;
+    for (const callback of resizeCallbacks) callback();
+    expect(reveal).toHaveBeenCalledTimes(1);
+
     // 一屏放得下时不做多余滚动，避免抢走用户手动滚动位置。
     reveal.mockClear();
     scrollHeight = 400;
+    const agent = wrapper.get<HTMLAnchorElement>('[href="/settings/agent"]');
+    agent.element.scrollIntoView = reveal;
     await router.push('/settings/agent');
     await flushPromises();
     expect(reveal).not.toHaveBeenCalled();
     wrapper.unmount();
+    expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('移动设置下拉菜单包含全部分类，切换分类与返回时同步当前页面', async () => {
