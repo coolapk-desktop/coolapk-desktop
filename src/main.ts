@@ -173,7 +173,7 @@ async function bootstrap() {
   await androidIconStylesReady;
   await initializeAndroidSafeArea();
   await settingsStore.initializeSettings();
-  // 原生层已恢复登录 Cookie：游客生成并缓存 DUID，已登录时不会自动获取或启用。
+  // 原生层已恢复登录状态，启动时只为缺少设备 ID 的当前账号或游客生成。
   if (isTauri()) {
     try { await invoke('initialize_device_identity'); }
     catch { logDiagnostic('warn', 'device', 'identity_initialization_failed'); }

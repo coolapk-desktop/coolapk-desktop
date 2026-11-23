@@ -33,8 +33,8 @@ impl IdentityState {
         self.error = None;
     }
 
-    pub fn should_generate_guest(&self, logged_in: bool) -> bool {
-        self.automatic && !logged_in && self.guest_id.is_none()
+    pub fn should_generate(&self, uid: Option<&str>) -> bool {
+        self.automatic && self.active_id(uid).is_none()
             && self.last_failure.is_none_or(|time| time.elapsed() >= Duration::from_secs(60))
     }
 }
@@ -123,15 +123,20 @@ mod tests {
     }
 
     #[test]
-    fn generation_is_guest_only_cached_and_rate_limited_after_failure() {
+    fn automatic_generation_checks_current_identity_and_failure_cooldown() {
         let mut state = IdentityState { automatic: true, ..Default::default() };
-        assert!(state.should_generate_guest(false));
-        assert!(!state.should_generate_guest(true));
+        assert!(state.should_generate(None));
+        assert!(state.should_generate(Some("1")));
         state.last_failure = Some(Instant::now());
-        assert!(!state.should_generate_guest(false));
+        assert!(!state.should_generate(None));
+        assert!(!state.should_generate(Some("1")));
         state.last_failure = None;
         state.guest_id = Some("DUguest123456".into());
-        assert!(!state.should_generate_guest(false));
+        assert!(!state.should_generate(None));
+        assert!(state.should_generate(Some("1")));
+        state.account_id = Some(("1".into(), "DUaccount123456".into()));
+        assert!(!state.should_generate(Some("1")));
+        assert!(state.should_generate(Some("2")));
     }
 
     #[test]

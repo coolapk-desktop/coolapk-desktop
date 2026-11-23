@@ -209,7 +209,7 @@ fn reply_detail_normalization_preserves_captcha_response() {
 }
 
 #[test]
-fn generated_duid_is_guest_default_and_account_explicit_only() {
+fn generated_duid_uses_the_current_identity_and_preserves_manual_settings() {
     let client = CoolapkClient::new();
     client.update_device_profile(DeviceProfile { device_id: Some("DUmanual123456".into()), ..Default::default() });
     client.generated_identity.write().unwrap().guest_id = Some("DUguest123456".into());
@@ -267,24 +267,65 @@ async fn pending_duid_generation_is_discarded_when_login_changes() {
 }
 
 #[tokio::test]
-async fn guest_duid_cache_restores_without_network_and_never_activates_for_login() {
+async fn startup_reuses_guest_id_and_saves_a_separate_id_for_the_restored_account() {
     let mut random = [0; 8];
     getrandom::fill(&mut random).unwrap();
     let folder = std::env::temp_dir().join(format!("coolapk-duid-{}", hex::encode(random)));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(folder.join("accounts.json"), json!({
-        "generatedGuestDeviceId": "DUcached123456", "accounts": [], "lastLoginUid": ""
+        "generatedGuestDeviceId": "DUcached123456", "lastLoginUid": "",
+        "accounts": [{ "uid": "10001", "cookie": "uid=10001; SESSID=synthetic-session" }]
     }).to_string()).unwrap();
     let client = CoolapkClient::new();
     client.persist_cookie_to(folder.join("session_cookie.txt"));
-    let info = client.initialize_device_identity().await.unwrap();
+    let info = client.initialize_device_identity_with(async { panic!("游客已有 ID") }).await.unwrap();
     assert_eq!(info["data"]["deviceId"], "DUcached123456");
     assert_eq!(info["data"]["deviceIdSource"], "generated_guest");
     client.set_user_cookie("uid=10001; SESSID=synthetic-session".into()).unwrap();
-    let info = client.initialize_device_identity().await.unwrap();
-    assert!(info["data"]["deviceId"].is_null());
-    assert_eq!(info["data"]["deviceIdSource"], "default");
+    client.set_last_login_uid("10001");
+    let account = CoolapkClient::new();
+    account.persist_cookie_to(folder.join("session_cookie.txt"));
+    let info = account.initialize_device_identity_with(async { Ok("DUaccount123456".into()) }).await.unwrap();
+    assert_eq!(info["data"]["deviceId"], "DUaccount123456");
+    assert_eq!(info["data"]["deviceIdSource"], "generated_account");
+    let mut encoded: String = info["data"]["deviceCode"].as_str().unwrap().chars().rev().collect();
+    while encoded.len() % 4 != 0 { encoded.push('='); }
+    let decoded = String::from_utf8(BASE64.decode(encoded).unwrap()).unwrap();
+    assert_eq!(decoded.split(';').next(), Some("DUaccount123456"));
+    assert_eq!(account.load_accounts_root()["generatedGuestDeviceId"], "DUcached123456");
+    assert_eq!(account.load_accounts_root()["generatedAccountDeviceIds"]["10001"], "DUaccount123456");
+    let restarted = CoolapkClient::new();
+    restarted.persist_cookie_to(folder.join("session_cookie.txt"));
+    let info = restarted.initialize_device_identity_with(async { panic!("账号已有 ID") }).await.unwrap();
+    assert_eq!(info["data"]["deviceId"], "DUaccount123456");
+    restarted.set_user_cookie("uid=10002; SESSID=another-session".into()).unwrap();
+    assert!(restarted.effective_custom_device_id().is_none());
     std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[tokio::test]
+async fn startup_keeps_manual_duid_for_guest_and_account() {
+    let client = CoolapkClient::new();
+    client.update_device_profile(DeviceProfile { device_id: Some("DUmanual123456".into()), ..Default::default() });
+    let info = client.initialize_device_identity_with(async { panic!("已有手动 ID") }).await.unwrap();
+    assert_eq!(info["data"]["deviceIdSource"], "manual");
+    client.set_user_cookie("uid=10001; SESSID=synthetic-session".into()).unwrap();
+    let info = client.initialize_device_identity_with(async { panic!("已有手动 ID") }).await.unwrap();
+    assert_eq!(info["data"]["deviceId"], "DUmanual123456");
+    assert_eq!(info["data"]["deviceIdSource"], "manual");
+}
+
+#[tokio::test]
+async fn startup_duid_failure_keeps_the_default_device_and_exposes_retry_feedback() {
+    let client = CoolapkClient::new();
+    client.set_user_cookie("uid=10001; SESSID=synthetic-session".into()).unwrap();
+    let fallback = client.get_device_info().unwrap()["data"]["deviceCode"].clone();
+    let info = client.initialize_device_identity_with(async { Err("获取失败".into()) }).await.unwrap();
+    assert_eq!(info["data"]["deviceCode"], fallback);
+    assert_eq!(info["data"]["deviceIdSource"], "default");
+    assert_eq!(info["data"]["deviceIdGenerationError"], "获取失败");
+    let info = client.initialize_device_identity_with(async { panic!("失败后不立即重试") }).await.unwrap();
+    assert_eq!(info["data"]["deviceIdGenerationError"], "获取失败");
 }
 
 #[tokio::test]

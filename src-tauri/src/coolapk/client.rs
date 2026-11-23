@@ -251,6 +251,12 @@ struct ReportFormSession {
     uid: Option<String>,
 }
 
+enum DeviceIdentityGeneration {
+    Startup,
+    GuestRequest,
+    Manual,
+}
+
 pub struct CoolapkClient {
     client: RwLock<Client>,
     /// Live Photo 解析只需要拿到重定向地址，不能跟随重定向把视频正文提前下载掉。
@@ -1417,6 +1423,10 @@ impl CoolapkClient {
             .and_then(|state| state.active_id(uid.as_deref()).map(str::to_owned)) {
             return Some(id);
         }
+        self.manual_device_id()
+    }
+
+    fn manual_device_id(&self) -> Option<String> {
         let guard = self.device_profile.read().ok()?;
         guard
             .device_id
@@ -1425,8 +1435,15 @@ impl CoolapkClient {
             .filter(|s| !s.is_empty())
     }
 
-    /// 启动时恢复游客及当前账号的 DUID；登录状态下不自动生成。
+    /// 启动时恢复已保存的 DUID，当前身份缺少设备 ID 时自动获取。
     pub async fn initialize_device_identity(&self) -> Result<Value, String> {
+        self.initialize_device_identity_with(super::shuzilm::generate()).await
+    }
+
+    async fn initialize_device_identity_with(
+        &self,
+        generation: impl std::future::Future<Output = Result<String, String>>,
+    ) -> Result<Value, String> {
         {
             let cached = self.load_accounts_root().get("generatedGuestDeviceId").and_then(Value::as_str)
                 .filter(|id| super::shuzilm::valid_duid(id)).map(str::to_owned);
@@ -1435,44 +1452,19 @@ impl CoolapkClient {
             if state.guest_id.is_none() { state.guest_id = cached; }
         }
         self.restore_account_device_identity();
-        self.ensure_guest_device_identity().await;
         self.sync_device_code();
+        self.update_generated_device_identity(generation, DeviceIdentityGeneration::Startup).await?;
         self.get_device_info()
     }
 
     async fn ensure_guest_device_identity(&self) {
-        let should_generate = self.generated_identity.read().map(|state|
-            state.should_generate_guest(self.current_uid().is_some())).unwrap_or(false);
-        if !should_generate { return; }
-        // 所有首次游客请求共享一次生成；网络失败后一分钟内不自动重复请求。
-        let _generation = self.identity_generation.lock().await;
-        let should_generate = self.generated_identity.read().map(|state|
-            state.should_generate_guest(self.current_uid().is_some())).unwrap_or(false);
-        if !should_generate { return; }
-        match super::shuzilm::generate().await {
-            Ok(id) => {
-                if let Ok(mut state) = self.generated_identity.write() {
-                    state.guest_id = Some(id.clone());
-                    state.error = None;
-                    state.last_failure = None;
-                }
-                let mut root = self.load_accounts_root();
-                root["generatedGuestDeviceId"] = json!(id);
-                self.save_accounts_root(&root);
-                // 若等待期间发生登录，这里会按当前账号重新选设备，不会启用游客值。
-                self.sync_device_code();
-            }
-            Err(error) => {
-                if let Ok(mut state) = self.generated_identity.write() {
-                    state.last_failure = Some(std::time::Instant::now());
-                    state.error = Some(error);
-                }
-                log::warn!("device.duid_generation_failed context=guest");
-            }
-        }
+        let _ = self.update_generated_device_identity(
+            super::shuzilm::generate(),
+            DeviceIdentityGeneration::GuestRequest,
+        ).await;
     }
 
-    /// 仅用户点击才为当前登录账号生成并使用；不改写保存的手动设备 ID。
+    /// 按设置页操作重新生成设备 ID，手动配置仍保留。
     pub async fn generate_device_identity(&self) -> Result<Value, String> {
         self.generate_device_identity_with(super::shuzilm::generate()).await
     }
@@ -1481,33 +1473,82 @@ impl CoolapkClient {
         &self,
         generation: impl std::future::Future<Output = Result<String, String>>,
     ) -> Result<Value, String> {
+        self.update_generated_device_identity(generation, DeviceIdentityGeneration::Manual).await?;
+        self.get_device_info()
+    }
+
+    async fn update_generated_device_identity(
+        &self,
+        generation: impl std::future::Future<Output = Result<String, String>>,
+        mode: DeviceIdentityGeneration,
+    ) -> Result<(), String> {
         let uid = self.current_uid();
-        let epoch = self.generated_identity.read().map_err(|_| "无法读取设备 ID 状态")?.auth_epoch;
+        let automatic = !matches!(mode, DeviceIdentityGeneration::Manual);
+        if matches!(mode, DeviceIdentityGeneration::GuestRequest) && uid.is_some() {
+            return Ok(());
+        }
+        let should_generate = |state: &super::shuzilm::IdentityState| {
+            !automatic || (state.should_generate(uid.as_deref()) && self.manual_device_id().is_none())
+        };
+        let epoch = {
+            let state = self.generated_identity.read().map_err(|_| "无法读取设备 ID 状态")?;
+            if !should_generate(&state) { return Ok(()); }
+            state.auth_epoch
+        };
         let _generation = self.identity_generation.lock().await;
-        let id = generation.await?;
+        let session_matches = |state: &super::shuzilm::IdentityState| {
+            state.auth_epoch == epoch && self.current_uid() == uid
+        };
+        let session_changed = || {
+            if automatic { Ok(()) } else { Err("登录状态已变化，生成结果未应用，请重新点击生成".into()) }
+        };
+        {
+            let state = self.generated_identity.read().map_err(|_| "无法读取设备 ID 状态")?;
+            if !session_matches(&state) { return session_changed(); }
+            if !should_generate(&state) { return Ok(()); }
+        }
+        let result = generation.await;
         {
             let mut state = self.generated_identity.write().map_err(|_| "无法读取设备 ID 状态")?;
-            if state.auth_epoch != epoch || self.current_uid() != uid {
-                return Err("登录状态已变化，生成结果未应用，请重新点击生成".into());
-            }
-            // 保存成功后才应用，防止显示成功却在重启后丢失。
-            let mut root = self.load_accounts_root();
-            if let Some(uid) = uid.as_deref() {
-                if !root["generatedAccountDeviceIds"].is_object() {
-                    root["generatedAccountDeviceIds"] = json!({});
+            if !session_matches(&state) { return session_changed(); }
+            if !should_generate(&state) { return Ok(()); }
+            match result.and_then(|id| self.save_generated_device_identity(uid.as_deref(), id, &mut state)) {
+                Ok(()) => {}
+                Err(error) if automatic => {
+                    state.last_failure = Some(std::time::Instant::now());
+                    state.error = Some(error);
+                    log::warn!("device.duid_generation_failed context={}", if uid.is_some() { "account" } else { "guest" });
+                    return Ok(());
                 }
-                root["generatedAccountDeviceIds"][uid] = json!(id);
-            } else {
-                root["generatedGuestDeviceId"] = json!(id);
+                Err(error) => return Err(error),
             }
-            self.save_device_identity_root(&root)?;
-            if let Some(uid) = uid { state.account_id = Some((uid, id.clone())); }
-            else { state.guest_id = Some(id.clone()); }
-            state.error = None;
-            state.last_failure = None;
         }
         self.sync_device_code();
-        self.get_device_info()
+        Ok(())
+    }
+
+    fn save_generated_device_identity(
+        &self,
+        uid: Option<&str>,
+        id: String,
+        state: &mut super::shuzilm::IdentityState,
+    ) -> Result<(), String> {
+        // 先保存再应用，避免显示成功却在重启后丢失。
+        let mut root = self.load_accounts_root();
+        if let Some(uid) = uid {
+            if !root["generatedAccountDeviceIds"].is_object() {
+                root["generatedAccountDeviceIds"] = json!({});
+            }
+            root["generatedAccountDeviceIds"][uid] = json!(id);
+        } else {
+            root["generatedGuestDeviceId"] = json!(id);
+        }
+        self.save_device_identity_root(&root)?;
+        if let Some(uid) = uid { state.account_id = Some((uid.to_owned(), id)); }
+        else { state.guest_id = Some(id); }
+        state.error = None;
+        state.last_failure = None;
+        Ok(())
     }
 
     pub fn use_saved_device_identity(&self) -> Result<Value, String> {
@@ -1525,12 +1566,11 @@ impl CoolapkClient {
     }
 
     fn restore_account_device_identity(&self) {
-        let uid = self.current_uid();
-        let root = self.load_accounts_root();
-        let cached = uid.as_deref().and_then(|uid| root.get("generatedAccountDeviceIds")?.get(uid)?.as_str())
-            .filter(|id| super::shuzilm::valid_duid(id)).map(str::to_owned);
         if let Ok(mut state) = self.generated_identity.write() {
-            if self.current_uid() != uid { return; }
+            let uid = self.current_uid();
+            let root = self.load_accounts_root();
+            let cached = uid.as_deref().and_then(|uid| root.get("generatedAccountDeviceIds")?.get(uid)?.as_str())
+                .filter(|id| super::shuzilm::valid_duid(id)).map(str::to_owned);
             state.account_id = uid.zip(cached);
         }
     }
@@ -1722,7 +1762,7 @@ impl CoolapkClient {
             let source = if state.active_id(uid.as_deref()).is_some() {
                 if uid.is_some() { "generated_account" } else { "generated_guest" }
             } else if device_id.is_some() { "manual" } else { "default" };
-            (source, if uid.is_none() { state.error.clone() } else { None })
+            (source, if device_id.is_none() { state.error.clone() } else { None })
         };
         Ok(json!({
             "code": 200,

@@ -959,8 +959,7 @@ export const useSettingsStore = defineStore('settings', () => {
     syncCloseToTray(s.closeToTray);
     syncAlwaysOnTop(s.alwaysOnTop);
     syncStartupFlags(s);
-    syncDeviceProfile(s);
-    await syncNetworkProxy(s.networkProxyUrl);
+    await Promise.all([syncDeviceProfile(s), syncNetworkProxy(s.networkProxyUrl)]);
   }
 
   /** 同一次失败只提示一次；同步成功后重置，下次再失败可以重新提示。 */
