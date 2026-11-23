@@ -2015,7 +2015,7 @@ defineExpose({
     transition: transform 150ms cubic-bezier(0.2, 0.9, 0.25, 1), background-color 0.2s ease, border-color 0.2s ease;
   }
 
-  :global(:root:not([data-reduce-motion='true'])) .feed-card:not(.is-detail-mode):active {
+  :root:not([data-reduce-motion='true']) .feed-card:not(.is-detail-mode):active {
     transform: scale(0.985);
   }
 }
