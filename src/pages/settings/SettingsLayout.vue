@@ -3,7 +3,7 @@
     <div class="settings-layout-card" :class="{ 'is-mobile': mobileLayout }" @keydown.esc.stop="closeCategories">
       <aside v-if="!mobileLayout" class="settings-sidebar">
         <h2 class="settings-title">设置中心</h2>
-        <nav class="settings-menu" aria-label="设置栏目">
+        <nav ref="menuEl" class="settings-menu custom-scrollbar" aria-label="设置栏目">
           <router-link v-for="item in settingsMenu" :key="item.path" :to="item.path" class="settings-menu-item" active-class="is-active">
             <i :class="[item.icon, 'menu-icon']" aria-hidden="true"></i><span>{{ item.label }}</span>
           </router-link>
@@ -60,6 +60,8 @@ const settingsMenu = [
   { path: '/settings/diagnostics', label: '诊断日志', icon: 'fas fa-file-lines' },
   { path: '/settings/about', label: '关于酷安', icon: 'fas fa-info-circle' },
 ].filter(item => !webRouteFallback(item.path));
+// 侧栏条目高度之和可能超过窗口高度，菜单必须在栏内滚动，不能按窗口高度裁掉。
+const menuEl = ref<HTMLElement | null>(null);
 const categoriesOpen = ref(false);
 const categoryTrigger = ref<HTMLButtonElement | null>(null);
 const categoryPanel = ref<HTMLElement | null>(null);
@@ -72,13 +74,36 @@ async function toggleCategories() {
   categoryPanel.value?.querySelector<HTMLButtonElement>('.is-active')?.focus({ preventScroll: true });
 }
 function closeCategories() { categoriesOpen.value = false; categoryTrigger.value?.focus({ preventScroll: true }); }
+// 直接打开深链接或窗口变矮后，当前栏目可能落在可视区外，滚到最近位置。
+function revealActiveItem() {
+  const menu = menuEl.value;
+  if (!menu || menu.scrollHeight <= menu.clientHeight) return;
+  const active = menu.querySelector<HTMLElement>('.settings-menu-item.is-active');
+  if (typeof active?.scrollIntoView !== 'function') return;
+  active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
 function selectCategory(path: string) {
   closeCategories();
   if (path !== route.path && settingsMenu.some(item => item.path === path)) void router.push(path);
 }
 useAndroidBackButton(() => categoriesOpen.value, closeCategories);
 watch(() => route.fullPath, () => { categoriesOpen.value = false; });
+watch(() => route.path, revealActiveItem, { flush: 'post' });
 watch(mobileLayout, () => { categoriesOpen.value = false; });
+watch(menuEl, (menu, _, onCleanup) => {
+  if (!menu) return;
+  revealActiveItem();
+  if (typeof ResizeObserver === 'undefined') return;
+
+  let previousHeight = menu.clientHeight;
+  const observer = new ResizeObserver(() => {
+    const height = menu.clientHeight;
+    if (height > 0 && height < previousHeight) revealActiveItem();
+    previousHeight = height;
+  });
+  observer.observe(menu);
+  onCleanup(() => observer.disconnect());
+}, { flush: 'post' });
 onDeactivated(() => { categoriesOpen.value = false; });
 </script>
 
@@ -86,10 +111,11 @@ onDeactivated(() => { categoriesOpen.value = false; });
 .settings-page-container { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; background: var(--surface); }
 .settings-layout-card { flex: 1; min-width: 0; min-height: 0; height: 100%; position: relative; display: flex; overflow: hidden; background: var(--surface); }
 .settings-layout-card.is-mobile { flex-direction: column; }
-.settings-sidebar { width: 170px; background: var(--surface); border-right: 1px solid var(--border); padding: var(--space-4) var(--space-3); display: flex; flex-direction: column; flex-shrink: 0; }
-.settings-sidebar .settings-title { margin-bottom: var(--space-5); }
-.settings-menu { display: flex; flex-direction: column; gap: var(--space-1); }
-.settings-menu-item { display: flex; align-items: center; gap: var(--space-3); height: 40px; padding: 0 var(--space-4); border-radius: var(--radius-control); font-size: var(--font-size-sub); color: var(--text-secondary); font-weight: var(--font-weight-medium); text-decoration: none; transition: all var(--duration-fast) var(--ease-default); }
+.settings-sidebar { width: 170px; background: var(--surface); border-right: 1px solid var(--border); padding: var(--space-4) var(--space-3); display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; overflow: hidden; }
+.settings-sidebar .settings-title { flex: 0 0 auto; margin-bottom: var(--space-5); }
+/* 固定标题 + 菜单独立滚动：14 个栏目在短窗口里可滚到最后一栏，而不是被 body 高度裁掉。 */
+.settings-menu { display: flex; flex-direction: column; gap: var(--space-1); flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.settings-menu-item { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-3); height: 40px; padding: 0 var(--space-4); border-radius: var(--radius-control); font-size: var(--font-size-sub); color: var(--text-secondary); font-weight: var(--font-weight-medium); text-decoration: none; transition: all var(--duration-fast) var(--ease-default); }
 .settings-menu-item:hover { background: var(--surface-hover); color: var(--text-primary); }
 .settings-menu-item.is-active { background: var(--brand-soft); color: var(--brand-primary); font-weight: var(--font-weight-semibold); }
 .menu-icon { font-size: 15px; width: 18px; text-align: center; }
