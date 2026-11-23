@@ -560,12 +560,47 @@ describe('设置页面交互', () => {
     wrapper.unmount();
   });
 
-  it('移动设置下拉菜单包含全部分类，切换分类与返回时同步当前页面', async () => {
-    vi.stubGlobal('innerWidth', 390);
+  it('PC 设置侧栏在短窗口内可滚动，并自动露出当前栏目', async () => {
+    vi.stubGlobal('innerWidth', 1024);
+    window.dispatchEvent(new Event('resize'));
+    await flushPromises();
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/settings/:category', component: { template: '<div />' } }] });
     await router.push('/settings/appearance');
     await router.isReady();
     const wrapper = mount(SettingsLayout, { global: { plugins: [createPinia(), router], stubs: { 'router-view': RouterViewStub } } });
+    // 视口宽度在 onMounted 里才同步，等一帧再断言布局。
+    await flushPromises();
+    const menu = wrapper.get('.settings-menu');
+    // 侧栏菜单必须自带滚动容器与滚动条样式，而不是依赖窗口高度。
+    expect(menu.classes()).toContain('custom-scrollbar');
+    let scrollHeight = 700;
+    let clientHeight = 400;
+    Object.defineProperty(menu.element, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(menu.element, 'clientHeight', { configurable: true, get: () => clientHeight });
+    const reveal = vi.fn();
+    for (const item of wrapper.findAll('.settings-menu-item')) item.element.scrollIntoView = reveal;
+
+    await router.push('/settings/diagnostics');
+    await flushPromises();
+    expect(reveal).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+
+    // 一屏放得下时不做多余滚动，避免抢走用户手动滚动位置。
+    reveal.mockClear();
+    scrollHeight = 400;
+    await router.push('/settings/agent');
+    await flushPromises();
+    expect(reveal).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('移动设置下拉菜单包含全部分类，切换分类与返回时同步当前页面', async () => {
+    vi.stubGlobal('innerWidth', 390);
+    window.dispatchEvent(new Event('resize'));
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/settings/:category', component: { template: '<div />' } }] });
+    await router.push('/settings/appearance');
+    await router.isReady();
+    const wrapper = mount(SettingsLayout, { global: { plugins: [createPinia(), router], stubs: { 'router-view': RouterViewStub } } });
+    await flushPromises();
     await wrapper.get('.settings-category-trigger').trigger('click');
     expect(wrapper.findAll('.settings-category-card')).toHaveLength(14);
     expect(wrapper.text()).toContain('网络代理');
