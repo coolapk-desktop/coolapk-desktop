@@ -610,6 +610,19 @@ fn set_window_theme(app: tauri::AppHandle, theme: Option<String>) -> Result<(), 
 }
 
 #[tauri::command]
+fn set_window_background_color(app: tauri::AppHandle, rgb: [u8; 3]) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    if let Some(window) = app.get_webview_window("main") {
+        // 同时给 Win32 窗口和 WebView2 设置底色，避免拖大窗口时露出黑色边缘。
+        let [red, green, blue] = rgb;
+        window.set_background_color(Some(tauri::window::Color(red, green, blue, 255))).map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (app, rgb);
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_android_system_bar_theme(app: tauri::AppHandle, dark: bool, profile: Option<bool>, dimmed: Option<bool>, image_viewer: Option<bool>) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
@@ -1568,6 +1581,7 @@ pub fn run() {
             get_platform_info,
             set_close_to_tray,
             set_window_theme,
+            set_window_background_color,
             system_theme::get_linux_system_theme,
             set_android_system_bar_theme,
             get_android_safe_area,

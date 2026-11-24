@@ -1945,12 +1945,6 @@ async function refreshMobilePage() { await loadFeeds(true); }
   overflow: hidden;
 }
 
-@container layout (max-width: 960px) {
-  :deep(.right-sidebar) {
-    display: none !important;
-  }
-}
-
 .main-feed-column {
   flex: 1;
   min-width: 0;

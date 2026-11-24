@@ -619,6 +619,14 @@ export const useSettingsStore = defineStore('settings', () => {
       for (const key of ['page', 'secondary', 'surface', 'hover', 'active', 'border', 'divider']) root.style.removeProperty(`--light-custom-${key}`);
     }
   }, { immediate: true });
+  watch([resolvedTheme, () => settings.value.lightBackgroundColor], () => {
+    if (!isTauriRuntime || !/windows/i.test(navigator.userAgent)) return;
+    // 缩放时网页下一帧尚未覆盖的新区域，使用与当前页面一致的原生底色。
+    const color = normalizeLightBackground(getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
+    if (!color) return;
+    const rgb = [1, 3, 5].map(offset => Number.parseInt(color.slice(offset, offset + 2), 16));
+    void invoke('set_window_background_color', { rgb }).catch(err => console.warn('同步窗口底色失败:', err));
+  }, { immediate: true, flush: 'post' });
   watch(() => settings.value.density, applyDensity, { immediate: true });
   watch(() => settings.value.fontFamily, applyFontFamily, { immediate: true });
   watch(() => settings.value.fontSize, applyFontSize, { immediate: true });

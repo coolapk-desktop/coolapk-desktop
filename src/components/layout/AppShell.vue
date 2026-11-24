@@ -14,6 +14,7 @@
       'has-page-toolbar': hasPageToolbar,
       'has-topic-hub-detail': isTopicHubDetail,
       'has-web-desktop-navigation': useWebDesktopNavigation,
+      'hide-home-right-sidebar': hideHomeRightSidebar,
       'has-discovery-navigation': route.path === '/digital' || route.path === '/discover',
       'topic-glass-joined': topicGlassJoined,
       'is-reading-topbar-animating': isReadingTopbarAnimating,
@@ -45,6 +46,7 @@
     </div></div>
     <div ref="appBody" class="app-body">
       <MainSidebar
+        :compact="compactSidebar"
         :web-desktop-navigation="useWebDesktopNavigation"
         @open-preview="(key, anchor, focus) => topBar?.openSidebarPreview(key, anchor, focus)"
         @close-preview="(key, event) => topBar?.closeSidebarPreview(key, event)"
@@ -105,8 +107,29 @@ const settingsStore = useSettingsStore();
 const appStore = useAppStore();
 const mobileNavigationOpen = ref(false);
 const readingViewportWidth = ref(window.innerWidth);
+const sidebarViewportWidth = ref(readingViewportWidth.value);
+const compactSidebar = computed(() => sidebarViewportWidth.value <= 1100);
+const hideHomeRightSidebar = computed(() => {
+  const width = sidebarViewportWidth.value;
+  if (width <= 1200) return true;
+  // 应用缩放由 #app 的 transform 实现，左右栏判定使用缩放前的布局宽度。
+  const navSize = settingsStore.settings.sidebarCollapsed ? '--sidebar-collapsed-width' : '--sidebar-width';
+  const navWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(navSize)) || 0;
+  return width * 100 / settingsStore.settings.zoom - navWidth <= 960;
+});
+const SIDEBAR_LAYOUT_SETTLE_MS = 120;
+let sidebarLayoutTimer: number | undefined;
 const topicGlassJoined = ref(false);
-function updateReadingViewport() { readingViewportWidth.value = window.innerWidth; updateTopicGlass(); }
+function updateReadingViewport() {
+  const width = window.innerWidth;
+  if (width !== readingViewportWidth.value) {
+    readingViewportWidth.value = width;
+    window.clearTimeout(sidebarLayoutTimer);
+    // 连续拖动时保留两侧栏的布局，避免在临界宽度附近反复挤占正文。
+    sidebarLayoutTimer = window.setTimeout(() => { sidebarViewportWidth.value = width; }, SIDEBAR_LAYOUT_SETTLE_MS);
+  }
+  updateTopicGlass();
+}
 const mainContent = ref<HTMLElement | null>(null);
 const topBar = ref<InstanceType<typeof TopBar> | null>(null);
 const homeToolbarTarget = ref<HTMLElement | null>(null);
@@ -348,6 +371,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   clearTimeout(layoutSampleTimer);
+  window.clearTimeout(sidebarLayoutTimer);
   resetReadingTopbarAnimation();
   window.removeEventListener('keydown', handleMobileNavigationKeydown);
   window.removeEventListener('resize', updateReadingViewport);
@@ -365,6 +389,8 @@ onUnmounted(() => {
   --topic-glass-tint: color-mix(in srgb, var(--surface) 45%, transparent);
   --topic-glass-edge: rgba(255, 255, 255, .65);
 }
+
+.app-shell.hide-home-right-sidebar :deep(.right-sidebar) { display: none !important; }
 
 /* 原生视口覆盖整块屏幕；普通页面仍在安全区内排列。 */
 .app-shell.is-android { padding: 0 var(--app-safe-area-right) var(--app-safe-area-bottom) var(--app-safe-area-left); }

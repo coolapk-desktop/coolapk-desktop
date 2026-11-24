@@ -7,7 +7,7 @@
     @click="emit('closeMobile')"
   ></button>
 
-  <aside :class="['main-sidebar', { 'is-collapsed': isCollapsed, 'is-mobile-open': mobileOpen, 'has-window-controls': mobileWindowControls }]">
+  <aside :class="['main-sidebar', { 'is-collapsed': isCollapsed, 'is-compact': compact, 'is-mobile-open': mobileOpen, 'has-window-controls': mobileWindowControls }]">
     <div class="mobile-navigation-header">
       <strong>快捷入口</strong>
       <span>频道与常用功能</span>
@@ -176,7 +176,7 @@ function closeSidebarPreview(key: string, event?: KeyboardEvent) {
 }
 const notificationStore = useNotificationStore();
 const downloadStore = useDownloadStore();
-const props = withDefaults(defineProps<{ mobileOpen?: boolean; mobileWindowControls?: boolean; webDesktopNavigation?: boolean }>(), { mobileOpen: false, mobileWindowControls: false, webDesktopNavigation: false });
+const props = withDefaults(defineProps<{ compact?: boolean; mobileOpen?: boolean; mobileWindowControls?: boolean; webDesktopNavigation?: boolean }>(), { compact: false, mobileOpen: false, mobileWindowControls: false, webDesktopNavigation: false });
 const emit = defineEmits<{ closeMobile: []; openPreview: [key: SidebarPreview, anchor: HTMLElement, focus: boolean]; closePreview: [key: SidebarPreview, event?: KeyboardEvent] }>();
 
 const mobileOpen = computed(() => props.mobileOpen);
@@ -647,33 +647,31 @@ function handleLogout() {
   background-color: rgba(240, 68, 68, 0.1);
 }
 
-@media (max-width: 1100px) {
-  .main-sidebar {
-    width: var(--sidebar-collapsed-width);
-  }
+.main-sidebar.is-compact {
+  width: var(--sidebar-collapsed-width);
+}
 
-  .nav-label {
-    display: none !important;
-  }
+.is-compact .nav-label {
+  display: none !important;
+}
 
-  .nav-icon {
-    margin-right: 0 !important;
-  }
+.is-compact .nav-icon {
+  margin-right: 0 !important;
+}
 
-  .nav-item {
-    justify-content: center !important;
-    padding: 0 !important;
-  }
+.is-compact .nav-item {
+  justify-content: center !important;
+  padding: 0 !important;
+}
 
-  .nav-badge {
-    position: absolute;
-    top: 4px;
-    right: 5px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-    line-height: 14px;
-  }
+.is-compact .nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  line-height: 14px;
 }
 
 @media (max-width: 720px) {

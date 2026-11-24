@@ -42,9 +42,4 @@ const props = withDefaults(defineProps<{
   border-radius: 0;
 }
 
-@media (max-width: 1200px) {
-  .right-sidebar {
-    display: none !important;
-  }
-}
 </style>

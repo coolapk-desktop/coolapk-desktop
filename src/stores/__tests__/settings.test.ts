@@ -409,6 +409,30 @@ describe('settings store', () => {
     expect(store.settings.theme).toBe('dark');
   });
 
+  it('Windows 原生窗口底色随页面主题及自定义底色更新', async () => {
+    const userAgent = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+    const rootStyle = document.documentElement.style;
+    (window as any).__TAURI_INTERNALS__ = {};
+    rootStyle.setProperty('--background', '#f5f7f8');
+    const store = useSettingsStore();
+    try {
+      expect(invoke).toHaveBeenCalledWith('set_window_background_color', { rgb: [245, 247, 248] });
+      rootStyle.setProperty('--background', '#0e1012');
+      store.setTheme('dark');
+      await nextTick();
+      expect(invoke).toHaveBeenCalledWith('set_window_background_color', { rgb: [14, 16, 18] });
+      rootStyle.setProperty('--background', '#e5e7eb');
+      store.setTheme('light');
+      store.settings.lightBackgroundColor = '#e5e7eb';
+      await nextTick();
+      expect(invoke).toHaveBeenCalledWith('set_window_background_color', { rgb: [229, 231, 235] });
+    } finally {
+      store.$dispose();
+      rootStyle.removeProperty('--background');
+      userAgent.mockRestore();
+    }
+  });
+
   it('Android 主题切换时同步状态栏背景和图标模式', async () => {
     const userAgent = vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Android');
     try {

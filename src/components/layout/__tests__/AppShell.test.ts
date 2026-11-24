@@ -37,6 +37,32 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
+  it('连续缩放经过侧栏临界宽度时，拖动停稳后才切换布局', async () => {
+    vi.useFakeTimers();
+    const previousWidth = window.innerWidth;
+    window.innerWidth = 1210;
+    const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub,
+      PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
+    try {
+      const sidebar = wrapper.get('.main-sidebar-stub');
+      for (const width of [1196, 1204, 1096, 1104, 1096]) {
+        window.innerWidth = width;
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(40);
+        expect(wrapper.classes()).not.toContain('hide-home-right-sidebar');
+        expect(sidebar.attributes('compact')).toBe('false');
+      }
+      await vi.advanceTimersByTimeAsync(120);
+      expect(wrapper.classes()).toContain('hide-home-right-sidebar');
+      expect(sidebar.attributes('compact')).toBe('true');
+    } finally {
+      wrapper.unmount();
+      window.innerWidth = previousWidth;
+      window.dispatchEvent(new Event('resize'));
+      vi.useRealTimers();
+    }
+  });
+
   it('话题详情使用页内标题栏，回到话题目录时恢复全局移动顶栏', async () => {
     Object.assign(routeState.value, { path: '/topics', fullPath: '/topics?tag=摄影', query: { tag: '摄影' } });
     const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub,

@@ -136,16 +136,25 @@ describe('移动首页一体滑动', () => {
     expect((sidebar as HTMLElement).style.display).toBe('none');
     w.unmount();
   });
-  it('尺寸通知不立即改动布局，下一帧更新宽度并在卸载时取消待处理通知', async () => {
+  it('缩放时保留栏目相对位置，下一帧更新触摸手势宽度', async () => {
     const w = await render();
-    const before = w.get('.pager-track').attributes('style');
+    const track = w.get<HTMLElement>('.pager-track').element;
+    const viewport = w.get('.pager-viewport').element;
+    const before = track.style.transform;
+    expect(before).toContain('-100%');
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(480);
     notifyResize(); notifyResize();
     await flushPromises();
-    expect(w.get('.pager-track').attributes('style')).toBe(before);
+    expect(track.style.transform).toBe(before);
     expect(frames.size).toBe(1);
     finish(); await flushPromises();
-    expect(w.get('.pager-track').attributes('style')).toContain('-480px');
+    expect(track.style.transform).toBe(before);
+    pointer(viewport, 'pointerdown', 300);
+    pointer(window, 'pointermove', 180);
+    tick(); await flushPromises();
+    expect(track.style.transform).toContain('-125%');
+    pointer(window, 'pointercancel', 180);
+    finish(); await flushPromises();
     notifyResize();
     w.unmount();
     expect(frames.size).toBe(0);
@@ -184,7 +193,7 @@ describe('移动首页一体滑动', () => {
   it('拖动中同时移动页面与指示条，松手完成相邻切页', async () => {
     const w = await render(), viewport = w.find('.pager-viewport').element;
     pointer(viewport, 'pointerdown', 300); now = 100; pointer(window, 'pointermove', 156); tick(); await flushPromises();
-    expect(Number.parseFloat(w.find('.pager-track').attributes('style')!.split('translate3d(')[1]!)).toBeCloseTo(-504);
+    expect(Number.parseFloat(w.get<HTMLElement>('.pager-track').element.style.transform.split('translate3d(')[1]!)).toBeCloseTo(-140);
     expect(progress).toHaveBeenLastCalledWith(1.4);
     pointer(window, 'pointerup', 156); finish(); await flushPromises();
     expect(w.findComponent({ name: 'FeedTabs' }).props('activeKey')).toBe('hot'); w.unmount();

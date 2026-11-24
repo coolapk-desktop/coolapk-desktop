@@ -60,7 +60,8 @@ const previewRange = ref<[number, number]>([0, 0]);
 let position = 0, width = 1, moveFrame = 0, pendingPosition = 0;
 function setPosition(value: number) {
   position = value;
-  if (track.value) track.value.style.transform = `translate3d(${-value * width}px,0,0)`;
+  // 与栏目 left 使用同一百分比基准，轨道随宽度变化同步对齐，不等待 JS 测量。
+  if (track.value) track.value.style.transform = `translate3d(${-value * 100}%,0,0)`;
   if (props.mobile) tabBar.value?.setSwipeProgress?.(value);
 }
 function flushMove() {
@@ -265,7 +266,6 @@ watch(() => props.mobile, () => {
   resetGesture();
   clickUntil = 0;
   if (!props.mobile && (!isWebBuild || activePanel.value)) sidebarMounted.value = true;
-  void nextTick(measure);
 });
 function bind() {
   window.addEventListener(HOME_TAB_CYCLE_EVENT, cycleHomeTab);
@@ -284,21 +284,21 @@ watch(activeIndex, (index) => { if (!moving.value && !frame) preparePreview(inde
 watch(tabs, () => { if (tabs.value.length && !tabs.value.some(tab => getHomeTabKey(tab) === activeKey.value)) activeKey.value = getHomeTabKey(tabs.value[0]!); if (!drag && !frame) { preparePreview(activeIndex.value); setPosition(activeIndex.value); } });
 function observeViewport() {
   stopObservingResize?.();
-  stopObservingResize = viewport.value ? observeResizeOnFrame(viewport.value, measure) : undefined;
+  // 只有触摸拖动需要像素宽度，桌面缩放交给 CSS 处理。
+  stopObservingResize = props.mobile && viewport.value ? observeResizeOnFrame(viewport.value, measure) : undefined;
   measure();
 }
 onMounted(() => { bind(); void loadTabs(); observeViewport(); });
-watch(viewport, observeViewport);
+watch([viewport, () => props.mobile], observeViewport, { flush: 'post' });
 onActivated(bind); onDeactivated(unbind);
 onUnmounted(() => { unbind(); stopObservingResize?.(); });
 </script>
 <style scoped>
-.mobile-home-pager { container-type: inline-size; container-name: home-layout; display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--surface); }
+.mobile-home-pager { container-type: inline-size; display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: var(--surface); }
 .home-main-column { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 .home-toolbar { display: flex; flex: 0 0 auto; min-width: 0; }
 .home-toolbar :deep(.feed-tabs-wrapper) { flex: 1; min-width: 0; }
 .desktop-home-pager .home-main-column { border-right: 1px solid var(--border); }
-@container home-layout (max-width: 960px) { :deep(.right-sidebar) { display: none !important; } }
 .pager-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: pan-y; }
 .pager-track { position: relative; height: 100%; width: 100%; will-change: transform; }
 .pager-page { position: absolute; top: 0; width: 100%; height: 100%; overflow: hidden; contain: layout style; }
