@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { registerGlobalHotkeys, REGISTERED_HOTKEY_IDS, EXTERNAL_HOTKEY_IDS } from '../hotkeys';
 import { SHORTCUT_BRANCH_IDS, SHORTCUT_DEFINITIONS } from '../shortcuts';
 import * as commentTracker from '../activeCommentTracker';
-import { HOME_TAB_REFRESH_EVENT } from '../homeTab';
+import { HOME_TAB_CYCLE_EVENT, HOME_TAB_REFRESH_EVENT } from '../homeTab';
 import { consumePageTabTransition, resetPageTabTransition } from '../routeTransition';
 
 const { push, replace, back, cycle, closeTab, historyState, currentRoute } = vi.hoisted(() => ({
@@ -121,6 +121,47 @@ describe('registerGlobalHotkeys', () => {
     unregister();
     resetPageTabTransition();
     commentTracker.resetActiveComments();
+  });
+
+  it.each([['h', -1], ['l', 1]] as const)('%s 仅在首页请求切换栏目，成功时消费按键', (key, direction) => {
+    const listener = vi.fn((event: Event) => event.preventDefault());
+    const press = () => {
+      const event = new KeyboardEvent('keydown', { key, cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(press()).toBe(false);
+    window.addEventListener(HOME_TAB_CYCLE_EVENT, listener);
+    try {
+      expect(press()).toBe(true);
+      expect((listener.mock.calls[0]?.[0] as CustomEvent).detail).toBe(direction);
+      currentRoute.path = '/discover';
+      expect(press()).toBe(false);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(cycle).not.toHaveBeenCalled();
+      expect(push).not.toHaveBeenCalled();
+    } finally { window.removeEventListener(HOME_TAB_CYCLE_EVENT, listener); }
+  });
+
+  it('输入、组合键和栏目管理弹窗保留 H / L', () => {
+    const listener = vi.fn();
+    const input = document.createElement('input');
+    const overlay = document.createElement('div');
+    overlay.className = 'channel-manager-overlay';
+    window.addEventListener(HOME_TAB_CYCLE_EVENT, listener);
+    document.body.append(input);
+    try {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', ctrlKey: true }));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', isComposing: true }));
+      document.body.append(overlay);
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'l' }));
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      input.remove();
+      overlay.remove();
+      window.removeEventListener(HOME_TAB_CYCLE_EVENT, listener);
+    }
   });
 
   it.each([

@@ -19,6 +19,9 @@ export const HOME_TAB_SCROLL_TOP_EVENT = 'home-tab-scroll-top';
 /** 双击主栏目：回到顶部后刷新当前栏目。 */
 export const HOME_TAB_REFRESH_EVENT = 'home-tab-refresh';
 
+/** 键盘切换首页栏目，当前栏目容器处理成功时取消默认行为。 */
+export const HOME_TAB_CYCLE_EVENT = 'home-tab-cycle';
+
 export type HomeTabClickResult = 'single' | 'double' | 'navigate';
 
 let lastHomeTabClickAt = 0;

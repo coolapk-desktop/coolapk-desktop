@@ -8,6 +8,7 @@ import MobileHomePager from '../MobileHomePager.vue';
 import HomePage from '../../../pages/HomePage.vue';
 import { useSettingsStore } from '../../../stores/settings';
 import { desktopFeedCommentsOpenKey } from '../../../utils/desktopFeedComments';
+import { HOME_TAB_CYCLE_EVENT } from '../../../utils/homeTab';
 import { mobileHomeToolbarTargetKey, mobileReadingNavigationKey } from '../../../composables/useMobileReadingNavigation';
 const progress = vi.fn();
 const Tabs = defineComponent({ name: 'FeedTabs', props: ['activeKey', 'tabs', 'swipeProgress'], setup(_, { expose }) { expose({ setSwipeProgress: progress }); }, template: '<nav />' });
@@ -47,6 +48,34 @@ describe('移动首页一体滑动', () => {
     HTMLElement.prototype.releasePointerCapture = vi.fn();
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it.each([false, true])('栏目快捷键按可见顺序双向循环并跳过隐藏栏目（窄屏：%s）', async (mobile) => {
+    const settings = useSettingsStore().settings;
+    settings.homeTabOrder = ['hot', 'follow', 'digest'];
+    const w = mount(MobileHomePager, { props: { mobile }, global: {
+      stubs: { HomeTabPanel: Panel, FeedTabs: Tabs, RightSidebar: true, FeedLayoutToggle: true },
+    } });
+    const cycle = (direction: number) => window.dispatchEvent(new CustomEvent(HOME_TAB_CYCLE_EVENT, { detail: direction, cancelable: true }));
+    try {
+      await flushPromises();
+      const tabs = w.findComponent({ name: 'FeedTabs' });
+      expect(tabs.props('activeKey')).toBe('digest');
+      expect(cycle(1)).toBe(false);
+      finish(); await flushPromises();
+      expect(tabs.props('activeKey')).toBe('hot');
+      expect(cycle(-1)).toBe(false);
+      finish(); await flushPromises();
+      expect(tabs.props('activeKey')).toBe('digest');
+      settings.homeTabOrder = ['hot', '__hidden__follow', 'digest'];
+      await flushPromises();
+      expect(cycle(-1)).toBe(false);
+      finish(); await flushPromises();
+      expect(tabs.props('activeKey')).toBe('hot');
+      settings.homeTabOrder = ['hot', '__hidden__follow', '__hidden__digest'];
+      await flushPromises();
+      expect(cycle(1)).toBe(true);
+    } finally { w.unmount(); }
+    expect(cycle(1)).toBe(true);
+  });
   it('窄屏主栏目进入外壳顶栏，跨断点保留同一组标签', async () => {
     const hidden = ref(false);
     const reset = vi.fn(() => { hidden.value = false; });

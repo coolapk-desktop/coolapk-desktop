@@ -653,7 +653,9 @@ describe('设置页面交互', () => {
 
   it('快捷键页展示全部快捷键并可设置私信回车行为', async () => {
     const { wrapper, settings } = mountPage(ShortcutSettingsPage);
-    expect(wrapper.findAll('.setting-row')).toHaveLength(19);
+    expect(wrapper.findAll('.setting-row')).toHaveLength(20);
+    expect(wrapper.text()).toContain('上一个 / 下一个首页栏目');
+    expect(wrapper.text()).toContain('H / L');
     expect(wrapper.text()).toContain('下一个标签页');
     expect(wrapper.text()).toContain('Ctrl+Tab');
     expect(wrapper.text()).toContain('Ctrl+Shift+Tab');

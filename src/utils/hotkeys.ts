@@ -8,6 +8,7 @@ import { usePageTabsStore } from '../stores/pageTabs';
 import { refreshPageTabGeneration } from './pageTabs';
 import { navigateBack } from './navigation';
 import { triggerPageTabTransition } from './routeTransition';
+import { HOME_TAB_CYCLE_EVENT } from './homeTab';
 import type { ShortcutBranchId } from './shortcuts';
 
 /**
@@ -19,6 +20,7 @@ import type { ShortcutBranchId } from './shortcuts';
 export const REGISTERED_HOTKEY_IDS: ReadonlySet<ShortcutBranchId> = new Set([
   'closeTab',
   'tabCycle',
+  'homeTabCycle',
   'navBack',
   'navForward',
   'toggleSidebar',
@@ -50,6 +52,7 @@ export const EXTERNAL_HOTKEY_IDS: ReadonlySet<ShortcutBranchId> = new Set([
  *  - Ctrl+W 关闭当前标签页，Ctrl+Tab / Ctrl+Shift+Tab 循环切换标签页
  *  - Ctrl+PageUp / PageDown、⌘⇧[ / ⌘⇧] 切换上一个 / 下一个标签页
  *  - Alt+Left / Alt+Right 前进后退页面
+ *  - H / L 循环切换首页栏目
  *  - J / K 上下一条动态（派发 feed-nav-next / feed-nav-prev，由首页监听）
  *  - J / K / C 单键导航忽略修饰键，保留 Ctrl+C 等系统快捷键
  *  - Ctrl+K / Esc 由 SearchCommand 及各浮层组件自行处理
@@ -194,7 +197,14 @@ export function registerGlobalHotkeys() {
 
     if (isTypingTarget(e) || ctrl || e.altKey || e.shiftKey) return;
     const key = e.key.toLowerCase();
-    if (key === 'j') {
+    if ((key === 'h' || key === 'l') && router.currentRoute.value.path === '/') {
+      const appStore = useAppStore();
+      if (appStore.isSearchOpen || appStore.isPublishOpen || appStore.activeImageViewer
+        || document.querySelector(`${OVERLAY_ESCAPE_SELECTOR}, .channel-manager-overlay, [aria-modal="true"], dialog[open]`)) return;
+      const direction = key === 'h' ? -1 : 1;
+      // 首页可能尚未挂载或正在加载栏目，只有实际切换时才消费按键。
+      if (!window.dispatchEvent(new CustomEvent(HOME_TAB_CYCLE_EVENT, { detail: direction, cancelable: true }))) e.preventDefault();
+    } else if (key === 'j') {
       e.preventDefault();
       window.dispatchEvent(new Event('feed-nav-next'));
     } else if (key === 'k') {

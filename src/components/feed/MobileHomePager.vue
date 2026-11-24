@@ -30,6 +30,7 @@ import { isWebBuild } from '../../api/runtime';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { useSettingsStore } from '../../stores/settings';
 import { getHomeTabKey, resolvePreferredHomeTab, type HomeSubChannelSelection } from '../../utils/homeTabs';
+import { HOME_TAB_CYCLE_EVENT } from '../../utils/homeTab';
 import type { ConfigPageTab } from '../../types/settings';
 import { homePagerMovingKey } from '../../utils/feedPageVisibility';
 import { observeResizeOnFrame } from '../../utils/observeResizeOnFrame';
@@ -157,6 +158,16 @@ function select(key: string) {
   }
   settle(index);
 }
+function cycleHomeTab(event: Event) {
+  const direction = (event as CustomEvent<number>).detail;
+  const visibleTabs = tabs.value;
+  if (visibleTabs.length < 2 || drag || frame || (direction !== -1 && direction !== 1)) return;
+  // 使用栏目栏的可见顺序，并复用点击栏目的选择和滚动保留逻辑。
+  const target = (activeIndex.value + direction + visibleTabs.length) % visibleTabs.length;
+  resetWheelGesture();
+  select(getHomeTabKey(visibleTabs[target]!));
+  event.preventDefault();
+}
 async function selectSubTab(selection: HomeSubChannelSelection) {
   select(selection.parentKey);
   await nextTick();
@@ -257,10 +268,12 @@ watch(() => props.mobile, () => {
   void nextTick(measure);
 });
 function bind() {
+  window.addEventListener(HOME_TAB_CYCLE_EVENT, cycleHomeTab);
   window.addEventListener('pointermove', moveDrag, { passive: false });
   window.addEventListener('pointerup', pointerUp); window.addEventListener('pointercancel', cancelDrag);
 }
 function unbind() {
+  window.removeEventListener(HOME_TAB_CYCLE_EVENT, cycleHomeTab);
   window.removeEventListener('pointermove', moveDrag); window.removeEventListener('pointerup', pointerUp); window.removeEventListener('pointercancel', cancelDrag);
   resetGesture();
 }
