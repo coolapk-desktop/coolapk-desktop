@@ -84,6 +84,27 @@ function mountPage(component: Parameters<typeof mount>[0]) {
 }
 
 describe('设置页面交互', () => {
+  it('外观页可切换首页居中、头条快捷入口和页面滚动条', async () => {
+    const { wrapper, settings } = mountPage(AppearanceSettingsPage);
+    try {
+      const alignment = wrapper.get('input[aria-label="居中对齐头条快捷入口和关注分组"]');
+      const quickLinks = wrapper.get('input[aria-label="显示头条快捷入口"]');
+      const scrollbars = wrapper.get('input[aria-label="隐藏页面滚动条"]');
+      expect(settings.settings.centerHomeSections).toBe(false);
+      expect(settings.settings.showHeadlineQuickLinks).toBe(true);
+      expect(document.documentElement.hasAttribute('data-hide-scrollbars')).toBe(false);
+      await alignment.setValue(true);
+      await quickLinks.setValue(false);
+      await scrollbars.setValue(true);
+      expect(settings.settings.centerHomeSections).toBe(true);
+      expect(settings.settings.showHeadlineQuickLinks).toBe(false);
+      expect(settings.settings.hideScrollbars).toBe(true);
+      expect(document.documentElement.hasAttribute('data-hide-scrollbars')).toBe(true);
+      await scrollbars.setValue(false);
+      expect(document.documentElement.hasAttribute('data-hide-scrollbars')).toBe(false);
+    } finally { wrapper.unmount(); }
+  });
+
   it('首页右栏热门资讯可从外观设置独立关闭', async () => {
     const { wrapper, settings } = mountPage(AppearanceSettingsPage);
     try {

@@ -70,6 +70,20 @@
   background: transparent;
 }
 
+/* 覆盖各页面的滚动条样式，保留滚动容器与原有滚动方式。 */
+html:root[data-hide-scrollbars],
+html:root[data-hide-scrollbars] * {
+  scrollbar-width: none !important;
+  scrollbar-gutter: auto !important;
+}
+
+html:root[data-hide-scrollbars]::-webkit-scrollbar,
+html:root[data-hide-scrollbars] *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 /* 酷安表情行内显示规则：强行约束尺寸为 22px x 22px，防止变成巨大图片 */
 img.coolapk-emoji,
 .coolapk-emoji {

@@ -224,6 +224,18 @@
         </div>
         <AppSwitch v-model="settingsStore.settings.autoHideMobileNavigation" />
       </div>
+      <div class="setting-row">
+        <div class="row-info"><span class="row-label">居中对齐头条快捷入口和关注分组</span></div>
+        <AppSwitch v-model="settingsStore.settings.centerHomeSections" aria-label="居中对齐头条快捷入口和关注分组" />
+      </div>
+      <div class="setting-row">
+        <div class="row-info"><span class="row-label">显示头条快捷入口</span></div>
+        <AppSwitch v-model="settingsStore.settings.showHeadlineQuickLinks" aria-label="显示头条快捷入口" />
+      </div>
+      <div class="setting-row">
+        <div class="row-info"><span class="row-label">隐藏页面滚动条</span><span class="row-sub">保留滚轮、触控和键盘滚动</span></div>
+        <AppSwitch v-model="settingsStore.settings.hideScrollbars" aria-label="隐藏页面滚动条" />
+      </div>
     </div>
 
     <div v-if="!isAndroidTauri" class="setting-group">

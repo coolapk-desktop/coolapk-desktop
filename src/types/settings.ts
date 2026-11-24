@@ -174,6 +174,12 @@ export interface AppSettings {
   showDeviceInfo: boolean;
   /** 是否显示动态顶部的作者背景与装饰图，不影响正文配图。 */
   showFeedBackground: boolean;
+  /** 居中对齐头条快捷入口与关注分组。 */
+  centerHomeSections: boolean;
+  /** 显示头条顶部的快捷入口。 */
+  showHeadlineQuickLinks: boolean;
+  /** 隐藏应用内页面的滚动条。 */
+  hideScrollbars: boolean;
   showHomeMonthlyRank: boolean;
   /** 首页右栏热门资讯开关，以及热榜上次选择的时间范围。 */
   showHomeHotNews: boolean;

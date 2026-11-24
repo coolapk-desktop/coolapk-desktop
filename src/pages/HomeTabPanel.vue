@@ -1,5 +1,5 @@
 <template>
-  <div class="home-page-layout" :class="{ 'has-follow-subchannels': isFollowingTab && followSubChannels.length > 0 }">
+  <div class="home-page-layout" :class="{ 'has-follow-subchannels': isFollowingTab && followSubChannels.length > 0, 'center-home-sections': settingsStore.settings.centerHomeSections }">
     <div ref="mainFeedColumnRef" class="main-feed-column">
       <div v-if="!props.embedded" class="feed-toolbar-row">
         <FeedTabs
@@ -48,10 +48,9 @@
       >
         <UpdatedFollowUsers ref="updatedFollowUsers" v-if="isFollowingTab && (!selectedFollowSubChannel || isDefaultFollowSubChannel(selectedFollowSubChannel))" :feeds="followingUpdateFeeds" />
         <!-- 1. 头条 Tab 专属：服务端要闻与动态子栏目 -->
-        <div v-if="isHeadlineTab" class="headline-header-section">
+        <div v-if="isHeadlineTab && settingsStore.settings.showHeadlineQuickLinks && headlineSubChannels.length" class="headline-header-section">
           <!-- APK ConfigPage.rawEntities 动态下发的头条子栏目 -->
           <div
-            v-if="headlineSubChannels.length"
             ref="subChannelsContainer"
             class="quick-icons-grid custom-scrollbar"
             data-discovery-horizontal-scroll
@@ -1110,6 +1109,7 @@ async function getHeadlineSubChannelData(
   subTitle: string,
   page: number,
 ) {
+  const sequence = feedRequestSequence;
   const targetUrl = normalizeHeadlinePageUrl(headlineResolvedUrl.value || url);
   const isProductSelector = targetUrl.includes('filter') || targetUrl.includes('product') || title.includes('选机');
 
@@ -1125,6 +1125,7 @@ async function getHeadlineSubChannelData(
         lastItem: headlineCursor.lastItem,
         pageContext: headlinePageContext.value,
       });
+      if (sequence !== feedRequestSequence) return;
       if (productPageRes && productPageRes.data && Array.isArray(productPageRes.data) && productPageRes.data.length > 0) {
         if (page === 1) updateHeadlineNestedSubChannels(productPageRes.data);
         return productPageRes;
@@ -1154,6 +1155,8 @@ async function getHeadlineSubChannelData(
       lastItem: headlineCursor.lastItem,
       pageContext: headlinePageContext.value,
     });
+    // 关闭快捷入口后，迟到的响应不能恢复子栏目或触发下一次请求。
+    if (sequence !== feedRequestSequence) return;
     if (res && res.data && Array.isArray(res.data) && res.data.length > 0) {
       const items = res.data;
       if (page === 1) updateHeadlineNestedSubChannels(items);
@@ -1891,8 +1894,15 @@ function restoreHeadlineRecommendation() {
   if (isInitializingHome || !props.selected || !isHeadlineTab.value || !selectedHeadlineSubChannelUrl.value) return;
   selectedHeadlineSubChannelUrl.value = '';
   resetHeadlineCursor();
+  // 退出快捷入口时立即刷新推荐流，旧请求的结果不能覆盖它。
+  loading.value = loadingMore.value = false;
   void loadFeeds(true);
 }
+watch(() => settingsStore.settings.showHeadlineQuickLinks, (visible) => {
+  if (visible) return;
+  headlinePage.value = 0;
+  restoreHeadlineRecommendation();
+});
 onActivated(() => {
   bindGlobalListeners();
   // 从通知、详情等页面返回时保留当前子栏目，交给路由恢复原来的滚动位置。
@@ -1998,6 +2008,10 @@ async function refreshMobilePage() { await loadFeeds(true); }
   display: none;
 }
 
+/* 有剩余空间时居中，溢出时让第一个栏目仍能从起点滚到。 */
+.center-home-sections .follow-subchannel-item:first-child { margin-inline-start: auto; }
+.center-home-sections .follow-subchannel-item:last-child { margin-inline-end: auto; }
+
 .follow-subchannel-item {
   display: inline-flex;
   align-items: center;
@@ -2056,6 +2070,11 @@ async function refreshMobilePage() { await loadFeeds(true); }
   user-select: none;
   scrollbar-width: thin;
   scrollbar-color: var(--border, rgba(0, 0, 0, 0.15)) transparent;
+}
+
+@media (min-width: 721px) {
+  .center-home-sections .headline-icon-page:first-child > .icon-btn-item:first-child { margin-inline-start: auto; }
+  .center-home-sections .headline-icon-page:last-child > .icon-btn-item:last-child { margin-inline-end: auto; }
 }
 
 .quick-icons-grid::-webkit-scrollbar {
@@ -2550,6 +2569,9 @@ async function refreshMobilePage() { await loadFeeds(true); }
   .quick-icons-grid::-webkit-scrollbar { display: none; width: 0; height: 0; }
   .headline-icon-page { display: grid; grid-template-columns: repeat(var(--headline-columns, 5), minmax(0, 1fr)); flex: 0 0 100%; min-width: 0; align-content: start; scroll-snap-align: start; }
   .icon-btn-item { gap: 3px; min-width: 0; padding: 8px 4px; }
+  /* 开启居中后，不满一行的快捷入口也按配置列宽对齐到中间。 */
+  .center-home-sections .headline-icon-page { display: flex; flex-wrap: wrap; justify-content: center; }
+  .center-home-sections .icon-btn-item { flex-basis: calc(100% / var(--headline-columns, 5)); }
   .icon-circle { flex: 0 0 36px; width: 36px; height: 36px; margin-top: 1px; border-radius: 10px; font-size: 18px; }
   .headline-sub-channel-logo { width: 36px; height: 36px; border-radius: 10px; }
   .channel-title { max-width: 100%; overflow: hidden; font-size: 12px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }

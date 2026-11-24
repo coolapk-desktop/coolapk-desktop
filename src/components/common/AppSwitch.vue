@@ -4,6 +4,7 @@
       type="checkbox"
       :checked="modelValue"
       :disabled="disabled"
+      :aria-label="ariaLabel"
       class="switch-input"
       @change="onToggle"
     />
@@ -16,6 +17,7 @@ const props = withDefaults(
   defineProps<{
     modelValue: boolean;
     disabled?: boolean;
+    ariaLabel?: string;
   }>(),
   {
     disabled: false

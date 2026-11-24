@@ -176,6 +176,9 @@ const defaultSettings: AppSettings = {
   adaptiveFeedImages: false,
   showDeviceInfo: true,
   showFeedBackground: true,
+  centerHomeSections: false,
+  showHeadlineQuickLinks: true,
+  hideScrollbars: false,
   showHomeMonthlyRank: true,
   showHomeHotNews: true,
   homeSidebarRankPeriod: 'day',
@@ -356,6 +359,9 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.adaptiveFeedImages = readBoolean(source.adaptiveFeedImages, result.adaptiveFeedImages);
   result.showDeviceInfo = readBoolean(source.showDeviceInfo, result.showDeviceInfo);
   result.showFeedBackground = readBoolean(source.showFeedBackground, result.showFeedBackground);
+  result.centerHomeSections = readBoolean(source.centerHomeSections, result.centerHomeSections);
+  result.showHeadlineQuickLinks = readBoolean(source.showHeadlineQuickLinks, result.showHeadlineQuickLinks);
+  result.hideScrollbars = readBoolean(source.hideScrollbars, result.hideScrollbars);
   result.showHomeMonthlyRank = readBoolean(source.showHomeMonthlyRank, result.showHomeMonthlyRank);
   result.showHomeHotNews = readBoolean(source.showHomeHotNews, result.showHomeHotNews);
   result.homeSidebarRankPeriod = ['day', 'week', 'month'].includes(String(source.homeSidebarRankPeriod)) ? source.homeSidebarRankPeriod as AppSettings['homeSidebarRankPeriod'] : result.homeSidebarRankPeriod;
@@ -619,6 +625,7 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(() => settings.value.zoom, applyZoom, { immediate: true });
   watch(() => settings.value.reduceMotion, applyReduceMotion, { immediate: true });
   watch(() => settings.value.noImageMode, applyNoImageMode, { immediate: true });
+  watch(() => settings.value.hideScrollbars, enabled => document.documentElement.toggleAttribute('data-hide-scrollbars', enabled), { immediate: true });
 
   watch(() => settings.value.closeToTray, (enabled) => {
     if (nativeSyncReady) syncCloseToTray(enabled);

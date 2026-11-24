@@ -115,6 +115,44 @@ it.each([
 });
 
 
+it('关闭头条快捷入口时恢复推荐流，忽略未完成的子栏目请求', async () => {
+  const feed = { id: '100', entityType: 'feed', message: '推荐动态', uid: '123', username: '酷友' };
+  const quickLinks = { entityType: 'card', entityTemplate: 'iconLinkGridCard', entities: [{ id: 'worth', title: '值得看', url: '/page?url=worth' }] };
+  api.getIndexV8EntitiesPaged.mockReset().mockResolvedValue({ data: [quickLinks, feed] });
+  let resolveSubChannel!: (result: unknown) => void;
+  api.getDiscoveryPageData.mockReset().mockReturnValueOnce(new Promise(resolve => { resolveSubChannel = resolve; }));
+  const tab = { title: '头条', page_name: 'V9_HOME_TAB_HEADLINE', url: '/main/headline' };
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] });
+  await router.push('/');
+  const pinia = createPinia();
+  const settings = useSettingsStore(pinia).settings;
+  settings.showHeadlineQuickLinks = false;
+  const wrapper = mount(HomeTabPanel, { props: { embedded: true, selected: true, tabKey: tab.page_name, tabs: [tab] }, global: { plugins: [router, pinia], stubs: { FeedCard: { props: ['feed'], template: '<article>{{ feed.message }}</article>' }, AppImage: true } } });
+  try {
+    await flushPromises();
+    expect(wrapper.find('.headline-header-section').exists()).toBe(false);
+    expect(wrapper.text()).toContain('推荐动态');
+    settings.showHeadlineQuickLinks = true;
+    await flushPromises();
+    await wrapper.get('.icon-btn-item').trigger('click');
+    expect(api.getDiscoveryPageData).toHaveBeenCalledOnce();
+    settings.showHeadlineQuickLinks = false;
+    await flushPromises();
+    resolveSubChannel({ data: [
+      { entityType: 'card', entityTemplate: 'iconTabLinkGridCard', entities: [{ title: '全部', url: '/page?url=worth-all' }] },
+      { ...feed, id: '200', message: '过期子栏目动态' },
+    ] });
+    await flushPromises();
+    expect(api.getDiscoveryPageData).toHaveBeenCalledOnce();
+    expect(wrapper.find('.headline-header-section').exists()).toBe(false);
+    expect(wrapper.text()).toContain('推荐动态');
+    expect(wrapper.text()).not.toContain('过期子栏目动态');
+    settings.showHeadlineQuickLinks = true;
+    await flushPromises();
+    expect(wrapper.find('.icon-btn-item.selected').exists()).toBe(false);
+  } finally { wrapper.unmount(); api.getDiscoveryPageData.mockReset(); }
+});
+
 it('历史返回头条保留快捷入口，主动切换栏目后再进入恢复推荐流', async () => {
   const feed = { id: '100', entityType: 'feed', message: '推荐动态', uid: '123', username: '酷友' };
   const quickLinks = { entityType: 'card', entityTemplate: 'iconLinkGridCard', extraData: JSON.stringify({ row: 1, column: 5, pagination: 'true' }), entities: [{ id: 'worth', title: '值得看', url: '/page?url=worth' }] };

@@ -77,6 +77,20 @@ describe('settings store', () => {
     await nextTick(); await store.flushSettings();
     expect(normalizeSettings(Object.fromEntries(fileStoreState.values))).toMatchObject({ showHomeHotNews: false, homeSidebarRankPeriod: 'week' });
   });
+
+  it('保存阅读外观偏好，旧配置保留快捷入口和滚动条', async () => {
+    expect(normalizeSettings({})).toMatchObject({ centerHomeSections: false, showHeadlineQuickLinks: true, hideScrollbars: false });
+    (window as any).__TAURI_INTERNALS__ = {};
+    const store = useSettingsStore();
+    try {
+      await store.initializeSettings();
+      store.settings.centerHomeSections = true;
+      store.settings.showHeadlineQuickLinks = false;
+      store.settings.hideScrollbars = true;
+      await nextTick(); await store.flushSettings();
+      expect(normalizeSettings(Object.fromEntries(fileStoreState.values))).toMatchObject({ centerHomeSections: true, showHeadlineQuickLinks: false, hideScrollbars: true });
+    } finally { store.$dispose(); document.documentElement.removeAttribute('data-hide-scrollbars'); }
+  });
   it('图片自适应排列默认关闭，保留保存的布尔值并忽略无效配置', () => {
     expect(normalizeSettings({}).adaptiveFeedImages).toBe(false);
     expect(normalizeSettings({ adaptiveFeedImages: true }).adaptiveFeedImages).toBe(true);
