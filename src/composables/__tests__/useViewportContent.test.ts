@@ -3,7 +3,7 @@ import { defineComponent, nextTick, ref } from 'vue';
 import { mount } from '@vue/test-utils';
 import { useViewportContent } from '../useViewportContent';
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function harness(protectedContent = ref(false), pageVisible = ref(true)) {
   let notify!: IntersectionObserverCallback;
@@ -163,18 +163,44 @@ it('remeasures cached placeholders if the viewport width changed while hidden', 
   h.wrapper.unmount();
 });
 
-it('remeasures recycled cards when the window width changes', async () => {
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
-  vi.stubGlobal('cancelAnimationFrame', vi.fn());
+it('keeps recycled cards when only the window height changes', async () => {
+  vi.useFakeTimers();
   const h = harness();
-  await nextTick();
-  await h.visibility(false);
-  window.dispatchEvent(new Event('resize'));
-  await nextTick();
-  expect(h.wrapper.find('input').exists()).toBe(true);
-  expect((h.wrapper.element as HTMLElement).style.height).toBe('');
-  expect(h.observe).toHaveBeenCalledTimes(2);
-  h.wrapper.unmount();
+  try {
+    await nextTick();
+    await h.visibility(false);
+    vi.stubGlobal('innerHeight', window.innerHeight + 100);
+    window.dispatchEvent(new Event('resize'));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(h.wrapper.find('input').exists()).toBe(false);
+    expect((h.wrapper.element as HTMLElement).style.height).toBe('280px');
+    expect(h.observe).toHaveBeenCalledOnce();
+  } finally { h.wrapper.unmount(); }
+});
+
+it('remeasures a recycled card once after the viewport width settles', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame'] });
+  const h = harness();
+  try {
+    await nextTick();
+    await h.visibility(false);
+    for (const width of [900, 920, 940]) {
+      vi.stubGlobal('innerWidth', width);
+      window.dispatchEvent(new Event('resize'));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(h.wrapper.find('input').exists()).toBe(false);
+      expect(h.observe).toHaveBeenCalledOnce();
+    }
+    await vi.advanceTimersByTimeAsync(200);
+    expect(h.wrapper.find('input').exists()).toBe(true);
+    expect((h.wrapper.element as HTMLElement).style.height).toBe('');
+    expect(h.observe).toHaveBeenCalledTimes(2);
+    await h.visibility(false);
+    window.dispatchEvent(new Event('resize'));
+    await vi.advanceTimersByTimeAsync(200);
+    expect(h.wrapper.find('input').exists()).toBe(false);
+    expect(h.observe).toHaveBeenCalledTimes(2);
+  } finally { h.wrapper.unmount(); }
 });
 
 it('preserves a text selection spanning an offscreen card', async () => {

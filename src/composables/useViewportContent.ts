@@ -1,19 +1,46 @@
 import { computed, nextTick, onActivated, onDeactivated, onUnmounted, ref, watch, type Ref } from 'vue';
 import { getResourceScrollRoot } from '../utils/resourceVisibility';
 
-type CardObserver = { visibility: (visible: boolean) => void; resize: () => void };
+type CardObserver = { visibility: (visible: boolean) => void; refreshPlaceholder: (width: number) => boolean };
 const cards = new Map<Element, CardObserver & { reobserve: () => void }>();
 const observers = new Map<Element | null, { observer: IntersectionObserver; count: number }>();
-let resizeFrame = 0;
+const RESIZE_SETTLE_MS = 120;
+const PLACEHOLDERS_PER_FRAME = 8;
+let lastViewportWidth = 0;
+let resizeTimer: number | undefined;
+let resizeFrame: number | undefined;
+
+function cancelPlaceholderRefresh() {
+  window.clearTimeout(resizeTimer);
+  if (resizeFrame !== undefined) window.cancelAnimationFrame(resizeFrame);
+  resizeTimer = resizeFrame = undefined;
+}
 
 function onResize() {
-  cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => {
-    for (const callback of cards.values()) callback.resize();
-    void nextTick(() => {
-      for (const callback of cards.values()) callback.reobserve();
-    });
-  });
+  const width = window.innerWidth;
+  if (width === lastViewportWidth) return;
+  lastViewportWidth = width;
+  cancelPlaceholderRefresh();
+  // 仅在宽度稳定后重测离屏占位。可见卡片继续跟随 CSS 布局即时调整。
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = undefined;
+    const pending = [...cards];
+    let index = 0;
+    // 分帧重建离屏子树，避免拖动结束后长列表集中重测造成一帧停顿。
+    function refreshBatch() {
+      resizeFrame = undefined;
+      const refreshed: Array<() => void> = [];
+      while (index < pending.length && refreshed.length < PLACEHOLDERS_PER_FRAME) {
+        const [element, callback] = pending[index++]!;
+        if (cards.get(element) === callback && callback.refreshPlaceholder(width)) refreshed.push(callback.reobserve);
+      }
+      if (refreshed.length) void nextTick(() => {
+        for (const reobserve of refreshed) reobserve();
+      });
+      if (index < pending.length) resizeFrame = window.requestAnimationFrame(refreshBatch);
+    }
+    resizeFrame = window.requestAnimationFrame(refreshBatch);
+  }, RESIZE_SETTLE_MS);
 }
 
 function observeCard(element: Element, callback: CardObserver) {
@@ -27,14 +54,18 @@ function observeCard(element: Element, callback: CardObserver) {
     observers.set(root, group);
   }
   const cardGroup = group;
-  if (!cards.size) window.addEventListener('resize', onResize, { passive: true });
+  if (!cards.size) {
+    lastViewportWidth = window.innerWidth;
+    window.addEventListener('resize', onResize, { passive: true });
+  }
   cardGroup.count += 1;
+  let stopped = false;
   cards.set(element, { ...callback, reobserve() {
+    if (stopped) return;
     cardGroup.observer.unobserve(element);
     cardGroup.observer.observe(element);
   } });
   cardGroup.observer.observe(element);
-  let stopped = false;
   return () => {
     if (stopped) return;
     stopped = true;
@@ -46,7 +77,7 @@ function observeCard(element: Element, callback: CardObserver) {
     }
     if (!cards.size) {
       window.removeEventListener('resize', onResize);
-      cancelAnimationFrame(resizeFrame);
+      cancelPlaceholderRefresh();
     }
   };
 }
@@ -66,16 +97,21 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
     : { height: `${height.value}px`, boxSizing: 'border-box' as const });
 
   function retainViewportContent() { retained.value = true; }
+  function refreshPlaceholder(width: number) {
+    if (viewportWidth === width) return false;
+    viewportWidth = width;
+    const wasRecycled = !renderViewportContent.value;
+    height.value = 0;
+    nearViewport.value = true;
+    return wasRecycled;
+  }
+
   function observe() {
     stop();
     stop = () => {};
     if (!active.value || !pageVisible.value || !element.value || retained.value || protectedContent.value || typeof IntersectionObserver === 'undefined') return;
     // 隐藏期间旋转手机/调整桌面窗口后，旧占位高度需要重新测量。
-    if (viewportWidth !== window.innerWidth) {
-      viewportWidth = window.innerWidth;
-      height.value = 0;
-      nearViewport.value = true;
-    }
+    refreshPlaceholder(window.innerWidth);
     stop = observeCard(element.value, {
       visibility(visible) {
         if (visible) nearViewport.value = true;
@@ -90,12 +126,13 @@ export function useViewportContent(element: Ref<HTMLElement | null>, protectedCo
           // 卡片使用 border-box。读取未缩放的布局高度，避免把路由转场中的视觉尺寸写回占位。
           const measured = Number.parseFloat(getComputedStyle(card).height);
           if (measured > 0) {
+            viewportWidth = window.innerWidth;
             height.value = measured;
             nearViewport.value = false;
           }
         }
       },
-      resize() { height.value = 0; nearViewport.value = true; },
+      refreshPlaceholder,
     });
   }
   watch([element, retained, protectedContent, pageVisible], () => {
