@@ -63,6 +63,13 @@ describe('Live Photo 视频编码识别', () => {
     expect(detectLiveVideoCodec(concat(box('ftyp', new Uint8Array(8)), new TextEncoder().encode('hvc1')))).toBeNull();
   });
 
+  it.each(['avc1', 'avc3'])('从 avcC 生成编码参数时保留小写标识 %s', id => {
+    const avcC = new Uint8Array([1, 0x64, 0x0a, 0x2f]);
+    expect(detectLiveVideoCodec(mp4WithCodec(id, { type: 'avcC', payload: avcC }))).toEqual({
+      id, name: 'H.264/AVC', container: 'mp4', mimeCodec: `${id}.640A2F`,
+    });
+  });
+
   it('从 hvcC 生成完整的 HEVC codec 字符串', () => {
     const hvcC = new Uint8Array(13);
     hvcC.set([1, 1, 0x60, 0, 0, 0, 0xb0, 0, 0, 0, 0, 0, 93]);

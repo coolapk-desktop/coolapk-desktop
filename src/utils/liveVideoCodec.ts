@@ -93,7 +93,9 @@ function readMp4CodecConfiguration(bytes: Uint8Array, entryOffset: number, entry
   if (id === 'avc1' || id === 'avc3') {
     const offset = findMp4SampleEntryBox(bytes, entryOffset, entrySize, 'avcC');
     if (offset === null || offset + 4 > bytes.length) return undefined;
-    return `${id}.${bytes[offset + 1].toString(16).padStart(2, '0')}${bytes[offset + 2].toString(16).padStart(2, '0')}${bytes[offset + 3].toString(16).padStart(2, '0')}`.toUpperCase();
+    // Chromium 的能力查询区分编码标识的大小写，保留 MP4 中的小写 avc1/avc3。
+    const profile = Array.from(bytes.subarray(offset + 1, offset + 4), byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase();
+    return `${id}.${profile}`;
   }
   if (id === 'hvc1' || id === 'hev1') {
     const offset = findMp4SampleEntryBox(bytes, entryOffset, entrySize, 'hvcC');
