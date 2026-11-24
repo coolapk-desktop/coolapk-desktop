@@ -7,7 +7,6 @@ const routerMock = vi.hoisted(() => ({
   replace: vi.fn(),
   currentRoute: { value: { path: '/' } },
 }));
-const apiMock = vi.hoisted(() => ({ openUrl: vi.fn() }));
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>();
@@ -18,10 +17,7 @@ vi.mock('vue-router', async (importOriginal) => {
   };
 });
 
-vi.mock('../../../api/coolapk', () => ({ CoolapkTauriAPI: apiMock }));
-
 import MainSidebar from '../MainSidebar.vue';
-import { useSettingsStore } from '../../../stores/settings';
 import * as routeTransition from '../../../utils/routeTransition';
 import {
   HOME_TAB_REFRESH_EVENT,
@@ -59,45 +55,15 @@ describe('MainSidebar', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it('点击底部操作按钮（如反馈/更新）时不触发 triggerSidebarTransition', async () => {
-    const spy = vi.spyOn(routeTransition, 'triggerSidebarTransition');
+  it.each([false, true])('侧栏保留设置入口并移除底部版本卡片（移动快捷菜单：%s）', (mobileOpen) => {
     const wrapper = mount(MainSidebar, {
-      global: {
-        stubs: {
-          'router-link': RouterLinkStub,
-        },
-      },
+      props: { mobileOpen },
+      global: { stubs: { 'router-link': RouterLinkStub } },
     });
 
-    const feedbackButton = wrapper.find('.feedback-btn');
-    expect(feedbackButton.exists()).toBe(true);
-
-    await feedbackButton.trigger('click');
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('存在一键反馈与更新按钮并正常展示', async () => {
-    const wrapper = mount(MainSidebar, {
-      global: {
-        stubs: {
-          'router-link': RouterLinkStub,
-        },
-      },
-    });
-
-    const feedbackButton = wrapper.find('.feedback-btn');
-    expect(feedbackButton.exists()).toBe(true);
-    expect(feedbackButton.text()).toContain('反馈');
-    await feedbackButton.trigger('click');
-    const [issueUrl, target] = apiMock.openUrl.mock.calls[0]!;
-    const issue = new URL(String(issueUrl));
-    expect(`${issue.origin}${issue.pathname}`).toBe('https://github.com/coolapk-desktop/coolapk-desktop/issues/new');
-    expect(issue.searchParams.get('body')).toContain('客户端版本：');
-    expect(target).toBe('system');
-
-    const updateButton = wrapper.find('.check-update-btn');
-    expect(updateButton.exists()).toBe(true);
-    expect(updateButton.text()).toContain('更新');
+    expect(wrapper.get('a[href="/settings"]').text()).toBe('设置');
+    expect(wrapper.find('.sidebar-footer').exists()).toBe(false);
+    wrapper.unmount();
   });
 
   it('应用和下载不再作为左侧独立入口展示', () => {
@@ -112,28 +78,6 @@ describe('MainSidebar', () => {
     expect(wrapper.find('a[href="/apps"]').exists()).toBe(false);
     expect(wrapper.find('a[href="/downloads"]').exists()).toBe(false);
     expect(wrapper.find('a[href="/more"]').exists()).toBe(true);
-  });
-
-  it('底部快捷开关与设置渠道同步，关闭测试版后保留其他实验性功能', async () => {
-    const settings = useSettingsStore();
-    settings.settings.updateChannel = 'stable';
-    settings.settings.experimentalFeatures = false;
-    const wrapper = mount(MainSidebar, {
-      global: { stubs: { 'router-link': RouterLinkStub } },
-    });
-    const button = wrapper.find('.beta-toggle-btn');
-    expect(button.attributes('aria-pressed')).toBe('false');
-    await button.trigger('click');
-    expect(settings.settings.updateChannel).toBe('beta');
-    expect(settings.settings.experimentalFeatures).toBe(true);
-    expect(button.text()).toContain('已开启');
-    await button.trigger('click');
-    expect(settings.settings.updateChannel).toBe('stable');
-    expect(settings.settings.experimentalFeatures).toBe(true);
-    settings.settings.updateChannel = 'beta';
-    await wrapper.vm.$nextTick();
-    expect(button.attributes('aria-pressed')).toBe('true');
-    wrapper.unmount();
   });
 
   it('保留边界上的小圆形收起按钮，并能切换侧边栏状态', async () => {

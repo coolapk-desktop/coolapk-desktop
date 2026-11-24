@@ -690,43 +690,6 @@ onUnmounted(() => {
     margin: 2px 0;
   }
 
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .sidebar-footer) {
-    display: flex !important;
-    flex: 0 0 auto;
-    padding: 12px;
-  }
-
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .app-info-card) {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px;
-    width: 100%;
-  }
-
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .app-info-top) {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-    gap: 8px;
-  }
-
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .app-info-actions) {
-    min-width: 0;
-    gap: 8px;
-  }
-
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .footer-action-btn) {
-    min-width: 0;
-    min-height: 44px;
-    padding: 8px;
-    border-radius: 10px;
-    font-size: 12px;
-  }
-
-  .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .beta-toggle-btn) {
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
   .app-shell:not(.prevent-mobile-layout) :deep(.main-sidebar .nav-badge) {
     position: absolute;
     top: 3px;

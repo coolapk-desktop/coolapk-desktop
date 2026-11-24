@@ -127,37 +127,6 @@
         </div>
       </div>
     </nav>
-
-    <div v-if="!isCollapsed || mobileLayout || mobileOpen" class="sidebar-footer">
-      <div class="app-info-card">
-        <div class="app-info-top">
-          <span class="app-name">{{ appDisplayName }}</span>
-          <span class="version-badge" :title="`v${appVersion}`">v{{ appVersion }}</span>
-        </div>
-        <div class="app-info-actions">
-          <button class="footer-action-btn feedback-btn" title="在 GitHub Issues 反馈问题或建议" @click="handleFeedback">
-            <i class="fas fa-comment-dots action-icon"></i>
-            <span>反馈</span>
-          </button>
-          <button v-if="!isWebBuild" class="footer-action-btn check-update-btn" title="检查更新" @click="requestUpdateCheck">
-            <i class="fas fa-sync-alt update-icon"></i>
-            <span>更新</span>
-          </button>
-        </div>
-        <button
-          v-if="!isWebBuild"
-          type="button"
-          class="footer-action-btn beta-toggle-btn"
-          :class="{ 'is-enabled': betaEnabled }"
-          :aria-pressed="betaEnabled"
-          :title="betaEnabled ? '关闭测试版更新，切回稳定版渠道' : '开启测试版更新，提前体验新功能'"
-          @click="toggleBetaChannel"
-        >
-          <span class="beta-toggle-label"><i class="fas fa-flask" aria-hidden="true"></i>测试版</span>
-          <span class="beta-toggle-state">{{ betaEnabled ? '已开启' : '已关闭' }}<i :class="['fas', betaEnabled ? 'fa-toggle-on' : 'fa-toggle-off']" aria-hidden="true"></i></span>
-        </button>
-      </div>
-    </div>
   </aside>
 </template>
 
@@ -172,12 +141,8 @@ import { useAuthStore } from '../../stores/auth';
 import { useAppStore } from '../../stores/app';
 import { useNotificationStore } from '../../stores/notifications';
 import { useDownloadStore } from '../../stores/downloads';
-import { APP_VERSION } from '../../constants/version';
-import { CoolapkTauriAPI } from '../../api/coolapk';
-import { isWebBuild } from '../../api/runtime';
 import { triggerSidebarTransition } from '../../utils/routeTransition';
 import { activateRootTab } from '../../utils/homeTab';
-import { createFeedbackIssueUrl } from '../../utils/feedback';
 import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
 
 const mobileLayout = useMobileLayout();
@@ -211,19 +176,6 @@ function closeSidebarPreview(key: string, event?: KeyboardEvent) {
 }
 const notificationStore = useNotificationStore();
 const downloadStore = useDownloadStore();
-const appVersion = APP_VERSION;
-const betaEnabled = computed(() => settingsStore.settings.updateChannel === 'beta');
-
-function toggleBetaChannel() {
-  if (betaEnabled.value) {
-    settingsStore.settings.updateChannel = 'stable';
-  } else {
-    settingsStore.settings.experimentalFeatures = true;
-    settingsStore.settings.updateChannel = 'beta';
-  }
-}
-const appDisplayName = computed(() => isWebBuild ? '酷安 Web' : /android|iphone|ipad|ipod/i.test(navigator.userAgent) ? '酷安' : '酷安桌面版');
-
 const props = withDefaults(defineProps<{ mobileOpen?: boolean; mobileWindowControls?: boolean; webDesktopNavigation?: boolean }>(), { mobileOpen: false, mobileWindowControls: false, webDesktopNavigation: false });
 const emit = defineEmits<{ closeMobile: []; openPreview: [key: SidebarPreview, anchor: HTMLElement, focus: boolean]; closePreview: [key: SidebarPreview, event?: KeyboardEvent] }>();
 
@@ -248,20 +200,12 @@ function handleRootNavClick(event: MouseEvent, path: string) {
   activateRootTab(router, path);
 }
 
-function handleFeedback() {
-  void CoolapkTauriAPI.openUrl(createFeedbackIssueUrl(), 'system');
-}
-
 function handleNavClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   const link = target?.closest('.nav-item:not(.action-item)');
   if (link) {
     triggerSidebarTransition();
   }
-}
-
-function requestUpdateCheck() {
-  window.dispatchEvent(new Event('check-for-update'));
 }
 
 const isCollapsed = computed(() => settingsStore.settings.sidebarCollapsed);
@@ -458,7 +402,7 @@ function handleLogout() {
   flex-shrink: 0;
 }
 
-/* 桌面设置入口靠近版本与更新区；空间不足时随菜单正常滚动。 */
+/* 桌面侧栏将设置入口放在底部，空间不足时随菜单滚动。 */
 .main-sidebar:not(.is-mobile-open) .sidebar-settings {
   margin-top: auto;
 }
@@ -703,167 +647,12 @@ function handleLogout() {
   background-color: rgba(240, 68, 68, 0.1);
 }
 
-.sidebar-footer {
-  flex-shrink: 0;
-  padding: 8px 12px 10px;
-  border-top: 1px solid var(--border-light, rgba(0, 0, 0, 0.06));
-}
-
-.app-info-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  background-color: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-}
-
-.app-info-top {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.app-name {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.version-badge {
-  max-width: 100%;
-  box-sizing: border-box;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
-  padding: 1px 5px;
-  border-radius: 4px;
-  line-height: 1.2;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.app-info-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-}
-
-.footer-action-btn {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 500;
-  border: none;
-  border-radius: 5px;
-  padding: 4px 6px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.18s ease, background-color 0.18s ease;
-  line-height: 1;
-}
-
-.feedback-btn {
-  color: var(--text-secondary);
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.05));
-  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.04));
-}
-
-.beta-toggle-btn {
-  justify-content: space-between;
-  width: 100%;
-  min-height: 26px;
-  color: var(--text-secondary);
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.05));
-  border: 1px solid var(--border-light, rgba(0, 0, 0, 0.04));
-}
-
-.beta-toggle-label,
-.beta-toggle-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.beta-toggle-state {
-  font-size: 10px;
-}
-
-.beta-toggle-state i {
-  font-size: 15px;
-}
-
-.beta-toggle-btn:hover,
-.beta-toggle-btn.is-enabled {
-  color: var(--brand-primary);
-  background-color: var(--brand-soft);
-  border-color: var(--brand-primary);
-}
-
-.beta-toggle-btn:focus-visible {
-  outline: 2px solid var(--brand-primary);
-  outline-offset: 2px;
-}
-
-.feedback-btn .action-icon {
-  font-size: 10px;
-  color: var(--text-tertiary);
-}
-
-.feedback-btn:hover {
-  color: var(--brand-primary);
-  background-color: var(--brand-soft, rgba(16, 185, 129, 0.12));
-  border-color: var(--brand-primary);
-}
-
-.feedback-btn:hover .action-icon {
-  color: var(--brand-primary);
-}
-
-.check-update-btn {
-  color: var(--brand-primary);
-  background-color: var(--brand-soft, rgba(16, 185, 129, 0.1));
-  border: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.check-update-btn .update-icon {
-  font-size: 10px;
-  transition: transform 0.3s ease;
-}
-
-.check-update-btn:hover {
-  color: #fff;
-  background-color: var(--brand-primary);
-  border-color: var(--brand-primary);
-}
-
-.check-update-btn:hover .update-icon {
-  transform: rotate(180deg);
-}
-
-.footer-action-btn:active {
-  transform: scale(0.96);
-}
-
-.check-update-btn:active {
-  transform: scale(0.96);
-}
-
 @media (max-width: 1100px) {
   .main-sidebar {
     width: var(--sidebar-collapsed-width);
   }
 
-  .nav-label, .sidebar-footer {
+  .nav-label {
     display: none !important;
   }
 
