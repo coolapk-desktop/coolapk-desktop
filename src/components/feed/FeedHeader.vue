@@ -23,7 +23,7 @@
           :verify-title="verifyTitle"
           :device="device"
         >
-          <span class="username clickable" @click.stop="handleUserClick">
+          <span class="username clickable" @pointerdown="recordUsernamePointerStart" @click.stop="handleUsernameClick">
             {{ username || '酷友' }}
           </span>
         </UserHoverCard>
@@ -97,6 +97,7 @@ import AppIconButton from '../common/AppIconButton.vue';
 import UserHoverCard from '../user/UserHoverCard.vue';
 import { reactiveUserProfileMap, getCachedUserProfileSync } from '../../utils/userProfilePreloader';
 import { normalizeUserUid } from '../../utils/userRoute';
+import { recordSelectionPointerStart, shouldSkipClickForSelection, type SelectionDragStart } from '../../utils/selection';
 
 const props = withDefaults(defineProps<{
   uid?: string | number;
@@ -197,6 +198,23 @@ const ipLocationText = computed(() => {
   }
   return '';
 });
+
+/**
+ * 用户名在桌面端要能像正文一样框选复制：按下时记录起点，抬起后若已形成
+ * 真正的选字拖动就放弃跳转，否则照常进入个人主页。
+ */
+let usernamePointerStart: SelectionDragStart = null;
+
+function recordUsernamePointerStart(event: PointerEvent) {
+  usernamePointerStart = recordSelectionPointerStart(event);
+}
+
+function handleUsernameClick(e: MouseEvent) {
+  const pointerStart = usernamePointerStart;
+  usernamePointerStart = null;
+  if (shouldSkipClickForSelection(e, pointerStart)) return;
+  handleUserClick();
+}
 
 function handleUserClick() {
   const targetUid = normalizeUserUid(props.uid);
@@ -302,6 +320,14 @@ function normalizeTimestamp(value: number | string): number | null {
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.3;
+}
+
+/* 只有桌面端需要框选复制用户名；移动端保持长按/点击的原有交互。 */
+@media (min-width: 721px) {
+  .username {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 }
 
 .username.clickable {
