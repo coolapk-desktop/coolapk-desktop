@@ -164,6 +164,7 @@ export interface AppSettings {
   collapseLines: number;
   autoPlayGif: boolean;
   autoPlayLivePhotoSound: boolean;
+  hdrImageDisplay: boolean;
   suppressUnsupportedLivePhotoCodecPrompt: boolean;
   autoLoadOriginalImage: boolean;
   noImageMode: boolean;

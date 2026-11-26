@@ -37,6 +37,28 @@ const MobileTopBarStub = { template: '<div class="mobile-top-bar-stub" />' };
 const MobileBottomNavStub = { template: '<div class="mobile-bottom-nav-stub" />' };
 
 describe('AppShell', () => {
+  it('只在看图层实际显示时暂停页面交互', async () => {
+    const store = useAppStore();
+    const settings = useSettingsStore();
+    const wrapper = mount(AppShell, { global: { stubs: { TopBar: TopBarStub, MainSidebar: MainSidebarStub,
+      PageTabBar: PageTabBarStub, NetworkStatusBanner: NetworkStatusBannerStub, MobileTopBar: MobileTopBarStub, MobileBottomNav: MobileBottomNavStub } } });
+    try {
+      store.openImageViewer(['https://img.example/photo.jpg']);
+      await nextTick();
+      expect(wrapper.attributes('inert')).toBeDefined();
+      settings.settings.noImageMode = true;
+      await nextTick();
+      expect(wrapper.attributes('inert')).toBeUndefined();
+      settings.settings.showImagesInDetail = true;
+      store.openImageViewer(['https://img.example/photo.jpg'], 0, { fromDetail: true });
+      await nextTick();
+      expect(wrapper.attributes('inert')).toBeDefined();
+      store.closeImageViewer();
+      await nextTick();
+      expect(wrapper.attributes('inert')).toBeUndefined();
+    } finally { wrapper.unmount(); }
+  });
+
   it('连续缩放经过侧栏临界宽度时，拖动停稳后才切换布局', async () => {
     vi.useFakeTimers();
     const previousWidth = window.innerWidth;

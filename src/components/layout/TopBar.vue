@@ -1118,7 +1118,6 @@ function handleUserClick() {
 
 <style scoped>
 .top-bar {
-  --macos-traffic-light-safe-width: 86px;
   position: relative;
   height: var(--topbar-height);
   min-height: var(--topbar-height);

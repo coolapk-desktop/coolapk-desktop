@@ -1609,6 +1609,14 @@ export class CoolapkTauriAPI {
     return await invoke<string>('open_image_in_system_viewer', { url, cacheDir: cacheDir || '' });
   }
 
+  static async supportsHdrImageViewer() {
+    return await invoke<boolean>('supports_hdr_image_viewer');
+  }
+
+  static async openHdrImageViewer(url: string) {
+    await invoke<void>('open_hdr_image_viewer', { url });
+  }
+
   static async openUrl(url: string, mode: 'internal' | 'system' = 'internal'): Promise<boolean> {
     // 浏览器备用入口与原生打开入口统一限定合法协议。
     const scheme = url.trim().match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();

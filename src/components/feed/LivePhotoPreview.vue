@@ -53,6 +53,8 @@
       @error="handleVideoError"
     ></video>
 
+    <span v-if="item.isHdr && settingsStore.settings.hdrImageDisplay" class="hdr-badge">HDR</span>
+
     <span
       v-if="item.isLivePhoto || isGif"
       class="live-badge"
@@ -83,7 +85,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, onDeactivated, onUnmounted, ref, watch } from 'vue';
 import AppImage from '../common/AppImage.vue';
-import { getHdImageUrl, getStaticAnimatedImageUrl, isAnimatedImageUrl } from '../../utils/image';
+import { getHdImageUrl, getSdrImagePreviewUrl, getStaticAnimatedImageUrl, isAnimatedImageUrl, needsSdrImagePreview } from '../../utils/image';
+import { useSettingsStore } from '../../stores/settings';
 import { normalizeResourceUrl } from '../../utils/resourceCache';
 import { isCoarsePointer } from '../../utils/platform';
 import { observeResourceVisibility } from '../../utils/resourceVisibility';
@@ -116,6 +119,7 @@ const emit = defineEmits<{
 }>();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
+const settingsStore = useSettingsStore();
 const previewRef = ref<HTMLElement | null>(null);
 let stopObserving = () => {};
 let previewVisible = false;
@@ -152,6 +156,7 @@ let lastFallbackAttemptAt = 0;
 const staticCoverUrl = computed(() => {
   if (isGif.value) return getStaticAnimatedImageUrl(props.item.sourceUrl);
   const url = props.item.coverUrl || props.item.sourceUrl;
+  if (props.item.isHdr && !settingsStore.settings.hdrImageDisplay && needsSdrImagePreview()) return getSdrImagePreviewUrl(url, settingsStore.settings.imageQuality);
   return props.item.isLivePhoto ? normalizeResourceUrl(url) : getHdImageUrl(url);
 });
 
@@ -447,6 +452,21 @@ watch(() => props.gifAutoPlay, enabled => {
 .live-photo-preview.is-single.is-long .live-photo-video {
   object-fit: cover;
   object-position: top center;
+}
+
+.hdr-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  pointer-events: none;
 }
 
 .live-badge {

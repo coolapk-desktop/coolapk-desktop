@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
   clipboardWriteText: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue(undefined),
+  isTauri: () => false,
+}));
+
 vi.mock('../../api/coolapk', () => ({
   CoolapkTauriAPI: {
     getImageDataUrl: vi.fn(),

@@ -6,6 +6,9 @@
 @import './pullRefresh.css';
 @import './transitions.css';
 
+/* 关闭 HDR 时限制图片显示亮度，包含传送到 body 的大图、动效代理图和原图。 */
+:root[data-sdr-images] img { dynamic-range-limit: standard; }
+
 /* 看图区域与 WebView 画布共用黑底，系统栏和画布边缘不会露出页面底色。 */
 :root[data-android-image-viewer],
 :root[data-android-image-viewer] body { background-color: #000; }

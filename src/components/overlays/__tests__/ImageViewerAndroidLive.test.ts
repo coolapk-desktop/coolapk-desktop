@@ -1,5 +1,6 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { afterEach, expect, it, vi } from 'vitest';
+import * as tauriCore from '@tauri-apps/api/core';
 import { useAppStore } from '../../../stores/app';
 import { CoolapkTauriAPI } from '../../../api/coolapk';
 import * as codecs from '../../../utils/liveVideoCodec';
@@ -14,6 +15,23 @@ vi.mock('../../../utils/resourceCache', async importOriginal => ({
   getMemoryCachedResourceSync: vi.fn(() => null),
 }));
 afterEach(() => vi.restoreAllMocks());
+
+it('Android 的 HDR 按钮把有 HDR 标记的原图地址交给原生查看器', async () => {
+  vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14)');
+  const supported = vi.spyOn(CoolapkTauriAPI, 'supportsHdrImageViewer').mockResolvedValue(true);
+  const open = vi.spyOn(CoolapkTauriAPI, 'openHdrImageViewer').mockResolvedValue(undefined);
+  const store = useAppStore();
+  const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true } } });
+  vi.spyOn(tauriCore, 'isTauri').mockReturnValue(true);
+  const original = 'https://image.coolapk.com/feed/scene-xhdr@1920x1080.jpg';
+  try {
+    store.openImageViewer([{ sourceUrl: 'https://image.coolapk.com/feed/scene.jpg', compressedUrl: `${original}.m.jpg` }], 0);
+    await flushPromises();
+    expect(supported).toHaveBeenCalledOnce();
+    await wrapper.get('button.topbar-hdr-badge').trigger('click');
+    expect(open).toHaveBeenCalledWith(original);
+  } finally { wrapper.unmount(); }
+});
 
 it('Android WebView 拒绝能力查询时仍调用播放器，成功出帧后显示实况', async () => {
   vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 12)');

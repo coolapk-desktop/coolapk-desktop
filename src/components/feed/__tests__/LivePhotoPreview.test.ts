@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, KeepAlive, ref, nextTick } from 'vue';
 import LivePhotoPreview from '../LivePhotoPreview.vue';
 import type { FeedImageItem } from '../../../utils/livePhoto';
+import { useSettingsStore } from '../../../stores/settings';
 
 const liveItem: FeedImageItem = {
   key: 'live-1',
@@ -10,6 +11,7 @@ const liveItem: FeedImageItem = {
   coverUrl: 'https://img.example/1.jpg',
   liveVideoUrl: 'https://video.example/1.mp4',
   isLivePhoto: true,
+  isHdr: false,
 };
 
 const gifItem: FeedImageItem = {
@@ -18,6 +20,7 @@ const gifItem: FeedImageItem = {
   coverUrl: 'https://image.coolapk.com/test@1200x2608.gif',
   liveVideoUrl: '',
   isLivePhoto: false,
+  isHdr: false,
 };
 
 const imageStub = defineComponent({
@@ -32,6 +35,18 @@ const imageStub = defineComponent({
 });
 
 const originalMatchMedia = window.matchMedia;
+
+it('关闭 HDR 后隐藏角标，实况仍可播放', async () => {
+  const wrapper = mount(LivePhotoPreview, { props: { item: { ...liveItem, isHdr: true } }, global: { stubs: { AppImage: imageStub } } });
+  try {
+    expect(wrapper.get('.hdr-badge').text()).toBe('HDR');
+    expect(wrapper.get('.live-badge').text()).toBe('Live');
+    useSettingsStore().settings.hdrImageDisplay = false;
+    await nextTick();
+    expect(wrapper.find('.hdr-badge').exists()).toBe(false);
+    expect(wrapper.get('.live-badge').text()).toBe('Live');
+  } finally { wrapper.unmount(); }
+});
 
 /** jsdom 的 matchMedia 桩固定返回 false，这里按用例覆盖指针类型。 */
 function stubPointer(coarse: boolean) {

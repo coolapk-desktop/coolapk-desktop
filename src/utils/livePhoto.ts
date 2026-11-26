@@ -1,5 +1,5 @@
 import { CoolapkTauriAPI } from '../api/coolapk';
-import { isLivePhotoUrl } from './image';
+import { isHdrImageUrl, isLivePhotoUrl } from './image';
 import { normalizeResourceUrl } from './resourceCache';
 
 export type LivePhotoContextType = 'feed' | 'reply' | 'article';
@@ -28,6 +28,7 @@ export interface FeedImageItem {
   coverUrl: string;
   liveVideoUrl: string;
   isLivePhoto: boolean;
+  isHdr: boolean;
   [key: string]: unknown;
 }
 
@@ -186,6 +187,8 @@ export function normalizeFeedImageItems(value: unknown): FeedImageItem[] {
       coverUrl,
       liveVideoUrl,
       isLivePhoto,
+      isHdr: isHdrImageUrl(sourceUrl) || isHdrImageUrl(coverUrl)
+        || Boolean(record && readFlag(record, ['isHdr', 'HDRSign', 'hdrSign', 'hdr'])),
     }];
   });
 }

@@ -94,6 +94,14 @@
 
       <div class="setting-row">
         <div class="row-info">
+          <span class="row-label">查看完整 HDR 效果</span>
+          <span class="row-sub">关闭后，应用内按普通亮度显示图片并隐藏 HDR 角标</span>
+        </div>
+        <AppSwitch v-model="settingsStore.settings.hdrImageDisplay" aria-label="查看完整 HDR 效果" />
+      </div>
+
+      <div class="setting-row">
+        <div class="row-info">
           <span class="row-label">Live 图片自动播放声音</span>
           <span class="row-sub">打开 Live 图片时自动播放原声；关闭后默认静音，可在查看器中手动开启</span>
         </div>

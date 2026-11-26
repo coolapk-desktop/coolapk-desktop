@@ -28,6 +28,7 @@ function gifItem(): FeedImageItem {
     coverUrl: 'https://img.example.com/cover.jpg',
     liveVideoUrl: '',
     isLivePhoto: false,
+    isHdr: false,
   };
 }
 

@@ -13,10 +13,13 @@
         v-if="viewerData && !noImageMode"
         class="image-viewer-backdrop"
         :class="{ 'no-image-detail-enabled': detailImagesEnabled, 'is-mobile-layout': mobileLayout }"
+        role="dialog"
+        aria-modal="true"
+        aria-label="图片查看器"
         @click="handleBackdropClick"
       >
         <!-- 顶部工具栏 -->
-        <div class="viewer-topbar">
+        <div class="viewer-topbar" :class="{ 'has-window-controls': showWindowControls, 'has-macos-controls': usesMacOverlay && !isFullscreen }">
           <div class="topbar-left">
             <span class="counter-text">{{ currentIndex + 1 }} / {{ totalCount }}</span>
             <button
@@ -30,7 +33,10 @@
               <span>Live</span>
               <span v-if="liveResolving" class="viewer-live-loading"><i class="fas fa-circle-notch fa-spin"></i></span>
             </button>
+            <button v-if="currentHdrEnabled && nativeHdrAvailable" class="topbar-hdr-badge" type="button" :disabled="openingNativeHdr" aria-label="以 HDR 显示原图" title="以 HDR 显示原图" @click.stop="openNativeHdr">HDR</button>
+            <span v-else-if="currentHdrEnabled" class="topbar-hdr-badge">HDR</span>
           </div>
+          <div v-if="showWindowControls || (usesMacOverlay && !isFullscreen)" class="viewer-drag-region" data-tauri-drag-region></div>
           <div class="topbar-actions">
             <button class="viewer-btn" :disabled="!imageReady" title="缩小" @click="zoomOut"><i class="fas fa-search-minus"></i></button>
             <span class="zoom-text">{{ Math.round(scale * 100) }}%</span>
@@ -48,8 +54,9 @@
             >
               <i :class="savingOriginal ? 'fas fa-circle-notch fa-spin' : 'fas fa-download'"></i>
             </button>
-            <button class="viewer-btn" :title="showShortcutHints ? '关闭 (Esc)' : '关闭'" @click="close"><i class="fas fa-times"></i></button>
+            <button class="viewer-btn" aria-label="退出看图" :title="showShortcutHints ? '退出看图 (Esc)' : '退出看图'" @click="close"><i class="fas fa-times" aria-hidden="true"></i></button>
           </div>
+          <WindowControls v-if="showWindowControls" class="viewer-window-controls" :is-maximized="isMaximized" @minimize="minimizeWindow" @toggle-maximize="toggleMaximize" @close="closeWindow" />
         </div>
 
         <!-- 左右导航 -->
@@ -90,7 +97,7 @@
             alt="Viewer Image"
             class="viewer-img"
             :style="mediaTransformStyle"
-            :class="{ 'is-touch-dragging': isDragging || touchDragging || mediaTransition === 'none', 'is-sliding': mediaTransition === 'smooth' }"
+            :class="{ 'is-hdr': currentHdrEnabled, 'is-touch-dragging': isDragging || touchDragging || mediaTransition === 'none', 'is-sliding': mediaTransition === 'smooth' }"
             @dragstart.prevent
             @load="measureImage"
             @error="handleImageError"
@@ -192,14 +199,16 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { isTauri } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores/app';
 import { useShortcutHints } from '../../composables/useShortcutHints';
+import { useDesktopWindow } from '../../composables/useDesktopWindow';
 import { useMobileLayout } from '../../composables/useOfficialMobileFeedDetail';
 import { useSettingsStore } from '../../stores/settings';
 import { useNoImageMode, provideDetailImageScope } from '../../composables/useNoImageMode';
 import { CoolapkTauriAPI } from '../../api/coolapk';
 import { isWebBuild } from '../../api/runtime';
-import { getHdImageUrl, getOriginalImageUrl } from '../../utils/image';
+import { getHdImageUrl, getOriginalImageUrl, getSdrImagePreviewUrl, isHdrImageUrl, needsSdrImagePreview } from '../../utils/image';
 import { canLoadWebImageDirectly, preloadWebImage, getMemoryCachedResourceSync, loadImageResource, normalizeResourceUrl } from '../../utils/resourceCache';
 import { useResourceUrlLifetime } from '../../composables/useResourceUrlLifetime';
 import { getErrorMessage } from '../../utils/errors';
@@ -207,6 +216,7 @@ import { showToast } from '../../utils/toast';
 import { showLivePhotoCodecPrompt } from '../../utils/livePhotoCodecPrompt';
 import { useAndroidBackButton } from '../../utils/androidBackButton';
 import { isTouchMobilePlatform } from '../../utils/platform';
+import WindowControls from '../layout/WindowControls.vue';
 import { normalizeFeedImageItems, resolveLivePhotoVideo, type FeedImageItem } from '../../utils/livePhoto';
 import { detectLiveVideoCodec, getLiveVideoCodecSupport, waitForDecodedVideoFrame, logLiveVideoState, type LiveVideoCodec } from '../../utils/liveVideoCodec';
 import {
@@ -222,6 +232,7 @@ import {
 const appStore = useAppStore();
 const showShortcutHints = useShortcutHints();
 const settingsStore = useSettingsStore();
+const { isMaximized, isFullscreen, usesMacOverlay, showWindowControls, minimize: minimizeWindow, toggleMaximize, close: closeWindow } = useDesktopWindow();
 // 与页面共用移动布局判定，桌面浏览器窄窗口也必须进入长图阅读模式。
 const mobileLayout = useMobileLayout();
 const useFluidImageMorph = computed(() => !settingsStore.settings.reduceMotion && settingsStore.settings.pageTransitionStyle !== 'native');
@@ -315,12 +326,16 @@ const liveVideoCodecChecks = new Map<string, Promise<{ codec: LiveVideoCodec | n
 
 const originalLoadedMap = ref<Record<number, boolean>>({});
 const originalLoadingMap = ref<Record<number, boolean>>({});
+const showingHdrFallback = ref(false);
+const nativeHdrAvailable = ref(false);
+const openingNativeHdr = ref(false);
 
 let startX = 0;
 let startY = 0;
 
 const imageItems = computed(() => normalizeFeedImageItems(viewerData.value?.urls || []));
 const currentItem = computed(() => imageItems.value[currentIndex.value] || null);
+const currentHdrEnabled = computed(() => Boolean(currentItem.value?.isHdr && settingsStore.settings.hdrImageDisplay));
 const totalCount = computed(() => imageItems.value.length);
 const rawUrl = computed(() => currentItem.value?.sourceUrl || '');
 /** 对照官方 shouldBeReadMode：长图从顶部阅读，横屏将阅读宽度限制为高度的 9/16。 */
@@ -465,22 +480,36 @@ function isPassThroughImageUrl(url: string): boolean {
 function itemDisplayUrl(item: FeedImageItem): string {
   const coverUrl = itemCoverUrl(item);
   if (isPassThroughImageUrl(coverUrl)) return coverUrl;
+  if (usesSdrPreview(item)) return getSdrImagePreviewUrl(coverUrl, settingsStore.settings.imageQuality);
   if (item.isLivePhoto) return normalizeResourceUrl(item.sourceUrl || coverUrl);
   return getHdImageUrl(coverUrl);
 }
 
+function usesSdrPreview(item: FeedImageItem): boolean {
+  return item.isHdr && !settingsStore.settings.hdrImageDisplay && needsSdrImagePreview();
+}
+
 /** 该图片的原图地址。 */
 function itemOriginalUrl(item: FeedImageItem): string {
+  if (item.isHdr) return itemHdrUrl(item);
   if (!item.sourceUrl) return '';
   if (isPassThroughImageUrl(item.sourceUrl)) return item.sourceUrl;
   return getOriginalImageUrl(item.sourceUrl);
 }
 
+/** 带 HDR 标记的地址优先，使用原图避免 CDN 的普通缩略图丢失增益图。 */
+function itemHdrUrl(item: FeedImageItem): string {
+  if (!item.isHdr) return '';
+  const hdrUrl = !isHdrImageUrl(item.sourceUrl) && isHdrImageUrl(item.coverUrl) ? item.coverUrl : item.sourceUrl;
+  return getOriginalImageUrl(hdrUrl);
+}
+
 const currentUrl = computed(() => {
   const item = currentItem.value;
   if (!item) return '';
+  if (currentHdrEnabled.value) return (showingHdrFallback.value ? '' : itemHdrUrl(item)) || itemDisplayUrl(item);
   // 这一张的原图已经加载过：切回来继续显示原图，不要退回缩略图。
-  if (originalLoadedMap.value[currentIndex.value]) {
+  if (originalLoadedMap.value[currentIndex.value] && !usesSdrPreview(item)) {
     const original = itemOriginalUrl(item);
     if (original) return original;
   }
@@ -494,7 +523,23 @@ const originalUrl = computed(() => {
 
 const isCurrentOriginalLoaded = computed(() => Boolean(originalLoadedMap.value[currentIndex.value]));
 const isCurrentOriginalLoading = computed(() => Boolean(originalLoadingMap.value[currentIndex.value]));
-const showOriginalControl = computed(() => !isCurrentOriginalLoaded.value);
+const showOriginalControl = computed(() => {
+  if (currentHdrEnabled.value) return showingHdrFallback.value;
+  return !isCurrentOriginalLoaded.value && (!currentItem.value || !usesSdrPreview(currentItem.value));
+});
+
+async function openNativeHdr() {
+  const item = currentItem.value;
+  if (!item || !currentHdrEnabled.value || openingNativeHdr.value) return;
+  openingNativeHdr.value = true;
+  try {
+    await CoolapkTauriAPI.openHdrImageViewer(itemHdrUrl(item));
+  } catch (error) {
+    showToast(getErrorMessage(error, '打开 HDR 图片失败'), 'error');
+  } finally {
+    openingNativeHdr.value = false;
+  }
+}
 
 async function resolveImageData(url: string): Promise<boolean> {
   const sequence = ++resolveSequence;
@@ -541,6 +586,7 @@ async function resolveImageData(url: string): Promise<boolean> {
     return true;
   } catch (err) {
     if (sequence !== resolveSequence) return false;
+    if (tryHdrCover()) return false;
     console.warn('看图器加载图片失败:', err);
     displaySrc.value = url; // 备用回退直接使用原 url
     startLoadTimeout(sequence);
@@ -699,6 +745,7 @@ function startLoadTimeout(sequence: number) {
     if (sequence !== resolveSequence || loadFailed.value || noImageMode.value || !viewerData.value) return;
     const failed = displaySrc.value || currentUrl.value;
     if (!failed) return;
+    if (tryHdrCover()) return;
     failedSrc.value = failed;
     loadFailed.value = true;
     imageSize.value = null;
@@ -713,6 +760,7 @@ function handleImageError(event: Event) {
   if (!image || event.target !== image) return;
   // 无图模式下查看器整体隐藏，失败态与它互不覆盖。
   if (noImageMode.value) return;
+  if (tryHdrCover()) return;
   clearLoadTimeout();
   failedSrc.value = displaySrc.value;
   loadFailed.value = true;
@@ -721,19 +769,31 @@ function handleImageError(event: Event) {
   console.warn('看图器图片加载失败:', failedSrc.value);
 }
 
+function tryHdrCover(): boolean {
+  const item = currentItem.value;
+  if (!item || !currentHdrEnabled.value || showingHdrFallback.value || itemDisplayUrl(item) === currentUrl.value) return false;
+  showingHdrFallback.value = true;
+  void resolveImageData(currentUrl.value);
+  return true;
+}
+
 /**
  * 失败态重试：当前变体是显示地址（HD/封面后缀）且与原图地址不同时，
  * 改试原图地址做变体回退，不再反复请求同一个死链（R3-3.1）。
  * 回退后仍失败时保持失败态，重试按钮可继续点击（再次尝试当前候选）。
  */
 async function retryLoadCurrentImage() {
+  if (currentHdrEnabled.value) {
+    await loadOriginal();
+    return;
+  }
   const failed = failedSrc.value || currentUrl.value;
   loadFailed.value = false;
   failedSrc.value = '';
   imageSize.value = null;
   displaySrc.value = '';
   if (!failed) return;
-  const original = originalUrl.value;
+  const original = currentItem.value && usesSdrPreview(currentItem.value) ? '' : originalUrl.value;
   const isDataOrBlob = /^(?:data:|blob:)/.test(failed);
   const url = !isDataOrBlob && original && original !== failed ? original : failed;
   await resolveImageData(url);
@@ -931,13 +991,20 @@ function loadCurrentMedia() {
     clearMediaForNoImageMode();
     return;
   }
-  if (settingsStore.settings.autoLoadOriginalImage && originalUrl.value) {
+  loadCurrentImage();
+  void resolveCurrentLiveVideo();
+  prefetchAdjacentImages();
+}
+
+function loadCurrentImage() {
+  const item = currentItem.value;
+  if (!item || noImageMode.value) return;
+  showingHdrFallback.value = false;
+  if (!currentHdrEnabled.value && !usesSdrPreview(item) && settingsStore.settings.autoLoadOriginalImage && originalUrl.value) {
     void loadOriginal();
   } else if (currentUrl.value) {
     void resolveImageData(currentUrl.value);
   }
-  void resolveCurrentLiveVideo();
-  prefetchAdjacentImages();
 }
 
 /**
@@ -951,8 +1018,8 @@ function prefetchAdjacentImages() {
   const prefetchOriginal = settingsStore.settings.autoLoadOriginalImage;
   for (const offset of [-1, 1]) {
     const item = items[currentIndex.value + offset];
-    if (!item) continue;
-    const url = (prefetchOriginal ? itemOriginalUrl(item) : '') || itemDisplayUrl(item);
+    if (!item || (item.isHdr && settingsStore.settings.hdrImageDisplay && !prefetchOriginal)) continue;
+    const url = (prefetchOriginal && !usesSdrPreview(item) ? itemOriginalUrl(item) : '') || itemDisplayUrl(item);
     if (!url || url.startsWith('data:') || url.startsWith('blob:')) continue;
     void loadImageResource(url, CoolapkTauriAPI.getImageDataUrl).catch(() => undefined);
   }
@@ -972,6 +1039,16 @@ watch(currentItem, () => {
   loadCurrentMedia();
 }, { immediate: true });
 
+watch(currentHdrEnabled, async (enabled) => {
+  if (enabled && isTauri() && /android/i.test(navigator.userAgent)) {
+    nativeHdrAvailable.value = await CoolapkTauriAPI.supportsHdrImageViewer().catch(() => false);
+  }
+}, { immediate: true });
+
+watch(() => settingsStore.settings.hdrImageDisplay, () => {
+  if (currentItem.value?.isHdr) loadCurrentImage();
+});
+
 watch(noImageMode, (enabled) => {
   if (enabled) clearMediaForNoImageMode();
   else if (viewerData.value) loadCurrentMedia();
@@ -979,6 +1056,11 @@ watch(noImageMode, (enabled) => {
 
 async function loadOriginal() {
   if (noImageMode.value) return;
+  if (currentHdrEnabled.value) {
+    showingHdrFallback.value = false;
+    await resolveImageData(currentUrl.value);
+    return;
+  }
   const idx = currentIndex.value;
   const itemSourceUrl = rawUrl.value;
   const url = originalUrl.value;
@@ -1523,8 +1605,7 @@ onUnmounted(() => {
 <style scoped>
 .image-viewer-backdrop {
   position: fixed;
-  /* 桌面端避开应用标题栏，避免预览工具栏覆盖窗口控制按钮。 */
-  inset: var(--topbar-height) 0 0;
+  inset: 0;
   background-color: var(--image-viewer-background, rgba(0, 0, 0, 0.92));
   z-index: 3000;
   display: flex;
@@ -1542,6 +1623,26 @@ onUnmounted(() => {
   z-index: 3002;
 }
 
+.viewer-topbar.has-window-controls,
+.viewer-topbar.has-macos-controls {
+  background: #151515;
+  gap: 0 var(--space-2);
+}
+
+.viewer-drag-region {
+  align-self: stretch;
+  flex: 1 1 24px;
+  min-width: 24px;
+}
+
+.viewer-topbar .viewer-window-controls {
+  --text-primary: rgba(255, 255, 255, 0.86);
+  --window-control-hover: rgba(255, 255, 255, 0.1);
+  --window-control-active: rgba(255, 255, 255, 0.16);
+  border-left-color: rgba(255, 255, 255, 0.12);
+  height: auto;
+}
+
 .topbar-left {
   display: flex;
   align-items: center;
@@ -1554,7 +1655,8 @@ onUnmounted(() => {
   font-weight: var(--font-weight-medium, 500);
 }
 
-.topbar-live-badge {
+.topbar-live-badge,
+.topbar-hdr-badge {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1566,13 +1668,26 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.15);
   font-size: 11px;
   font-weight: 600;
-  cursor: pointer;
   transition: background-color 0.18s ease, color 0.18s ease;
   user-select: none;
 }
 
-.topbar-live-badge:hover {
+.topbar-live-badge,
+button.topbar-hdr-badge:not(:disabled) {
+  cursor: pointer;
+}
+
+.topbar-live-badge:hover,
+button.topbar-hdr-badge:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+@media (pointer: coarse) {
+  button.topbar-hdr-badge {
+    min-width: 44px;
+    min-height: 36px;
+    justify-content: center;
+  }
 }
 
 .topbar-live-badge.is-playing {
@@ -1598,6 +1713,8 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-3);
 }
+
+.has-window-controls .topbar-actions { gap: var(--space-1); }
 
 .viewer-btn {
   background: transparent;
@@ -1689,6 +1806,10 @@ onUnmounted(() => {
   will-change: transform;
   transition: transform 0.05s ease-out;
   pointer-events: auto;
+}
+
+.viewer-img.is-hdr {
+  dynamic-range-limit: no-limit;
 }
 
 /* 解码慢时主图可能在动画中途才挂载，也要等代理层交接后再显示。 */
@@ -1994,7 +2115,6 @@ onUnmounted(() => {
 
 .image-viewer-backdrop.is-mobile-layout {
   --image-viewer-background: #000;
-  inset: 0;
 }
 
 /* 横屏手机和平板同样避开状态栏和屏幕开孔。 */
@@ -2011,10 +2131,6 @@ onUnmounted(() => {
 .is-mobile-layout .nav-next { right: calc(8px + var(--app-safe-area-right)); }
 
 @media (max-width: 720px) {
-  .image-viewer-backdrop {
-    inset: 0;
-  }
-
   .viewer-topbar {
     height: auto;
     min-height: 44px;
@@ -2032,6 +2148,17 @@ onUnmounted(() => {
     justify-content: flex-end;
     margin-left: auto;
   }
+
+  /* 桌面窄窗先留出固定的窗口按钮行，图片操作在下方完整显示。 */
+  .viewer-topbar.has-window-controls .topbar-actions {
+    flex: 1 0 100%;
+    order: 1;
+    gap: 2px;
+    padding-right: 8px;
+    padding-bottom: 4px;
+  }
+
+  .viewer-window-controls { min-height: 36px; }
 
   .viewer-btn {
     flex-shrink: 0;
@@ -2063,4 +2190,7 @@ onUnmounted(() => {
     bottom: calc(16px + var(--app-safe-area-bottom));
   }
 }
+
+.viewer-topbar.has-window-controls { padding-right: 0; }
+.viewer-topbar.has-macos-controls { padding-left: var(--macos-traffic-light-safe-width); }
 </style>

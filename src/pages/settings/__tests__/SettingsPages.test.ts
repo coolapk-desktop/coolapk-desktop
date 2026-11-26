@@ -242,6 +242,10 @@ describe('设置页面交互', () => {
     expect(settings.settings.showFeedBackground).toBe(false);
     expect(wrapper.text()).not.toContain('默认评论排序');
     const contentRows = wrapper.findAll('.setting-row');
+    const hdrSwitch = wrapper.get<HTMLInputElement>('input[aria-label="查看完整 HDR 效果"]');
+    expect(hdrSwitch.element.checked).toBe(true);
+    await hdrSwitch.setValue(false);
+    expect(settings.settings.hdrImageDisplay).toBe(false);
     await contentRows.find((row) => row.text().includes('Live 图片自动播放声音'))!.find('.switch-input').setValue(true);
     await contentRows.find((row) => row.text().includes('不再提醒 Live 图片编码问题'))!.find('.switch-input').setValue(true);
     await contentRows.find((row) => row.text().includes('打开图片自动加载原图'))!.find('.switch-input').setValue(false);

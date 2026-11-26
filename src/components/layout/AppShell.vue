@@ -1,6 +1,7 @@
 <template>
   <div
     class="app-shell"
+    :inert="imageViewerVisible || undefined"
     :class="{
       'has-mobile-window-controls': showWindowControls,
       'is-android': isAndroidApp,
@@ -75,6 +76,7 @@ import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, w
 import DesktopFeedCommentPanel from '../feed/DesktopFeedCommentPanel.vue';
 import { desktopFeedCommentsOpenKey, openDesktopFeedCommentsKey } from '../../utils/desktopFeedComments';
 import { useMobileLayout, useOfficialMobileFeedDetail, useWideSplitLayout } from '../../composables/useOfficialMobileFeedDetail';
+import { useNoImageMode } from '../../composables/useNoImageMode';
 import type { FeedItem } from '../../types/feed';
 import { isTauri } from '@tauri-apps/api/core';
 import { isWebBuild } from '../../api/runtime';
@@ -105,6 +107,8 @@ const route = useRoute();
 const router = useRouter();
 const settingsStore = useSettingsStore();
 const appStore = useAppStore();
+const imageViewerHidden = useNoImageMode(computed(() => Boolean(appStore.activeImageViewer?.fromDetail)));
+const imageViewerVisible = computed(() => Boolean(appStore.activeImageViewer) && !imageViewerHidden.value);
 const mobileNavigationOpen = ref(false);
 const readingViewportWidth = ref(window.innerWidth);
 const sidebarViewportWidth = ref(readingViewportWidth.value);

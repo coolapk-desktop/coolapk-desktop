@@ -72,6 +72,32 @@ export function getHdImageUrl(url: string): string {
   return getImageUrlByQuality(url);
 }
 
+/** 酷安 HDR 标记位于 CDN 路径中，查询参数和外站同名文件不能用于打标。 */
+export function isHdrImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.hostname === 'image.coolapk.com'
+      && ['http:', 'https:'].includes(url.protocol)
+      && /-[ux]?hdr@\d+x\d+\.[a-z]+(?=\.|$)/i.test(url.pathname);
+  } catch { return false; }
+}
+
+/** 早期支持 HDR 的浏览器可能没有亮度限制属性，此时使用 CDN 普通缩略图显示。 */
+export function needsSdrImagePreview(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(dynamic-range: high)').matches
+    && !globalThis.CSS?.supports?.('dynamic-range-limit', 'standard');
+}
+
+/** 用酷安普通缩略图兼容旧内核，保留地址的查询参数。 */
+export function getSdrImagePreviewUrl(url: string, quality: ImageQualityMode): string {
+  try {
+    const parsed = new URL(getOriginalImageUrl(url));
+    if (parsed.hostname !== 'image.coolapk.com' || !['http:', 'https:'].includes(parsed.protocol)) return url;
+    parsed.pathname += quality === 'standard' ? '.s.jpg' : '.m.jpg';
+    return parsed.toString();
+  } catch { return url; }
+}
+
 /** 检查真实主机边界，路径或查询参数里出现酷安域名不能命中 CDN。 */
 function isCoolapkImageHost(value: string): boolean {
   try {

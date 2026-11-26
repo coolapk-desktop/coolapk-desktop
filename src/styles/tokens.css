@@ -50,6 +50,7 @@
   --feed-max-width: 720px;
   --right-sidebar-width: 270px;
   --app-titlebar-height: 56px;
+  --macos-traffic-light-safe-width: 86px;
   --topbar-height: var(--app-titlebar-height);
   --window-control-width: 36px;
   --titlebar-background: var(--surface);

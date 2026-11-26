@@ -1,11 +1,21 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 import { useAppStore } from '../../../stores/app';
 import { useSettingsStore } from '../../../stores/settings';
 import { getMemoryCachedResourceSync, loadImageResource } from '../../../utils/resourceCache';
 import { showToast } from '../../../utils/toast';
 import * as imageViewerTransform from '../../../utils/imageViewerTransform';
 import ImageViewer from '../ImageViewer.vue';
+
+const windowState = vi.hoisted(() => ({ controls: false, close: vi.fn(), minimize: vi.fn(), maximize: vi.fn() }));
+
+vi.mock('../../../composables/useDesktopWindow', () => ({
+  useDesktopWindow: () => ({
+    isMaximized: ref(false), isFullscreen: ref(false), usesMacOverlay: ref(false), showWindowControls: ref(windowState.controls),
+    close: windowState.close, minimize: windowState.minimize, toggleMaximize: windowState.maximize,
+  }),
+}));
 
 vi.mock('@tauri-apps/api/core', () => ({
   isTauri: () => false,
@@ -34,6 +44,27 @@ vi.mock('../../../utils/toast', () => ({ showToast: vi.fn() }));
 const loadResourceMock = vi.mocked(loadImageResource);
 const memoryCacheMock = vi.mocked(getMemoryCachedResourceSync);
 const toastMock = vi.mocked(showToast);
+
+it('桌面看图栏保留窗口操作，退出看图只关闭图片', async () => {
+  windowState.controls = true;
+  const store = useAppStore();
+  const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true } } });
+  try {
+    store.openImageViewer(['https://img.example/photo.jpg']);
+    await flushPromises();
+    expect(wrapper.get('.viewer-drag-region').attributes('data-tauri-drag-region')).toBeDefined();
+    await wrapper.get('.viewer-window-controls button[aria-label="最小化"]').trigger('click');
+    await wrapper.get('.viewer-window-controls button[aria-label="最大化"]').trigger('click');
+    await wrapper.get('.viewer-window-controls button[aria-label="关闭"]').trigger('click');
+    expect(windowState.minimize).toHaveBeenCalledOnce();
+    expect(windowState.maximize).toHaveBeenCalledOnce();
+    expect(windowState.close).toHaveBeenCalledOnce();
+    expect(store.activeImageViewer).not.toBeNull();
+    await wrapper.get('button[aria-label="退出看图"]').trigger('click');
+    expect(store.activeImageViewer).toBeNull();
+    expect(windowState.close).toHaveBeenCalledOnce();
+  } finally { wrapper.unmount(); windowState.controls = false; }
+});
 
 it('移动端看图层关闭后恢复系统栏配色', async () => {
   const userAgent = vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('Android');
@@ -95,6 +126,65 @@ describe('原图加载成功后隐藏入口', () => {
     expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf('https://img.example/0.jpg'));
     expect(wrapper.find('.raw-image-btn').exists()).toBe(false);
     wrapper.unmount();
+  });
+
+  it('HDR 图片优先加载原地址，加载失败时降级为普通缩略图', async () => {
+    const original = 'https://image.coolapk.com/feed/scene-uhdr@1920x1080.jpg';
+    const fallback = 'https://image.coolapk.com/feed/cover.jpg.m.jpg';
+    const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true } } });
+    try {
+      useAppStore().openImageViewer([{ sourceUrl: original, compressedUrl: 'https://image.coolapk.com/feed/cover.jpg' }], 0);
+      await flushPromises();
+      expect(wrapper.get('.topbar-hdr-badge').text()).toBe('HDR');
+      expect(wrapper.get('.viewer-img.is-hdr').attributes('src')).toBe(dataOf(original));
+      expect(wrapper.find('.raw-image-btn').exists()).toBe(false);
+
+      await wrapper.get('.viewer-img').trigger('error');
+      await flushPromises();
+      expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf(fallback));
+      await wrapper.get('.raw-image-btn').trigger('click');
+      await flushPromises();
+      expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf(original));
+    } finally { wrapper.unmount(); }
+  });
+
+  it('关闭 HDR 后即时回到普通浏览，仍能查看和保存原图', async () => {
+    const original = 'https://image.coolapk.com/feed/scene-hdr@1920x1080.jpg';
+    const settings = useSettingsStore();
+    const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true } } });
+    try {
+      useAppStore().openImageViewer([original], 0);
+      await flushPromises();
+      settings.settings.hdrImageDisplay = false;
+      await flushPromises();
+      expect(wrapper.find('.topbar-hdr-badge').exists()).toBe(false);
+      expect(wrapper.find('.viewer-img.is-hdr').exists()).toBe(false);
+      expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf(`${original}.m.jpg`));
+      await wrapper.get('.raw-image-btn').trigger('click');
+      await flushPromises();
+      expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf(original));
+      expect(wrapper.get('button[title="保存原图"]').attributes('disabled')).toBeUndefined();
+    } finally { wrapper.unmount(); }
+  });
+
+  it('不支持 CSS 亮度限制的 HDR 浏览器在关闭 HDR 后使用普通缩略图', async () => {
+    const original = 'https://image.coolapk.com/feed/scene-hdr@1920x1080.jpg';
+    const settings = useSettingsStore();
+    settings.settings.hdrImageDisplay = false;
+    settings.settings.imageQuality = 'raw';
+    settings.settings.autoLoadOriginalImage = true;
+    const matchMedia = window.matchMedia;
+    window.matchMedia = query => query === '(dynamic-range: high)'
+      ? { ...matchMedia.call(window, query), matches: true }
+      : matchMedia.call(window, query);
+    const wrapper = mount(ImageViewer, { global: { stubs: { Teleport: true } } });
+    try {
+      useAppStore().openImageViewer([original], 0);
+      await flushPromises();
+      expect(wrapper.get('.viewer-img').attributes('src')).toBe(dataOf(`${original}.m.jpg`));
+      expect(wrapper.find('.raw-image-btn').exists()).toBe(false);
+      expect(wrapper.get('.viewer-img').attributes('data-original-url')).toBe(original);
+    } finally { wrapper.unmount(); window.matchMedia = matchMedia; }
   });
 
   it('切到未加载原图的图片显示入口，返回已加载的图片隐藏入口', async () => {
@@ -914,7 +1004,7 @@ describe('加载失败兜底与操作反馈', () => {
       expect(counter(wrapper)).toBe('3 / 3');
       mockStageAndViewerRects(wrapper);
 
-      await wrapper.get('[title^="关闭"]').trigger('click');
+      await wrapper.get('button[aria-label="退出看图"]').trigger('click');
       await flushPromises();
       expect(thumbs[0]!.style.visibility).toBe('');
       expect(thumbs[2]!.style.visibility).toBe('hidden');

@@ -169,6 +169,7 @@ const defaultSettings: AppSettings = {
   collapseLines: 12,
   autoPlayGif: true,
   autoPlayLivePhotoSound: false,
+  hdrImageDisplay: true,
   suppressUnsupportedLivePhotoCodecPrompt: false,
   autoLoadOriginalImage: true,
   noImageMode: false,
@@ -352,6 +353,7 @@ export function normalizeSettings(value: unknown): AppSettings {
   result.collapseLines = [0, 8, 12, 18].includes(Number(source.collapseLines)) ? Number(source.collapseLines) : result.collapseLines;
   result.autoPlayGif = readBoolean(source.autoPlayGif, result.autoPlayGif);
   result.autoPlayLivePhotoSound = readBoolean(source.autoPlayLivePhotoSound, result.autoPlayLivePhotoSound);
+  result.hdrImageDisplay = readBoolean(source.hdrImageDisplay, result.hdrImageDisplay);
   result.suppressUnsupportedLivePhotoCodecPrompt = readBoolean(source.suppressUnsupportedLivePhotoCodecPrompt, result.suppressUnsupportedLivePhotoCodecPrompt);
   result.autoLoadOriginalImage = readBoolean(source.autoLoadOriginalImage, result.autoLoadOriginalImage);
   result.noImageMode = readBoolean(source.noImageMode, result.noImageMode);
@@ -633,6 +635,7 @@ export const useSettingsStore = defineStore('settings', () => {
   watch(() => settings.value.zoom, applyZoom, { immediate: true });
   watch(() => settings.value.reduceMotion, applyReduceMotion, { immediate: true });
   watch(() => settings.value.noImageMode, applyNoImageMode, { immediate: true });
+  watch(() => settings.value.hdrImageDisplay, enabled => document.documentElement.toggleAttribute('data-sdr-images', !enabled), { immediate: true });
   watch(() => settings.value.hideScrollbars, enabled => document.documentElement.toggleAttribute('data-hide-scrollbars', enabled), { immediate: true });
 
   watch(() => settings.value.closeToTray, (enabled) => {

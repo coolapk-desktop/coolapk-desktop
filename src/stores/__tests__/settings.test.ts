@@ -134,6 +134,18 @@ describe('settings store', () => {
     expect(normalizeSettings({}).showImagesInDetail).toBe(false);
     expect(normalizeSettings({ showImagesInDetail: true }).showImagesInDetail).toBe(true);
   });
+
+  it('HDR 默认开启，关闭后应用 SDR 显示并保留关闭状态', async () => {
+    expect(normalizeSettings({}).hdrImageDisplay).toBe(true);
+    expect(normalizeSettings({ hdrImageDisplay: false }).hdrImageDisplay).toBe(false);
+    const store = useSettingsStore();
+    store.settings.hdrImageDisplay = false;
+    await nextTick();
+    expect(document.documentElement.hasAttribute('data-sdr-images')).toBe(true);
+    store.settings.hdrImageDisplay = true;
+    await nextTick();
+    expect(document.documentElement.hasAttribute('data-sdr-images')).toBe(false);
+  });
   it('旧配置默认开启滚动隐藏导航，并保留用户明确关闭的选择', () => {
     expect(normalizeSettings({}).autoHideMobileNavigation).toBe(true);
     expect(normalizeSettings({ autoHideMobileNavigation: false }).autoHideMobileNavigation).toBe(false);

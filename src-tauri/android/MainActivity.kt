@@ -7,7 +7,10 @@ import android.content.res.Configuration
 import android.content.Intent
 import android.app.AlertDialog
 import android.app.Activity
+import android.app.Dialog
+import android.content.pm.ActivityInfo
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
@@ -20,11 +23,17 @@ import android.provider.Settings
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.view.RoundedCorner
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.ViewTreeObserver
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.Keep
@@ -47,6 +56,7 @@ class MainActivity : TauriActivity() {
     @Volatile private var webSafeArea = Insets.NONE
     private var imageViewerImmersive = false
     private var mainWebView: WeakReference<WebView>? = null
+    private var hdrImageDialog: Dialog? = null
     private var activityResumed = false
     private var foregroundDrawRequest = 0L
     private val foregroundDrawTasks = mutableListOf<Runnable>()
@@ -59,6 +69,7 @@ class MainActivity : TauriActivity() {
     companion object {
         // 原生日志独立落盘，页面脚本失去响应时仍可从诊断导出获取；单线程保持事件顺序。
         private val foregroundLogWriter = Executors.newSingleThreadExecutor { task -> Thread(task, "foreground-diagnostics").apply { isDaemon = true } }
+        private val hdrImageDecoder = Executors.newSingleThreadExecutor { task -> Thread(task, "hdr-image-decoder").apply { isDaemon = true } }
     }
 
     @Keep
@@ -186,6 +197,7 @@ class MainActivity : TauriActivity() {
     }
 
     override fun onDestroy() {
+        hdrImageDialog?.dismiss()
         cancelForegroundDraw("destroy")
         logForeground("destroy")
         super.onDestroy()
@@ -256,6 +268,89 @@ class MainActivity : TauriActivity() {
     fun setSystemBarTheme(theme: String): String {
         runOnUiThread { applySystemBarTheme(theme.startsWith("dark"), theme.contains("-profile"), theme.endsWith("-dimmed"), theme == "image-viewer") }
         return "ok"
+    }
+
+    @Keep
+    fun supportsHdrImageViewer(@Suppress("UNUSED_PARAMETER") unused: String): String =
+        if (Build.VERSION.SDK_INT >= 34 && display?.hdrCapabilities?.supportedHdrTypes?.isNotEmpty() == true) "supported" else "unsupported"
+
+    @Keep
+    fun showHdrImage(path: String): String = try {
+        val file = localFile(path)
+        require(file.isFile && file.name.startsWith("hdr-") && file.extension == "tmp" && file.parentFile == File(cacheDir, "CoolapkDesktopCache/images").canonicalFile) { "HDR 图片缓存无效" }
+        if (Build.VERSION.SDK_INT < 34) "error:当前设备无法显示 HDR 图片"
+        else {
+            runOnUiThread {
+                if (isFinishing || isDestroyed) file.delete()
+                else try { showHdrImageDialog(file) } catch (error: Exception) {
+                    file.delete()
+                    hdrImageDialog?.dismiss()
+                    Log.w("CoolapkHdrImage", "无法打开 HDR 图片窗口", error)
+                    Toast.makeText(this, "打开 HDR 图片失败", Toast.LENGTH_SHORT).show()
+                }
+            }
+            "opened"
+        }
+    } catch (error: Exception) { "error:${error.message ?: error.javaClass.simpleName}" }
+
+    @RequiresApi(34)
+    private fun showHdrImageDialog(file: File) {
+        hdrImageDialog?.dismiss()
+        val dialog = Dialog(this, android.R.style.Theme_Material_NoActionBar_Fullscreen)
+        hdrImageDialog = dialog
+        val frame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val image = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            contentDescription = "HDR 图片"
+            setOnClickListener { dialog.dismiss() }
+        }
+        val loading = ProgressBar(this)
+        val close = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            setColorFilter(Color.WHITE)
+            contentDescription = "关闭"
+            setOnClickListener { dialog.dismiss() }
+        }
+        val buttonSize = (48 * resources.displayMetrics.density).toInt()
+        frame.addView(image, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        frame.addView(loading, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        frame.addView(close, FrameLayout.LayoutParams(buttonSize, buttonSize, Gravity.TOP or Gravity.END))
+        dialog.setContentView(frame)
+        dialog.setOnDismissListener {
+            if (hdrImageDialog === dialog) hdrImageDialog = null
+            image.setImageDrawable(null)
+        }
+        dialog.show()
+
+        val metrics = resources.displayMetrics
+        val displaySize = maxOf(metrics.widthPixels, metrics.heightPixels).coerceIn(1, 4096)
+        hdrImageDecoder.execute {
+            // 解码保留 JPEG 增益图，按屏幕像素限制大图的解码开销。
+            val bitmap = try {
+                ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
+                    val width = info.size.width
+                    val height = info.size.height
+                    val scale = displaySize.toFloat() / maxOf(width, height)
+                    if (scale < 1) decoder.setTargetSize((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1))
+                }
+            } catch (error: Exception) {
+                Log.w("CoolapkHdrImage", "HDR 图片解码失败", error)
+                null
+            } finally { file.delete() }
+            runOnUiThread {
+                if (!dialog.isShowing) return@runOnUiThread
+                if (bitmap == null || !bitmap.hasGainmap()) {
+                    dialog.dismiss()
+                    val message = if (bitmap == null) "HDR 图片加载失败" else "原图没有可显示的 HDR 增益图"
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                // HDR 色彩模式只作用于原生图片窗口，关闭后自动回到 WebView。
+                dialog.window?.colorMode = ActivityInfo.COLOR_MODE_HDR
+                loading.visibility = View.GONE
+                image.setImageBitmap(bitmap)
+            }
+        }
     }
 
     @Keep

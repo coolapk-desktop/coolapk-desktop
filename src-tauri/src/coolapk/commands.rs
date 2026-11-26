@@ -1038,6 +1038,35 @@ pub async fn open_image_in_system_viewer(
     Ok(target_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+pub async fn supports_hdr_image_viewer(app: tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    return Ok(call_android_update_method(&app, "supportsHdrImageViewer", String::new()).await? == "supported");
+    #[cfg(not(target_os = "android"))]
+    { let _ = app; Ok(false) }
+}
+
+#[tauri::command]
+pub async fn open_hdr_image_viewer(state: State<'_, AppState>, app: tauri::AppHandle, url: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        if !supports_hdr_image_viewer(app.clone()).await? { return Err("当前设备无法显示 HDR 图片".into()); }
+        let data_url = get_image_data_url(state, app.clone(), url, None, None).await?;
+        let (_, bytes) = decode_image_data_url(&data_url)?;
+        let dir = image_cache_root(&app, None)?;
+        tokio::fs::create_dir_all(&dir).await.map_err(|error| format!("创建图片缓存目录失败：{error}"))?;
+        let name = format!("hdr-{}-{}.tmp", std::process::id(), IMAGE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+        let path = save_image_bytes(&dir, &name, &bytes).await?;
+        let result = call_android_update_method(&app, "showHdrImage", path.to_string_lossy().into_owned()).await.and_then(|status| {
+            if status == "opened" { Ok(()) } else { Err(status.strip_prefix("error:").unwrap_or(&status).to_string()) }
+        });
+        if result.is_err() { let _ = tokio::fs::remove_file(path).await; }
+        result
+    }
+    #[cfg(not(target_os = "android"))]
+    { let _ = (state, app, url); Err("原生 HDR 查看器仅在 Android 可用".into()) }
+}
+
 async fn save_image_bytes(
     target_dir: &std::path::Path,
     file_name: &str,

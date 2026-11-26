@@ -1568,6 +1568,8 @@ pub fn run() {
             save_file,
             save_image_data_url,
             open_image_in_system_viewer,
+            coolapk::commands::supports_hdr_image_viewer,
+            coolapk::commands::open_hdr_image_viewer,
             open_url,
             coolapk::commands::select_equipment_product,
             fetch_external_page,

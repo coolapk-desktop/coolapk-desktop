@@ -1,5 +1,5 @@
 <template>
-  <div class="window-controls" data-tauri-drag-region="false" aria-label="窗口控制">
+  <div class="window-controls" data-tauri-drag-region="false" role="group" aria-label="窗口控制">
     <button type="button" class="window-control-button" aria-label="最小化" title="最小化" @click="$emit('minimize')">
       <svg class="minimize-icon" aria-hidden="true" viewBox="0 0 12 12">
         <path d="M1 6.5h10" />
