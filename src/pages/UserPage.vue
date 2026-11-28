@@ -75,7 +75,7 @@
             <div class="user-details-area-immersive">
               <!-- 名字与等级 -->
               <div class="username-title-row">
-                <h1 class="app-username">{{ displayUserName }}</h1>
+                <h1 class="app-username" :data-context-profile-username="touchMobile ? undefined : ''">{{ displayUserName }}</h1>
                 <span class="app-user-level" v-if="profile.level">Lv.{{ profile.level }}</span>
                 <span v-if="profile.isDeveloper || profile.verify_title" class="app-verify-tag">
                   <i class="fas fa-check-circle"></i> {{ profile.verify_title || '酷安认证开发者' }}
@@ -573,11 +573,13 @@ import { requestConfirmation } from '../utils/confirm';
 import { asUserSpaceProfile, mergeEntityPageItems, normalizeEntityPage } from '../types/userSpace';
 import { getCachedUserProfileSync } from '../utils/userProfilePreloader';
 import { usePageTabTitle } from '../composables/usePageTabTitle';
+import { isTouchMobilePlatform } from '../utils/platform';
 
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const userRelations = useUserRelationsStore();
+const touchMobile = isTouchMobilePlatform();
 
 const effectiveUid = computed(() => {
   const rUid = (route.params.uid as string) || (route.params.id as string) || '';

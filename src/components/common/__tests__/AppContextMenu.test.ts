@@ -138,6 +138,54 @@ describe('AppContextMenu', () => {
     vi.useRealTimers();
   });
 
+  it('动态作者名沿用动态右键菜单', async () => {
+    const wrapper = mount(AppContextMenu, { attachTo: document.body });
+    const feed = document.createElement('article');
+    feed.dataset.feedId = '42';
+    feed.dataset.feedText = '动态正文';
+    const author = document.createElement('span');
+    author.className = 'username';
+    author.textContent = '竹本青';
+    feed.appendChild(author);
+    document.body.appendChild(feed);
+
+    try {
+      author.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await wrapper.vm.$nextTick();
+
+      const menu = document.querySelector('.app-context-menu');
+      expect(menu?.textContent).toContain('复制动态正文');
+      expect(menu?.textContent).not.toContain('复制用户名');
+    } finally {
+      feed.remove();
+      wrapper.unmount();
+    }
+  });
+
+  it('剪贴板拒绝写入时显示复制失败', async () => {
+    mocks.writeText.mockRejectedValueOnce(new Error('剪贴板不可用'));
+    const wrapper = mount(AppContextMenu, { attachTo: document.body });
+    const username = document.createElement('h1');
+    username.dataset.contextProfileUsername = '';
+    username.textContent = '酷友甲';
+    document.body.appendChild(username);
+
+    try {
+      username.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await wrapper.vm.$nextTick();
+
+      const copy = Array.from(document.querySelectorAll<HTMLElement>('.context-menu-item'))
+        .find(item => item.textContent?.trim() === '复制用户名');
+      expect(copy).toBeDefined();
+      copy?.click();
+      await flushPromises();
+      expect(document.body.textContent).toContain('复制失败，请检查剪贴板权限');
+    } finally {
+      username.remove();
+      wrapper.unmount();
+    }
+  });
+
   it.each(['a', 'video', 'audio'])('右键 %s 可以原样下载带参数的任意文件资源', async (tag) => {
     const wrapper = mount(AppContextMenu, { attachTo: document.body });
     const resource = document.createElement(tag);

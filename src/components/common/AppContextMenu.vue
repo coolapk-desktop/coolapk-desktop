@@ -502,18 +502,23 @@ async function copyText(text: string) {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    showToast('已复制');
   } catch {
     const textarea = document.createElement('textarea');
     textarea.value = text;
     textarea.style.position = 'fixed';
     textarea.style.opacity = '0';
     document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    textarea.remove();
-    showToast('已复制');
+    try {
+      textarea.select();
+      if (!document.execCommand('copy')) throw new Error('剪贴板写入失败');
+    } catch {
+      showToast('复制失败，请检查剪贴板权限', 'error');
+      return;
+    } finally {
+      textarea.remove();
+    }
   }
+  showToast('已复制');
 }
 
 async function copyImage(url: string, loadedDataUrl?: string) {
@@ -746,8 +751,11 @@ function estimateMenuWidth(items: MenuItem[]): number {
   return Math.max(136, Math.min(258, contentWidth));
 }
 
-function applyMenu(state: ContextState) {
+function applyMenu(state: ContextState, profileUsername?: string) {
   const items = createItems(state);
+  if (profileUsername) {
+    items.unshift(item('copy-profile-username', '复制用户名', 'far fa-copy', () => copyText(profileUsername)));
+  }
   const mobileSelection = isTouchMobilePlatform() && Boolean(state.selectedText);
   const width = mobileSelection
     ? Math.min(460, window.visualViewport?.width || window.innerWidth) - 16
@@ -805,7 +813,8 @@ function openMenu(event: MouseEvent) {
   if (!state) return;
   event.preventDefault();
   event.stopPropagation();
-  applyMenu(state);
+  const username = event.target instanceof Element ? event.target.closest('[data-context-profile-username]') : null;
+  applyMenu(state, username?.textContent?.trim());
 }
 
 function openMenuForLongPress(target: EventTarget | null, x: number, y: number): boolean {
